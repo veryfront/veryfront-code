@@ -1,28 +1,28 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { ConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
 import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
-import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
-import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
-import { generateText } from "../../runtime/runtime-bridge.ts";
-import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
-import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
+import type { ConversationRunMirrorSnapshot } from "#veryfront/agent/conversation/run-mirror.ts";
+import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
+import { createGenerateModel } from "#veryfront/runtime/runtime-bridge.test-helpers.ts";
+import { runWithRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import {
   type AgentRunModelCallContextEvent,
   createAgentRunEventTimingAnchor,
-} from "../../runtime/model-call-context.ts";
+} from "#veryfront/runtime/model-call-context.ts";
 import {
   getPrivateRunEventAppendRequestByteLength,
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
   MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
-} from "../conversation/run-event-limits.ts";
-import { isPrivateConversationRunEvent } from "../conversation/private-run-event.ts";
-import { prepareConversationRunExternalEvents } from "../conversation/run-event-preparation.ts";
+} from "#veryfront/agent/conversation/run-event-limits.ts";
+import { isPrivateConversationRunEvent } from "#veryfront/agent/conversation/private-run-event.ts";
+import { prepareConversationRunExternalEvents } from "#veryfront/agent/conversation/run-event-preparation.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
-} from "./durable-run-event-sink.ts";
+} from "#veryfront/agent/hosted/durable-run-event-sink.ts";
 
 function snapshot(
   overrides: Partial<ConversationRunMirrorSnapshot> = {},

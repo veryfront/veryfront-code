@@ -10,9 +10,12 @@ import {
   withLocalChildExecution,
   withLocalChildRuntime,
   withoutAutomaticRuntimeStreamObservation,
-} from "./local-child-execution.ts";
-import { createAgUiEncoderState, mapRuntimeStreamEventToAgUiEvents } from "../ag-ui/encoder.ts";
-import { coerceWireEvent } from "../ag-ui/sse-parser.ts";
+} from "#veryfront/agent/composition/local-child-execution.ts";
+import {
+  createAgUiEncoderState,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "#veryfront/agent/ag-ui/encoder.ts";
+import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 
 it("local child host scopes remain isolated across concurrent executions and close afterwards", async () => {
   let release!: () => void;

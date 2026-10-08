@@ -29,6 +29,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
+import type { AgentRunModelCallContextEvent } from "#veryfront/runtime/model-call-context.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import {
@@ -8314,7 +8315,7 @@ describe("project run inference credential header", () => {
     await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((_input, init) => {
+        withMockFetch(async (_input, init) => {
           const observed = observeFetchRequestInit(init);
           const key = new Headers(observed.headers).get("idempotency-key");
           assertExists(key);
@@ -8409,7 +8410,7 @@ describe("project run inference credential header", () => {
     await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((_input, init) => {
+        withMockFetch(async (_input, init) => {
           const observed = observeFetchRequestInit(init);
           const key = new Headers(observed.headers).get("idempotency-key");
           assertExists(key);
@@ -8507,7 +8508,7 @@ describe("project run inference credential header", () => {
     const result = await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((_input, init) => {
+        withMockFetch(async (_input, init) => {
           const payload = requestJsonBody(init);
           if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
           for (const event of payload.events) {
@@ -8543,7 +8544,7 @@ describe("project run inference credential header", () => {
     const exactMessages = [{
       role: "user",
       content: [{ type: "text", text: "Exact private input" }],
-    }];
+    }] satisfies AgentRunModelCallContextEvent["messages"];
     const modelCallId = "34343434-3434-4343-8343-343434343434";
     let capturedMessages: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -8564,7 +8565,9 @@ describe("project run inference credential header", () => {
             Array.prototype.filter = () => [];
             Array.prototype.flatMap = () => [];
             Array.prototype.slice = () => [];
-            Array.prototype[Symbol.iterator] = function* () {};
+            Array.prototype[Symbol.iterator] = function () {
+              return originalIterator.call([]);
+            };
             try {
               await control.onEvent({ type: "text-delta", id: "message", delta: text });
               await control.onEvent({
@@ -8609,7 +8612,7 @@ describe("project run inference credential header", () => {
     const result = await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((_input, init) => {
+        withMockFetch(async (_input, init) => {
           const payload = requestJsonBody(init);
           if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
           for (let index = 0; index < payload.events.length; index++) {
@@ -8696,7 +8699,7 @@ describe("project run inference credential header", () => {
     const result = await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((_input, init) => {
+        withMockFetch(async (_input, init) => {
           const body = observeFetchRequestInit(init).body;
           if (
             typeof body !== "string" || new TextEncoder().encode(body).byteLength > 10 * 1024 * 1024
@@ -9455,7 +9458,7 @@ describe("project run inference credential header", () => {
     const result = await withEnv(
       { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
       () =>
-        withMockFetch((input, init) => {
+        withMockFetch(async (input, init) => {
           if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
           const payload = requestJsonBody(init);
           if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");

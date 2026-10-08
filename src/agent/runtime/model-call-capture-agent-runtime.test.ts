@@ -70,6 +70,15 @@ function erroringRuntimeStream(
   });
 }
 
+function providerStream<T>(chunks: readonly T[]): ReadableStream<T> {
+  return new ReadableStream<T>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}
+
 describe("agent runtime model-call capture", () => {
   it("preserves Veryfront Cloud facts through the streaming wrapper before dispatch", async () => {
     const order: string[] = [];
@@ -101,7 +110,7 @@ describe("agent runtime model-call capture", () => {
           order.push("dispatch");
           dispatchCapture = getCurrentVeryfrontCloudModelCallCapture();
           return Promise.resolve({
-            stream: ReadableStream.from([
+            stream: providerStream([
               { type: "text-delta", delta: "ok" },
               { type: "finish", finishReason: "stop", usage: {} },
             ]),
@@ -171,7 +180,7 @@ describe("agent runtime model-call capture", () => {
             throw overloadedProviderError();
           }
           return Promise.resolve({
-            stream: ReadableStream.from([
+            stream: providerStream([
               { type: "text-delta", text: "ok" },
               { type: "finish", finishReason: "stop", totalUsage: {} },
             ]),
