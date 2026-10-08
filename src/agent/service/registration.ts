@@ -375,11 +375,10 @@ async function readAgentPushRuntimeServiceResponse(
   try {
     payload = await response.json();
   } catch (cause) {
-    // The headers landed but the body did not: the deadline fired while the
-    // JSON was still arriving, or the connection reset mid-body. No complete
-    // response came back and nothing upstream was applied, so this is as
-    // transport-level as a failed connect and gets the same retries. It
-    // carries no httpStatus, which is what marks it retryable.
+    // Complete malformed JSON is a permanent protocol failure.
+    if (cause instanceof SyntaxError) throw cause;
+    // A body interrupted by an abort or connection reset is a transport
+    // failure. Registration retains its upsert identity when replayed.
     throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
   }
 
@@ -393,7 +392,14 @@ async function readAgentPushRuntimeServiceResponse(
 
 function createHeaders(authToken: string): Headers {
   const headers = new Headers();
-  headers.set("Authorization", `Bearer ${authToken}`);
+  try {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  } catch {
+    // Header implementations may include the rejected credential in their error.
+    throw CONFIG_INVALID.create({
+      detail: "Agent service authorization token is not a valid HTTP header value",
+    });
+  }
   headers.set("Content-Type", "application/json");
   return headers;
 }
@@ -420,12 +426,21 @@ async function registerAgentPushRuntimeService(
   fetchImpl: typeof globalThis.fetch,
   abortSignal?: AbortSignal,
 ): Promise<AgentPushRuntimeServiceRest> {
-  const response = await fetchImpl(getRegistrationEndpoint(input.apiUrl), {
-    method: "POST",
-    headers: createHeaders(input.authToken),
-    body: JSON.stringify(buildRegistrationRequest(input)),
-    signal: abortSignal,
-  });
+  const headers = createHeaders(input.authToken);
+  const body = JSON.stringify(buildRegistrationRequest(input));
+  const endpoint = getRegistrationEndpoint(input.apiUrl);
+  let response: Response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers,
+      body,
+      signal: abortSignal,
+    });
+  } catch (cause) {
+    if (isVeryfrontError(cause)) throw cause;
+    throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
+  }
   return await readAgentPushRuntimeServiceResponse(response);
 }
 
@@ -441,11 +456,13 @@ async function sendHeartbeatRequest(
   fetchImpl: typeof globalThis.fetch,
   abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
+  const headers = createHeaders(input.authToken);
+  const endpoint = getHeartbeatEndpoint(input.apiUrl, input.serviceId);
   let response: Response;
   try {
-    response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
+    response = await fetchImpl(endpoint, {
       method: "POST",
-      headers: createHeaders(input.authToken),
+      headers,
       body: JSON.stringify({}),
       signal: abortSignal,
     });
@@ -482,7 +499,7 @@ function readUpstreamHttpStatus(context: unknown): number | undefined {
  * A 4xx (unknown service id, rejected token) is a real error that repeating
  * only delays, and any other error slug is not ours to retry.
  */
-function isRetryableHeartbeatFailure(error: unknown): boolean {
+function isRetryableControlPlaneRequestFailure(error: unknown): boolean {
   if (!isVeryfrontError(error) || error.slug !== NETWORK_ERROR.slug) return false;
   const httpStatus = readUpstreamHttpStatus(error.context);
   return httpStatus === undefined || (httpStatus >= 500 && httpStatus <= 599);
@@ -518,7 +535,7 @@ async function heartbeatAgentPushRuntimeService(
     // interval from falsely escalating a healthy service.
     timeoutMs: Math.max(input.heartbeatIntervalMs, HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS),
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
-    shouldRetry: isRetryableHeartbeatFailure,
+    shouldRetry: isRetryableControlPlaneRequestFailure,
     onRetry: ({ error, attempt, delay }) => {
       options.logger?.warn?.("Agent service heartbeat retrying after transient failure", {
         serviceId: input.serviceId,
@@ -536,7 +553,23 @@ export async function createAgentServiceRegistrationLifecycle(
 ): Promise<AgentServiceRegistrationLifecycle> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const input = resolvedAgentServiceRegistrationInputSchema.parse(options);
-  let service = await registerAgentPushRuntimeService(input, fetchImpl);
+  // Registration upserts the same scoped service key and immutable source binding.
+  let service = await retryWithBackoff(
+    (signal) => registerAgentPushRuntimeService(input, fetchImpl, signal),
+    {
+      maxAttempts: 3,
+      timeoutMs: HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS,
+      computeDelay: (attempt) => [250, 500][attempt] ?? 0,
+      shouldRetry: isRetryableControlPlaneRequestFailure,
+      onRetry: ({ error, attempt, delay }) => {
+        options.logger?.warn?.("Agent service registration retrying after transient failure", {
+          attempt: attempt + 1,
+          retryInMs: delay,
+          error: getErrorMessage(error),
+        });
+      },
+    },
+  );
   let stopped = false;
   const teardown = new AbortController();
   let heartbeatInFlight: Promise<void> | undefined;
