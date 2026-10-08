@@ -107,12 +107,27 @@ export function buildFinalizedMessageState(
   const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
     (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
+  const persistedTextParts = persistedMessage.parts.filter((part) => part.type === "text");
+  let textCursor = 0;
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      return appendMissingFallbackTextPart(persistedMessage.parts, { text: fallbackPart.text })
-        .slice(persistedMessage.parts.length);
+      const remainingParts = persistedTextParts.slice(textCursor);
+      let matchedCount = 0;
+      for (let count = 1; count <= remainingParts.length; count++) {
+        const texts = remainingParts.slice(0, count).map((part) => part.text);
+        const matchesPrefix = ["\n\n", "\n", " ", ""].some((separator) => {
+          const prefix = texts.join(separator).trim();
+          return prefix.length > 0 && fallbackPart.text.startsWith(prefix);
+        });
+        if (!matchesPrefix) break;
+        matchedCount = count;
+      }
+      const matchedParts = remainingParts.slice(0, matchedCount);
+      textCursor += matchedCount;
+      return appendMissingFallbackTextPart(matchedParts, { text: fallbackPart.text })
+        .slice(matchedParts.length);
     }
     if (fallbackPart.type === "reasoning") {
       const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>

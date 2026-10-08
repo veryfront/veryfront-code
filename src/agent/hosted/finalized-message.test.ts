@@ -618,3 +618,57 @@ Deno.test("fully streamed tool and text retain both original orders without fall
     );
   }
 });
+
+Deno.test("buildFinalizedMessageState reconciles a partial later text block without duplicating its prefix", () => {
+  const responseMessage = {
+    id: "assistant-1",
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: "First answer." }, {
+      type: "text" as const,
+      text: "Sec",
+    }],
+  };
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [
+          { type: "text", text: "First answer." },
+          { type: "text", text: "Second answer." },
+        ],
+      }],
+    },
+  };
+  const input = {
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const result = buildFinalizedMessageState(input);
+  assertEquals(result.sanitizedFinalizedMessage.parts, [
+    ...responseMessage.parts,
+    { type: "text", text: "ond answer." },
+  ]);
+  assertEquals(result.sanitizedFinalizedMessage.parts.slice(0, 2), responseMessage.parts);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: result.sanitizedFinalizedMessage })
+      .sanitizedFinalizedMessage.parts,
+    result.sanitizedFinalizedMessage.parts,
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      persistedMessage: result.persistedMessage,
+      sanitizedFinalizedMessage: result.sanitizedFinalizedMessage,
+      finalStep,
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-1",
+      hasIncompleteFinalizedToolParts: false,
+    }),
+    [
+      { type: "text-start", id: "assistant-1" },
+      { type: "text-delta", id: "assistant-1", delta: "ond answer." },
+      { type: "text-end", id: "assistant-1" },
+    ],
+  );
+});

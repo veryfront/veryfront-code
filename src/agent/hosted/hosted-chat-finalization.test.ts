@@ -721,6 +721,56 @@ describe("agent/hosted-chat-finalization", () => {
     ]);
   });
 
+  it("mirrors only the missing suffix of a later final-step text block", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "First answer." },
+          { type: "text", text: "Sec" },
+        ],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [
+              { type: "text", text: "First answer." },
+              { type: "text", text: "Second answer." },
+            ],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+    assertEquals(chunks, [
+      { type: "text-start", id: "assistant-message-1" },
+      { type: "text-delta", id: "assistant-message-1", delta: "ond answer." },
+      { type: "text-end", id: "assistant-message-1" },
+    ]);
+    assertEquals(terminalStates.at(0)!.status, "completed");
+    assertEquals((terminalStates.at(0)!.output as ChatUiMessage).parts, [
+      { type: "text", text: "First answer." },
+      { type: "text", text: "Sec" },
+      { type: "text", text: "ond answer." },
+    ]);
+  });
+
   it("fails runtime-metadata-only response output with an empty final-step reasoning shell", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
