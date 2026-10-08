@@ -85,11 +85,21 @@ function getOkfTypeDiagnostic(
 /**
  * Inspect the basic OKF document contract at the pinned revision.
  *
+ * Paths are bundle-relative by default. For canonical project paths returned by
+ * lookup, supply the matching bundleRoot (for example, "knowledge").
  * Unknown types and metadata are accepted. Legacy files remain readable with
  * diagnostics. This checks the document envelope, not the complete optional
  * provenance or Attested Computation contracts, and does not resolve links.
  */
-export function inspectOkfDocument(path: string, source: string): OkfDocumentInspection {
+export function inspectOkfDocument(
+  path: string,
+  source: string,
+  options: { bundleRoot?: string } = {},
+): OkfDocumentInspection {
+  const normalizedPath = path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "");
+  const bundleRoot = options.bundleRoot?.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "")
+    .replace(/\/+$/, "");
+  const rootIndexPath = bundleRoot ? `${bundleRoot}/index.md` : "index.md";
   const kind = getOkfDocumentKind(path);
   const framed = readOkfEnvelope(source);
   const diagnostics: OkfDocumentDiagnostic[] = [];
@@ -108,7 +118,7 @@ export function inspectOkfDocument(path: string, source: string): OkfDocumentIns
       });
     }
   } else {
-    if (kind === "index" && path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "") !== "index.md") {
+    if (kind === "index" && normalizedPath !== rootIndexPath) {
       diagnostics.push({
         code: "invalid_frontmatter",
         message:

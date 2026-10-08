@@ -224,3 +224,25 @@ it("classifies Windows reserved paths before validating their envelopes", () => 
     false,
   );
 });
+
+it("uses explicit bundle roots for canonical lookup paths", () => {
+  const source = "---\nokf_version: 0.2\n---\nNavigation\n";
+  for (const bundleRoot of ["knowledge", "custom/bundle", "./knowledge/", "knowledge\\"]) {
+    const normalizedRoot = bundleRoot.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "").replace(
+      /\/+$/,
+      "",
+    );
+    const root = inspectOkfDocument(`${normalizedRoot}/index.md`, source, { bundleRoot });
+    assertEquals(root.envelopeConforms, true);
+    assertEquals(root.source, source);
+    assertEquals(root.body, "Navigation\n");
+    assertEquals(root.path, `${normalizedRoot}/index.md`);
+    const nested = inspectOkfDocument(`${normalizedRoot}/nested/index.md`, source, { bundleRoot });
+    assertEquals(nested.envelopeConforms, false);
+  }
+  assertEquals(inspectOkfDocument("knowledge/index.md", source).envelopeConforms, false);
+  assertEquals(
+    inspectOkfDocument("other/index.md", source, { bundleRoot: "knowledge" }).envelopeConforms,
+    false,
+  );
+});
