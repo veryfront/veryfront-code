@@ -8533,6 +8533,123 @@ describe("project run inference credential header", () => {
     assertStringIncludes(String(tool.content), "tool result truncated");
   });
 
+  it("retains public observations and exact private input while project array hooks are replaced", async () => {
+    const runId = "run_public_observation_limit";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const limit = 240 * 1024;
+    const text = "x".repeat(limit + 10_000);
+    const appended: Record<string, unknown>[] = [];
+    const exactMessages = [{
+      role: "user",
+      content: [{ type: "text", text: "Exact private input" }],
+    }];
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let capturedMessages: unknown;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-child",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const originalMap = Array.prototype.map;
+            const originalFilter = Array.prototype.filter;
+            const originalFlatMap = Array.prototype.flatMap;
+            const originalSlice = Array.prototype.slice;
+            const originalIterator = Array.prototype[Symbol.iterator];
+            Array.prototype.map = () => [];
+            Array.prototype.filter = () => [];
+            Array.prototype.flatMap = () => [];
+            Array.prototype.slice = () => [];
+            Array.prototype[Symbol.iterator] = function* () {};
+            try {
+              await control.onEvent({ type: "text-delta", id: "message", delta: text });
+              await control.onEvent({
+                type: "tool-output-available",
+                toolCallId: "lookup",
+                output: text,
+              });
+              await getActiveRunEventSink()?.({
+                type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                modelCallId,
+                messages: exactMessages,
+                tools: [],
+              });
+            } finally {
+              Array.prototype.map = originalMap;
+              Array.prototype.filter = originalFilter;
+              Array.prototype.flatMap = originalFlatMap;
+              Array.prototype.slice = originalSlice;
+              Array.prototype[Symbol.iterator] = originalIterator;
+            }
+            return { text, toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
+          for (let index = 0; index < payload.events.length; index++) {
+            const event = payload.events[index];
+            if (new TextEncoder().encode(JSON.stringify(event)).byteLength > limit) {
+              return Response.json({ error: "Event too large" }, { status: 413 });
+            }
+            appended[appended.length] = event;
+            if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+              capturedMessages = event.messages;
+            }
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(capturedMessages
+              ? {
+                model_call_captures: [{
+                  event_id: String(appended.length),
+                  run_id: canonicalRunId,
+                  project_id: projectId,
+                  model_call_id: modelCallId,
+                }],
+              }
+              : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const deltas = appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
+    assertEquals(deltas.map((event) => event.delta).join(""), text);
+    assertEquals(deltas.length > 1, true);
+    const tool = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(tool);
+    assertStringIncludes(String(tool.content), "tool result truncated");
+    assertEquals(capturedMessages, exactMessages);
+  });
+
   it("persists child text beyond the append request limit in ordered bounded batches", async () => {
     const runId = "run_public_observation_limit";
     const canonicalRunId = "12121212-1212-4121-8121-121212121212";

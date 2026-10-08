@@ -1,3 +1,10 @@
+import {
+  primordialArrayFilter,
+  primordialArrayFlatMap,
+  primordialArrayMap,
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
@@ -618,13 +625,13 @@ function completeToolInput(
   const events: AgUiEncodedEvent[] = [];
 
   if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
-    events.push({
+    appendEncodedEvents(events, [{
       event: "ToolCallArgs",
       payload: {
         toolCallId,
         delta: serializeToolInput("input" in event ? event.input : {}),
       },
-    });
+    }]);
   }
 
   if (toolCallId.length > 0) {
@@ -632,10 +639,10 @@ function completeToolInput(
     state.openToolCallIds?.delete(toolCallId);
   }
 
-  events.push({
+  appendEncodedEvents(events, [{
     event: "ToolCallEnd",
     payload: { toolCallId: event.toolCallId },
-  });
+  }]);
 
   return events;
 }
@@ -802,13 +809,15 @@ export function stampAgUiEventTiming(
   // wall-clock traces and logs, and turns ingest lag into `created_at -
   // emittedAt`. Both are stamped because wall clocks can step backwards and
   // the monotonic reading cannot.
-  for (const { payload } of events) {
+  for (const { payload } of primordialArrayValues(events)) {
     if (Object.hasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
     if (Object.hasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
   }
 
-  const needsElapsedMs = events.some(({ payload }) => !Object.hasOwn(payload, "elapsedMs"));
-  const needsEmittedAt = events.some(({ payload }) => !Object.hasOwn(payload, "emittedAt"));
+  const needsElapsedMs =
+    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "elapsedMs")).length > 0;
+  const needsEmittedAt =
+    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "emittedAt")).length > 0;
   const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
     ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
     : undefined;
@@ -819,7 +828,7 @@ export function stampAgUiEventTiming(
     return events;
   }
 
-  return events.map((entry) => ({
+  return primordialArrayMap(events, (entry) => ({
     ...entry,
     payload: {
       ...entry.payload,
@@ -890,27 +899,27 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       const events = closeOpenReasoningEvent(state);
       if (state.textOpen) {
         if (isActiveTextIdentity(state, event)) return events;
-        events.push(...closeOpenTextEvent(state));
+        appendEncodedEvents(events, closeOpenTextEvent(state));
       }
       const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.textOpen = true;
       state.activeTextContentId = contentId;
       state.sawVisibleOutput = true;
-      events.push(createTextEvent(messageId, "TextMessageStart", "", contentId));
+      appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
       return events;
     }
 
     case "text-delta": {
       const events = closeOpenReasoningEvent(state);
       if (state.textOpen && !isActiveTextIdentity(state, event)) {
-        events.push(...closeOpenTextEvent(state));
+        appendEncodedEvents(events, closeOpenTextEvent(state));
       }
       const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.sawVisibleOutput = true;
       if (!state.textOpen) {
         state.textOpen = true;
         state.activeTextContentId = contentId;
-        events.push(
+        appendEncodedEvents(events, [
           createTextEvent(messageId, "TextMessageStart", "", contentId),
           createTextEvent(
             messageId,
@@ -918,16 +927,16 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
             typeof event.delta === "string" ? event.delta : "",
             contentId,
           ),
-        );
+        ]);
         return events;
       }
 
-      events.push(createTextEvent(
+      appendEncodedEvents(events, [createTextEvent(
         messageId,
         "TextMessageContent",
         typeof event.delta === "string" ? event.delta : "",
         state.activeTextContentId ?? contentId,
-      ));
+      )]);
       return events;
     }
 
@@ -942,9 +951,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
 
     case "reasoning-start": {
       const events = closeOpenTextEvent(state);
-      events.push(...closeOpenReasoningEvent(state));
+      appendEncodedEvents(events, closeOpenReasoningEvent(state));
       state.sawVisibleOutput = true;
-      events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
       return events;
     }
 
@@ -952,9 +961,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       const events = closeOpenTextEvent(state);
       state.sawVisibleOutput = true;
       if (state.reasoningMessageId === null) {
-        events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+        appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
       }
-      events.push(createReasoningEvent(state, event, "ReasoningMessageContent"));
+      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
       return events;
     }
 
@@ -965,22 +974,22 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return closeOpenReasoningEvent(state);
 
     case "tool-input-start": {
-      const events = [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-      ];
+      const events = combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+      ]);
       state.sawVisibleOutput = true;
       if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
         (state.openToolCallIds ??= new Set<string>()).add(event.toolCallId);
       }
-      events.push({
+      appendEncodedEvents(events, [{
         event: "ToolCallStart",
         payload: {
           toolCallId: event.toolCallId,
           toolCallName: event.toolName,
           ...(state.messageId ? { parentMessageId: state.messageId } : {}),
         },
-      });
+      }]);
       return events;
     }
 
@@ -989,35 +998,37 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       if (typeof event.toolCallId === "string") {
         state.streamedToolInputIds.add(event.toolCallId);
       }
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        {
-          event: "ToolCallArgs",
-          payload: {
-            toolCallId: event.toolCallId,
-            delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          {
+            event: "ToolCallArgs",
+            payload: {
+              toolCallId: event.toolCallId,
+              delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+            },
           },
-        },
-      ];
+        ],
+      ]);
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        ...completeToolInput(state, event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        completeToolInput(state, event),
+      ]);
     }
 
     case "tool-input-error": {
       state.sawVisibleOutput = true;
-      const events = [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        ...completeToolInput(state, event),
-      ];
-      events.push({
+      const events = combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        completeToolInput(state, event),
+      ]);
+      appendEncodedEvents(events, [{
         event: "ToolCallResult",
         payload: {
           toolCallId: event.toolCallId,
@@ -1026,30 +1037,32 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
           },
           isError: true,
         },
-      });
+      }]);
       return events;
     }
 
     case "tool-output-available":
       if (event.preliminary === true) return [];
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createToolResultEvent(
-          event.toolCallId,
-          event.output,
-          // Producers send a provider result they judge failed as tool-output-error,
-          // so only forwarded results without the marker are judged by content.
-          event.providerExecuted !== true && isToolResultErrorOutput(event.output),
-        ),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createToolResultEvent(
+            event.toolCallId,
+            event.output,
+            // Producers send a provider result they judge failed as tool-output-error,
+            // so only forwarded results without the marker are judged by content.
+            event.providerExecuted !== true && isToolResultErrorOutput(event.output),
+          ),
+        ],
+      ]);
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
         // A truncated local tool call terminalizes as `tool-input-start`
         // (plus any partial deltas) and then straight to this event, so the
         // input is still open. `tool-input-available` and `tool-input-error`
@@ -1057,33 +1070,41 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         // or the client is left with ToolCallStart and ToolCallResult and no
         // ToolCallEnd. No synthetic args are emitted: the model never
         // committed any, and inventing `{}` would claim it did.
-        ...closeOpenToolInput(state, event.toolCallId),
-        createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
-      ];
+        closeOpenToolInput(state, event.toolCallId),
+        [
+          createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
+        ],
+      ]);
 
     case "tool-output-denied":
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true),
+        ],
+      ]);
 
     case "step-start":
     case "start-step":
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepStarted", event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createStepEvent(state, "StepStarted", event),
+        ],
+      ]);
 
     case "step-end":
     case "finish-step":
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepFinished", event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createStepEvent(state, "StepFinished", event),
+        ],
+      ]);
 
     case "data":
       applyDataMetadata(state, event);
@@ -1091,19 +1112,21 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
 
     case "error":
       state.sawTerminalError = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        {
-          event: "RunError",
-          payload: {
-            ...(typeof event.code === "string" && event.code.length > 0
-              ? { code: event.code }
-              : {}),
-            message: typeof event.error === "string" ? event.error : "Agent run failed",
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          {
+            event: "RunError",
+            payload: {
+              ...(typeof event.code === "string" && event.code.length > 0
+                ? { code: event.code }
+                : {}),
+              message: typeof event.error === "string" ? event.error : "Agent run failed",
+            },
           },
-        },
-      ];
+        ],
+      ]);
 
     default:
       // The `data-` guard at the top of this function already returns for
@@ -1143,10 +1166,10 @@ function finalizeAgUiEventsUnstamped(
   }
 
   const events: AgUiEncodedEvent[] = [];
-  events.push(...closeOpenTextEvent(state));
-  events.push(...closeOpenReasoningEvent(state));
+  appendEncodedEvents(events, closeOpenTextEvent(state));
+  appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
-  events.push({
+  appendEncodedEvents(events, [{
     event: "RunFinished",
     payload: {
       metadata: state.metadata,
@@ -1155,7 +1178,19 @@ function finalizeAgUiEventsUnstamped(
       // output did not parse; a parsed `null` is still reported.
       ...(response?.object !== undefined ? { result: response.object } : {}),
     },
-  });
+  }]);
 
   return events;
+}
+
+function appendEncodedEvents(
+  target: AgUiEncodedEvent[],
+  entries: readonly AgUiEncodedEvent[],
+): void {
+  for (const entry of primordialArrayValues(entries)) primordialArrayPush(target, entry);
+}
+function combineEncodedEvents(
+  groups: readonly (readonly AgUiEncodedEvent[])[],
+): AgUiEncodedEvent[] {
+  return primordialArrayFlatMap(groups, (group) => group);
 }

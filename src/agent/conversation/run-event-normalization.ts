@@ -1,3 +1,10 @@
+import {
+  primordialArrayFlatMap,
+  primordialArrayMap,
+  primordialArrayPush,
+  primordialArraySlice,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
@@ -84,7 +91,7 @@ export function normalizeConversationRunEvent(
 
   // Every summarizer output passes through enforceEventSizeLimit so the byte-limit
   // invariant holds regardless of which branch (or future event type) ran.
-  return summarizeOversizedEvent(event).map(enforceEventSizeLimit);
+  return primordialArrayMap(summarizeOversizedEvent(event), enforceEventSizeLimit);
 }
 
 function summarizeOversizedEvent(
@@ -149,7 +156,7 @@ function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationR
     return event;
   }
 
-  for (const field of ["delta", "content"] as const) {
+  for (const field of primordialArrayValues(["delta", "content"] as const)) {
     if (typeof event[field] === "string") {
       const clamped = truncateEventStringFieldToLimit(event, field, " [truncated]");
       if (clamped) {
@@ -165,7 +172,7 @@ function enforceEventSizeLimit(event: ConversationRunEventRecord): ConversationR
 export function normalizeConversationRunEvents(
   events: ConversationRunEventRecord[],
 ): ConversationRunEventRecord[] {
-  return events.flatMap(normalizeConversationRunEvent);
+  return primordialArrayFlatMap(events, normalizeConversationRunEvent);
 }
 
 function summarizeToolResultEvent(event: ConversationRunEventRecord): ConversationRunEventRecord {
@@ -370,7 +377,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
       return [event];
     }
 
-    parts.push(buildPart(value.slice(startIndex, bestEndIndex)));
+    primordialArrayPush(parts, buildPart(value.slice(startIndex, bestEndIndex)));
     startIndex = bestEndIndex;
   }
 
@@ -401,7 +408,7 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
       }
     }
 
-    parts.push(value.slice(startIndex, bestEndIndex));
+    primordialArrayPush(parts, value.slice(startIndex, bestEndIndex));
     startIndex = bestEndIndex;
   }
 
@@ -419,7 +426,7 @@ function truncateUtf8String(value: string, maxBytes: number, suffix: string): st
   }
 
   const prefixBudget = maxBytes - suffixBytes;
-  const [prefix] = splitUtf8String(value, prefixBudget);
+  const prefix = splitUtf8String(value, prefixBudget)[0];
   return `${prefix}${suffix}`;
 }
 
@@ -443,20 +450,25 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
   seen.add(value);
 
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, MAX_SUMMARY_ARRAY_ITEMS)
-      .map((item) => summarizeValue(item, depth + 1, seen));
+    const items = primordialArrayMap(
+      primordialArraySlice(value, 0, MAX_SUMMARY_ARRAY_ITEMS),
+      (item) => summarizeValue(item, depth + 1, seen),
+    );
     if (value.length > MAX_SUMMARY_ARRAY_ITEMS) {
-      items.push(`[truncated ${value.length - MAX_SUMMARY_ARRAY_ITEMS} more items]`);
+      primordialArrayPush(
+        items,
+        `[truncated ${value.length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
+      );
     }
     return items;
   }
 
   const entries = Object.entries(value);
-  const summarizedEntries = entries
-    .slice(0, MAX_SUMMARY_OBJECT_KEYS)
-    .map(([key, entryValue]) => [key, summarizeValue(entryValue, depth + 1, seen)] as const);
-  const summarizedObject = Object.fromEntries(summarizedEntries);
+  const summarizedEntries = primordialArrayMap(
+    primordialArraySlice(entries, 0, MAX_SUMMARY_OBJECT_KEYS),
+    (entry) => [entry[0], summarizeValue(entry[1], depth + 1, seen)] as const,
+  );
+  const summarizedObject = Object.fromEntries(primordialArrayValues(summarizedEntries));
 
   if (entries.length > MAX_SUMMARY_OBJECT_KEYS) {
     return {

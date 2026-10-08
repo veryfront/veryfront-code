@@ -1,3 +1,7 @@
+import {
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -58,7 +62,7 @@ export function buildConversationRunEventBatches<T>(input: {
   let currentBatch: T[] = [];
   let currentBatchBytes = 0;
 
-  for (const event of input.events) {
+  for (const event of primordialArrayValues(input.events)) {
     const eventBytes = getConversationRunEventJsonByteLength(event);
 
     if (
@@ -66,17 +70,17 @@ export function buildConversationRunEventBatches<T>(input: {
       (currentBatch.length >= input.maxEventsPerBatch ||
         currentBatchBytes + eventBytes > maxBatchPayloadBytes)
     ) {
-      batches.push(currentBatch);
+      primordialArrayPush(batches, currentBatch);
       currentBatch = [];
       currentBatchBytes = 0;
     }
 
-    currentBatch.push(event);
+    primordialArrayPush(currentBatch, event);
     currentBatchBytes += eventBytes;
   }
 
   if (currentBatch.length > 0) {
-    batches.push(currentBatch);
+    primordialArrayPush(batches, currentBatch);
   }
 
   return batches;

@@ -43,7 +43,11 @@ import {
   primordialPromiseResolve,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
-import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  primordialArrayFilter,
+  primordialArrayMap,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
@@ -2526,7 +2530,7 @@ function createProjectRunObservationMirror(input: {
             "Project run observation model-call receipt is invalid",
           );
         }
-        for (const capture of captures) {
+        for (const capture of primordialArrayValues(captures)) {
           if (!capture || typeof capture !== "object" || Array.isArray(capture)) {
             throw new DurableRunEventPersistenceError(
               "Project run observation model-call receipt is invalid",
@@ -2709,22 +2713,28 @@ async function withProjectRunRuntimeObservations<T>(
       // Parent entry is recorded once by this host boundary; nested agent contexts
       // must not create a second parent execution-start occurrence.
       if (event.type === "data-veryfront.runtime_context") return;
-      const events = mapRuntimeStreamEventToAgUiEvents(encoder, event).map((
-        { event: type, payload },
-      ) => coerceWireEvent(type, payload));
-      const normalized = normalizeConversationRunEvents(
-        events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
+      const events = primordialArrayMap(
+        mapRuntimeStreamEventToAgUiEvents(encoder, event),
+        ({ event: type, payload }) => {
+          const candidate = coerceWireEvent(type, payload);
           if (typeof candidate.type !== "string") {
-            throw new Error("Invalid encoded project run observation event");
+            throw new Error(
+              "Invalid encoded project run observation event",
+            );
           }
-          return isPermittedProjectRunObservationEventType(candidate.type);
-        }),
+          return { ...candidate, type: candidate.type };
+        },
+      );
+      const normalized = normalizeConversationRunEvents(
+        primordialArrayFilter(
+          events,
+          (candidate) => isPermittedProjectRunObservationEventType(candidate.type),
+        ),
       );
       for (
-        const batch of buildConversationRunEventBatches({
-          events: normalized,
-          maxEventsPerBatch: 100,
-        })
+        const batch of primordialArrayValues(
+          buildConversationRunEventBatches({ events: normalized, maxEventsPerBatch: 100 }),
+        )
       ) {
         await mirror.appendEvents(batch);
       }
