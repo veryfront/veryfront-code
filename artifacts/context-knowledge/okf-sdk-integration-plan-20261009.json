@@ -1,0 +1,130 @@
+{
+  "generatedAt": "2026-10-09T01:42:41+02:00",
+  "worktree": "/private/tmp/vf-okf-sdk-integrated-20261009",
+  "branch": "chore/okf-sdk-integrated-20261009",
+  "status": "integrated_locally_verified_not_pushed",
+  "base": {
+    "name": "ContextSDK",
+    "commit": "d7fe059bbe72ba1d9237b12b7d345cd340d1e328",
+    "summary": "fix(agent): preserve loader grants and legacy form selection"
+  },
+  "publishedOkfHeads": [
+    {
+      "name": "writer",
+      "commit": "9720eb6fa2350e7c623e0c1864af363c523d2e94",
+      "mergeCommit": "3648b9810be126a2c45f38d52dc722db7c8b5500",
+      "summary": "Recognize project-root OKF bundles",
+      "ancestorOfHead": true
+    },
+    {
+      "name": "destination",
+      "commit": "0f68e538b31ac69605d3ddeea7ac4582bca2a421",
+      "mergeCommit": "1da963226c55db24c04fcc272e710e7f3b760fff",
+      "summary": "Keep destination branch checks aligned after rebase",
+      "ancestorOfHead": true
+    },
+    {
+      "name": "reader",
+      "commit": "fbc4ea1ae2129b089bf736bca4a11358ec0ccb10",
+      "mergeCommit": "1bc877ca2d5be69a11cc01b5cdff0c4fb97ffd0a",
+      "summary": "Recognize project-root OKF bundles",
+      "ancestorOfHead": true
+    }
+  ],
+  "integrationOrder": [
+    "writer",
+    "destination",
+    "reader"
+  ],
+  "conflictResolutions": [
+    {
+      "merge": "destination",
+      "files": [
+        "cli/commands/files/command.test.ts",
+        "src/server/handlers/request/project-run-execute.handler.test.ts",
+        "src/server/handlers/request/project-run-execute.handler.ts"
+      ],
+      "resolution": "Kept writer OKF bundle ingest semantics and kept destination preview-branch admission proof. Knowledge-ingest output destinations remain derived from the signed runtime target; environment targets still reject without an explicit writable main_branch or preview_branch target."
+    },
+    {
+      "merge": "reader",
+      "files": [
+        "src/knowledge/okf-document.test.ts"
+      ],
+      "resolution": "Kept writer recursive-YAML JSON-safety regression and reader project-root/root-index bundle restrictions in the same OKF document test file."
+    }
+  ],
+  "localGateEvidence": [
+    {
+      "phase": "writer merge",
+      "command": "deno task test:file src/knowledge/okf-document.test.ts src/knowledge/index.test.ts cli/commands/knowledge/command.test.ts cli/commands/files/command.test.ts cli/commands/knowledge/result.test.ts",
+      "result": "passed: 44 tests, 96 steps"
+    },
+    {
+      "phase": "writer merge",
+      "command": "codex review --uncommitted",
+      "result": "passed: no actionable regressions reported"
+    },
+    {
+      "phase": "destination merge",
+      "command": "deno task test:file cli/commands/files/command.test.ts src/server/handlers/request/project-run-execute.handler.test.ts tests/integration/ci/merge-quality-gate-workflow.test.ts src/agent/runtime/agent-span-error-redaction.test.ts",
+      "result": "passed: 19 tests, 383 steps"
+    },
+    {
+      "phase": "destination merge",
+      "command": "codex review --uncommitted",
+      "result": "passed: no actionable defects reported; docs/focused suite 72 tests, 295 steps; git diff --check passed"
+    },
+    {
+      "phase": "reader merge",
+      "command": "deno task test:file src/knowledge/okf-document.test.ts src/knowledge/index.test.ts cli/commands/knowledge/command.test.ts cli/commands/knowledge/result.test.ts cli/commands/files/command.test.ts",
+      "result": "passed: 44 tests, 96 steps"
+    },
+    {
+      "phase": "reader merge",
+      "command": "codex review --uncommitted",
+      "result": "passed: no actionable correctness issues reported; JSON validation and git diff --check passed"
+    }
+  ],
+  "remainingRequiredBeforePublication": [
+    "Refresh origin/main and run final codex review --base origin/main for exact integrated head.",
+    "Root owns PR publication, CI, staging, SDK release, and API/Studio rollout claims."
+  ],
+  "apiStudioPrerequisites": {
+    "requiredForLocalSdkIntegration": false,
+    "requiredBeforeReleaseOrStagingClaims": true,
+    "note": "SDK-only local integration does not require API/Studio prerequisite branches to land first; root owns publication and staging."
+  },
+  "pushReleaseStatus": "not_pushed_not_released",
+  "finalLocalGates": [
+    {
+      "command": "deno task test:file src/knowledge/okf-document.test.ts src/knowledge/index.test.ts cli/commands/knowledge/command.test.ts cli/commands/files/command.test.ts cli/commands/knowledge/result.test.ts",
+      "result": "passed: 44 tests, 96 steps"
+    },
+    {
+      "command": "deno task test:file src/server/handlers/request/project-run-execute.handler.test.ts tests/integration/ci/merge-quality-gate-workflow.test.ts src/agent/runtime/agent-span-error-redaction.test.ts",
+      "result": "passed: 13 tests, 374 steps"
+    },
+    {
+      "command": "deno task test:file src/agent/ag-ui/runtime-restrictions.test.ts src/agent/hosted/chat-runtime-tool-assembly.test.ts src/agent/hosted/form-input-tool.test.ts",
+      "result": "passed: 66 tests, 75 steps"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "integratedCodeHeadBeforeProofCommit": {
+    "commit": "1bc877ca2d5be69a11cc01b5cdff0c4fb97ffd0a",
+    "tree": "5730c90a966cd7ffa4016e0f7c54f8d5f7d3d74d",
+    "firstParentLogAtIntegration": [
+      "1bc877ca2d Join OKF reader coverage into the integrated SDK candidate",
+      "1da963226c Preserve admitted OKF knowledge destinations in the integrated SDK",
+      "3648b9810b Integrate OKF writer semantics into the Context SDK base",
+      "d7fe059bbe fix(agent): preserve loader grants and legacy form selection",
+      "fbf1b673fe fix(agent): preserve loader denials and canonical form replay",
+      "18b9f2772d Keep hosted replay ownership bound to persisted canonical names"
+    ]
+  },
+  "proofCommitNote": "The final proof commit SHA is reported by git after this artifact is committed; it cannot be embedded in the same committed artifact without changing itself."
+}
