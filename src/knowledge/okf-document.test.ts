@@ -1,4 +1,7 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
+import { YamlParserProviderName } from "#veryfront/extensions/parser/yaml-parser.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   inspectOkfDocument,
@@ -174,4 +177,50 @@ it("does not accept a closing delimiter followed by a standalone carriage return
   const inspected = inspectOkfDocument("topic.md", source);
   assertEquals(inspected.body, source);
   assertEquals(inspected.diagnostics.map((diagnostic) => diagnostic.code), ["invalid_frontmatter"]);
+});
+
+it("rejects nested index frontmatter without losing source or body", () => {
+  const source = "---\nokf_version: 0.2\n---\nNavigation\n";
+  const nested = inspectOkfDocument("nested/index.md", source);
+  assertEquals(nested.envelopeConforms, false);
+  assertEquals(nested.diagnostics.map((value) => value.code), ["invalid_frontmatter"]);
+  assertEquals(nested.source, source);
+  assertEquals(nested.body, "Navigation\n");
+  assertEquals(inspectOkfDocument("index.md", source).envelopeConforms, true);
+});
+
+it("propagates YAML parser infrastructure failures", () => {
+  const previous = tryResolve(YamlParserProviderName);
+  const unavailable = MISSING_EXTENSION_ERROR.create({
+    message: "Missing YAML parser",
+    detail: "Install @veryfront/ext-yaml",
+  });
+  try {
+    for (const error of [unavailable, new TypeError("YAML provider must be synchronous")]) {
+      register(YamlParserProviderName, {
+        parseYaml: () => {
+          throw error;
+        },
+      });
+      const thrown = assertThrows(() =>
+        inspectOkfDocument("topic.md", "---\ntype: Topic\n---\nBody")
+      );
+      assertEquals(thrown, error);
+    }
+  } finally {
+    if (previous === undefined) unregister(YamlParserProviderName);
+    else register(YamlParserProviderName, previous);
+  }
+});
+
+it("classifies Windows reserved paths before validating their envelopes", () => {
+  for (const path of ["nested\\index.md", "nested\\log.md"]) {
+    const value = inspectOkfDocument(path, "Navigation");
+    assertEquals(value.kind, path.endsWith("index.md") ? "index" : "log");
+    assertEquals(value.envelopeConforms, true);
+  }
+  assertEquals(
+    inspectOkfDocument("nested\\index.md", "---\nokf_version: 0.2\n---\nBody").envelopeConforms,
+    false,
+  );
 });

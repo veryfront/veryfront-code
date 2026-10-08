@@ -36,7 +36,8 @@ export function isRuntimeCapabilityError(error: unknown): boolean {
 }
 
 function getOkfDocumentKind(path: string): OkfDocumentInspection["kind"] {
-  const name = path.slice(path.lastIndexOf("/") + 1);
+  const normalizedPath = path.replaceAll("\\", "/");
+  const name = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1);
   if (name === "index.md") return "index";
   if (name === "log.md") return "log";
   return "concept";
@@ -54,6 +55,8 @@ function readOkfEnvelope(source: string) {
   };
 }
 
+class InvalidOkfMetadataError extends Error {}
+
 function decodeOkfMetadata(frontMatter: string): Record<string, unknown> {
   // JSON resolution preserves timestamp strings instead of coercing them to Date.
   const decoded: unknown = frontMatter.trim() ? parse(frontMatter, { schema: "json" }) : {};
@@ -61,7 +64,7 @@ function decodeOkfMetadata(frontMatter: string): Record<string, unknown> {
     !decoded || typeof decoded !== "object" || Array.isArray(decoded) ||
     (Object.getPrototypeOf(decoded) !== Object.prototype && Object.getPrototypeOf(decoded) !== null)
   ) {
-    throw new TypeError("Expected a YAML mapping");
+    throw new InvalidOkfMetadataError("Expected a YAML mapping");
   }
   return decoded as Record<string, unknown>;
 }
@@ -105,12 +108,22 @@ export function inspectOkfDocument(path: string, source: string): OkfDocumentIns
       });
     }
   } else {
+    if (kind === "index" && path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "") !== "index.md") {
+      diagnostics.push({
+        code: "invalid_frontmatter",
+        message:
+          "Nested index.md files must not contain frontmatter; only the bundle-root index.md may declare okf_version.",
+      });
+    }
     try {
       metadata = decodeOkfMetadata(framed.frontMatter);
       const diagnostic = kind === "concept" ? getOkfTypeDiagnostic(metadata) : undefined;
       if (diagnostic) diagnostics.push(diagnostic);
     } catch (error) {
-      if (isRuntimeCapabilityError(error)) throw error;
+      if (
+        isRuntimeCapabilityError(error) ||
+        !(error instanceof SyntaxError || error instanceof InvalidOkfMetadataError)
+      ) throw error;
       diagnostics.push({
         code: "invalid_frontmatter",
         message: "Use one valid YAML mapping between the frontmatter delimiters.",
