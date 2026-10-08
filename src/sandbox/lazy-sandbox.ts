@@ -40,7 +40,7 @@ export interface LazySandboxOptions extends SandboxOptions {
   sandboxId?: string;
   /** Optional known endpoint for sandboxId; avoids the initial control-plane lookup. */
   sandboxEndpoint?: string;
-  /** Delete the sandbox when closing. Defaults to true for created sessions and false for sandboxId. */
+  /** Delete the sandbox when closing. Defaults to false for persistent, always-on or attached workspaces, and true for temporary workspaces created by this client. */
   deleteOnClose?: boolean;
   getProjectId?: () => string | null | undefined;
   startupTimeoutMs?: number;
@@ -165,7 +165,8 @@ export class LazySandbox {
   >;
   private readonly sandboxId: string | undefined;
   private readonly sandboxEndpoint: string | undefined;
-  private readonly deleteOnClose: boolean;
+  private deleteOnClose: boolean;
+  private readonly requestedDeleteOnClose: boolean | undefined;
   private readonly getProjectId: () => string | null | undefined;
   private readonly startupTimeoutMs: number;
   private readonly pollIntervalMs: number;
@@ -211,6 +212,7 @@ export class LazySandbox {
     };
     this.sandboxId = options.sandboxId?.trim() || undefined;
     this.sandboxEndpoint = options.sandboxEndpoint?.trim() || undefined;
+    this.requestedDeleteOnClose = options.deleteOnClose;
     this.deleteOnClose = options.deleteOnClose ??
       (!this.sandboxId && options.ttlMode !== "always_on");
     this.getProjectId = options.getProjectId ??
@@ -669,6 +671,8 @@ export class LazySandbox {
     }
 
     const session = await res.json();
+    this.deleteOnClose = this.requestedDeleteOnClose ??
+      (this.creationPolicy.ttlMode !== "always_on" && session.workspace_storage !== "persistent");
     this.sessionId = session.id;
     this.sessionProjectId = projectId;
 

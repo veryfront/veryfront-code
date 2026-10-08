@@ -134,14 +134,20 @@ export class Sandbox {
       });
     }
 
-    const { id, endpoint, status } = await res.json();
+    const { id, endpoint, status, workspace_storage } = await res.json();
 
     // If not yet running, poll until ready
     if (status !== "running") {
       await Sandbox.#waitForReady(apiUrl, id, authToken);
     }
 
-    return new Sandbox(endpoint, id, authToken, apiUrl, options.ttlMode !== "always_on");
+    return new Sandbox(
+      endpoint,
+      id,
+      authToken,
+      apiUrl,
+      options.ttlMode !== "always_on" && workspace_storage !== "persistent",
+    );
   }
 
   /** Connect to an existing sandbox. Closing this client leaves the sandbox available. */
@@ -513,7 +519,7 @@ export class Sandbox {
     }
   }
 
-  /** Close this client. Always-on workspaces remain available. */
+  /** Close this client. Persistent and always-on workspaces remain available. */
   async close(): Promise<void> {
     if (getSandboxPrivateState(this).deleteOnClose) await this.delete();
   }

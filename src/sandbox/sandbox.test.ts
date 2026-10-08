@@ -140,6 +140,102 @@ describe("Sandbox", () => {
     assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
   });
 
+  for (const ttlMode of ["default", "duration"] as const) {
+    it(`preserves created persistent storage with ${ttlMode} cleanup`, async () => {
+      mockFetch([
+        jsonResponse({
+          id: "persistent",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "persistent",
+        }),
+      ]);
+      const sandbox = await Sandbox.create({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        ttlMode,
+        ...(ttlMode === "duration" ? { ttlHours: 4 } : {}),
+      });
+      await sandbox.close();
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+    });
+    it(`detaches and reconnects lazy persistent storage with ${ttlMode} cleanup`, async () => {
+      const session = {
+        id: "persistent",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "persistent",
+      };
+      mockFetch([
+        jsonResponse(session),
+        jsonResponse({ ok: true }),
+        jsonResponse(session),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        ttlMode,
+        ...(ttlMode === "duration" ? { ttlHours: 4 } : {}),
+      });
+      await sandbox.ensure();
+      await sandbox.close();
+      assertEquals(sandbox.id, "persistent");
+      await sandbox.ensure();
+      await sandbox.close();
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+    });
+  }
+  it("retains returned persistent storage after a bootstrap failure", async () => {
+    const session = {
+      id: "persistent",
+      endpoint: "https://sb.test",
+      status: "running",
+      workspace_storage: "persistent",
+    };
+    mockFetch([
+      jsonResponse(session),
+      textResponse("unavailable", 503),
+      jsonResponse(session),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = Sandbox.createLazy({ authToken: "token", apiUrl: "https://api.test.com" });
+    await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed");
+    assertEquals(sandbox.id, "persistent");
+    await sandbox.ensure();
+    await sandbox.close();
+    assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+    assertEquals(
+      fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+        .length,
+      1,
+    );
+  });
+  it("joins control-plane paths to a normalized API URL", async () => {
+    mockFetch([jsonResponse({
+      private_creation: true,
+      private_always_on: true,
+      coding_agent_terminal: true,
+      limits: {
+        max_ttl_hours: 24,
+        max_command_timeout_seconds: 55,
+        max_background_timeout_seconds: 600,
+        max_command_output_bytes: 1048576,
+        max_page_size: 100,
+        max_file_bytes: 1048576,
+        max_write_files: 100,
+      },
+      defaults: { command_timeout_seconds: 30, background_timeout_seconds: 600, page_size: 20 },
+    })]);
+    await Sandbox.capabilities({ authToken: "token", apiUrl: "https://api.test.com/api///" });
+    assertEquals(fetchCalls[0]!.url, "https://api.test.com/api/sandboxes/capabilities");
+  });
+
   describe("create()", () => {
     it("should create a sandbox and return instance", async () => {
       mockFetch([
