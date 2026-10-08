@@ -1106,6 +1106,11 @@ Deno.test("empty persisted text recovers many provider blocks without occurrence
   };
   const result = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
   assertEquals(result.parts, [...input.responseMessage.parts, ...content]);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: result }).sanitizedFinalizedMessage
+      .parts,
+    result.parts,
+  );
 });
 
 for (const [persistedCount, fallbackCount] of [[1, 3000], [5000, 2]] as const) {

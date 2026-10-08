@@ -28,7 +28,7 @@ assignments jointly across provider text occurrences: maximize matched character
 then consumed physical occurrences, then prefer monotonic physical starts.
 Fragments can cross another assigned occurrence, never unrelated persisted text.
 Emit only the missing suffixes in provider order and preserve append-only parts.
-The single-fallback latest-prefix behavior remains unchanged.
+The single-fallback latest-prefix behavior remains unchanged. Empty physical text and exactly aligned complete physical/provider occurrences use linear, unambiguous fast paths before search limits; replay of large completed messages remains idempotent.
 
 Verification includes exact first-pass suffixes and twice-applied equality for
 both symmetric replay cases, repeated-prefix two- and three-occurrence cases,

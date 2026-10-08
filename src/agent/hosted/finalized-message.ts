@@ -39,6 +39,12 @@ function assignFallbackTextOccurrences(
   fallback: readonly { text: string }[],
 ): TextMatch[] {
   if (persisted.length === 0) return fallback.map(() => ({ indexes: [], length: 0 }));
+  if (
+    persisted.length === fallback.length &&
+    persisted.every((part, index) => part.text.trim() === fallback[index]!.text.trim())
+  ) {
+    return fallback.map((part, index) => ({ indexes: [index], length: part.text.trim().length }));
+  }
   // Provider-controlled fragments must not cause an unbounded finalization search.
   const failSearch = (): never => {
     const error = new Error("Fallback text occurrence assignment exceeded its search budget");
