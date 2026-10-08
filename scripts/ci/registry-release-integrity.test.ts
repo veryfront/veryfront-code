@@ -1294,4 +1294,29 @@ describe("failed publish diagnostics", () => {
     assertEquals(now, 120_000);
     assertStringIncludes(lines.join("\n"), `${PACKAGE_NAME}@${VERSION}: published`);
   });
+
+  it("revalidates cached misses on every diagnostic version lookup", async () => {
+    const cacheControl: (string | null)[] = [];
+    let now = 0;
+    await captureError(() =>
+      diagnoseRegistryPackages([{
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 181,
+        retryDelayMs: 10_000,
+        requestTimeoutMs: 15_000,
+        now: () => now,
+        delay: (ms: number) => {
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: (_input: RequestInfo | URL, init?: RequestInit) => {
+          cacheControl.push(new Headers(init?.headers).get("Cache-Control"));
+          return Promise.resolve(new Response("", { status: 404 }));
+        },
+      }], () => {})
+    );
+    assertEquals(cacheControl, ["no-cache", "no-cache"]);
+  });
 });

@@ -416,7 +416,8 @@ async function attemptRegistryLookup(
         options.packageName,
         options.version,
       ),
-      { signal },
+      // Diagnostics re-check after a settle window; revalidate so a cached 404 cannot mask publication.
+      options.versionOnly ? { signal, headers: { "Cache-Control": "no-cache" } } : { signal },
     );
     if (response.status === 404) {
       return {
