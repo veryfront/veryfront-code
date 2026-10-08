@@ -6,6 +6,7 @@ import {
   type Job,
   recoverGate,
   type Run,
+  scanGates,
   type WatchdogClient,
 } from "./registry-gate-watchdog.ts";
 
@@ -60,7 +61,7 @@ describe("registry gate watchdog", () => {
           conclusion: "success",
           started_at: gate.created_at,
         },
-        { started_at: gate.created_at },
+        { steps: [{ name: "Set up job", conclusion: "success" }] },
         { created_at: "2026-10-05T13:35:00Z" },
       ]
     ) {
@@ -69,6 +70,12 @@ describe("registry gate watchdog", () => {
         false,
       );
     }
+  });
+  it("recovers a queued zero-step gate even when REST populates started_at", () => {
+    assertEquals(
+      decide([prerelease, { ...gate, started_at: gate.created_at }]).recover,
+      true,
+    );
   });
   it("does not recover when any other branch holds or queues the gate", () => {
     for (const status of ["queued", "in_progress", "waiting", "pending"]) {
@@ -181,6 +188,60 @@ describe("registry gate watchdog", () => {
     await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
     assertEquals(calls, []);
   });
+  it("queues the rerun behind a holder appearing after verified cancellation", async () => {
+    for (const head_branch of ["main", "feature"]) {
+      const { api, calls } = client();
+      let reads = 0;
+      api.others = () =>
+        Promise.resolve(
+          ++reads < 3 ? [] : [{
+            run: { ...other, head_branch },
+            jobs: [{ ...gate, status: "in_progress" }],
+          }],
+        );
+      await recoverGate(api, run.id, { dryRun: false, now: () => NOW });
+      assertEquals(calls, ["cancel", "rerun-failed", "comment"]);
+    }
+  });
+  it("reports a newer successful dispatch after cancellation without rerunning", async () => {
+    const { api, calls } = client();
+    let reads = 0;
+    api.others = () =>
+      Promise.resolve(
+        ++reads < 3 ? [] : [{
+          run: other,
+          jobs: [{
+            ...gate,
+            status: "completed",
+            conclusion: "success",
+            steps: [{ name: "Trigger server deploy", conclusion: "success" }],
+          }],
+        }],
+      );
+    const message = await recoverGate(api, run.id, {
+      dryRun: false,
+      now: () => NOW,
+    });
+    assertEquals(message.includes("newer main gate dispatched"), true);
+    assertEquals(calls, ["cancel", "comment"]);
+  });
+  it("continues inspecting other candidates and reports a scan failure", async () => {
+    const { api, calls } = client();
+    api.inspect = (id) =>
+      id === 1
+        ? Promise.reject(new Error("inspection unavailable"))
+        : Promise.resolve({ run, jobs });
+    const result = await scanGates(api, [1, run.id], {
+      dryRun: true,
+      now: () => NOW,
+    });
+    assertEquals(result.failed, true);
+    assertEquals(result.lines, [
+      "Run 1: ERROR: inspection unavailable",
+      `Run ${run.id}: stuck, no holder, would recover`,
+    ]);
+    assertEquals(calls, []);
+  });
   it("refuses a rerun if cancellation raced with a real failure", async () => {
     const { api, calls } = client();
     api.completed = () =>
@@ -224,7 +285,11 @@ describe("watchdog GitHub transport", () => {
       "test-token",
       (url, init) => {
         calls.push(`${init.method} ${url.pathname}`);
-        return Promise.resolve(new Response(null, { status: 202 }));
+        return Promise.resolve(
+          new Response(null, {
+            status: url.pathname.endsWith("/cancel") ? 202 : 201,
+          }),
+        );
       },
     );
     await client.cancel(run.id);
@@ -232,6 +297,29 @@ describe("watchdog GitHub transport", () => {
     assertEquals(calls, [
       `POST /repos/veryfront/veryfront-code/actions/runs/${run.id}/cancel`,
       `POST /repos/veryfront/veryfront-code/actions/runs/${run.id}/rerun-failed-jobs`,
+    ]);
+  });
+  it("posts one comment on the merged PR and accepts its JSON 201 response", async () => {
+    const calls: string[] = [];
+    const { client } = createWatchdogClient(
+      "veryfront/veryfront-code",
+      "test-token",
+      (url, init) => {
+        calls.push(`${init.method} ${url.pathname}`);
+        return Promise.resolve(
+          url.pathname.endsWith("/pulls")
+            ? Response.json([{
+              number: 5001,
+              merged_at: "2026-10-08T10:00:00Z",
+            }, { number: 5002, merged_at: null }])
+            : Response.json({ id: 1 }, { status: 201 }),
+        );
+      },
+    );
+    await client.comment(run, "Recovered registry gate");
+    assertEquals(calls, [
+      `GET /repos/veryfront/veryfront-code/commits/${run.head_sha}/pulls`,
+      "POST /repos/veryfront/veryfront-code/issues/5001/comments",
     ]);
   });
   it("fails closed on unavailable API data", async () => {

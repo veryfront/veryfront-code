@@ -19,6 +19,7 @@ on:
       - scripts/ci/registry-gate-watchdog.ts
       - scripts/ci/registry-gate-watchdog.test.ts
       - scripts/ci/registry-gate-watchdog.md
+      - tests/integration/ci/registry-gate-watchdog-workflow.test.ts
   push:
     branches: [main]
     paths:
@@ -26,6 +27,7 @@ on:
       - scripts/ci/registry-gate-watchdog.ts
       - scripts/ci/registry-gate-watchdog.test.ts
       - scripts/ci/registry-gate-watchdog.md
+      - tests/integration/ci/registry-gate-watchdog-workflow.test.ts
 
 permissions:
   contents: read
@@ -36,35 +38,38 @@ concurrency:
 
 jobs:
   contract:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Check watchdog source
         run: |
-          deno fmt --check --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts scripts/ci/registry-gate-watchdog.md
-          deno lint --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts
-          deno check --frozen --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts
-          deno task test:file scripts/ci/registry-gate-watchdog.test.ts
+          deno fmt --check --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts scripts/ci/registry-gate-watchdog.md tests/integration/ci/registry-gate-watchdog-workflow.test.ts
+          deno lint --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts
+          deno check --frozen --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts
+          deno task test:file scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts tests/integration/ci/workflow-concurrency.test.ts
 
   watchdog:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     needs: contract
     permissions:
       contents: read
       actions: write
       pull-requests: write
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Recover an unstarted RC gate
         env:
           GH_TOKEN: ${{ github.token }}

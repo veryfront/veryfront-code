@@ -5,7 +5,12 @@ for more than 15 minutes without starting. It cancels and reruns only that
 unstarted job when every other job finished without failure, no other registry
 gate holds or queues the dispatch lock, and no newer main gate dispatched. The
 existing RC tag, Sonar, environment, and dispatch checks run unchanged. API
-errors stop the watchdog without authorizing recovery.
+errors never authorize recovery. A failed inspection is reported while the scan
+continues with other runs; any error fails the watchdog after writing its
+summary. A queued gate must have no execution steps, because GitHub can populate
+`started_at` before execution. After verified cancellation, a newly active
+holder can queue the rerun. A newer successful dispatch suppresses that obsolete
+rerun and is reported on the merged PR.
 
 Use **Registry gate watchdog** in Actions with `dry_run: true` and a run id to
 inspect a live run. An empty run id scans active main runs. Scheduled runs

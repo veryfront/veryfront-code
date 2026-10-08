@@ -51,7 +51,7 @@ export function decideRecovery(
     run.event !== "push" || run.head_branch !== "main" ||
     run.path.split("@")[0] !== ".github/workflows/cicd.yml" ||
     run.status === "completed" || !gate || gate.status !== "queued" ||
-    gate.started_at !== null
+    gate.steps.length !== 0
   ) return no("healthy, no action");
   const minutes = (now - Date.parse(gate.created_at)) / 60_000;
   if (!Number.isFinite(minutes) || minutes <= 15) {
@@ -81,15 +81,24 @@ export function decideRecovery(
     if (otherGate.status !== "completed") {
       return no("another gate holds or queues the lock, no action");
     }
-    if (
-      other.run.head_branch === "main" &&
-      other.run.run_number > run.run_number &&
-      otherGate.steps.some((step) =>
-        DISPATCH_STEPS.has(step.name) && step.conclusion === "success"
-      )
-    ) return no("newer main gate dispatched, no action");
+    if (hasNewerDispatch(run, [other])) {
+      return no("newer main gate dispatched, no action");
+    }
   }
   return { recover: true, message: "stuck, no holder, would recover", minutes };
+}
+
+function hasNewerDispatch(run: Run, others: Inspection[]): boolean {
+  return others.some((other) =>
+    other.run.id !== run.id && other.run.head_branch === "main" &&
+    other.run.run_number > run.run_number &&
+    other.jobs.some((job) =>
+      job.name === GATE &&
+      job.steps.some((step) =>
+        DISPATCH_STEPS.has(step.name) && step.conclusion === "success"
+      )
+    )
+  );
 }
 
 export async function recoverGate(
@@ -133,13 +142,14 @@ export async function recoverGate(
       `Run ${id}: cancellation changed other work; refusing rerun`,
     );
   }
-  // Recheck holders and newer dispatches after cancellation too.
-  const after = decideRecovery(
-    candidate,
-    await client.others(candidate.run),
-    now(),
-  );
-  if (!after.recover) return `Run ${id}: cancelled, but ${after.message}`;
+  // Cancellation already freed the lock. A new holder can safely queue the
+  // rerun; only a newer completed dispatch makes this RC obsolete.
+  if (hasNewerDispatch(candidate.run, await client.others(candidate.run))) {
+    const message =
+      `Run ${id}: cancelled; newer main gate dispatched, no action`;
+    await client.comment(candidate.run, message);
+    return message;
+  }
   await client.rerunFailed(id);
   const message =
     `Recovered registry gate in run ${id}, queued without starting for ${
@@ -147,6 +157,29 @@ export async function recoverGate(
     } min. Cancelled the run and reran only its cancelled jobs; no failed check was retried.`;
   await client.comment(candidate.run, message);
   return message;
+}
+
+export async function scanGates(
+  client: WatchdogClient,
+  ids: number[],
+  options: { dryRun: boolean; now?: () => number },
+) {
+  const lines: string[] = [];
+  let failed = false;
+  for (const id of ids) {
+    try {
+      lines.push(`Run ${id}: ${await recoverGate(client, id, options)}`);
+    } catch (error) {
+      failed = true;
+      lines.push(
+        `Run ${id}: ERROR: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  if (!lines.length) lines.push("healthy, no action");
+  return { lines, failed };
 }
 
 type FetchLike = (url: URL, init: RequestInit) => Promise<Response>;
@@ -176,9 +209,8 @@ export function createWatchdogClient(
     if (!response.ok) {
       throw new Error(`GitHub API ${method} ${path}: ${response.status}`);
     }
-    return response.status === 204 || response.status === 202
-      ? undefined as T
-      : await response.json() as T;
+    const text = await response.text();
+    return text ? JSON.parse(text) as T : undefined as T;
   }
   async function list<T>(path: string, key?: string): Promise<T[]> {
     const items: T[] = [];
@@ -263,6 +295,7 @@ if (import.meta.main) {
   const snapshot = Deno.args.find((arg) => arg.startsWith("--snapshot="))
     ?.slice("--snapshot=".length);
   let lines: string[];
+  let failed = false;
   if (snapshot) {
     if (!dryRun) throw new Error("Historical snapshots require --dry-run");
     const data = JSON.parse(await Deno.readTextFile(snapshot)) as {
@@ -291,11 +324,7 @@ if (import.meta.main) {
       : (await activeRuns()).filter((run) =>
         run.event === "push" && run.head_branch === "main"
       ).map((run) => run.id);
-    lines = [];
-    for (const id of runs) {
-      lines.push(`Run ${id}: ${await recoverGate(client, id, { dryRun })}`);
-    }
-    if (!lines.length) lines.push("healthy, no action");
+    ({ lines, failed } = await scanGates(client, runs, { dryRun }));
   }
   for (const line of lines) console.log(line);
   const summary = Deno.env.get("GITHUB_STEP_SUMMARY");
@@ -304,4 +333,5 @@ if (import.meta.main) {
       append: true,
     });
   }
+  if (failed) Deno.exit(1);
 }
