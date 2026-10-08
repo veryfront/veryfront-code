@@ -563,6 +563,20 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(tools.veryfront__execute_skill_script, false);
   });
 
+  it("preserves an explicit legacy loader denial under a canonical ceiling", () => {
+    const restrictedAgent = createEphemeralAgent(
+      applyAgUiRuntimeRestrictions(
+        createConfig({ tools: { load_skill: false } }),
+        { allowedTools: ["veryfront__load_skill"] },
+      ),
+    );
+
+    const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
+    assertEquals(restrictedAgent.config.skills, false);
+    assertEquals(tools.load_skill, false);
+    assertEquals(tools.veryfront__load_skill, false);
+  });
+
   it("disables skills when only non-loader canonical skill tools are allowed", () => {
     const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
       allowedTools: ["veryfront__execute_skill_script"],

@@ -128,6 +128,47 @@ describe("cloud agent service runtime options", () => {
     }
   });
 
+  it("preserves a project form_input beside the canonical replayable platform form", () => {
+    const projectFormInput = tool({
+      id: "form_input",
+      description: "Project-owned form input",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ owner: "project" }),
+    });
+    toolRegistryInternal.registerShared("form_input", projectFormInput);
+    try {
+      const context = createNodeVeryfrontCloudAgentServiceContext({
+        serviceName: "test-agent-service",
+        createBashTool: () => Promise.resolve({ tools: {} }),
+        env: {
+          VERYFRONT_API_URL: "https://api.example.test",
+          NODE_ENV: "test",
+          PORT: "3180",
+          ALLOWED_ORIGINS: "https://studio.example.test",
+        },
+      });
+      context.skillDocumentParserProvider = createStdYamlSkillDocumentParserProvider();
+      const tools = buildLocalTools(context, {
+        projectId: "project-1",
+        authToken: "token",
+        instructions: "Synthetic instructions",
+        allowDelegation: false,
+      }, {
+        authToken: "token",
+        agentId: "agent-1",
+        projectId: "project-1",
+        branchId: null,
+        model: "anthropic/claude-sonnet-4-6",
+      });
+      assertEquals(tools.form_input, projectFormInput);
+      assertEquals(hasTrustedHostToolProvenance(tools.form_input), false);
+      assertEquals(hasTrustedHostToolProvenance(tools.veryfront__form_input), true);
+      assertEquals(tools.veryfront__form_input?.id, "veryfront__form_input");
+    } finally {
+      toolRegistryInternal.clearAll();
+    }
+  });
+
   it("registers canonical aliases for trusted root platform tools", () => {
     const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
     const context = createNodeVeryfrontCloudAgentServiceContext({
@@ -160,6 +201,8 @@ describe("cloud agent service runtime options", () => {
     );
 
     assertEquals("veryfront__form_input" in tools, true);
+    assertEquals("form_input" in tools, false);
+    assertEquals(tools.veryfront__form_input?.id, "veryfront__form_input");
     assertEquals("veryfront__load_skill" in tools, true);
     assertEquals("veryfront__sleep" in tools, true);
     assertEquals("veryfront__web_fetch" in tools, true);

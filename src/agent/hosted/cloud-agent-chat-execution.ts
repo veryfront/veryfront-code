@@ -7,6 +7,7 @@ import {
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { CANONICAL_FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -107,9 +108,13 @@ export function buildLocalTools(
   const config = context.infrastructure.getConfig();
   const projectTools = getDiscoveredHostTools({ agentId: taskContext.agentId });
   const platformTools = markTrustedHostToolSet({
-    form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
-      controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
-    }),
+    // Persist canonical form ownership so replay remains safe after project tools change.
+    [CANONICAL_FORM_INPUT_TOOL_ID]: {
+      ...createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
+        controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
+      }),
+      id: CANONICAL_FORM_INPUT_TOOL_ID,
+    },
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
     web_fetch: createHostedWebFetchTool(),
