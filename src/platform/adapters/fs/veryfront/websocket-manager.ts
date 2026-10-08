@@ -19,6 +19,7 @@ import {
 import {
   buildFileListProjectPrefix,
   buildVersionedFileOperationProjectPrefix,
+  canUseLegacyFileOperationPrefix,
 } from "#veryfront/cache/keys/builders/file.ts";
 import {
   addPendingInvalidation,
@@ -780,13 +781,13 @@ export class WebSocketManager {
 
     const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
       const sourceKey = sourceType === "release" ? "release" : "env";
-      const base = `${sourceKey}:${this.deps.projectSlug}:`;
-      addPrefixes([
-        `file:${base}`,
-        `stat:${base}`,
-        `dir:${base}`,
-        buildFileListProjectPrefix(sourceKey, this.deps.projectSlug),
-      ]);
+      for (const cacheType of OPERATION_CACHE_TYPES) {
+        const prefix = `${cacheType}:${sourceKey}:${this.deps.projectSlug}`;
+        if (canUseLegacyFileOperationPrefix(prefix, this.deps.projectSlug)) {
+          addPrefixes([`${prefix}:`]);
+        }
+      }
+      addPrefixes([buildFileListProjectPrefix(sourceKey, this.deps.projectSlug)]);
       addPrefixes(
         OPERATION_CACHE_TYPES.map((cacheType) =>
           buildVersionedFileOperationProjectPrefix(cacheType, sourceKey, this.deps.projectSlug)
