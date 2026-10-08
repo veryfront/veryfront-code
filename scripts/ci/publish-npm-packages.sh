@@ -555,23 +555,29 @@ run_rc_publish() {
     done
   fi
 
-  for PACKAGE_DIR in $(package_dirs); do
-    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
-    if [[ -z "${PUBLISH_SPEC}" ]]; then
-      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
-      return 1
-    fi
-    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-    RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
-    if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
-      echo "::error::Maintenance rc selector changed during publication." >&2
-      return 1
-    fi
-    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
-  done
+  deno run --config=scripts/test.deno.json --frozen --allow-read --allow-run=bash --allow-env \
+    scripts/ci/publish-rc-packages.ts $(package_dirs)
   # The required read-only registry validator checks immutable identities and
   # RC tags after propagation, before the locked dispatch gate can deploy.
+}
+
+# Each child uses its own shell state and the parent's verified canonical artifact.
+run_rc_publish_package() {
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  PACKAGE_DIR="$1"
+  PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+  if [[ -z "${PUBLISH_SPEC}" ]]; then
+    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+    echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+    return 1
+  fi
+  PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+  RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
+    echo "::error::Maintenance rc selector changed during publication." >&2
+    return 1
+  fi
+  rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
 }
 
 is_npm_package_not_found() {

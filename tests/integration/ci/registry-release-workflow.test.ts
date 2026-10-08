@@ -2235,3 +2235,53 @@ describe("RC publication alongside the reused main Sonar scan", () => {
     }
   });
 });
+
+describe("canonical public RC material verification", () => {
+  const assets = [
+    "veryfront-linux-x64",
+    "veryfront-linux-arm64",
+    "veryfront-proxy-linux-x64",
+    "veryfront-proxy-linux-arm64",
+  ];
+  for (const failure of ["", ...assets, "mismatched-bytes"]) {
+    it(`blocks RC consumption for ${failure || "no missing or mismatched assets"}`, async () => {
+      const jobs = await readJobs();
+      const uploader = asRecord(jobs["publish-public-release"], "public release job");
+      const verify = namedStep(uploader, "Verify canonical public Linux assets");
+      const allSteps = steps(uploader, "public release job");
+      assert(
+        allSteps.indexOf(verify) > allSteps.indexOf(namedStep(uploader, "Create GitHub releases")),
+      );
+      assertEquals(asRecord(verify.env, "asset verification environment").GH_TOKEN, undefined);
+      await withTempDir(async (directory) => {
+        await Deno.mkdir(`${directory}/public-release-assets`);
+        for (const asset of assets) {
+          await Deno.writeTextFile(`${directory}/public-release-assets/${asset}`, asset);
+        }
+        const result = await new Deno.Command("bash", {
+          cwd: directory,
+          args: [
+            "-euo",
+            "pipefail",
+            "-c",
+            [
+              "curl() {",
+              "  local destination='' url='' ",
+              '  while [ "$#" -gt 0 ]; do case "$1" in --output) destination="$2"; shift 2;; https://*) url="$1"; shift;; *) shift;; esac; done',
+              '  local asset="${url##*/}"',
+              '  [ "$FAILURE" != "$asset" ] || return 22',
+              '  cp "public-release-assets/$asset" "$destination"',
+              '  if [ "$FAILURE" = mismatched-bytes ]; then printf bad > "$destination"; fi',
+              "}",
+              String(verify.run),
+            ].join("\n"),
+          ],
+          env: { VERSION: "0.1.0-rc.1", FAILURE: failure, RUNNER_TEMP: directory },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.success, failure === "", decoder.decode(result.stderr));
+      });
+    });
+  }
+});

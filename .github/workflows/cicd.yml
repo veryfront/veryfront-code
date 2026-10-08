@@ -2294,6 +2294,27 @@ jobs:
             --tag "v${VERSION}" --title "v${VERSION}" --notes "$notes" \
             "$mode" -- "${assets[@]}"
 
+      - name: Verify canonical public Linux assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          probe_dir="$(mktemp -d)"
+          trap 'rm -rf "$probe_dir"' EXIT
+          for asset in veryfront-linux-x64 veryfront-linux-arm64 veryfront-proxy-linux-x64 veryfront-proxy-linux-arm64; do
+            test -s "public-release-assets/$asset"
+            curl --fail --silent --show-error --location --max-time 1800 --retry 0 \
+              --proto '=https' --proto-redir '=https' \
+              --output "$probe_dir/$asset" \
+              "https://github.com/veryfront/veryfront/releases/download/v${VERSION}/$asset"
+            expected="$(sha256sum "public-release-assets/$asset" | cut -d ' ' -f 1)"
+            actual="$(sha256sum "$probe_dir/$asset" | cut -d ' ' -f 1)"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::Canonical public release bytes differ for $asset"
+              exit 1
+            fi
+          done
+
       - name: Create source repo release
         if: ${{ needs.version-check.outputs.is_stable == 'true' }}
         env:
