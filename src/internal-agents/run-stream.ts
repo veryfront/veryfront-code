@@ -20,6 +20,7 @@ import {
 } from "#veryfront/agent/runtime/model-resolution.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
+  hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
@@ -340,9 +341,11 @@ function isPlatformToolName(toolName: string): boolean {
     IntrinsicReflectApply(IntrinsicSetHas, controlPlaneNameSet, [toolName]);
 }
 
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
+
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
   INVOKE_AGENT_TOOL_ID,
-  `veryfront__${INVOKE_AGENT_TOOL_ID}`,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
 ]);
 
 /**
@@ -476,14 +479,21 @@ export function buildMergedTools(
   const configuredInvokeAgent = isRecord(agent.config.tools)
     ? agent.config.tools[INVOKE_AGENT_TOOL_ID]
     : undefined;
+  const configuredCanonicalInvokeAgent = isRecord(agent.config.tools)
+    ? agent.config.tools[CANONICAL_INVOKE_AGENT_TOOL_ID]
+    : undefined;
   const controlPlaneOwnsDelegation = configuredInvokeAgent === true ||
     isFrameworkInvokeAgentTool(configuredInvokeAgent);
+  const controlPlaneOwnsCanonicalDelegation = configuredCanonicalInvokeAgent === true ||
+    isFrameworkInvokeAgentTool(configuredCanonicalInvokeAgent);
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
         (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
-          (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
+          (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation) ||
+          (tool.name === CANONICAL_INVOKE_AGENT_TOOL_ID &&
+            controlPlaneOwnsCanonicalDelegation)) &&
         !isExplicitlyDeniedToolName(
           agent,
           explicitlyDeniedToolNames,
@@ -870,9 +880,13 @@ function applyRuntimeToolAllowlist(
     return {};
   }
   const hasVisibleSkills = skillRegistry.hasVisibleSkills({ agentId: agent.id });
+  const localToolNames = Object.keys(mergedTools);
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
-    localToolNames: Object.keys(mergedTools),
+    localToolNames,
+    trustedLocalToolNames: localToolNames.filter((name) =>
+      hasTrustedHostToolProvenance(mergedTools[name])
+    ),
     ...(hasVisibleSkills ? { availableSkillIds: ["*"] } : {}),
   });
   if (!allowedToolNames) {
@@ -885,11 +899,14 @@ function applyRuntimeToolAllowlist(
   // denial still strips the tool below.
   const preservesConfigDelegation = hasVisibleSkills &&
     allowedToolNames.size > 0 &&
-    hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
+    (hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID) ||
+      hasTrustedAgentToolDeclaration(agent, CANONICAL_INVOKE_AGENT_TOOL_ID));
   return Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) =>
+    Object.entries(mergedTools).filter(([toolName, entry]) =>
       allowedToolNames.has(toolName) ||
-      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID)
+      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID) ||
+      (preservesConfigDelegation && toolName === CANONICAL_INVOKE_AGENT_TOOL_ID &&
+        hasTrustedHostToolProvenance(entry))
     ),
   );
 }

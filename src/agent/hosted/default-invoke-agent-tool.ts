@@ -1,6 +1,10 @@
 import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
-import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -319,15 +323,17 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
-  const globalTools: HostToolSet = {
-    ...(options.buildGlobalTools?.(
+  const globalTools = withPlatformHostToolAliases(
+    {
+      sleep: markTrustedHostToolProvenance(sleepTool),
+    },
+    options.buildGlobalTools?.(
       options.context,
       childAgentId,
       childConfig,
       durableChildRun,
-    ) ?? {}),
-    sleep: sleepTool,
-  };
+    ) ?? {},
+  );
 
   return prepareDefaultHostedChildForkSandboxToolSources({
     authToken: options.context.authToken,

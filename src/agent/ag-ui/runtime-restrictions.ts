@@ -24,7 +24,12 @@ import {
   type RuntimeToolFilterConfig,
 } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 
-const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
+const SKILL_LOADER_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+] as const;
 
 // The full skill infrastructure family the factory injects whenever skills stay
 // enabled. Kept as a local literal so this security boundary cannot be widened
@@ -33,6 +38,9 @@ const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
   "load_skill",
   "load_skill_reference",
   "execute_skill_script",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+  "veryfront__execute_skill_script",
 ] as const;
 
 // Reflection intrinsics captured at module evaluation, before any project
@@ -457,7 +465,10 @@ export function applyAgUiRuntimeRestrictionsForModel(
       : { ...restricted.tools };
     for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
       const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
-      if (toolName !== undefined && allowedTools[toolName] !== true) {
+      if (toolName === undefined) continue;
+      if (allowedTools[toolName] === true) {
+        if (tools[toolName] === undefined) tools[toolName] = true;
+      } else {
         tools[toolName] = false;
       }
     }

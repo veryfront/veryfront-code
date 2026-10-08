@@ -42,7 +42,7 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill", "veryfront__load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** Which field a query term matched on, strongest evidence first. */
 type ToolSearchMatchField = "exactName" | "name" | "description" | "parameterDescription";

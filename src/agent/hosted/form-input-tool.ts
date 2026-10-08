@@ -17,6 +17,7 @@ import {
   type InputRequestOutput,
 } from "../input/request-protocol.ts";
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
+import { isFormInputToolName } from "../runtime/skill-policy-enforcement.ts";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
@@ -224,9 +225,13 @@ function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInpu
   if (typeof record.toolCallId !== "string" || !("output" in record)) {
     return false;
   }
-  const toolName = typeof record.toolName === "string" ? record.toolName : undefined;
+  return (typeof record.toolName === "string" && isFormInputToolName(record.toolName)) ||
+    isFormInputToolPartType(part.type);
+}
 
-  return toolName === "form_input" || part.type === "tool-form_input";
+function isFormInputToolPartType(type: unknown): boolean {
+  return typeof type === "string" && type.startsWith("tool-") &&
+    isFormInputToolName(type.slice("tool-".length));
 }
 
 function extractSubmittedFormInputResult(

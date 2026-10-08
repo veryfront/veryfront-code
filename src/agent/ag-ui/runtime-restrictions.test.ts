@@ -496,6 +496,9 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       load_skill: true,
       load_skill_reference: false,
       execute_skill_script: false,
+      veryfront__load_skill: false,
+      veryfront__load_skill_reference: false,
+      veryfront__execute_skill_script: false,
     });
   });
 
@@ -515,10 +518,16 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       "execute_skill_script",
       "load_skill",
       "load_skill_reference",
+      "veryfront__execute_skill_script",
+      "veryfront__load_skill",
+      "veryfront__load_skill_reference",
     ]);
     assertEquals(typeof tools.load_skill, "object");
     assertEquals(tools.load_skill_reference, false);
     assertEquals(tools.execute_skill_script, false);
+    assertEquals(tools.veryfront__load_skill, false);
+    assertEquals(tools.veryfront__load_skill_reference, false);
+    assertEquals(tools.veryfront__execute_skill_script, false);
   });
 
   it("disables non-allowlisted skill tools even when the config declares no tools", () => {
@@ -527,7 +536,40 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     });
 
     assertEquals(restricted.skills, true);
-    assertEquals(restricted.tools, { execute_skill_script: false });
+    assertEquals(restricted.tools, {
+      execute_skill_script: false,
+      load_skill: true,
+      load_skill_reference: true,
+      veryfront__execute_skill_script: false,
+      veryfront__load_skill: false,
+      veryfront__load_skill_reference: false,
+    });
+  });
+
+  it("keeps canonical skill infrastructure denied outside the allowlist", () => {
+    const restrictedAgent = createEphemeralAgent(
+      applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+        allowedTools: ["veryfront__load_skill"],
+      }),
+    );
+
+    const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
+    assertEquals(restrictedAgent.config.skills, true);
+    assertEquals(tools.load_skill, false);
+    assertEquals(tools.load_skill_reference, false);
+    assertEquals(tools.execute_skill_script, false);
+    assertEquals(typeof tools.veryfront__load_skill, "object");
+    assertEquals(tools.veryfront__load_skill_reference, false);
+    assertEquals(tools.veryfront__execute_skill_script, false);
+  });
+
+  it("disables skills when only non-loader canonical skill tools are allowed", () => {
+    const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+      allowedTools: ["veryfront__execute_skill_script"],
+    });
+
+    assertEquals(restricted.skills, false);
+    assertEquals(restricted.tools, {});
   });
 
   it("never raises the configured step bound", () => {

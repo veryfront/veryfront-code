@@ -32,7 +32,9 @@ const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
 
 export const LOAD_SKILL_TOOL_ID = "load_skill";
+export const CANONICAL_LOAD_SKILL_TOOL_ID = `veryfront__${LOAD_SKILL_TOOL_ID}`;
 export const FORM_INPUT_TOOL_ID = "form_input";
+export const CANONICAL_FORM_INPUT_TOOL_ID = `veryfront__${FORM_INPUT_TOOL_ID}`;
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 
@@ -46,7 +48,16 @@ export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = Object.fr
 
 const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set([
   FORM_INPUT_TOOL_ID,
+  CANONICAL_FORM_INPUT_TOOL_ID,
 ]);
+
+export function isLoadSkillToolName(toolName: string): boolean {
+  return toolName === LOAD_SKILL_TOOL_ID || toolName === CANONICAL_LOAD_SKILL_TOOL_ID;
+}
+
+export function isFormInputToolName(toolName: string): boolean {
+  return toolName === FORM_INPUT_TOOL_ID || toolName === CANONICAL_FORM_INPUT_TOOL_ID;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   try {
@@ -153,7 +164,7 @@ export function hydrateActiveSkillStateFromMessages(
     for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
       if (!objectHasOwn(message.parts, partIndex)) continue;
       const part = message.parts[partIndex]!;
-      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
+      if (!isToolResultPart(part) || !isLoadSkillToolName(part.toolName)) continue;
       state = applySkillActivationResult(state, part.result);
     }
   }
@@ -303,7 +314,7 @@ export function hasSubmittedFormInputResult(messages: readonly Message[]): boole
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) && part.toolName === FORM_INPUT_TOOL_ID &&
+        isToolResultPart(part) && isFormInputToolName(part.toolName) &&
         isSubmittedFormInputResult(part.result)
       ) return true;
     }
@@ -342,7 +353,7 @@ export function filterToolsAfterSubmittedFormInput(
     if (POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name)) {
       continue;
     }
-    if (tool.name !== LOAD_SKILL_TOOL_ID) {
+    if (!isLoadSkillToolName(tool.name)) {
       filtered[filtered.length] = tool;
       continue;
     }
@@ -403,7 +414,7 @@ function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
 
 /** Identify a valid skill-body activation call without confusing reference reads for activation. */
 export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolean {
-  if (toolName !== LOAD_SKILL_TOOL_ID || !isRecord(input)) return false;
+  if (!isLoadSkillToolName(toolName) || !isRecord(input)) return false;
   const skillId = readToolResultOwnDataProperty(input, "skillId");
   const file = readToolResultOwnDataProperty(input, "file");
   return typeof skillId === "string" && skillId.length > 0 && file === undefined;
@@ -426,7 +437,7 @@ export function enforceSkillPolicy(
 
   if (
     options.hasSubmittedFormInput === true &&
-    toolName === LOAD_SKILL_TOOL_ID &&
+    isLoadSkillToolName(toolName) &&
     !isActiveSkillReferenceLoad(options)
   ) {
     return {

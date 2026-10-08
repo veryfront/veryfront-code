@@ -208,6 +208,57 @@ describe("agent/hosted-form-input-tool", () => {
     assertEquals(calls.length, 2);
   });
 
+  it("finds a submitted canonical form_input result from persisted UI tool parts", () => {
+    const result = findSubmittedFormInputResult([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: TOOL_CALL_ID,
+          toolName: "veryfront__form_input",
+          state: "output-available",
+          input: { title: "Plan intake" },
+          output: {
+            submitted: true,
+            values: { idea: "Build a support assistant" },
+            inputRequestId: INPUT_REQUEST_ID,
+          },
+        }],
+      },
+    ]);
+
+    assertEquals(result, {
+      values: { idea: "Build a support assistant" },
+      inputRequestId: INPUT_REQUEST_ID,
+    });
+  });
+
+  it("finds a submitted canonical form_input result from named persisted UI parts without toolName", () => {
+    const result = findSubmittedFormInputResult([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-veryfront__form_input",
+          toolCallId: TOOL_CALL_ID,
+          state: "output-available",
+          input: { title: "Plan intake" },
+          output: {
+            submitted: true,
+            values: { idea: "Build a support assistant" },
+            inputRequestId: INPUT_REQUEST_ID,
+          },
+        }],
+      },
+    ]);
+
+    assertEquals(result, {
+      values: { idea: "Build a support assistant" },
+      inputRequestId: INPUT_REQUEST_ID,
+    });
+  });
+
   it("finds a submitted form_input result from persisted UI tool parts", () => {
     const result = findSubmittedFormInputResult([
       {
@@ -591,6 +642,42 @@ it("reuses a privately replayed form result without parking the resumed turn aga
   );
   assertEquals((result as { reused: boolean }).reused, true);
   assertEquals((result as { values: unknown }).values, { password: "private-replayed" });
+});
+
+it("reuses a canonical named persisted form result without parking a fresh replay", async () => {
+  const submittedFormInputResult = findSubmittedFormInputResult([
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{
+        type: "tool-veryfront__form_input",
+        toolCallId: TOOL_CALL_ID,
+        state: "output-available",
+        input: { title: "Secret" },
+        output: {
+          submitted: true,
+          values: { password: "canonical-replayed" },
+          inputRequestId: INPUT_REQUEST_ID,
+        },
+      }],
+    },
+  ]);
+  const form = createHostedFormInputTool(
+    createContext({ submittedFormInputResult }),
+    API_URL,
+    { controlPlaneReplay: true },
+  );
+
+  const result = await form.execute(
+    getFormInputToolInputSchema().parse({
+      title: "Secret",
+      fields: [{ name: "password", label: "Password", type: "password" }],
+    }),
+    { toolCallId: "repeated-canonical-form" },
+  );
+
+  assertEquals((result as { reused: boolean }).reused, true);
+  assertEquals((result as { values: unknown }).values, { password: "canonical-replayed" });
 });
 
 it("advertises only durable field controls to the hosted model", () => {

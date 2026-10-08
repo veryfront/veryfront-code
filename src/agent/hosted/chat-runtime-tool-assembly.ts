@@ -149,6 +149,24 @@ function ownDataValue(value: HostToolSet[string], key: PropertyKey): unknown {
   }
 }
 
+function trustedHostToolNames(tools: HostToolSet): string[] {
+  const trustedNames: string[] = [];
+  const names = ownKeys(tools);
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    const descriptor = apply(objectGetOwnPropertyDescriptor, Object, [tools, name]);
+    if (!descriptor || !objectHasOwn(descriptor, "value")) continue;
+    if (hasTrustedHostToolProvenance(descriptor.value)) {
+      defineOwnDataProperty(trustedNames, trustedNames.length, name, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return trustedNames;
+}
+
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
@@ -432,9 +450,17 @@ function filterPostFormInputLocalTools(
     return tools;
   }
 
-  const blockedToolNames = createPrivateSet(["form_input", "load_skill"]);
+  const blockedToolNames = createPrivateSet([
+    "form_input",
+    "load_skill",
+    "veryfront__form_input",
+    "veryfront__load_skill",
+  ]);
   return recordFromEntries(
-    filterValues(ownEntries(tools), (entry) => !blockedToolNames.has(entry[0])),
+    filterValues(
+      ownEntries(tools),
+      (entry) => !blockedToolNames.has(entry[0]) || !hasTrustedHostToolProvenance(entry[1]),
+    ),
   );
 }
 
@@ -672,6 +698,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: ownKeys(authorizedLocalTools),
+    trustedLocalToolNames: trustedHostToolNames(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
     configDerivedSelector: configDerivedSelector ||
       (input.includeRuntimeEssentialToolsWhenEmpty === true &&
@@ -915,7 +942,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     : filterValues(providerToolNames, (toolName) => compatibleToolNames.has(toolName));
   const bootstrapToolNames = filterValues(
     availableToolNames,
-    (toolName) => toolName === "load_skill",
+    (toolName) => toolName === "load_skill" || toolName === "veryfront__load_skill",
   );
   const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
   const modelVisibleToolNames = toolLoadingMode === "deferred"

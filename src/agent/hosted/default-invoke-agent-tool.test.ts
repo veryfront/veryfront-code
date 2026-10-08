@@ -645,7 +645,7 @@ describe("default hosted invoke agent", () => {
     );
 
     assertEquals("success" in result && result.success, true);
-    assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+    assertEquals(capturedForkToolNames, ["lookup_job", "sleep", "veryfront__sleep"]);
   });
 });
 

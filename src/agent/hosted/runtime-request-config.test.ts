@@ -585,6 +585,34 @@ Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides na
   assertEquals(resolve([]), []);
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested canonical delegation", () => {
+  const resolve = (
+    skills: RuntimeAgentMarkdownDefinition["skills"],
+    deniedTools: string[] = [],
+  ) =>
+    resolveHostedRuntimeRequestConfig({
+      request: {
+        runtimeOverrides: { allowedTools: ["get_file", "veryfront__invoke_agent"] },
+      },
+      agentConfig: createAgentConfig({
+        tools: ["get_file"],
+        deniedTools,
+        skills,
+      }),
+      resolveModelId: (model) => model,
+    }).requestedAllowedTools;
+
+  assertEquals(resolve(["plan"]), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve("plan"), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve({ plan: true }), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(true), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(undefined), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(false), ["get_file"]);
+  assertEquals(resolve([]), ["get_file"]);
+  assertEquals(resolve({ plan: false }), ["get_file"]);
+  assertEquals(resolve(["plan"], ["veryfront__invoke_agent"]), ["get_file"]);
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
   const resolve = (skills: RuntimeAgentMarkdownDefinition["skills"]) =>
     resolveHostedRuntimeRequestConfig({

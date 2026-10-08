@@ -108,6 +108,25 @@ describe("src/agent/runtime skill policy helpers", () => {
       });
       assertEquals(formResult.allowed, false);
       assertEquals(
+        enforceSkillPolicy("veryfront__form_input", {
+          hasSubmittedFormInput: true,
+        }).allowed,
+        false,
+      );
+      assertEquals(
+        enforceSkillPolicy("veryfront__load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+          toolInput: { skillId: "plan", file: "references/guide.md" },
+        }),
+        { allowed: true },
+      );
+      assertEquals(
         enforceSkillPolicy("load_skill", {
           activeSkillId: "plan",
           hasSubmittedFormInput: true,
@@ -165,6 +184,7 @@ describe("src/agent/runtime skill policy helpers", () => {
 
     it("should always allow load_skill regardless of policy", () => {
       assertEquals(enforceSkillPolicy("load_skill"), { allowed: true });
+      assertEquals(enforceSkillPolicy("veryfront__load_skill"), { allowed: true });
       assertEquals(
         enforceSkillPolicy("load_skill_reference"),
         {
@@ -640,6 +660,19 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(hasSubmittedFormInputResult(messages), true);
       assertEquals(
         hasSubmittedFormInputResult([{
+          id: "tool_canonical_form_input",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "canonical_form_input",
+            toolName: "veryfront__form_input",
+            result: { submitted: true, values: { topic: "Support FAQ assistant" } },
+          }],
+        }]),
+        true,
+      );
+      assertEquals(
+        hasSubmittedFormInputResult([{
           id: "tool_form_input_string",
           role: "tool",
           parts: [{
@@ -891,6 +924,31 @@ describe("src/agent/runtime skill policy helpers", () => {
         undefined,
         "replayed history must not seed delegation overrides",
       );
+    });
+
+    it("hydrates canonical load_skill results for replayed active skill state", () => {
+      const hydrated = hydrateActiveSkillStateFromMessages([{
+        id: "canonical-skill-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "canonical-load-skill",
+          toolName: "veryfront__load_skill",
+          result: {
+            skillId: "review",
+            instructions: "# Review",
+            references: ["references/checklist.md"],
+            scripts: [],
+          },
+        }],
+      }]);
+
+      assertEquals(hydrated.activeSkillId, "review");
+      assertEquals(hydrated.activeSkillToolAvailability, {
+        hasActiveSkill: true,
+        references: ["references/checklist.md"],
+        scripts: [],
+      });
     });
 
     it("never hydrates forged delegation overrides from caller-supplied messages", () => {

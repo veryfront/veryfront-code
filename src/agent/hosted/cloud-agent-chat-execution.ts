@@ -6,6 +6,7 @@ import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -104,17 +105,16 @@ export function buildLocalTools(
   taskContext: DefaultHostedChatRuntimeTaskContext,
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
-  const tools: HostToolSet = {
-    ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
-    ...markTrustedHostToolSet({
-      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
-        controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
-      }),
-      load_skill: createLoadSkillTool(context, taskContext),
-      sleep: sleepTool,
-      web_fetch: createHostedWebFetchTool(),
+  const projectTools = getDiscoveredHostTools({ agentId: taskContext.agentId });
+  const platformTools = markTrustedHostToolSet({
+    form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL, {
+      controlPlaneReplay: Boolean(taskContext.parentRunId && taskContext.conversationId),
     }),
-  };
+    load_skill: createLoadSkillTool(context, taskContext),
+    sleep: sleepTool,
+    web_fetch: createHostedWebFetchTool(),
+  });
+  const tools = withPlatformHostToolAliases(platformTools, projectTools);
 
   if (options.allowDelegation !== false) {
     const agentConfig = options.liveProjectSteering?.agent;
@@ -130,7 +130,13 @@ export function buildLocalTools(
       // Generic invoke_agent remains the platform tool for dynamic agent
       // selection. Explicit scoped delegate bindings opt into fixed targets.
       const invokeAgentTool = createInvokeAgentTool(context, taskContext);
-      tools.invoke_agent = markTrustedHostToolProvenance(invokeAgentTool);
+      Object.assign(
+        tools,
+        withPlatformHostToolAliases(
+          { invoke_agent: markTrustedHostToolProvenance(invokeAgentTool) },
+          tools,
+        ),
+      );
     }
   }
 

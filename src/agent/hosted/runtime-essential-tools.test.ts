@@ -21,6 +21,66 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
     assertEquals(result?.has("invoke_agent"), false);
   });
 
+  it("preserves runtime-essential names only from trusted local tools when provenance is supplied", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(["sleep"]),
+      localToolNames: ["sleep", "load_skill", "invoke_agent"],
+      trustedLocalToolNames: ["sleep"],
+      configDerivedSelector: true,
+      availableSkillIds: ["plan"],
+    });
+
+    assertEquals(result?.has("sleep"), true);
+    assertEquals(result?.has("load_skill"), false);
+    assertEquals(result?.has("invoke_agent"), false);
+  });
+
+  it("preserves trusted canonical essentials when project tools collide with legacy names", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(["sleep"]),
+      localToolNames: [
+        "sleep",
+        "load_skill",
+        "invoke_agent",
+        "veryfront__load_skill",
+        "veryfront__invoke_agent",
+      ],
+      trustedLocalToolNames: ["sleep", "veryfront__load_skill", "veryfront__invoke_agent"],
+      configDerivedSelector: true,
+      availableSkillIds: ["plan"],
+    });
+
+    assertEquals(result?.has("sleep"), true);
+    assertEquals(result?.has("load_skill"), false);
+    assertEquals(result?.has("invoke_agent"), false);
+    assertEquals(result?.has("veryfront__load_skill"), true);
+    assertEquals(result?.has("veryfront__invoke_agent"), true);
+  });
+
+  it("removes trusted canonical skill infrastructure for known empty skill manifests", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set([
+        "read_file",
+        "load_skill",
+        "veryfront__load_skill",
+        "veryfront__execute_skill_script",
+      ]),
+      localToolNames: [
+        "read_file",
+        "load_skill",
+        "veryfront__load_skill",
+        "veryfront__execute_skill_script",
+      ],
+      trustedLocalToolNames: ["veryfront__load_skill", "veryfront__execute_skill_script"],
+      availableSkillIds: [],
+    });
+
+    assertEquals(result?.has("read_file"), true);
+    assertEquals(result?.has("load_skill"), true);
+    assertEquals(result?.has("veryfront__load_skill"), false);
+    assertEquals(result?.has("veryfront__execute_skill_script"), false);
+  });
+
   it("does not add delegation to a request-derived restrictive allowlist when skills are available", () => {
     const result = resolveHostedRuntimeAllowedToolNames({
       allowedToolNames: new Set(["sleep"]),

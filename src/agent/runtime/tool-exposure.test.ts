@@ -707,6 +707,24 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
 });
 
+it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
+  const state = createToolExposureState();
+
+  const plan = createToolExposurePlan({
+    authorized: [
+      definition("veryfront__load_skill", "Load a configured skill"),
+      definition("other_tool", "Other deferred tool"),
+    ],
+    mode: "deferred",
+    state,
+  });
+
+  assertEquals(
+    plan.visible.map((tool) => tool.name),
+    [TOOL_SEARCH_TOOL_NAME, "veryfront__load_skill"],
+  );
+});
+
 it("deferred exposure prunes revoked and bootstrap names before budget eviction", () => {
   const retained = definition("retained_tool", "Retained deferred tool");
   const authorized = [

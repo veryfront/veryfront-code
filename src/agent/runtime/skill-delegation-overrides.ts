@@ -14,6 +14,7 @@ export type SkillDelegationOverrides = {
 };
 
 const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
 const ArrayIsArray = Array.isArray;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,6 +65,10 @@ function isBlankString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length === 0;
 }
 
+export function isInvokeAgentToolName(toolName: string): boolean {
+  return toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID;
+}
+
 /** Apply active skill delegation overrides to invoke_agent tool input. */
 export function applySkillDelegationOverridesToToolInput(
   toolName: string,
@@ -72,7 +77,7 @@ export function applySkillDelegationOverridesToToolInput(
   tool?: unknown,
 ): Record<string, unknown> {
   if (
-    toolName !== INVOKE_AGENT_TOOL_ID ||
+    !isInvokeAgentToolName(toolName) ||
     !overrides ||
     !supportsSkillDelegationOverrides(tool)
   ) {

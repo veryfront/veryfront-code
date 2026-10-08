@@ -1228,7 +1228,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           bash: localTool("Run shell commands"),
           create_release: localTool("Create a release"),
           delete_project: localTool("Delete a project"),
-          load_skill: localTool("Load skill"),
+          load_skill: markTrustedHostToolProvenance(localTool("Load skill")),
         }),
         createRemoteToolSource: testCase.sourceIntegrationPolicy === undefined
           ? emptyRemoteSource

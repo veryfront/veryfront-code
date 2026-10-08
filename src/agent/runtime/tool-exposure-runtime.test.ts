@@ -61,11 +61,12 @@ it("deferred generate searches, exposes on the next step, and executes once", as
   const response = await assistant.generate({ input: "Read the release marker" });
 
   const observedSystems = model.systemPrompts();
-  assertEquals(model.toolNames(0), ["load_skill", "tool_search"]);
+  assertEquals(model.toolNames(0), ["load_skill", "tool_search", "veryfront__load_skill"]);
   assertEquals(model.toolNames(1), [
     "load_skill",
     "read_release_marker",
     "tool_search",
+    "veryfront__load_skill",
   ]);
   assertEquals((observedSystems[0] ?? "").includes("form_input"), false);
   assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
@@ -238,11 +239,11 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- create_agent: Create a project agent"),
@@ -330,11 +331,11 @@ it("deferred stream can reload another agent write tool after a successful write
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
-    ["load_skill", "tool_search", "update_agent"],
-    ["load_skill", "tool_search"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "update_agent", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- update_agent: Update a project agent"),

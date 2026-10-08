@@ -34,6 +34,7 @@ import {
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
+import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import {
   resolveRuntimeSkillSelectorForAgent,
@@ -455,11 +456,19 @@ function resolveInitialModelVisibleToolNames(input: {
   const deniedToolNames = new Set(input.runtimeConfig.deniedToolNames ?? []);
   const isHostAllowed = (toolName: string): boolean =>
     (hostAllow === undefined || hostAllow.has(toolName)) && !deniedToolNames.has(toolName);
+  const isPlatformPairDenied = (legacyToolName: string): boolean =>
+    deniedToolNames.has(legacyToolName) || deniedToolNames.has(`veryfront__${legacyToolName}`);
+  const visibleLoadSkillToolNames = isPlatformPairDenied("load_skill")
+    ? []
+    : ["load_skill", "veryfront__load_skill"].filter(isHostAllowed);
+  const visibleFormInputToolNames = isPlatformPairDenied("form_input")
+    ? []
+    : ["form_input", "veryfront__form_input"].filter(isHostAllowed);
 
   if (input.runtimeConfig.requestedAllowedTools === undefined) {
     return [
-      ...(isHostAllowed("form_input") ? ["form_input"] : []),
-      ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
+      ...visibleFormInputToolNames,
+      ...(input.selectedSkills.length > 0 ? visibleLoadSkillToolNames : []),
       ...(isHostAllowed(TOOL_SEARCH_TOOL_NAME) ? [TOOL_SEARCH_TOOL_NAME] : []),
     ].sort(compareStrings);
   }
@@ -469,10 +478,12 @@ function resolveInitialModelVisibleToolNames(input: {
   );
   if (
     input.selectedSkills.length > 0 &&
-    isHostAllowed("load_skill") &&
+    visibleLoadSkillToolNames.length > 0 &&
     (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty)
   ) {
-    visibleToolNames.add("load_skill");
+    for (const toolName of visibleLoadSkillToolNames) {
+      visibleToolNames.add(toolName);
+    }
   }
   return [...visibleToolNames].sort(compareStrings);
 }
@@ -505,7 +516,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const promptSkills = initialModelVisibleToolNames.includes("load_skill") ? selectedSkills : [];
+  const promptSkills = initialModelVisibleToolNames.some(isLoadSkillToolName) ? selectedSkills : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,

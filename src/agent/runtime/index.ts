@@ -179,8 +179,8 @@ import {
 
 import {
   enforceSkillPolicy,
-  FORM_INPUT_TOOL_ID,
-  LOAD_SKILL_TOOL_ID,
+  isFormInputToolName,
+  isLoadSkillToolName,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
@@ -364,6 +364,7 @@ import {
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import {
   applySkillDelegationOverridesToToolInput,
+  isInvokeAgentToolName,
   type SkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 import {
@@ -1366,7 +1367,7 @@ function applyProviderReplayDelegationOverrides(
   args: Record<string, unknown>,
   context: ProviderReplayDelegationArgsContext,
 ): Record<string, unknown> {
-  if (toolName !== "invoke_agent") return args;
+  if (!isInvokeAgentToolName(toolName)) return args;
   return applySkillDelegationOverridesToToolInput(
     toolName,
     args,
@@ -1470,7 +1471,7 @@ function generatedSameTurnSkillDelegationOrder(
     if (!ObjectHasOwn(toolCalls!, index)) continue;
     const toolCall = toolCalls![index]!;
     if (toolResults.has(toolCall.toolCallId)) continue;
-    if (toolCall.toolName === LOAD_SKILL_TOOL_ID) {
+    if (isLoadSkillToolName(toolCall.toolName)) {
       if (sawDelegation) sawSkillAfterDelegation = true;
       else sawSkillBeforeDelegation = true;
       continue;
@@ -1508,7 +1509,7 @@ function streamedSameTurnSkillDelegationOrder(
     if (toolCall.inputAvailable !== true) continue;
     // Execution folds a streamed load_skill result in call order, so a completed
     // skill call still orders its overrides relative to the delegations.
-    if (toolCall.name === LOAD_SKILL_TOOL_ID) {
+    if (isLoadSkillToolName(toolCall.name)) {
       if (sawDelegation) sawSkillAfterDelegation = true;
       else sawSkillBeforeDelegation = true;
       continue;
@@ -1764,7 +1765,7 @@ function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): 
 }
 
 function isSubmittedFormInputExecutionResult(toolName: string, result: unknown): boolean {
-  return toolName === FORM_INPUT_TOOL_ID && containsSubmittedFormInputExecutionResult(result);
+  return isFormInputToolName(toolName) && containsSubmittedFormInputExecutionResult(result);
 }
 
 type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
@@ -4060,7 +4061,7 @@ export class AgentRuntime {
                   agentWriteFinalResponseToolGuardEnabled = true;
                 }
                 // Track skill policy from successful load_skill results
-                if (tc.toolName === LOAD_SKILL_TOOL_ID) {
+                if (isLoadSkillToolName(tc.toolName)) {
                   skillState.applySuccessfulResult(result);
                 }
                 const submittedFormInput = isSubmittedFormInputExecutionResult(
@@ -5339,7 +5340,7 @@ export class AgentRuntime {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
-            if (tc.name === LOAD_SKILL_TOOL_ID) {
+            if (isLoadSkillToolName(tc.name)) {
               skillState.applySuccessfulResult(matchingResult.output);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(
@@ -5364,7 +5365,7 @@ export class AgentRuntime {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
-            if (tc.name === LOAD_SKILL_TOOL_ID) {
+            if (isLoadSkillToolName(tc.name)) {
               skillState.applySuccessfulResult(persistedResult.result);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(
@@ -5612,7 +5613,7 @@ export class AgentRuntime {
 
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
-            if (tc.name === LOAD_SKILL_TOOL_ID) {
+            if (isLoadSkillToolName(tc.name)) {
               skillState.applySuccessfulResult(result);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(tc.name, result);

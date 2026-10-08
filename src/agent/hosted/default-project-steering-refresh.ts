@@ -17,6 +17,7 @@ import {
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
+import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import {
   assertResolvedSkillSelector,
@@ -275,7 +276,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    const bootstrapToolNames = toolNames.filter((toolName) => toolName === "load_skill");
+    const bootstrapToolNames = toolNames.filter(isLoadSkillToolName);
     const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
     const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
       ? [
@@ -284,7 +285,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       ].sort(compareStrings)
       : toolNames;
     input.taskContext.availableToolNames = modelVisibleToolNames;
-    const promptSkills = modelVisibleToolNames.includes("load_skill")
+    const promptSkills = modelVisibleToolNames.some(isLoadSkillToolName)
       ? skillSelectorSnapshot.definitions
       : [];
 

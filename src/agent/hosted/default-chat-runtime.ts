@@ -36,6 +36,7 @@ import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import {
   applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
@@ -261,7 +262,7 @@ async function buildToolAssembly(
           branchId: input.taskContext.branchId,
           environmentContext: liveProjectSteering.environmentContext,
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
-          skills: modelVisibleToolNames.includes("load_skill")
+          skills: modelVisibleToolNames.some(isLoadSkillToolName)
             ? liveProjectSteering.initialSkills ?? []
             : [],
           availableToolNames: modelVisibleToolNames,

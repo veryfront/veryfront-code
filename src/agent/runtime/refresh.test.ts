@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
 import type {
@@ -29,6 +30,7 @@ import {
   type RuntimeProjectSkillContext,
 } from "./project-skill-loader.ts";
 import { hasSubmittedFormInputResult } from "./skill-policy-enforcement.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { normalizeInput } from "./input-utils.ts";
 import { cloneRuntimeStateMutableData } from "./index.ts";
@@ -821,7 +823,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(model.toolNames(0).includes("create_agent"), true);
     assertEquals(model.toolNames(0).includes("web_search"), true);
     assertEquals(model.toolNames(0).includes("web_fetch"), true);
-    assertEquals(model.toolNames(1), ["load_skill"]);
+    assertEquals(model.toolNames(1), ["load_skill", "veryfront__load_skill"]);
     assertEquals(model.systemPrompts()[1]?.includes("- create_agent"), false);
     assertEquals(model.systemPrompts()[1]?.includes("- load_skill"), true);
     assertEquals(executionCount, 1);
@@ -962,7 +964,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
     assertEquals(executionCount, 1);
   });
 
@@ -1118,7 +1120,7 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill"]);
+      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill", "veryfront__load_skill"]);
       assertEquals(toolNamesByStep.length, 3);
       assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
     });
@@ -1576,7 +1578,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
   });
 
   it("notifies configured hooks after stream() executes a tool", async () => {
@@ -3868,6 +3870,113 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
+  it("applies loaded skill overrides to generate() canonical invoke_agent calls", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/canonical-skill-invoke-generate",
+      async doGenerate() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "load-build-canonical-1",
+              toolName: "load_skill",
+              input: '{"skillId":"build"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "invoke-canonical-1",
+              toolName: "veryfront__invoke_agent",
+              input:
+                '{"description":"Research reference system","prompt":"Research reference docs","max_steps":10}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: () => ({
+        skillId: "build",
+        instructions: "# Build",
+        allowedTools: ["veryfront__invoke_agent"],
+        references: [],
+        scripts: [],
+        model: "anthropic/claude-sonnet-4-5",
+        thinking: false,
+        maxSteps: 160,
+      }),
+    });
+    const invokeAgent = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+      id: "veryfront__invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          description: v.string(),
+          prompt: v.string(),
+          model: v.string().optional(),
+          thinking: v.number().optional(),
+          max_steps: v.number().optional(),
+        })
+      )(),
+      execute: ({ model, thinking, max_steps }) => ({ ok: true, model, thinking, max_steps }),
+    })));
+    const assistant = eagerAgent({
+      model: "hosted/canonical-skill-invoke-generate",
+      system: "Canonical skill override generate test",
+      tools: { load_skill: loadSkill, veryfront__invoke_agent: invokeAgent },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    await assistant.generate({ input: "Build a report" });
+
+    assertEquals(callCount, 3);
+    const invokeResult = toolResults.find((result) =>
+      result.toolName === "veryfront__invoke_agent"
+    );
+    assertEquals(invokeResult?.input, {
+      description: "Research reference system",
+      prompt: "Research reference docs",
+      model: "anthropic/claude-sonnet-4-5",
+      thinking: 0,
+      max_steps: 160,
+    });
+    assertEquals(invokeResult?.result, {
+      ok: true,
+      model: "anthropic/claude-sonnet-4-5",
+      thinking: 0,
+      max_steps: 160,
+    });
+  });
+
   it("applies loaded skill maxSteps overrides to stream() invoke_agent calls", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
@@ -4716,8 +4825,20 @@ describe("agent runtime refresh hooks", () => {
     // pre-approval metadata, not an authorization boundary. `load_skill_reference`
     // stays gated on the skill actually advertising a reference file.
     const expectedToolNames = [
-      ["load_skill", "load_skill_reference", "read_secret"],
-      ["load_skill", "load_skill_reference", "read_secret"],
+      [
+        "load_skill",
+        "load_skill_reference",
+        "read_secret",
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
+      ],
+      [
+        "load_skill",
+        "load_skill_reference",
+        "read_secret",
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
+      ],
     ];
     assertEquals(generateToolNames, expectedToolNames);
     assertEquals(streamToolNames, expectedToolNames);

@@ -27,6 +27,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource, ToolDefinition } from "#veryfront/tool";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -117,6 +118,14 @@ const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const iteratorSymbol = Symbol.iterator;
 const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+  "veryfront__execute_skill_script",
+] as const;
 
 function combineSignals(...signals: AbortSignal[]): AbortSignal {
   const inputs = createPrivateSet(signals);
@@ -779,17 +788,42 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         agentId: definition.id,
         selector: definition.skills === false ? [] : definition.skills,
       });
-      if (sourceToolNames !== undefined || request.allowedToolNames === undefined) {
+      const availableSkillIds = skills.allowedSkillIds;
+      const hasKnownEmptySkillManifest = availableSkillIds !== undefined &&
+        availableSkillIds.length === 0;
+      if (
+        sourceToolNames !== undefined || request.allowedToolNames === undefined ||
+        hasKnownEmptySkillManifest
+      ) {
+        const grantedLocalToolNames = filter(
+          normalizeGrantedToolNames(grant.allowedToolNames),
+          (name) => hasOwn(localTools, name),
+        );
+        const trustedGrantedLocalToolNames = filter(
+          grantedLocalToolNames,
+          (name) => hasTrustedHostToolProvenance(localTools[name]),
+        );
         const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
           allowedToolNames: normalizeToolNames(sourceToolNames ?? allowedToolNames),
-          localToolNames: filter(
-            normalizeGrantedToolNames(grant.allowedToolNames),
-            (name) => hasOwn(localTools, name),
-          ),
-          availableSkillIds: skills.allowedSkillIds,
+          localToolNames: grantedLocalToolNames,
+          trustedLocalToolNames: trustedGrantedLocalToolNames,
+          availableSkillIds,
           configDerivedSelector: request.allowedToolNames === undefined &&
             !(definition.tools === true && (definition.deniedTools?.length ?? 0) > 0),
         });
+        if (
+          hasKnownEmptySkillManifest && request.allowedToolNames !== undefined &&
+          effectiveSourceTools !== null
+        ) {
+          const requestedToolNames = normalizeToolNames(request.allowedToolNames);
+          for (let index = 0; index < requestedToolNames.length; index++) {
+            const name = requestedToolNames[index];
+            if (
+              name !== undefined && includes(EMPTY_SKILL_MANIFEST_TOOL_NAMES, name) &&
+              includes(trustedGrantedLocalToolNames, name) && !effectiveSourceTools.has(name)
+            ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+          }
+        }
         allowedToolNames = intersectNames(
           normalizeGrantedToolNames(grant.allowedToolNames),
           effectiveSourceTools === null ? undefined : [...effectiveSourceTools],
@@ -813,7 +847,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         steeringRevision: 0,
         agentId: definition.id,
         model: modelId,
-        availableSkillIds: skills.allowedSkillIds,
+        availableSkillIds,
         ...(execution.kind === "canonical"
           ? { parentRunId: execution.runId, parentMessageId: execution.messageId }
           : {}),
@@ -830,7 +864,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
               projectId: execution.projectId,
               branchId: execution.branchId,
               instructions: steering.initialProjectInstructions ?? "",
-              skills: includes(allowedToolNames, "load_skill") ? skills.definitions : [],
+              skills: includes(allowedToolNames, "load_skill") ||
+                  includes(allowedToolNames, "veryfront__load_skill")
+                ? skills.definitions
+                : [],
               environmentContext: steering.environmentContext,
               availableToolNames: allowedToolNames,
             })
@@ -845,7 +882,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         maxOutputTokens,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
-        availableSkillIds: skills.allowedSkillIds,
+        availableSkillIds,
         ...(definition.toolLoading !== undefined ? { toolLoading: definition.toolLoading } : {}),
         ...(definition.toolResultContext !== undefined
           ? { toolResultContext: definition.toolResultContext }

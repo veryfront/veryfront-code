@@ -871,9 +871,12 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("uses the trusted aliased control-plane name for a parallel batch", async () => {
+  it("uses effective skill delegation args for the trusted aliased control-plane name", async () => {
     let completedBatch: unknown;
+    const executedInputs: unknown[] = [];
     const model = scriptedModel([{
+      toolCalls: [{ id: "load-1", name: "load_skill", input: { skillId: "delegate" } }],
+    }, {
       toolCalls: [
         { id: "child-1", name: "veryfront__invoke_agent", input: { task: "first" } },
         { id: "child-2", name: "veryfront__invoke_agent", input: { task: "second" } },
@@ -887,14 +890,18 @@ describe("provider replay checkpoint emission", () => {
       id: "aliased-parallel-invoke-agent-replay-boundary",
       model: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
       system: "Delegate twice.",
-      skills: false,
+      skills: true,
       tools: {
+        load_skill: skillDelegationTools().load_skill,
         veryfront__invoke_agent: markTrustedHostToolProvenance(
           invokeAgentTool(undefined, "veryfront__invoke_agent"),
         ),
       },
-      maxSteps: 1,
+      maxSteps: 2,
       resolveModelTransport: () => ({ model }),
+      onToolResult: (request: { toolName: string; input: unknown }) => {
+        if (request.toolName === "veryfront__invoke_agent") executedInputs.push(request.input);
+      },
       __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
       __vfProviderReplayInvokeAgentToolNames: ["veryfront__invoke_agent"],
       __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
@@ -906,17 +913,24 @@ describe("provider replay checkpoint emission", () => {
 
     await new AgentRuntime(config.id!, config).generate("Delegate both tasks");
 
-    assertEquals(model.toolNames(0).includes("veryfront__invoke_agent"), true);
+    const expectedArgs = [
+      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    ];
+    assertEquals(model.toolNames(1).includes("veryfront__invoke_agent"), true);
+    assertEquals(executedInputs, expectedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"first"}',
+        toolArgsJson:
+          '{"task":"first","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
       {
         toolCallId: "child-2",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"second"}',
+        toolArgsJson:
+          '{"task":"second","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
     ]);
   });

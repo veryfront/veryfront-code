@@ -22,6 +22,8 @@ import {
 } from "../runtime/provider-replay.ts";
 
 const arrayIsArray = Array.isArray;
+const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -235,7 +237,10 @@ export function resolveHostedRuntimeAllowedTools(input: {
   }
 
   const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
-  if (isKnowledgeEnabled(input.configuredKnowledge)) configuredToolNames.add("search_knowledge");
+  const deniedToolNames = createPrivateSet(input.configuredDeniedTools ?? []);
+  if (isKnowledgeEnabled(input.configuredKnowledge) && !deniedToolNames.has("search_knowledge")) {
+    configuredToolNames.add("search_knowledge");
+  }
   const delegates = input.configuredDelegates ?? [];
   for (let index = 0; index < delegates.length; index++) {
     const id = delegates[index];
@@ -250,9 +255,11 @@ export function resolveHostedRuntimeAllowedTools(input: {
   );
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
+    if (deniedToolNames.has(toolName)) continue;
     if (
       configuredToolNames.has(toolName) ||
-      (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
+      ((toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID) &&
+        hasImplicitLegacyDelegation)
     ) selectedToolNames.add(toolName);
   }
   return [...selectedToolNames];

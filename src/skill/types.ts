@@ -134,6 +134,9 @@ const SKILL_TOOL_ID_VALUES = [
   "load_skill",
   "load_skill_reference",
   "execute_skill_script",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+  "veryfront__execute_skill_script",
 ] as const;
 
 const INTERNAL_SKILL_TOOL_IDS = new Set<string>(SKILL_TOOL_ID_VALUES);

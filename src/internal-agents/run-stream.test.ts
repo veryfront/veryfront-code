@@ -1,5 +1,6 @@
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -2424,7 +2425,7 @@ describe("internal-agents/run-stream", () => {
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
-          load_skill: { description: "Load a skill" },
+          load_skill: markTrustedHostToolProvenance({ description: "Load a skill" }),
         },
       },
     } as unknown as Agent;
@@ -3256,6 +3257,89 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
+
+  for (
+    const testCase of [
+      {
+        name:
+          "preserves canonical invoke_agent delegation when visible skills are hidden from the catalog",
+        canonicalEntry: true,
+        expectedToolNames: ["read_baseline", "veryfront__invoke_agent"],
+      },
+      {
+        name:
+          "does not preserve project-owned canonical invoke_agent collisions across a hard tool allowlist",
+        canonicalEntry: { description: "Project-owned collision" },
+        expectedToolNames: ["read_baseline"],
+      },
+      {
+        name:
+          "does not preserve explicitly denied canonical invoke_agent across a hard tool allowlist",
+        canonicalEntry: false,
+        expectedToolNames: ["read_baseline"],
+      },
+    ] as const
+  ) {
+    it(testCase.name, async () => {
+      registerSkill("handoff", {
+        id: "handoff",
+        metadata: { name: "handoff", description: "Delegate safely" },
+        rootPath: "/test/skills/handoff",
+      });
+
+      const sessionManager = new AgentRunSessionManager();
+      let capturedToolNames: string[] = [];
+
+      const agent = {
+        id: "ops-agent",
+        config: {
+          id: "ops-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          skills: [],
+          tools: {
+            read_baseline: { description: "Read the telemetry baseline" },
+            veryfront__invoke_agent: testCase.canonicalEntry,
+          },
+        },
+      } as unknown as Agent;
+
+      const input = {
+        agentId: "ops-agent",
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [{
+          name: "veryfront__invoke_agent",
+          description: "Canonical platform delegation",
+          parameters: { type: "object", properties: {} },
+        }],
+        context: [],
+        forwardedProps: {
+          runtimeOverrides: {
+            toolAllowlist: ["read_baseline"],
+          },
+        },
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+      await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      });
+
+      assertEquals(capturedToolNames, [...testCase.expectedToolNames]);
+    });
+  }
 
   it("does not preserve caller-injected delegation across a hard tool allowlist", async () => {
     registerSkill("handoff", {

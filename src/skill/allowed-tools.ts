@@ -25,6 +25,7 @@ export type SkillToolAvailability = {
 const LOAD_SKILL_TOOL_ID = "load_skill";
 const LOAD_SKILL_REFERENCE_TOOL_ID = "load_skill_reference";
 const EXECUTE_SKILL_SCRIPT_TOOL_ID = "execute_skill_script";
+const PLATFORM_TOOL_PREFIX = "veryfront__";
 const apply = Reflect.apply;
 const arrayFilter = Array.prototype.filter;
 
@@ -36,15 +37,19 @@ function isSkillInfrastructureToolAllowed(
     return undefined;
   }
 
-  if (toolName === LOAD_SKILL_TOOL_ID) {
+  const skillToolName = toolName.startsWith(PLATFORM_TOOL_PREFIX)
+    ? toolName.slice(PLATFORM_TOOL_PREFIX.length)
+    : toolName;
+
+  if (skillToolName === LOAD_SKILL_TOOL_ID) {
     return true;
   }
 
-  if (toolName === LOAD_SKILL_REFERENCE_TOOL_ID) {
+  if (skillToolName === LOAD_SKILL_REFERENCE_TOOL_ID) {
     return availability.hasActiveSkill === true && (availability.references?.length ?? 0) > 0;
   }
 
-  if (toolName === EXECUTE_SKILL_SCRIPT_TOOL_ID) {
+  if (skillToolName === EXECUTE_SKILL_SCRIPT_TOOL_ID) {
     return availability.hasActiveSkill === true && (availability.scripts?.length ?? 0) > 0;
   }
 
