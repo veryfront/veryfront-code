@@ -1,4 +1,4 @@
-import { completeOnResponseBodySettlement } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
 export interface TrackedProxyRequest {
@@ -25,7 +25,12 @@ export class ProxyRequestDrainTracker {
   }
 
   completeOnResponseEnd(requestId: string, response: Response): Response {
-    return completeOnResponseBodySettlement(response, () => this.complete(requestId));
+    return completeOnResponseBodyConsumption(
+      response,
+      () => this.complete(requestId),
+      undefined,
+      { highWaterMark: 0 },
+    );
   }
 
   getInFlightCount(): number {

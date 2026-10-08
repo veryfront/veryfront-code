@@ -8,16 +8,95 @@ import {
 } from "./request-drain.ts";
 
 describe("proxy request drain", () => {
-  it("completes non-streaming responses when headers are ready", () => {
+  it("keeps a chunked HTML response in flight until its body is consumed", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    let sourceController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        sourceController = controller;
+      },
+    });
+    tracker.start("preview", "GET", "/?studio_embed=true");
+    const response = tracker.completeOnResponseEnd(
+      "preview",
+      new Response(source, { headers: { "content-type": "text/html" } }),
+    );
+    try {
+      assertEquals(tracker.getInFlightCount(), 1);
+      assertEquals(await tracker.waitForDrain(10, 2), false);
+      const consumed = response.text();
+      sourceController!.enqueue(new TextEncoder().encode("<main>preview</main>"));
+      sourceController!.close();
+      assertEquals(await consumed, "<main>preview</main>");
+      assertEquals(await tracker.waitForDrain(50, 2), true);
+    } finally {
+      if (!response.body?.locked) await response.body?.cancel("test cleanup");
+    }
+  });
+
+  it("completes bodyless responses without changing their identity", () => {
     const tracker = new ProxyRequestDrainTracker();
     tracker.start("request-1", "GET", "/health");
 
+    const source = new Response(null, { status: 204 });
     const response = tracker.completeOnResponseEnd(
       "request-1",
-      new Response("ok", { status: 200 }),
+      source,
     );
 
-    assertEquals(response.status, 200);
+    assertEquals(response === source, true);
+    assertEquals(response.status, 204);
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
+  it("does not prefetch a finite HTML body before the transport consumes it", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    tracker.start("html", "GET", "/");
+    const response = tracker.completeOnResponseEnd(
+      "html",
+      new Response("<main>ready</main>", { headers: { "content-type": "text/html" } }),
+    );
+    await Promise.resolve();
+    assertEquals(tracker.getInFlightCount(), 1);
+    assertEquals(await response.text(), "<main>ready</main>");
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
+  it("releases an HTML response when the transport cancels its body", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    let canceled = false;
+    const source = new ReadableStream<Uint8Array>({
+      cancel() {
+        canceled = true;
+      },
+    });
+    tracker.start("canceled-html", "GET", "/");
+    const response = tracker.completeOnResponseEnd(
+      "canceled-html",
+      new Response(source, { headers: { "content-type": "text/html" } }),
+    );
+    assertEquals(tracker.getInFlightCount(), 1);
+    await response.body!.cancel("client disconnected");
+    assertEquals(canceled, true);
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
+  it("releases a failed HTML body without making the truncated response succeed", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    let sourceController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        sourceController = controller;
+      },
+    });
+    tracker.start("failed-html", "GET", "/");
+    const response = tracker.completeOnResponseEnd(
+      "failed-html",
+      new Response(source, { headers: { "content-type": "text/html" } }),
+    );
+    assertEquals(tracker.getInFlightCount(), 1);
+    sourceController!.error(new Error("truncated HTML"));
+    await assertRejects(() => response.text(), Error, "truncated HTML");
     assertEquals(tracker.getInFlightCount(), 0);
   });
 
