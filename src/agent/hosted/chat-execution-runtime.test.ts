@@ -1320,6 +1320,26 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(flushes, ["flush"]);
   });
 
+  it("does not emit local tool inputs through the exported aborted response builder", async () => {
+    const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
+    const buildState = createHostedChatFinalizeResponseBuildState({
+      responseMessage: createResponseMessage({ parts: [metadata] }),
+      isAborted: true,
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+    });
+    const state = await buildState({
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: {} }],
+    });
+    assertEquals(state.finalizedMessage.parts, [metadata]);
+    assertEquals(state.fallbackChunks, []);
+    assertEquals(state.hasIncompleteToolParts, false);
+  });
+
   it("builds finalized response state and metadata without mirror fallback chunks", async () => {
     const buildState = createHostedChatFinalizeResponseBuildState({
       responseMessage: createResponseMessage({

@@ -304,6 +304,7 @@ Deno.test("buildDetachedFallbackMessageState uses the captured message id for de
 
 Deno.test("buildFinalizedMessageFallbackChunks builds finalized fallback text chunks for empty persisted messages", () => {
   const result = buildFinalizedMessageFallbackChunks({
+    isAborted: false,
     persistedMessage: {
       id: "assistant-1",
       role: "assistant",
@@ -357,6 +358,7 @@ Deno.test("buildFinalizedMessageFallbackChunks preserves ordered text without du
   };
 
   const result = buildFinalizedMessageFallbackChunks({
+    isAborted: false,
     persistedMessage: {
       id: "assistant-1",
       role: "assistant",
@@ -437,6 +439,7 @@ Deno.test("finalized tool input adopts matching final-step output without duplic
   mirrored.inputAvailableToolCallIds.add("c");
   assertEquals(
     buildFinalizedMessageFallbackChunks({
+      isAborted: false,
       ...state,
       finalStep,
       mirroredToolChunkState: mirrored,
@@ -478,6 +481,7 @@ Deno.test("partially streamed tool input recovers complete arguments in terminal
   mirrored.startedToolCallIds.add("c");
   assertEquals(
     buildFinalizedMessageFallbackChunks({
+      isAborted: false,
       ...state,
       finalStep,
       mirroredToolChunkState: mirrored,
@@ -525,6 +529,7 @@ Deno.test("partial text suffix precedes its following final-step tool in termina
   });
   assertEquals(repeated.sanitizedFinalizedMessage, state.sanitizedFinalizedMessage);
   const chunks = buildFinalizedMessageFallbackChunks({
+    isAborted: false,
     ...state,
     finalStep,
     mirroredToolChunkState: createMirroredToolChunkState(),
@@ -582,6 +587,7 @@ Deno.test("reasoning normalization retains the original signed part without dupl
   assertEquals(state.sanitizedFinalizedMessage.parts, [original]);
   assertEquals(
     buildFinalizedMessageFallbackChunks({
+      isAborted: false,
       ...state,
       finalStep,
       mirroredToolChunkState: createMirroredToolChunkState(),
@@ -654,6 +660,7 @@ Deno.test("fully streamed tool and text retain both original orders without fall
     mirrored.outputAvailableToolCallIds.add("c");
     assertEquals(
       buildFinalizedMessageFallbackChunks({
+        isAborted: false,
         ...state,
         finalStep,
         mirroredToolChunkState: mirrored,
@@ -703,6 +710,7 @@ Deno.test("buildFinalizedMessageState reconciles a partial later text block with
   );
   assertEquals(
     buildFinalizedMessageFallbackChunks({
+      isAborted: false,
       persistedMessage: result.persistedMessage,
       sanitizedFinalizedMessage: result.sanitizedFinalizedMessage,
       finalStep,
@@ -784,6 +792,7 @@ for (
     );
     assertEquals(
       buildFinalizedMessageFallbackChunks({
+        isAborted: false,
         ...state,
         finalStep,
         mirroredToolChunkState: createMirroredToolChunkState(),
@@ -826,6 +835,7 @@ Deno.test("final-step reasoning does not consume an identical earlier-step block
   );
   assertEquals(
     buildFinalizedMessageFallbackChunks({
+      isAborted: false,
       ...state,
       finalStep,
       mirroredToolChunkState: createMirroredToolChunkState(),
@@ -874,3 +884,52 @@ for (const state of ["pending", "input-streaming", "input-available"] as const) 
     });
   }
 }
+
+Deno.test("missing earlier fallback text retains a later persisted block for reconciliation", () => {
+  const responseMessage = {
+    id: "m",
+    role: "assistant" as const,
+    parts: [{ type: "step-start" as const }, { type: "text" as const, text: "Second" }],
+  };
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [
+          { type: "text", text: "First" },
+          { type: "text", text: "Second" },
+        ],
+      }],
+    },
+  };
+  const input = {
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const state = buildFinalizedMessageState(input);
+  assertEquals(state.sanitizedFinalizedMessage.parts, [...responseMessage.parts, {
+    type: "text",
+    text: "First",
+  }]);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: state.sanitizedFinalizedMessage })
+      .sanitizedFinalizedMessage.parts,
+    state.sanitizedFinalizedMessage.parts,
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "m",
+    }),
+    [
+      { type: "text-start", id: "m" },
+      { type: "text-delta", id: "m", delta: "First" },
+      { type: "text-end", id: "m" },
+    ],
+  );
+});

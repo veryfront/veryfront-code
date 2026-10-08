@@ -62,7 +62,7 @@ export interface DetachedFallbackMessageState {
 
 /** Input payload for build finalized message fallback chunks. */
 export interface BuildFinalizedMessageFallbackChunksInput {
-  isAborted?: boolean;
+  isAborted: boolean;
   persistedMessage: ChatUiMessage;
   sanitizedFinalizedMessage: ChatUiMessage;
   finalStep: unknown;
@@ -132,18 +132,14 @@ export function buildFinalizedMessageState(
   );
   const persistedTextParts = persistedFinalStepParts.filter((part) => part.type === "text")
     .filter((part) => part.text.trim().length > 0);
-  let textCursor = 0;
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      while (
-        textCursor < persistedTextParts.length &&
-        !fallbackPart.text.startsWith(persistedTextParts[textCursor]!.text.trim())
-      ) {
-        textCursor++;
-      }
-      const remainingParts = persistedTextParts.slice(textCursor);
+      const matchingStart = persistedTextParts.findIndex((part) =>
+        fallbackPart.text.startsWith(part.text.trim())
+      );
+      const remainingParts = matchingStart < 0 ? [] : persistedTextParts.slice(matchingStart);
       let matchedCount = 0;
       for (let count = 1; count <= remainingParts.length; count++) {
         const texts = remainingParts.slice(0, count).map((part) => part.text);
@@ -155,7 +151,7 @@ export function buildFinalizedMessageState(
         matchedCount = count;
       }
       const matchedParts = remainingParts.slice(0, matchedCount);
-      textCursor += matchedCount;
+      if (matchedCount > 0) persistedTextParts.splice(matchingStart, matchedCount);
       return appendMissingFallbackTextPart(matchedParts, { text: fallbackPart.text })
         .slice(matchedParts.length);
     }
@@ -301,11 +297,6 @@ export function buildFinalizedMessageFallbackChunks(
         input.finalStep,
         mirroredToolChunkStateWithPartFallbacks,
       )),
-    ...buildMissingFallbackTextChunks(
-      input.persistedMessage.parts,
-      input.finalStep,
-      fallbackMessageId,
-    ),
   ];
 }
 

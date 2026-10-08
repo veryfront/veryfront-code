@@ -1054,6 +1054,54 @@ describe("agent/hosted-chat-finalization", () => {
     });
   }
 
+  it("recovers a missing earlier text block without replaying a persisted later block", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const original: ChatUiMessage["parts"] = [{ type: "step-start" }, {
+      type: "text",
+      text: "Second",
+    }];
+    let parts = original;
+    const finalStep = {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [
+            { type: "text", text: "First" },
+            { type: "text", text: "Second" },
+          ],
+        }],
+      },
+    };
+    for (const _attempt of [0, 1]) {
+      await finalizeHostedChatRun({
+        kind: "response",
+        isAborted: false,
+        responseMessage: createResponseMessage({ parts }),
+        streamResult: createStreamResult(finalStep),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        streamError: null,
+        cleanup: async () => {},
+      });
+      assertEquals(terminalStates.at(-1)!.status, "completed");
+      parts = (terminalStates.at(-1)!.output as ChatUiMessage).parts;
+      assertEquals(parts, [...original, { type: "text", text: "First" }]);
+    }
+    assertEquals(chunks, [{ type: "text-start", id: "assistant-message-1" }, {
+      type: "text-delta",
+      id: "assistant-message-1",
+      delta: "First",
+    }, { type: "text-end", id: "assistant-message-1" }]);
+  });
+
   for (const scenario of ["accepted-provider", "aborted-local"] as const) {
     it(`reconciles terminal fallback for ${scenario}`, async () => {
       const calls: string[] = [];

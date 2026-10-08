@@ -601,6 +601,7 @@ export function createHostedChatFinalizeResponseBuildState(input: {
       fallbackChunks:
         sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
           ? buildFinalizedMessageFallbackChunks({
+            isAborted: input.isAborted,
             persistedMessage,
             sanitizedFinalizedMessage,
             finalStep,
