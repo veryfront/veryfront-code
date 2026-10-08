@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { agent } from "../factory.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -120,6 +121,38 @@ async function connected(model = stubModel(), options: Parameters<typeof pair>[1
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("executor managed model bridge", () => {
+  it("round-trips required stream completion into managed agent execution", async () => {
+    const model = stubModel({
+      runtimeCapabilities: {
+        toolCalling: true,
+        toolCallStreamRequiresFinish: true,
+        streamRequiresFinish: true,
+        structuredOutput: ["json_schema"],
+      },
+    });
+    const channels = await connected(model);
+    try {
+      assertEquals(channels.proxy.runtimeCapabilities, {
+        toolCalling: true,
+        toolCallStreamRequiresFinish: true,
+        streamRequiresFinish: true,
+        structuredOutput: ["json_schema"],
+      });
+      const assistant = agent({
+        model: modelId,
+        system: "Answer the synthetic prompt.",
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model: channels.proxy }),
+      });
+      const body = await (await assistant.stream({ input: "Synthetic prompt" }))
+        .toDataStreamResponse().text();
+      assertEquals(body.includes('"type":"error"'), true);
+      assertEquals(body.includes('"finishReason":"stop"'), false);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("reconciles bounded metadata through the broker and omits unsupported hooks", async () => {
     const plain = await connected();
     try {

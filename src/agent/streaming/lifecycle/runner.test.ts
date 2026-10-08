@@ -32,6 +32,18 @@ describe("runStreamLifecycle", () => {
     }
   });
 
+  it("rejects text EOF before required stream finish", async () => {
+    const provider = createScriptedStreamProvider<StreamSignal>([{
+      kind: "protocol",
+      event: { type: "text_content", delta: "Ready." },
+    }]);
+    const run = runStreamLifecycle({ provider, policy: { streamRequiresFinish: true } });
+    for await (const _frame of run.frames) { /* drain */ }
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "failed");
+    if (outcome.status === "failed") assertEquals(outcome.error.code, "PROVIDER_STREAM_ERROR");
+  });
+
   it("consumes decoded signals without consulting their own array iterator", async () => {
     const signals: StreamSignal[] = [
       { kind: "protocol", event: { type: "text_content", delta: "synthetic private signal" } },

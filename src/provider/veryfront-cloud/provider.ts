@@ -65,6 +65,10 @@ function wrapVeryfrontCloudModel(
   const wrapped = ObjectCreate(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
+    runtimeCapabilities: {
+      enumerable: true,
+      get: () => ({ ...model.runtimeCapabilities, streamRequiresFinish: true }),
+    },
   });
 
   ObjectDefineProperties(wrapped, {

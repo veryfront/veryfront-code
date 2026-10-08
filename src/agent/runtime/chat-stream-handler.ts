@@ -1,3 +1,4 @@
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { isTerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -435,6 +436,7 @@ export interface ChatStreamCallbacks {
   localToolInputIdleTimeoutMs?: number;
   localToolCommitGraceMs?: number;
   requireProviderFinish?: boolean;
+  streamRequiresFinish?: boolean;
   streamIdleTimeoutMs?: number;
   streamLifecycleMode?: StreamLifecycleMode;
   streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
@@ -708,6 +710,7 @@ export function resolveRuntimeLifecyclePolicy(
     ...compatibility,
     ...callbacks?.streamLifecyclePolicy,
     ...(callbacks?.requireProviderFinish ? { requireProviderFinish: true } : {}),
+    ...(callbacks?.streamRequiresFinish ? { streamRequiresFinish: true } : {}),
   });
 }
 
@@ -1312,7 +1315,15 @@ export function processStreamInternal(
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never
         // executes and its card is stranded at input-available.
         const wouldTimeOutIdle = !hasActiveLocalToolInput && !shouldStopForCommittedLocalToolCall;
-        const next = hasActiveLocalToolInput
+        // Cloud completion is bounded by the provider HTTP deadline and caller
+        // signal. Short compatibility idle windows must not cancel its request
+        // before the provider emits final metadata and usage.
+        const next = callbacks?.streamRequiresFinish && !sawProviderFinishPart
+          ? await awaitAbortable(
+            readNextStreamPart(streamIterator, state, abortSignal),
+            abortSignal,
+          )
+          : hasActiveLocalToolInput
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
@@ -1367,6 +1378,11 @@ export function processStreamInternal(
           break;
         }
         if (next.done) {
+          if (callbacks?.streamRequiresFinish && !sawProviderFinishPart) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream ended before required finish"),
+            );
+          }
           if (
             callbacks?.requireProviderFinish && !sawProviderFinishPart &&
             somePrivateArray(
@@ -1903,6 +1919,7 @@ export function processStreamInternal(
         }
 
         throwIfAborted(abortSignal);
+        if (callbacks?.streamRequiresFinish && typedPart.type === "error") break;
       }
 
       throwIfAborted(abortSignal);

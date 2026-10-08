@@ -645,7 +645,7 @@ describe("provider/veryfront-cloud", () => {
       assertEquals(runtime.calls(), ["prepare", "generate", "stream"]);
       assertEquals(model.modelId, "private-field-runtime");
       assertEquals(model.provider, "private-provider");
-      assertEquals(model.runtimeCapabilities, { toolCalling: true });
+      assertEquals(model.runtimeCapabilities, { toolCalling: true, streamRequiresFinish: true });
       assertEquals(model._generateViaStream, true);
       assertEquals(model.modelProvider, "openai");
     } finally {
@@ -2266,7 +2266,7 @@ describe("provider/veryfront-cloud served catalog loading", () => {
 
     // A model constructed now, with the catalog loaded, is the reference.
     const warm = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
-    assertEquals(coldCapabilities, { structuredOutput: true });
+    assertEquals(coldCapabilities, { structuredOutput: true, streamRequiresFinish: true });
     assertEquals(
       JSON.stringify(warm.runtimeCapabilities) === JSON.stringify(coldCapabilities),
       false,
