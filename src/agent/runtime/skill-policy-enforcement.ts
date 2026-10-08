@@ -39,9 +39,11 @@ import {
 import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 import {
   CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
   FORM_INPUT_TOOL_ID,
   isFormInputToolName,
   isLoadSkillToolName,
+  LOAD_SKILL_TOOL_ID,
 } from "../platform-tool-names.ts";
 export {
   CANONICAL_FORM_INPUT_TOOL_ID,
@@ -238,11 +240,22 @@ function getActiveSkillReferenceSnapshot(
   return snapshot;
 }
 
-function isSkillActivationResult(result: unknown): result is Record<string, unknown> {
-  if (!isRecord(result) || hasToolExecutionErrorMarker(result)) return false;
-  const skillId = readToolResultOwnDataProperty(result, "skillId");
-  const instructions = readToolResultOwnDataProperty(result, "instructions");
-  return typeof skillId === "string" &&
+function normalizeToolResultPayload(result: unknown): unknown {
+  const parsed = typeof result === "string" ? parseToolResultJson(result) : result;
+  if (!isRecord(parsed)) return parsed;
+  const type = readToolResultOwnDataProperty(parsed, "type");
+  if (type === "json" && objectHasOwn(parsed, "value")) {
+    return readToolResultOwnDataProperty(parsed, "value");
+  }
+  return parsed;
+}
+
+function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
+  const normalized = normalizeToolResultPayload(result);
+  if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return undefined;
+  const skillId = readToolResultOwnDataProperty(normalized, "skillId");
+  const instructions = readToolResultOwnDataProperty(normalized, "instructions");
+  const isActivation = typeof skillId === "string" &&
     skillId.length > 0 &&
     skillId.length <= SKILL_ID_MAX_LENGTH &&
     isWellFormedUtf16(skillId) &&
@@ -250,6 +263,11 @@ function isSkillActivationResult(result: unknown): result is Record<string, unkn
     typeof instructions === "string" &&
     instructions.length <= SKILL_DOCUMENT_MAX_CHARACTERS &&
     isWellFormedUtf16(instructions);
+  return isActivation ? normalized : undefined;
+}
+
+function isSkillActivationResult(result: unknown): boolean {
+  return getSkillActivationResult(result) !== undefined;
 }
 
 export type ActiveSkillState = {
@@ -296,8 +314,9 @@ export function hydrateActiveSkillStateFromMessages(
 }
 
 export function extractSkillId(result: unknown): string | undefined {
-  if (!isRecord(result)) return undefined;
-  const skillId = readToolResultOwnDataProperty(result, "skillId");
+  const activation = getSkillActivationResult(result);
+  if (!activation) return undefined;
+  const skillId = readToolResultOwnDataProperty(activation, "skillId");
   return typeof skillId === "string" ? skillId : undefined;
 }
 
@@ -335,18 +354,19 @@ function extractStringArrayField(
 export function extractSkillToolAvailability(
   result: unknown,
 ): SkillToolAvailability | undefined {
-  if (!isSkillActivationResult(result)) return undefined;
+  const activation = getSkillActivationResult(result);
+  if (!activation) return undefined;
 
   return Object.freeze({
     hasActiveSkill: true,
     references: extractStringArrayField(
-      result,
+      activation,
       "references",
       SKILL_READABLE_DIRS,
       SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
     ),
     scripts: extractStringArrayField(
-      result,
+      activation,
       "scripts",
       ["scripts"],
       SKILL_SUBDIR_MAX_ENTRIES,
@@ -370,15 +390,16 @@ export function applySkillActivationResult(
   result: unknown,
   options: SkillActivationOptions = {},
 ): ActiveSkillState {
-  if (!isSkillActivationResult(result)) return current;
+  const activation = getSkillActivationResult(result);
+  if (!activation) return current;
 
   try {
     return {
-      activeSkillId: extractSkillId(result),
-      activeSkillToolAvailability: extractSkillToolAvailability(result) ??
+      activeSkillId: extractSkillId(activation),
+      activeSkillToolAvailability: extractSkillToolAvailability(activation) ??
         INACTIVE_SKILL_TOOL_AVAILABILITY,
       activeSkillDelegationOverrides: options.trustDelegationOverrides === true
-        ? extractSkillDelegationOverrides(result)
+        ? extractSkillDelegationOverrides(activation)
         : undefined,
     };
   } catch (error) {
@@ -398,7 +419,7 @@ function parseToolResultJson(result: string): unknown {
 }
 
 export function isSubmittedFormInputResult(result: unknown): boolean {
-  const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
+  const normalized = normalizeToolResultPayload(result);
   if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return false;
   const submitted = readToolResultOwnDataProperty(normalized, "submitted");
   if (submitted === UNREADABLE_TOOL_RESULT_PROPERTY) return false;
@@ -446,6 +467,33 @@ export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
         trustedToolCallIdSet.has(part.toolCallId) &&
         ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
           (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part);
+      }
+    }
+  }
+}
+
+/** Restore platform control provenance for trusted hosted server conversation history. */
+export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
+  messages: readonly Message[],
+  options: {
+    legacyLoadSkillReplayAllowed?: boolean;
+  } = {},
+): void {
+  for (let index = 0; index < messages.length; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const parts = message.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) &&
+        (part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
+          (options.legacyLoadSkillReplayAllowed === true &&
+            part.toolName === LOAD_SKILL_TOOL_ID)) &&
+        isSkillActivationResult(part.result)
       ) {
         markTrustedPlatformPolicyToolResultPart(part);
       }

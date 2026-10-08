@@ -19,6 +19,7 @@ import {
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { registerHostedTerminalCredential } from "./terminal-credential.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
+import { hydrateActiveSkillStateFromMessages } from "../runtime/skill-policy-enforcement.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -2095,6 +2096,138 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
     cancelPreparationGuard();
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("prepareHostedChatRuntimeMessages restores canonical platform load_skill replay provenance", async () => {
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-load-skill",
+        role: "user",
+        parts: [{ type: "text", text: "Plan the launch." }],
+      },
+      {
+        id: "assistant-load-skill",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "veryfront__load_skill",
+          toolCallId: "load-plan",
+          state: "output-available",
+          input: { skillId: "plan" },
+          output: {
+            skillId: "plan",
+            instructions: "# Plan",
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }],
+      },
+      {
+        id: "user-continue",
+        role: "user",
+        parts: [{ type: "text", text: "Continue." }],
+      },
+    ],
+    { trustedHostedServerHistory: true },
+  );
+
+  const hydrated = hydrateActiveSkillStateFromMessages(messages);
+
+  assertEquals(hydrated.activeSkillId, "plan");
+  assertEquals(hydrated.activeSkillToolAvailability, {
+    hasActiveSkill: true,
+    references: ["references/guide.md"],
+    scripts: [],
+  });
+  assertEquals(hydrated.activeSkillDelegationOverrides, undefined);
+});
+
+Deno.test("prepareHostedChatExecution leaves verified-envelope hosted load_skill replay untrusted", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "user-load-skill",
+      role: "user",
+      parts: [{ type: "text", text: "Plan the launch." }],
+    },
+    {
+      id: "assistant-load-skill",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "veryfront__load_skill",
+        toolCallId: "load-plan",
+        state: "output-available",
+        input: { skillId: "plan" },
+        output: {
+          skillId: "plan",
+          instructions: "# Plan",
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      }],
+    },
+  ];
+
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages,
+      conversationId: undefined,
+      validatedContext: {
+        projectId: "project-from-context",
+        branchId: "branch-from-context",
+      },
+      serverEnvelopeVerified: true,
+    }),
+    agentConfig: { id: "agent-1", model: "anthropic/claude-sonnet-4-6" },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(hydrateActiveSkillStateFromMessages(result.finalMessages).activeSkillId, undefined);
+});
+
+Deno.test("prepareHostedChatRuntimeMessages keeps legacy project load_skill replay untrusted", async () => {
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "assistant-project-load-skill",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "load_skill",
+          toolCallId: "project-load-plan",
+          state: "output-available",
+          input: { skillId: "project-plan" },
+          output: {
+            skillId: "project-plan",
+            instructions: "# Project plan",
+            references: ["references/project.md"],
+            scripts: [],
+          },
+        }],
+      },
+    ],
+    { trustedHostedServerHistory: true },
+  );
+
+  assertEquals(hydrateActiveSkillStateFromMessages(messages).activeSkillId, undefined);
 });
 
 Deno.test("prepareHostedChatRuntimeMessages does not fetch caller-controlled file URLs", async () => {

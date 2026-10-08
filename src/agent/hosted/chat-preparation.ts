@@ -35,7 +35,10 @@ import {
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
-import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
+import {
+  isLoadSkillToolName,
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
+} from "../runtime/skill-policy-enforcement.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import {
   resolveRuntimeSkillSelectorForAgent,
@@ -103,6 +106,8 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     apiUrl?: string | URL;
     projectId?: string | null;
     providerReplayCheckpointMessageIds?: readonly string[];
+    trustedHostedServerHistory?: boolean;
+    legacyLoadSkillReplayAllowed?: boolean;
   };
 
 /** Context for hosted chat runtime preparation root run. */
@@ -844,7 +849,7 @@ export async function prepareHostedChatRuntimeMessages(
   options: PrepareHostedChatRuntimeMessagesOptions = {},
 ): Promise<AgentRuntimeMessage[]> {
   if (!options.authToken || !options.apiUrl) {
-    return await prepareAgentRuntimeMessagesFromUiMessages({
+    const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
@@ -859,11 +864,17 @@ export async function prepareHostedChatRuntimeMessages(
         ),
       },
     });
+    if (options.trustedHostedServerHistory === true) {
+      restoreTrustedHostedPlatformPolicyResultsFromServerHistory(runtimeMessages, {
+        legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+      });
+    }
+    return runtimeMessages;
   }
   const authToken = options.authToken;
   const apiUrl = options.apiUrl;
 
-  return await prepareAgentRuntimeMessagesFromUiMessages({
+  const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,
@@ -886,4 +897,10 @@ export async function prepareHostedChatRuntimeMessages(
       }),
     onUnresolvableAttachment: options.onUnresolvableAttachment,
   });
+  if (options.trustedHostedServerHistory === true) {
+    restoreTrustedHostedPlatformPolicyResultsFromServerHistory(runtimeMessages, {
+      legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+    });
+  }
+  return runtimeMessages;
 }
