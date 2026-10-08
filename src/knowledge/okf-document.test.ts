@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { inspectOkfDocument, OKF_SPEC_REVISION, OKF_SPEC_VERSION } from "./okf-document.ts";
+import {
+  inspectOkfDocument,
+  isRuntimeCapabilityError,
+  OKF_SPEC_REVISION,
+  OKF_SPEC_VERSION,
+} from "./okf-document.ts";
 
 describe("OKF document inspection", () => {
   it("preserves canonical source, nested extensions, timestamps and authored links", () => {
@@ -59,6 +64,7 @@ describe("OKF document inspection", () => {
     for (
       const source of [
         "---\ntype: [unfinished\n---\nBody",
+        "---\ntype: Topic\nx: [Requires env access\n---\nBody",
         "---\ntype: Playbook\nBody",
         "---\n- item\n---\nBody",
         "---\ntype: Topic---\nBody",
@@ -70,6 +76,24 @@ describe("OKF document inspection", () => {
       assertEquals(inspected.envelopeConforms, false);
       assertEquals(inspected.diagnostics.map((value) => value.code), ["invalid_frontmatter"]);
     }
+  });
+
+  it("distinguishes parser capability failures from malformed OKF", () => {
+    const deniedEnv = new Error('Requires env access to "LOG_TOKENS"');
+    deniedEnv.name = "NotCapable";
+    assertEquals(
+      isRuntimeCapabilityError(
+        new SyntaxError("YAML parser failed", {
+          cause: deniedEnv,
+        }),
+      ),
+      true,
+    );
+    assertEquals(
+      isRuntimeCapabilityError(new SyntaxError("x: [Requires env access\n                   ^")),
+      false,
+    );
+    assertEquals(isRuntimeCapabilityError(new Error("Unexpected scalar at line 1")), false);
   });
 
   it("preserves inline dashes in valid YAML values before a proper delimiter", () => {

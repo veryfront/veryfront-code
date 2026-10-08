@@ -23,6 +23,18 @@ export interface OkfDocumentInspection {
   diagnostics: OkfDocumentDiagnostic[];
 }
 
+export function isRuntimeCapabilityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (
+    error.name === "NotCapable" &&
+    /^Requires (?:read|write|env|net|run|ffi|sys) access\b/.test(error.message)
+  ) {
+    return true;
+  }
+  const cause = Object.getOwnPropertyDescriptor(error, "cause")?.value;
+  return isRuntimeCapabilityError(cause);
+}
+
 /**
  * Inspect the basic OKF document contract at the pinned revision.
  *
@@ -78,7 +90,8 @@ export function inspectOkfDocument(path: string, source: string): OkfDocumentIns
           diagnostics.push({ code: "invalid_type", message: "Set type to a non-empty string." });
         }
       }
-    } catch {
+    } catch (error) {
+      if (isRuntimeCapabilityError(error)) throw error;
       diagnostics.push({
         code: "invalid_frontmatter",
         message: "Use one valid YAML mapping between the frontmatter delimiters.",
