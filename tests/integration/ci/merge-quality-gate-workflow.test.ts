@@ -873,8 +873,8 @@ done
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
-    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
+    assertEquals(matrix.shard, Array.from({ length: 16 }, (_, i) => i + 1));
+    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/16");
     assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     const steps = (coverageShards.steps as unknown[]).map((step) =>
       asRecord(step, "coverage shard step")
@@ -883,7 +883,7 @@ done
     assert(run, "every shard must execute the coverage suite");
     assertStringIncludes(
       String(run.run),
-      "--shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "--shard=${{ matrix.shard }}/16 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     const codecov = asRecord(jobs["codecov-upload"], "codecov job");
     const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
@@ -894,10 +894,20 @@ done
       "coverage-profiles/coverage-shard-1/lcov.info",
       "coverage-profiles/coverage-shard-1/history/lcov.info",
       "coverage-profiles/coverage-shard-1/cli/lcov.info",
-      ...[2, 3, 4, 5, 6, 7, 8].map((shard) =>
+      ...Array.from({ length: 15 }, (_, i) => i + 2).map((shard) =>
         `coverage-profiles/coverage-shard-${shard}/lcov.info`
       ),
     ]);
+    const testedRun = asRecord(jobs["tested-run"], "tested-run job");
+    const decide = (testedRun.steps as unknown[])
+      .map((step) => asRecord(step, "tested-run step"))
+      .find((step) => step.id === "decide");
+    assert(decide, "reuse must verify every coverage artifact");
+    const artifacts = String(decide.run).match(/\bcoverage-shard-\d+\b/g);
+    assertEquals(
+      artifacts,
+      Array.from({ length: 16 }, (_, i) => `coverage-shard-${i + 1}`),
+    );
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);

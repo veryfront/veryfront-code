@@ -104,6 +104,8 @@ jobs:
             "npm-compatibility-${GITHUB_SHA}" \
             coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
+            coverage-shard-9 coverage-shard-10 coverage-shard-11 coverage-shard-12 \
+            coverage-shard-13 coverage-shard-14 coverage-shard-15 coverage-shard-16 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
         if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
@@ -325,11 +327,11 @@ jobs:
     needs: [npm-compatibility-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    name: "tests (node shard ${{ matrix.shard }}/2)"
+    name: "tests (node shard ${{ matrix.shard }}/4)"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -345,7 +347,7 @@ jobs:
       - uses: ./.github/actions/restore-npm-workspace
       - name: Run Node runtime shard
         env:
-          VF_TEST_SHARD: ${{ matrix.shard }}/2
+          VF_TEST_SHARD: ${{ matrix.shard }}/4
         run: node ./tests/node/run-tests.mjs --suite=runtime:node
 
   # Sandbox worker generation and prepared-module encoding on the minimum
@@ -535,11 +537,11 @@ jobs:
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    name: coverage shard ${{ matrix.shard }}/8
+    name: coverage shard ${{ matrix.shard }}/16
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -550,7 +552,7 @@ jobs:
         id: coverage
         run: |
           START=$(date +%s)
-          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}
+          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/16 --coverage-dir=coverage-shard-${{ matrix.shard }}
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Include CLI, dependency history, and runtime security integration coverage
         if: matrix.shard == 1
@@ -585,7 +587,7 @@ jobs:
           path: coverage-shard-${{ matrix.shard }}/**/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
-        run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "### Coverage shard ${{ matrix.shard }}/16 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
   coverage-node-executor:
     needs: [tested-run]
@@ -725,7 +727,7 @@ jobs:
           use_oidc: true
           # Comma separated, the form the action documents. All files go up in
           # one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info,coverage-profiles/coverage-shard-9/lcov.info,coverage-profiles/coverage-shard-10/lcov.info,coverage-profiles/coverage-shard-11/lcov.info,coverage-profiles/coverage-shard-12/lcov.info,coverage-profiles/coverage-shard-13/lcov.info,coverage-profiles/coverage-shard-14/lcov.info,coverage-profiles/coverage-shard-15/lcov.info,coverage-profiles/coverage-shard-16/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
