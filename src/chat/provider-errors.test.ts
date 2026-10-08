@@ -39,6 +39,14 @@ describe("chat/provider-errors", () => {
       parseProviderError(new Error("Provider stream failed", { cause: failure })),
       expected,
     );
+    assertEquals(executorModelFailure(failure), {
+      type: "failure",
+      code: "ai_provider_spend_check_unavailable",
+    });
+    assertEquals(
+      parseProviderError(createExecutorModelFailure("ai_provider_spend_check_unavailable")),
+      expected,
+    );
   });
 
   it("keeps unmarked provider spend-check text as a provider overload", async () => {

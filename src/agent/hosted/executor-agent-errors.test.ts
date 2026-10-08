@@ -18,6 +18,7 @@ const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; 
     { code: "INSUFFICIENT_CREDITS", status: 402 },
     { code: "RESOURCE_LIMIT_EXCEEDED", status: 402 },
     { code: "OVERLOADED_ERROR", status: 503 },
+    { code: "ai_provider_spend_check_unavailable", status: 503 },
     { code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED", status: 402 },
     { code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED", status: 502 },
     { code: "AI_PROVIDER_BILLING_ERROR", status: 502 },
