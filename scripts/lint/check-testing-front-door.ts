@@ -66,7 +66,9 @@ export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
     // In a local declaration, `typeof globalThis.fetch` is a type query;
     // the following equals sign assigns the local binding, not the global.
     exemptMatch: (match, stripped) =>
-      /\btypeof\s*$/.test(stripped.slice(0, match.index)),
+      /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*:\s*typeof\s*$/.test(
+        stripped.slice(0, match.index),
+      ),
     message:
       "globalThis.fetch assigned directly; use withMockFetch or installMockFetch " +
       "so the outbound transport moves with the global",

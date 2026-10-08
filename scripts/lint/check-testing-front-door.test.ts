@@ -40,6 +40,16 @@ describe("findFrontDoorBypasses", () => {
       assertEquals(groupsOf(source), ["fetch-assignment"]);
     });
 
+    it("counts global writes after a property named typeof", () => {
+      const source = [
+        "const kind = options.typeof",
+        "globalThis.fetch = stub;",
+        "const other = options . typeof",
+        "globalThis.fetch = anotherStub;",
+      ].join("\n");
+      assertEquals(groupsOf(source), ["fetch-assignment", "fetch-assignment"]);
+    });
+
     it("does not count comparisons or reads", () => {
       const source = [
         "if (globalThis.fetch === original) return;",
