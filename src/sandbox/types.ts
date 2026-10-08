@@ -14,7 +14,7 @@ export type SandboxWorkspaceStorage = "ephemeral" | "persistent";
 export type SandboxLifetimeMode = "default" | "duration" | "always_on";
 
 export interface SandboxClientOptions {
-  /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL, then the Veryfront Cloud API. */
+  /** Base URL of the Veryfront API. Set apiUrl or VERYFRONT_API_URL outside a scoped Veryfront Cloud context. */
   apiUrl?: string;
   /** Explicit Veryfront auth token or API key override. */
   authToken?: string;

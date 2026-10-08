@@ -141,6 +141,51 @@ describe("Sandbox", () => {
   });
 
   for (const ttlMode of ["default", "duration"] as const) {
+    for (
+      const [owned, storage] of [[true, "ephemeral"], [true, "persistent"], [
+        false,
+        "ephemeral",
+      ]] as const
+    ) {
+      it(`restores ${ttlMode} cleanup only for owned ephemeral storage: owned=${owned}, storage=${storage}`, async () => {
+        const details = {
+          id: "lifetime-roundtrip",
+          short_id: "roundtrip",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: storage,
+          access_scope: "project",
+          project_id: null,
+          created_at: "2026-10-08T00:00:00Z",
+          ttl_mode: ttlMode,
+          ttl_hours: ttlMode === "duration" ? 4 : null,
+          expires_at: null,
+          last_activity_at: null,
+        };
+        mockFetch([
+          ...(owned ? [jsonResponse(details)] : []),
+          jsonResponse({ ...details, ttl_mode: "always_on", ttl_hours: null }),
+          jsonResponse(details),
+          jsonResponse({ ok: true }),
+        ]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com" };
+        const sandbox = owned
+          ? await Sandbox.create(options)
+          : Sandbox.attach({ ...options, id: details.id, endpoint: details.endpoint });
+        await sandbox.updateLifetime({ ttlMode: "always_on" });
+        await sandbox.updateLifetime(
+          ttlMode === "duration" ? { ttlMode: "duration", ttlHours: 4 } : { ttlMode: "default" },
+        );
+        await sandbox.close();
+        assertEquals(
+          fetchCalls.some((call) => call.init?.method === "DELETE"),
+          owned && storage === "ephemeral",
+        );
+      });
+    }
+  }
+
+  for (const ttlMode of ["default", "duration"] as const) {
     it(`preserves created persistent storage with ${ttlMode} cleanup`, async () => {
       mockFetch([
         jsonResponse({

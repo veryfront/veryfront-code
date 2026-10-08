@@ -77,6 +77,7 @@ interface SandboxPrivateState {
   authToken: string;
   apiUrl: string;
   deleteOnClose: boolean;
+  createdByClient: boolean;
 }
 
 const sandboxPrivateStates = new WeakMap<object, SandboxPrivateState>();
@@ -96,7 +97,7 @@ function getSandboxAuthToken(sandbox: Sandbox): string {
   return getSandboxPrivateState(sandbox).authToken;
 }
 
-/** Client for isolated ephemeral compute environments with command execution and file I/O. */
+/** Client for isolated coding workspaces with command execution and file I/O. */
 export class Sandbox {
   private constructor(
     endpoint: string,
@@ -104,6 +105,7 @@ export class Sandbox {
     authToken: string,
     apiUrl: string,
     deleteOnClose = true,
+    createdByClient = false,
   ) {
     applyIntrinsic(weakMapSet, sandboxPrivateStates, [this, {
       endpoint,
@@ -111,6 +113,7 @@ export class Sandbox {
       authToken,
       apiUrl,
       deleteOnClose,
+      createdByClient,
     }]);
   }
 
@@ -147,6 +150,7 @@ export class Sandbox {
       authToken,
       apiUrl,
       options.ttlMode !== "always_on" && workspace_storage !== "persistent",
+      true,
     );
   }
 
@@ -223,7 +227,7 @@ export class Sandbox {
       }),
     );
     const state = getSandboxPrivateState(this);
-    state.deleteOnClose = state.deleteOnClose && details.workspaceStorage !== "persistent" &&
+    state.deleteOnClose = state.createdByClient && details.workspaceStorage !== "persistent" &&
       details.ttlMode !== "always_on";
     return details;
   }
