@@ -140,3 +140,38 @@ describe("OKF document inspection", () => {
     assertEquals(inspectOkfDocument("topic.md", duplicate).source, duplicate);
   });
 });
+
+for (const [label, newline] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
+  it(`preserves Markdown after an empty ${label} envelope before a later horizontal rule`, () => {
+    const body = ["# Navigation", "", "---", "Footer", ""].join(newline);
+    const source = ["---", "---", ""].join(newline) + body;
+    for (const path of ["index.md", "nested/log.md", "topic.md"]) {
+      const inspected = inspectOkfDocument(path, source);
+      assertEquals(inspected.body, body);
+      assertEquals(inspected.metadata, {});
+      assertEquals(inspected.source, source);
+      assertEquals(
+        inspected.diagnostics.map((diagnostic) => diagnostic.code),
+        path === "topic.md" ? ["missing_type"] : [],
+      );
+    }
+  });
+}
+
+it("keeps Unicode line separators inside YAML values instead of closing the envelope", () => {
+  for (const separator of ["\u2028", "\u2029"]) {
+    const title = `abc${separator}---`;
+    const source = `---\ntype: Topic\ntitle: ${title}\n---\nBody`;
+    const inspected = inspectOkfDocument("topic.md", source);
+    assertEquals(inspected.metadata.title, title);
+    assertEquals(inspected.body, "Body");
+    assertEquals(inspected.envelopeConforms, true);
+  }
+});
+
+it("does not accept a closing delimiter followed by a standalone carriage return", () => {
+  const source = "---\ntype: Topic\n---\rBody";
+  const inspected = inspectOkfDocument("topic.md", source);
+  assertEquals(inspected.body, source);
+  assertEquals(inspected.diagnostics.map((diagnostic) => diagnostic.code), ["invalid_frontmatter"]);
+});
