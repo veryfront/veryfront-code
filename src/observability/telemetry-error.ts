@@ -921,7 +921,7 @@ const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
   "web-search sources were malformed",
 ]);
 const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
-  /^(?:OpenAI|openai) request failed: invalid successful stream \(([^)]+)\)$/;
+  /^(?:OpenAI|openai|veryfront-cloud) request failed: invalid successful stream \(([^)]+)\)$/;
 
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
   if (

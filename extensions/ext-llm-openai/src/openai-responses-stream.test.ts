@@ -73,6 +73,17 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         issue: "message delta referenced an unknown message item",
       },
       {
+        events: [{ type: "response.output_text.delta", item_id: "missing", delta: "private text" }],
+        providerLabel: "veryfront-cloud",
+        issue: "message delta referenced an unknown message item",
+      },
+      {
+        events: [{ type: "response.output_text.delta", item_id: "missing", delta: "private text" }],
+        providerLabel: "private-provider-label",
+        privateIssue: "message delta referenced an unknown message item",
+        issue: undefined,
+      },
+      {
         events: [{ type: "response.output_text.delta", delta: { private: "provider text" } }],
         issue: "output-text delta was malformed",
       },
@@ -110,15 +121,17 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         privateIssue: "event type private-provider-event was unsupported",
       },
     ];
-    for (const { events, issue, privateIssue } of cases) {
+    for (const { events, issue, privateIssue, providerLabel } of cases) {
       const error = await assertRejects(
-        () => collectParts(streamFromText(events.map(data).join(""))),
+        () => collectParts(streamFromText(events.map(data).join("")), { providerLabel }),
         ProviderRequestError,
       );
       assert(error instanceof ProviderRequestError);
       assertEquals(
         error.message,
-        `openai request failed: invalid successful stream (${issue ?? privateIssue})`,
+        `${providerLabel ?? "openai"} request failed: invalid successful stream (${
+          issue ?? privateIssue
+        })`,
       );
       const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
       assertExists(causes);
