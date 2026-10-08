@@ -236,7 +236,11 @@ describe("server/runtime-handler/request-lifecycle", () => {
       await reader.read();
       assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
       release!();
-      await reader.read();
+      // Closing the source must not finish tracking while the transport still
+      // has not requested its terminal read.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+      assertEquals((await reader.read()).done, true);
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
 

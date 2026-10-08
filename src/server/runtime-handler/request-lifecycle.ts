@@ -150,7 +150,7 @@ export function completeRequestTrackingOnResponseEnd(
     completeRequestTracking(requestId, response.status, isTimeout, profile);
   };
   if (settleResponseBody) {
-    return completeOnResponseBodyConsumption(response, settle, undefined, undefined, {
+    return completeOnResponseBodyConsumption(response, settle, undefined, { highWaterMark: 0 }, {
       waitForConsumption: true,
     });
   }
