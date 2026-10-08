@@ -978,7 +978,41 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # The JS retry action can hold a cancelled run until the runner's forced
+      # termination. Own the process group in a native step for the queue only.
+      - name: Run cancellable binary e2e
+        if: ${{ github.event_name == 'merge_group' }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          exec python3 -u - <<'PY'
+          import os, signal, subprocess, sys
+
+          child = None
+          cancelled = None
+          def cancel(signum, frame):
+              global cancelled
+              cancelled = signum
+              if child is not None:
+                  try:
+                      os.killpg(child.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+
+          signal.signal(signal.SIGINT, cancel)
+          signal.signal(signal.SIGTERM, cancel)
+          child = subprocess.Popen(
+              ["deno", "task", "test:e2e:binary"],
+              env=dict(os.environ, VERYFRONT_BINARY_FRESH="1"),
+              start_new_session=True,
+          )
+          if cancelled is not None:
+              cancel(cancelled, None)
+          code = child.wait()
+          sys.exit(128 + cancelled if cancelled is not None else code if code >= 0 else 128 - code)
+          PY
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        if: ${{ github.event_name != 'merge_group' }}
         with:
           timeout_minutes: 30
           max_attempts: 2
