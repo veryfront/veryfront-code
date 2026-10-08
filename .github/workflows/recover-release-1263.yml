@@ -30,7 +30,7 @@
         },
         {
           "name": "Deliberate failed publish fixture",
-          "run": "echo \"Exact merged diagnostic source: 299be74ff5fc7188f6cac0609168adef1264918e\"; exit 1"
+          "run": "echo \"Exact merged diagnostic source: 641f76768\"; exit 1"
         }
       ]
     },
