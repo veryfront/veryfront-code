@@ -18,6 +18,10 @@ describe("commands/doctor/handler", () => {
   });
 
   describe("parseDoctorArgs", () => {
+    it("rejects the knowledge-only OKF bundle flag", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "--okf-bundle"]));
+      assertEquals(result.success, false);
+    });
     it("parses an explicit server port from raw argv", () => {
       const result = parseDoctorArgs(parseCliArgs(["doctor", "--port", "4321"]));
 

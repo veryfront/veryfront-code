@@ -41,6 +41,7 @@ import {
   createUploadSource,
 } from "./command.test-helpers.ts";
 import type { Logger } from "#veryfront/utils";
+import { VERSION } from "#cli/utils";
 
 type LoggedEvent = {
   level: string;
@@ -1233,6 +1234,61 @@ describe("ensureUniqueSlugs", () => {
   });
 });
 
+it("collects hidden OKF upload Markdown without downloading viewer artifacts", async () => {
+  const paths = ["uploads/.bundle/index.md", "uploads/.bundle/.catalog/topic.md"];
+  const calls: string[][] = [];
+  const collection = await collectKnowledgeSources(
+    { sources: [], path: "uploads/.bundle", all: true, recursive: true, okfBundle: true },
+    {
+      client: createMockClient({
+        get: () =>
+          Promise.resolve({
+            data: [...paths, "uploads/.bundle/viz.html"].map((path) => ({ type: "file", path })),
+            page_info: { next: null },
+          }),
+      }),
+      projectSlug: "my-project",
+      downloadUploads: createDownloadUploadsStub(calls),
+    },
+  );
+  assertEquals(calls, [paths]);
+  assertEquals(
+    collection.sources.map((source) => source.localPath),
+    paths.map((path) => `/workspace/${path}`),
+  );
+  assertEquals(collection.skipped.length, 1);
+  assertEquals(collection.skipped[0]?.source, "uploads/.bundle/viz.html");
+});
+
+it("collects Markdown in hidden OKF roots and directories", async () => {
+  const tempDir = await makeTempDir({ prefix: "veryfront-okf-hidden-" });
+  const root = join(tempDir, ".bundle");
+  const paths = ["index.md", ".catalog/topic.md", ".hidden.md"];
+  try {
+    for (const path of paths) {
+      await Deno.mkdir(dirname(join(root, path)), { recursive: true });
+      await Deno.writeTextFile(join(root, path), "# Authored document\n");
+    }
+    const collection = await collectKnowledgeSources(
+      { sources: [], path: root, all: true, recursive: true, okfBundle: true },
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        downloadUploads: async () => {
+          throw new Error("must not download local bundle files");
+        },
+      },
+    );
+    assertEquals(
+      collection.sources.map((source) => source.localPath).sort(),
+      paths.map((path) => join(root, path)).sort(),
+    );
+    assertEquals(collection.skipped, []);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
 const canonicalGa4OkfDocuments: Array<{
   path: string;
   kind: "concept" | "index";
@@ -1572,6 +1628,7 @@ describe("runKnowledgeParser", () => {
       assertStringIncludes(markdown, 'source: "uploads/contracts/q1-report.txt"');
       assertStringIncludes(markdown, 'description: "Quarterly performance summary"');
       assertStringIncludes(markdown, "generated:");
+      assertStringIncludes(markdown, `by: "veryfront/${VERSION}"`);
       assertStringIncludes(markdown, 'resource: "uploads/contracts/q1-report.txt"');
       assertEquals(markdown.includes("added:"), false);
       assertStringIncludes(markdown, "# Q1 Report");

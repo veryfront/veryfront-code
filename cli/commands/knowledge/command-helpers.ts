@@ -194,11 +194,14 @@ function classifyDirectoryOrSkip(
 export async function collectLocalFiles(
   root: string,
   recursive: boolean,
+  okfBundle = false,
 ): Promise<KnowledgeSourceCollection> {
   const fs = createFileSystem();
   const stat = await fs.stat(root);
   if (stat.isFile) {
-    const skipped = classifySourceOrSkip({ source: root, localSourcePath: root });
+    const skipped = okfBundle
+      ? null
+      : classifySourceOrSkip({ source: root, localSourcePath: root });
     return skipped == null
       ? {
         sources: [{ kind: "local", input: root, localPath: root }],
@@ -213,7 +216,7 @@ export async function collectLocalFiles(
     return { sources: [], skipped: [] };
   }
 
-  const skippedRootDirectory = classifyDirectoryOrSkip({ source: root });
+  const skippedRootDirectory = okfBundle ? null : classifyDirectoryOrSkip({ source: root });
   if (skippedRootDirectory != null) {
     return {
       sources: [],
@@ -229,7 +232,7 @@ export async function collectLocalFiles(
     for await (const entry of fs.readDir(dir)) {
       const entryPath = join(dir, entry.name);
       if (entry.isDirectory) {
-        const skipped = classifyDirectoryOrSkip({ source: entryPath });
+        const skipped = okfBundle ? null : classifyDirectoryOrSkip({ source: entryPath });
         if (skipped != null) {
           collection.skipped.push(skipped);
           continue;
@@ -242,7 +245,9 @@ export async function collectLocalFiles(
         continue;
       }
 
-      const skipped = classifySourceOrSkip({ source: entryPath, localSourcePath: entryPath });
+      const skipped = okfBundle
+        ? null
+        : classifySourceOrSkip({ source: entryPath, localSourcePath: entryPath });
       if (skipped != null) {
         collection.skipped.push(skipped);
         continue;

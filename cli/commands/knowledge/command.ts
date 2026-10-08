@@ -260,11 +260,12 @@ function createFailedKnowledgeSource(input: {
 async function collectLocalFiles(
   root: string,
   recursive: boolean,
+  okfBundle = false,
 ): Promise<KnowledgeSourceCollection> {
-  return commandHelpers.collectLocalFiles(root, recursive);
+  return commandHelpers.collectLocalFiles(root, recursive, okfBundle);
 }
 
-function classifyListedUploadsForKnowledge(uploads: UploadItem[]): {
+function classifyListedUploadsForKnowledge(uploads: UploadItem[], okfBundle = false): {
   skipped: KnowledgeIngestSkippedFileResult[];
   uploadTargets: string[];
 } {
@@ -277,7 +278,7 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[]): {
     }
 
     const source = formatKnowledgeUploadSource(item.path);
-    const skippedUpload = classifySourceOrSkip({ source });
+    const skippedUpload = okfBundle ? null : classifySourceOrSkip({ source });
     if (skippedUpload == null) {
       uploadTargets.push(item.path);
       continue;
@@ -491,7 +492,11 @@ export async function collectKnowledgeSources(
 
   if (!isProjectUploadReference(options.path) && await fs.exists(options.path)) {
     return filterOkfBundleCollection(
-      await collectLocalFiles(options.path, options.okfBundle ? true : options.recursive),
+      await collectLocalFiles(
+        options.path,
+        options.okfBundle ? true : options.recursive,
+        options.okfBundle,
+      ),
       options.okfBundle,
     );
   }
@@ -508,7 +513,7 @@ export async function collectKnowledgeSources(
 
   let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
   deps.signal?.throwIfAborted();
-  let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads);
+  let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle);
   uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
 
   if (
@@ -516,7 +521,7 @@ export async function collectKnowledgeSources(
   ) {
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
     deps.signal?.throwIfAborted();
-    ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads));
+    ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle));
     uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
   }
 

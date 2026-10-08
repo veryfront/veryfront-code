@@ -6,6 +6,7 @@ import type {
   DocumentExtractionProgressEvent,
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
+import { VERSION } from "#cli/utils";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -177,7 +178,7 @@ function buildFrontmatter(source: string, sourceType: string, description: strin
     `source_type: ${yamlQuote(sourceType)}`,
     `description: ${yamlQuote(description)}`,
     "generated:",
-    `  by: ${yamlQuote("veryfront knowledge ingest")}`,
+    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
     "sources:",
     "  - id: source",
     `    resource: ${yamlQuote(source)}`,
