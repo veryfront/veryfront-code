@@ -1,5 +1,6 @@
 import { UUID_PATTERN } from "#veryfront/chat/conversation.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 const parse = JSON.parse;
 const decode = atob;
 const indexOf = String.prototype.indexOf;
@@ -14,7 +15,7 @@ export function readProjectExecutionParent(
   projectId: string,
 ): { canonicalRunId: string; attemptId: string } {
   try {
-    if (!token || token.length > 16384) throw new Error();
+    if (!token || token.length > MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES) throw new Error();
     const first = apply(indexOf, token, ["."]);
     const second = apply(indexOf, token, [".", first + 1]);
     if (first < 0 || second <= first + 1) throw new Error();
