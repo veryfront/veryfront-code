@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import { isRecord } from "#veryfront/chat/conversation.ts";
 import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
@@ -321,7 +322,12 @@ describe("agent/hosted-chat-finalization", () => {
           ? ["reasoning-start", "reasoning-delta", "reasoning-end", "tool-output-available"]
           : ["text-start", "text-delta", "text-end", "tool-output-available"],
       );
-      assertEquals(chunks.at(-1), { type: "tool-output-available", toolCallId: "c", output: "ok" });
+      assertEquals(chunks.at(-1), {
+        type: "tool-output-available",
+        toolCallId: "c",
+        output: "ok",
+        providerExecuted: true,
+      });
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
       const firstOutput = terminalStates[0]!.output as ChatUiMessage;
       assertEquals<unknown>(canonicalProjectionParts(), firstOutput.parts);
@@ -988,6 +994,169 @@ describe("agent/hosted-chat-finalization", () => {
     ]);
     assertEquals(terminalStates.at(0)!.status, "completed");
   });
+
+  for (const source of ["content", "extracted", "ui"] as const) {
+    for (const providerExecuted of [true, false]) {
+      for (const hasResult of [false, true]) {
+        for (const streamed of ["absent", "input-streaming", "input-available"] as const) {
+          it(`retains ${providerExecuted ? "provider" : "local"} ownership for ${source} fallback (${hasResult ? "result" : "no result"}, ${streamed})`, async () => {
+            const calls: string[] = [];
+            const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+            const terminalStates: HostedLifecycleTerminalState[] = [];
+            const metadata = {
+              type: "data-veryfront.runtime_context" as const,
+              data: { currentDateUtc: "2026-10-08" },
+            };
+            const finalInput = { url: "https://example.com/final" };
+            const originalInput = { url: "https://example.com/streamed" };
+            const output = { found: true };
+            const toolCall = {
+              type: "tool-call",
+              toolCallId: "owned-fallback",
+              toolName: "web_fetch",
+              input: finalInput,
+              providerExecuted,
+            };
+            const toolResult = {
+              type: "tool-result",
+              toolCallId: toolCall.toolCallId,
+              toolName: toolCall.toolName,
+              output,
+            };
+            const finalStep = source === "extracted"
+              ? { toolCalls: [toolCall], toolResults: hasResult ? [toolResult] : [] }
+              : {
+                response: {
+                  messages: [
+                    source === "content"
+                      ? { role: "assistant", content: [toolCall] }
+                      : { role: "assistant", parts: [toolCall] },
+                    ...(hasResult
+                      ? [
+                        source === "content"
+                          ? { role: "tool", content: [toolResult] }
+                          : { role: "tool", parts: [{ ...toolResult, result: output }] },
+                      ]
+                      : []),
+                  ],
+                },
+              };
+            const mirrored = createMirroredToolChunkState();
+            const projection = createChatStreamMessageProjection("assistant-message-1");
+            const parts: ChatUiMessage["parts"] = [metadata];
+            if (streamed !== "absent") {
+              parts.push({
+                type: "tool-web_fetch",
+                toolCallId: toolCall.toolCallId,
+                state: streamed,
+                input: originalInput,
+                providerExecuted,
+              });
+              mirrored.startedToolCallIds.add(toolCall.toolCallId);
+              projection.append({
+                type: "tool-input-start",
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                providerExecuted,
+              });
+              if (streamed === "input-streaming") {
+                projection.append({
+                  type: "tool-input-delta",
+                  toolCallId: toolCall.toolCallId,
+                  inputTextDelta: JSON.stringify(originalInput),
+                });
+              }
+              if (streamed === "input-available") {
+                mirrored.inputAvailableToolCallIds.add(toolCall.toolCallId);
+                projection.append({
+                  type: "tool-input-available",
+                  toolCallId: toolCall.toolCallId,
+                  toolName: toolCall.toolName,
+                  input: originalInput,
+                  providerExecuted,
+                });
+              }
+            }
+            const mirror = createDurableRunMirror({ calls, chunks });
+            const append = mirror.handleChunk;
+            mirror.handleChunk = async (chunk) => {
+              await append(chunk);
+              if (chunk.type === "finish") throw new Error("Unexpected finish in fallback content");
+              projection.append(chunk);
+            };
+            const input = {
+              kind: "response" as const,
+              responseMessage: createResponseMessage({ parts }),
+              isAborted: false,
+              streamResult: createStreamResult(finalStep),
+              lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+              mirroredToolChunkState: mirrored,
+              capturedMessageId: "assistant-message-1",
+              incompleteToolCallsPartErrorText: "Tool call did not complete",
+              cleanup: async () => {},
+              streamError: null,
+            };
+            await finalizeHostedChatRun(input);
+            const succeeded = providerExecuted || hasResult;
+            assertEquals(terminalStates[0]!.status, succeeded ? "completed" : "failed");
+            assertEquals(
+              terminalStates[0]!.terminalErrorCode,
+              succeeded ? undefined : "INCOMPLETE_TOOL_CALLS",
+            );
+            const finalized = terminalStates[0]!.output as ChatUiMessage | undefined;
+            if (succeeded) assertEquals(finalized?.parts[0], metadata);
+            else assertEquals(finalized, undefined);
+            const expectedInput =
+              streamed === "input-available" || (!succeeded && streamed === "input-streaming")
+                ? originalInput
+                : finalInput;
+            const expectedState = hasResult
+              ? "output-available"
+              : providerExecuted
+              ? "input-available"
+              : "output-error";
+            const properties = (part: unknown) =>
+              isRecord(part) && "toolCallId" in part
+                ? {
+                  toolCallId: part.toolCallId,
+                  state: part.state,
+                  input: part.input,
+                  providerExecuted: part.providerExecuted,
+                  ...(hasResult && "output" in part ? { output: part.output } : {}),
+                }
+                : null;
+            const expected = {
+              toolCallId: toolCall.toolCallId,
+              state: expectedState,
+              input: expectedInput,
+              providerExecuted,
+              ...(hasResult ? { output } : {}),
+            };
+            if (succeeded) {
+              assertEquals<unknown>(
+                finalized!.parts.filter((part) => "toolCallId" in part).map(properties),
+                [expected],
+              );
+            }
+            assertEquals<unknown>(
+              projection.snapshot().parts.filter((part) => "toolCallId" in part).map(properties),
+              [expected],
+            );
+            assertEquals(
+              getToolOutputErrorChunks(chunks, toolCall.toolCallId).length,
+              succeeded ? 0 : 1,
+            );
+            if (finalized) {
+              chunks.length = 0;
+              await finalizeHostedChatRun({ ...input, responseMessage: finalized });
+              assertEquals(terminalStates[1]!.output, finalized);
+              assertEquals(chunks, []);
+            }
+          });
+        }
+      }
+    }
+  }
 
   it("fails runtime-metadata-only response output with unfinished final-step tool fallback", async () => {
     const calls: string[] = [];

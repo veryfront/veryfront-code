@@ -17,6 +17,12 @@ const STREAM_PROMISE_TIMEOUT_TOKEN = Symbol("stream-promise-timeout");
 /** Default value for stream promise timeout ms. */
 export const DEFAULT_STREAM_PROMISE_TIMEOUT_MS = 10_000;
 
+function providerExecutionFields(value: unknown): { providerExecuted?: boolean } {
+  return isRecord(value) && typeof value.providerExecuted === "boolean"
+    ? { providerExecuted: value.providerExecuted }
+    : {};
+}
+
 // --- Shared types ---
 
 /** Public API contract for chat fallback part. */
@@ -29,6 +35,7 @@ export interface FinalStepToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  providerExecuted?: boolean;
 }
 
 /** Result returned from final step tool. */
@@ -37,6 +44,7 @@ export interface FinalStepToolResult {
   toolName: string;
   input: unknown;
   output: unknown;
+  providerExecuted?: boolean;
 }
 
 /** State for fallback tool chunk. */
@@ -59,6 +67,7 @@ interface FallbackToolChunkDescriptor {
     | "output-error"
     | "output-denied";
   output?: unknown;
+  providerExecuted?: boolean;
   errorText?: string;
 }
 
@@ -73,6 +82,7 @@ function buildToolUiPart(descriptor: FallbackToolChunkDescriptor): ChatPart {
     toolName: descriptor.toolName,
     toolCallId: descriptor.toolCallId,
     input: descriptor.input,
+    ...providerExecutionFields(descriptor),
     state: descriptor.outputState === "started" ? "pending" : descriptor.outputState,
     ...(descriptor.outputState === "output-available" ? { output: descriptor.output } : {}),
     ...(descriptor.outputState === "output-error" && descriptor.errorText
@@ -143,6 +153,7 @@ function upsertParsedToolResult(
     toolName: result.toolName,
     toolCallId: result.toolCallId,
     input: toToolInput(result.input),
+    ...providerExecutionFields(result),
     outputState: "output-available",
     output: result.output,
   });
@@ -170,6 +181,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               input: part.input,
+              ...providerExecutionFields(part),
             } satisfies FinalStepToolCall,
           ]
           : []
@@ -193,6 +205,8 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
               toolName: part.toolName,
               input: toolCallsById.get(part.toolCallId)?.input ?? {},
               output: part.output,
+              ...providerExecutionFields(part),
+              ...providerExecutionFields(toolCallsById.get(part.toolCallId)),
             } satisfies FinalStepToolResult,
           ]
           : []
@@ -237,6 +251,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toToolInput(toolCall?.input ?? part.input),
+          ...providerExecutionFields(toolCall ?? part),
           outputState: toolResult ? "output-available" : "input-available",
           ...(toolResult ? { output: toolResult.output } : {}),
         });
@@ -249,6 +264,8 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toolCall?.input ?? part.output,
+          ...providerExecutionFields(part),
+          ...providerExecutionFields(toolCall),
           output: part.output,
         });
       }
@@ -307,6 +324,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
           toolName: derivedToolName,
           toolCallId,
           input: toToolInput("args" in part ? part.args : "input" in part ? part.input : {}),
+          ...providerExecutionFields(part),
           outputState: "input-available",
         });
       }
@@ -614,6 +632,8 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
       input: toToolInput(toolCall.input),
+      ...providerExecutionFields(toolResult),
+      ...providerExecutionFields(toolCall),
       outputState: toolResult ? "output-available" : "input-available",
       ...(toolResult ? { output: toolResult.output } : {}),
     });
@@ -628,6 +648,7 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolResult.toolCallId,
       toolName: toolResult.toolName,
       input: toToolInput(toolResult.input),
+      ...providerExecutionFields(toolResult),
       outputState: "output-available",
       output: toolResult.output,
     });
@@ -671,23 +692,22 @@ function buildToolChunkDescriptorsFromParts(
     const toolCallId = part.toolCallId;
     const input = toToolInput(part.input);
     const state = part.state;
+    const identity = { toolCallId, toolName, input, ...providerExecutionFields(part) };
 
     switch (state) {
       case "pending":
       case "input-streaming":
-        descriptors.push({ toolCallId, toolName, input, outputState: "started" });
+        descriptors.push({ ...identity, outputState: "started" });
         break;
       case "input-available":
       case "approval-requested":
       case "approval-responded":
-        descriptors.push({ toolCallId, toolName, input, outputState: "input-available" });
+        descriptors.push({ ...identity, outputState: "input-available" });
         break;
       case "output-available":
       case "completed":
         descriptors.push({
-          toolCallId,
-          toolName,
-          input,
+          ...identity,
           outputState: "output-available",
           output: "output" in part ? part.output : undefined,
         });
@@ -695,9 +715,7 @@ function buildToolChunkDescriptorsFromParts(
       case "output-error":
       case "error":
         descriptors.push({
-          toolCallId,
-          toolName,
-          input,
+          ...identity,
           outputState: "output-error",
           ...("errorText" in part && typeof part.errorText === "string"
             ? { errorText: part.errorText }
@@ -705,7 +723,7 @@ function buildToolChunkDescriptorsFromParts(
         });
         break;
       case "output-denied":
-        descriptors.push({ toolCallId, toolName, input, outputState: "output-denied" });
+        descriptors.push({ ...identity, outputState: "output-denied" });
         break;
     }
   }
@@ -721,10 +739,12 @@ function buildToolFallbackChunks(
   const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
 
   for (const descriptor of descriptors) {
+    const providerExecution = providerExecutionFields(descriptor);
     if (!normalizedState.startedToolCallIds.has(descriptor.toolCallId)) {
       chunks.push({
         type: "tool-input-start",
         toolCallId: descriptor.toolCallId,
+        ...providerExecution,
         toolName: descriptor.toolName,
       });
     }
@@ -736,6 +756,7 @@ function buildToolFallbackChunks(
       chunks.push({
         type: "tool-input-available",
         toolCallId: descriptor.toolCallId,
+        ...providerExecution,
         toolName: descriptor.toolName,
         input: descriptor.input,
       });
@@ -747,6 +768,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-available",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
             output: descriptor.output,
           });
         }
@@ -756,6 +778,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-error",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
             errorText: descriptor.errorText ?? "Tool execution failed",
           });
         }
@@ -765,6 +788,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-denied",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
           });
         }
         break;
@@ -994,6 +1018,7 @@ export function extractFinalStepToolCalls(step: unknown): FinalStepToolCall[] {
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
         input: "input" in toolCall ? toolCall.input : {},
+        ...providerExecutionFields(toolCall),
       },
     ];
   });
@@ -1005,8 +1030,8 @@ export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[
     return [];
   }
 
-  const toolInputs = new Map(
-    extractFinalStepToolCalls(step).map((toolCall) => [toolCall.toolCallId, toolCall.input]),
+  const toolCalls = new Map(
+    extractFinalStepToolCalls(step).map((toolCall) => [toolCall.toolCallId, toolCall]),
   );
 
   return step.toolResults.flatMap((toolResult) => {
@@ -1023,8 +1048,10 @@ export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[
         toolName: toolResult.toolName,
         input: "input" in toolResult
           ? toolResult.input
-          : (toolInputs.get(toolResult.toolCallId) ?? {}),
+          : (toolCalls.get(toolResult.toolCallId)?.input ?? {}),
         output: "output" in toolResult ? toolResult.output : null,
+        ...providerExecutionFields(toolResult),
+        ...providerExecutionFields(toolCalls.get(toolResult.toolCallId)),
       },
     ];
   });

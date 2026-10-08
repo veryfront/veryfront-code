@@ -96,18 +96,31 @@ export function buildFinalizedMessageState(
     ) {
       return part;
     }
+    const partialInput = part.state === "input-streaming" || part.state === "pending";
     const completed = finalStepFallbackParts.find((fallback) =>
       isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-      fallback.state === "output-available"
+      (fallback.state === "output-available" ||
+        (partialInput && fallback.state === "input-available" &&
+          fallback.providerExecuted === true))
     );
-    return completed && isToolUiPart(completed) && completed.state === "output-available"
+    if (!completed || !isToolUiPart(completed)) return part;
+    if (completed.state === "input-available" && completed.providerExecuted === true) {
+      return {
+        ...part,
+        input: completed.input,
+        state: "input-available" as const,
+        providerExecuted: true,
+      };
+    }
+    return completed.state === "output-available"
       ? {
         ...part,
-        input: part.state === "input-streaming" || part.state === "pending"
-          ? completed.input
-          : part.input,
+        input: partialInput ? completed.input : part.input,
         state: "output-available" as const,
         output: completed.output,
+        ...(part.providerExecuted === undefined && completed.providerExecuted !== undefined
+          ? { providerExecuted: completed.providerExecuted }
+          : {}),
       }
       : part;
   });
