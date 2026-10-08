@@ -136,21 +136,27 @@ export function buildFinalizedMessageState(
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      const matchingStart = persistedTextParts.findIndex((part) =>
-        fallbackPart.text.startsWith(part.text.trim())
-      );
-      const remainingParts = matchingStart < 0 ? [] : persistedTextParts.slice(matchingStart);
+      let matchingStart = -1;
       let matchedCount = 0;
-      for (let count = 1; count <= remainingParts.length; count++) {
-        const texts = remainingParts.slice(0, count).map((part) => part.text);
-        const matchesPrefix = ["\n\n", "\n", " ", ""].some((separator) => {
-          const prefix = texts.join(separator).trim();
-          return prefix.length > 0 && fallbackPart.text.startsWith(prefix);
-        });
-        if (!matchesPrefix) break;
-        matchedCount = count;
+      let matchedLength = 0;
+      for (let start = 0; start < persistedTextParts.length; start++) {
+        for (let count = 1; count <= persistedTextParts.length - start; count++) {
+          const texts = persistedTextParts.slice(start, start + count).map((part) => part.text);
+          const prefixLength = Math.max(...["\n\n", "\n", " ", ""].map((separator) => {
+            const prefix = texts.join(separator).trim();
+            return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
+          }));
+          if (prefixLength === 0) break;
+          if (prefixLength > matchedLength) {
+            matchingStart = start;
+            matchedCount = count;
+            matchedLength = prefixLength;
+          }
+        }
       }
-      const matchedParts = remainingParts.slice(0, matchedCount);
+      const matchedParts = matchingStart < 0
+        ? []
+        : persistedTextParts.slice(matchingStart, matchingStart + matchedCount);
       if (matchedCount > 0) persistedTextParts.splice(matchingStart, matchedCount);
       return appendMissingFallbackTextPart(matchedParts, { text: fallbackPart.text })
         .slice(matchedParts.length);

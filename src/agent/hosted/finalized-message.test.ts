@@ -933,3 +933,44 @@ Deno.test("missing earlier fallback text retains a later persisted block for rec
     ],
   );
 });
+
+for (const current of ["Done", "Don"]) {
+  Deno.test(`without step boundaries the longest matching text wins (${current})`, () => {
+    const responseMessage = {
+      id: "m",
+      role: "assistant" as const,
+      parts: [{ type: "text" as const, text: "Do" }, { type: "text" as const, text: current }],
+    };
+    const finalStep = { text: "Done" };
+    const input = {
+      responseMessage,
+      finalStep,
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    };
+    const state = buildFinalizedMessageState(input);
+    assertEquals(state.sanitizedFinalizedMessage.parts, [
+      ...responseMessage.parts,
+      ...(current === "Don" ? [{ type: "text" as const, text: "e" }] : []),
+    ]);
+    assertEquals(
+      buildFinalizedMessageState({ ...input, responseMessage: state.sanitizedFinalizedMessage })
+        .sanitizedFinalizedMessage.parts,
+      state.sanitizedFinalizedMessage.parts,
+    );
+    assertEquals(
+      buildFinalizedMessageFallbackChunks({
+        ...state,
+        finalStep,
+        isAborted: false,
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "m",
+      }),
+      current === "Done" ? [] : [
+        { type: "text-start", id: "m" },
+        { type: "text-delta", id: "m", delta: "e" },
+        { type: "text-end", id: "m" },
+      ],
+    );
+  });
+}
