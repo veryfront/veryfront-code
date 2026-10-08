@@ -45,6 +45,13 @@
     "decode-named-character-reference": "npm:decode-named-character-reference@1.3.0",
     "jszip": "npm:jszip@3.10.1",
     "pdf-lib": "npm:pdf-lib@1.17.1",
-    "es-module-lexer": "npm:es-module-lexer@2.3.1"
+    "es-module-lexer": "npm:es-module-lexer@2.3.1",
+    "https://jsr.io/@ts-morph/common/0.29.0/crypto": "node:crypto",
+    "https://jsr.io/@ts-morph/common/0.29.0/fs": "node:fs",
+    "https://jsr.io/@ts-morph/common/0.29.0/inspector": "node:inspector",
+    "https://jsr.io/@ts-morph/common/0.29.0/os": "node:os",
+    "https://jsr.io/@ts-morph/common/0.29.0/path": "node:path",
+    "https://jsr.io/@ts-morph/common/0.29.0/perf_hooks": "node:perf_hooks",
+    "https://jsr.io/@ts-morph/common/0.29.0/source-map-support": "npm:source-map-support@0.5.21"
   }
 }
