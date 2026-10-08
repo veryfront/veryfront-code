@@ -999,6 +999,32 @@ describe("observability/telemetry-error", () => {
       }
     });
 
+    it("retains exact compile-time parser limits but rejects altered values", () => {
+      const issues = [
+        "choice delta content exceeded 4096 parts",
+        "stream exceeded 1024 tool calls",
+        "tool call arguments exceeded 1048576 UTF-8 bytes",
+        "tool call arguments exceeded 4096 fragments",
+        "function call arguments exceeded 1048576 UTF-8 bytes",
+        "function call arguments exceeded 4096 fragments",
+        "message snapshot exceeded 8388608 UTF-8 bytes",
+        "raw response metadata exceeded 8388608 UTF-8 bytes",
+        "stream exceeded 4096 content parts",
+        "stream exceeded 4096 output items",
+      ];
+      for (const issue of [...issues, "stream exceeded 4097 output items"]) {
+        const error = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message: `openai request failed: invalid successful stream (${issue})`,
+        });
+        const cause = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error))?.[0];
+        assertEquals(cause?.streamIssue, issues.includes(issue) ? issue : undefined);
+        assertEquals(cause?.messageRedacted, true);
+      }
+    });
+
     it("withholds unknown, altered and credential-bearing stream issue text", () => {
       for (
         const message of [
