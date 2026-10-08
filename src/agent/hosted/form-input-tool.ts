@@ -17,7 +17,7 @@ import {
   type InputRequestOutput,
 } from "../input/request-protocol.ts";
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
-import { isFormInputToolName } from "../platform-tool-names.ts";
+import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
@@ -217,7 +217,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInputToolPart {
+function isFormInputToolPart(
+  part: ChatUiMessagePart,
+  options: { legacyFormInputReplayAllowed?: boolean } = {},
+): part is PersistedFormInputToolPart {
   if (!isRecord(part)) {
     return false;
   }
@@ -225,19 +228,26 @@ function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInpu
   if (typeof record.toolCallId !== "string" || !("output" in record)) {
     return false;
   }
-  return (typeof record.toolName === "string" && isFormInputToolName(record.toolName)) ||
-    isFormInputToolPartType(part.type);
+  return (record.toolName === CANONICAL_FORM_INPUT_TOOL_ID) ||
+    (options.legacyFormInputReplayAllowed === true && record.toolName === FORM_INPUT_TOOL_ID) ||
+    isFormInputToolPartType(part.type, options);
 }
 
-function isFormInputToolPartType(type: unknown): boolean {
+function isFormInputToolPartType(
+  type: unknown,
+  options: { legacyFormInputReplayAllowed?: boolean },
+): boolean {
   return typeof type === "string" && type.startsWith("tool-") &&
-    isFormInputToolName(type.slice("tool-".length));
+    (type.slice("tool-".length) === CANONICAL_FORM_INPUT_TOOL_ID ||
+      (options.legacyFormInputReplayAllowed === true &&
+        type.slice("tool-".length) === FORM_INPUT_TOOL_ID));
 }
 
 function extractSubmittedFormInputResult(
   part: ChatUiMessagePart,
+  options: { legacyFormInputReplayAllowed?: boolean } = {},
 ): HostedSubmittedFormInputResult | undefined {
-  if (!isFormInputToolPart(part) || !isRecord(part.output)) {
+  if (!isFormInputToolPart(part, options) || !isRecord(part.output)) {
     return undefined;
   }
   if (part.output.submitted !== true || !isRecord(part.output.values)) {
@@ -268,13 +278,14 @@ function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
 /** Find the latest submitted form_input result persisted after the latest user message. */
 export function findSubmittedFormInputResult(
   messages: readonly ChatUiMessage[],
+  options: { legacyFormInputReplayAllowed?: boolean } = {},
 ): HostedSubmittedFormInputResult | undefined {
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
 
   for (const message of messages.slice(startIndex)) {
     for (const part of message.parts) {
-      result = extractSubmittedFormInputResult(part) ?? result;
+      result = extractSubmittedFormInputResult(part, options) ?? result;
     }
   }
 

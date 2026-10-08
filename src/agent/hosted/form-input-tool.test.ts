@@ -118,7 +118,7 @@ function createSubmittedFormInputPart(inputRequestId: string, values: Record<str
   return {
     type: "dynamic-tool" as const,
     toolCallId: `tool-call-${inputRequestId}`,
-    toolName: "form_input",
+    toolName: "veryfront__form_input",
     state: "output-available" as const,
     input: { title: "Plan intake" },
     output: { submitted: true, values, inputRequestId },
@@ -259,7 +259,7 @@ describe("agent/hosted-form-input-tool", () => {
     });
   });
 
-  it("finds a submitted form_input result from persisted UI tool parts", () => {
+  it("ignores project-owned form_input result-shaped parts", () => {
     const result = findSubmittedFormInputResult([
       {
         id: "assistant-1",
@@ -278,6 +278,29 @@ describe("agent/hosted-form-input-tool", () => {
         }],
       },
     ]);
+
+    assertEquals(result, undefined);
+  });
+
+  it("finds a submitted legacy form_input result when the legacy name is platform-owned", () => {
+    const result = findSubmittedFormInputResult([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: TOOL_CALL_ID,
+          toolName: "form_input",
+          state: "output-available",
+          input: { title: "Plan intake" },
+          output: {
+            submitted: true,
+            values: { idea: "Build a support assistant" },
+            inputRequestId: INPUT_REQUEST_ID,
+          },
+        }],
+      },
+    ], { legacyFormInputReplayAllowed: true });
 
     assertEquals(result, {
       values: { idea: "Build a support assistant" },

@@ -601,6 +601,47 @@ Deno.test("hosted child project agents keep load_skill for a non-empty exact ski
   );
 });
 
+Deno.test("hosted child project agents materialize an advertised canonical load_skill", () => {
+  const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+    id: "extraction-agent",
+    name: "Extraction agent",
+    description: "Extract an application",
+    instructions: "Extract the application.",
+    skills: ["extract"],
+    tools: ["get_file", "veryfront__load_skill"],
+  }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+  assertEquals(toolNames, ["get_file", "veryfront__load_skill"]);
+  const context = {
+    projectSteeringByAgentId: new Map([["extraction-agent", {
+      createLoadSkillTool: () =>
+        tool({
+          id: "load_skill",
+          description: "Load skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+    }]]),
+  } as never;
+  const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+    context,
+    {
+      childAgentId: "extraction-agent",
+      childConfig: {
+        system: "Use exact child policy",
+        toolNames,
+        availableSkillIds: ["extraction-agent--extract"],
+        skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+        skillSourcePaths: {},
+      },
+      childToolContext: { agentId: "extraction-agent" } as never,
+    },
+  );
+
+  assertEquals("veryfront__load_skill" in hostTools, true);
+  assertEquals("load_skill" in hostTools, false);
+});
+
 describe("hosted child tool denials", () => {
   it("hosted child project agents preserve an explicit load_skill denial", () => {
     const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({

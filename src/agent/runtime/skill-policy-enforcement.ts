@@ -283,7 +283,11 @@ export function hydrateActiveSkillStateFromMessages(
     for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
       if (!objectHasOwn(message.parts, partIndex)) continue;
       const part = message.parts[partIndex]!;
-      if (!isToolResultPart(part) || !isLoadSkillToolName(part.toolName)) continue;
+      if (
+        !isToolResultPart(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName)
+      ) continue;
       state = applySkillActivationResult(state, part.result);
     }
   }
@@ -440,8 +444,8 @@ export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
       if (
         isToolResultPart(part) &&
         trustedToolCallIdSet.has(part.toolCallId) &&
-        isFormInputToolName(part.toolName) &&
-        isSubmittedFormInputResult(part.result)
+        ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
+          (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
       ) {
         markTrustedPlatformPolicyToolResultPart(part);
       }

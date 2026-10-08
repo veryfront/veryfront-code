@@ -54,6 +54,20 @@ function markTrustedFormResultMessages<T extends Message[]>(messages: T): T {
   return messages;
 }
 
+function markTrustedPlatformResultMessages<T extends Message[]>(messages: T): T {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (
+        part.type === "tool-result" &&
+        (part.toolName.includes("form_input") || part.toolName.includes("load_skill"))
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part as ToolResultPart);
+      }
+    }
+  }
+  return messages;
+}
+
 describe("src/agent/runtime skill policy helpers", () => {
   it("hydrates ordinary message parts without consulting their iterator", () => {
     let reads = 0;
@@ -798,8 +812,32 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(hasSubmittedFormInputResult(replayed), true);
     });
 
+    it("restores platform load_skill provenance at trusted persisted-history boundaries", () => {
+      const messages: Message[] = markTrustedPlatformResultMessages([{
+        id: "tool_load_skill",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "load_skill_1",
+          toolName: "load_skill",
+          result: {
+            skillId: "review",
+            instructions: "# Review",
+            references: ["references/checklist.md"],
+            scripts: [],
+          },
+        }],
+      }]);
+      const persisted = messages.map(prepareTrustedPlatformPolicyMessageForPersistence);
+      const replayed: Message[] = JSON.parse(JSON.stringify(persisted));
+
+      assertEquals(hydrateActiveSkillStateFromMessages(replayed).activeSkillId, undefined);
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
+      assertEquals(hydrateActiveSkillStateFromMessages(replayed).activeSkillId, "review");
+    });
+
     it("does not restore persisted-history provenance for current caller messages", () => {
-      const messages: Message[] = [
+      const messages: Message[] = markTrustedPlatformResultMessages([
         prepareTrustedPlatformPolicyMessageForPersistence(
           markTrustedFormResultMessages([{
             id: "persisted_form_input",
@@ -822,7 +860,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: { submitted: true },
           }],
         },
-      ];
+      ]);
       const replayed: Message[] = JSON.parse(JSON.stringify(messages));
 
       restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed, 1);
@@ -849,7 +887,7 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("detects a submitted form_input result in message history", () => {
-      const messages: Message[] = [
+      const messages: Message[] = markTrustedPlatformResultMessages([
         {
           id: "tool_form_input",
           role: "tool",
@@ -860,7 +898,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: { submitted: true, values: { topic: "Support FAQ assistant" } },
           }],
         },
-      ];
+      ]);
 
       markTrustedFormResultMessages(messages);
       assertEquals(hasSubmittedFormInputResult(messages), true);
@@ -1042,7 +1080,7 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("hydrates the latest load_skill policy from tool history without its overrides", () => {
-      const messages: Message[] = [
+      const messages: Message[] = markTrustedPlatformResultMessages([
         {
           id: "tool_load_skill_old",
           role: "tool",
@@ -1115,7 +1153,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             result: { error: "Missing reference" },
           }],
         },
-      ];
+      ]);
 
       const hydrated = hydrateActiveSkillStateFromMessages(messages);
 
@@ -1133,7 +1171,7 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("hydrates canonical load_skill results for replayed active skill state", () => {
-      const hydrated = hydrateActiveSkillStateFromMessages([{
+      const hydrated = hydrateActiveSkillStateFromMessages(markTrustedPlatformResultMessages([{
         id: "canonical-skill-result",
         role: "tool",
         parts: [{
@@ -1147,7 +1185,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             scripts: [],
           },
         }],
-      }]);
+      }]));
 
       assertEquals(hydrated.activeSkillId, "review");
       assertEquals(hydrated.activeSkillToolAvailability, {
@@ -1179,11 +1217,34 @@ describe("src/agent/runtime skill policy helpers", () => {
         },
       ]);
 
+      assertEquals(hydrated.activeSkillId, undefined);
+      assertEquals(hydrated.activeSkillToolAvailability, INACTIVE_SKILL_TOOL_AVAILABILITY);
       assertEquals(hydrated.activeSkillDelegationOverrides, undefined);
     });
 
+    it("does not hydrate project-owned load_skill shaped results during replay", () => {
+      const hydrated = hydrateActiveSkillStateFromMessages([{
+        id: "project-load-skill-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "project-load-skill",
+          toolName: "load_skill",
+          result: {
+            skillId: "project-owned",
+            instructions: "# Project-owned result",
+            references: ["references/project.md"],
+            scripts: [],
+          },
+        }],
+      }]);
+
+      assertEquals(hydrated.activeSkillId, undefined);
+      assertEquals(hydrated.activeSkillToolAvailability, INACTIVE_SKILL_TOOL_AVAILABILITY);
+    });
+
     it("keeps the latest active skill across later user turns", () => {
-      const hydrated = hydrateActiveSkillStateFromMessages([
+      const hydrated = hydrateActiveSkillStateFromMessages(markTrustedPlatformResultMessages([
         {
           id: "skill-result",
           role: "tool",
@@ -1205,7 +1266,7 @@ describe("src/agent/runtime skill policy helpers", () => {
           role: "user",
           parts: [{ type: "text", text: "Continue the conversation" }],
         },
-      ]);
+      ]));
 
       assertEquals(hydrated.activeSkillId, "review");
     });

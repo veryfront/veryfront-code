@@ -446,7 +446,7 @@ function getSkillLoaderToolName(
 ): BuildAgentCallContextInput["skillLoaderToolName"] {
   if (tools === true) return "load_skill";
   if (!tools) return undefined;
-  for (const name of ["load_skill", "veryfront__load_skill"] as const) {
+  for (const name of ["veryfront__load_skill", "load_skill"] as const) {
     const loader = tools[name];
     if (loader !== undefined && loader !== false) return name;
   }

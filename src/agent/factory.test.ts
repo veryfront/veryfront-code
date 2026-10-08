@@ -55,6 +55,15 @@ async function resolveSystemText(system: AgentConfig["system"]): Promise<string>
   return typeof resolved === "string" ? resolved : flattenSystemInstructions(resolved);
 }
 
+function expectAgentToolMap(
+  tools: AgentConfig["tools"],
+): Exclude<AgentConfig["tools"], boolean | undefined> {
+  if (!tools || tools === true) {
+    throw new Error("Expected an agent tool map");
+  }
+  return tools;
+}
+
 function createLoadSkillModel(skillId: string): ModelRuntime {
   let callCount = 0;
   return {
@@ -871,14 +880,40 @@ description: Excluded skill
       tools: { load_skill: runtimeLoadSkill },
     });
 
-    if (!assistant.config.tools || assistant.config.tools === true) {
-      throw new Error("Expected an agent tool map");
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertStrictEquals(tools.load_skill, runtimeLoadSkill);
+    assertEquals(typeof tools.load_skill_reference, "object");
+    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
+  });
+
+  it("advertises the canonical skill loader when a project load_skill collides", async () => {
+    for (let index = 0; index < 128; index++) {
+      const id = `support-triage-${index.toString().padStart(2, "0")}-${"x".repeat(220)}`;
+      registerSkill(id, createSkill(id, "Triage support requests"));
     }
-    assertStrictEquals(assistant.config.tools.load_skill, runtimeLoadSkill);
-    assertEquals(typeof assistant.config.tools.load_skill_reference, "object");
-    assertEquals(typeof assistant.config.tools.execute_skill_script, "object");
-    assertEquals(assistant.config.tools.veryfront__load_skill?.id, "veryfront__load_skill");
-    assertEquals(hasTrustedHostToolProvenance(assistant.config.tools.veryfront__load_skill), true);
+    const runtimeLoadSkill = tool({
+      id: "load_skill",
+      description: "Project-owned skill-like loader.",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: ({ skillId }) => Promise.resolve({ skillId, owner: "project" }),
+    });
+
+    const assistant = agent({
+      id: "canonical-loader-prompt",
+      system: "Load matching skills.",
+      tools: { load_skill: runtimeLoadSkill },
+    });
+
+    const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+
+    assertStringIncludes(prompt, "Call veryfront__load_skill({ inventory:");
+    assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
   });
 
   it("preserves concrete canonical skill implementations supplied by the host", () => {
@@ -900,10 +935,8 @@ description: Excluded skill
         system: "Use request-scoped skills.",
         tools: { [id]: supplied },
       });
-      if (!assistant.config.tools || assistant.config.tools === true) {
-        throw new Error("Expected an agent tool map");
-      }
-      assertStrictEquals(assistant.config.tools[id], supplied);
+      const tools = expectAgentToolMap(assistant.config.tools);
+      assertStrictEquals(tools[id], supplied);
     }
   });
 
@@ -921,12 +954,13 @@ description: Excluded skill
       },
     });
 
-    assertEquals(typeof assistant.config.tools?.load_skill, "object");
-    assertEquals(typeof assistant.config.tools?.load_skill_reference, "object");
-    assertEquals(typeof assistant.config.tools?.execute_skill_script, "object");
-    assertEquals(assistant.config.tools?.veryfront__load_skill, false);
-    assertEquals(assistant.config.tools?.veryfront__load_skill_reference, false);
-    assertEquals(assistant.config.tools?.veryfront__execute_skill_script, false);
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertEquals(typeof tools.load_skill, "object");
+    assertEquals(typeof tools.load_skill_reference, "object");
+    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.veryfront__load_skill, false);
+    assertEquals(tools.veryfront__load_skill_reference, false);
+    assertEquals(tools.veryfront__execute_skill_script, false);
   });
 
   it("marks generated canonical skill tools as runtime-local when rebuilding resolved configs", () => {
@@ -940,7 +974,12 @@ description: Excluded skill
 
     const rebuilt = createEphemeralAgent(assistant.config);
 
-    assertEquals(rebuilt.config.tools?.veryfront__load_skill?.id, "veryfront__load_skill");
+    const tools = expectAgentToolMap(rebuilt.config.tools);
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
   });
 
   it("preserves a canonical skill grant when the legacy platform spelling is denied", () => {
@@ -956,9 +995,14 @@ description: Excluded skill
       },
     });
 
-    assertEquals(assistant.config.tools?.load_skill, false);
-    assertEquals(assistant.config.tools?.veryfront__load_skill?.id, "veryfront__load_skill");
-    assertEquals(hasTrustedHostToolProvenance(assistant.config.tools?.veryfront__load_skill), true);
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertEquals(tools.load_skill, false);
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
   });
 
   it("does not inject canonical skill tools when skills are disabled", () => {

@@ -393,6 +393,8 @@ export type HostedChatExecutionPreparationInput<
   runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /** True only when the legacy form_input spelling still maps to the platform form. */
+  legacyFormInputReplayAllowed?: boolean;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -735,7 +737,9 @@ export async function prepareHostedChatExecution<
     serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
+  const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages, {
+    legacyFormInputReplayAllowed: input.legacyFormInputReplayAllowed,
+  });
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
     (checkpoint) => checkpoint.messageId,

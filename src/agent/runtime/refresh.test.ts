@@ -343,7 +343,7 @@ function submittedFormWithActiveSkillMessages(): Message[] {
     {
       id: "skill-result",
       role: "tool",
-      parts: [{
+      parts: [markTrustedPlatformPolicyToolResultPart({
         type: "tool-result",
         toolCallId: "load-plan",
         toolName: "load_skill",
@@ -354,7 +354,7 @@ function submittedFormWithActiveSkillMessages(): Message[] {
           references: ["references/guide.md"],
           scripts: [],
         },
-      }],
+      })],
     },
     {
       id: "form-result",
