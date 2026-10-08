@@ -1261,6 +1261,7 @@ describe("failed publish diagnostics", () => {
 
   it("reports a version accepted during settling as published but keeps failed publishing red", async () => {
     const lines: string[] = [];
+    const cacheControls: (string | null)[] = [];
     let attempts = 0;
     let now = 0;
     const error = await captureError(() =>
@@ -1276,9 +1277,10 @@ describe("failed publish diagnostics", () => {
           now += ms;
           return Promise.resolve();
         },
-        fetcher: (input: RequestInfo | URL) => {
+        fetcher: (input: RequestInfo | URL, init?: RequestInit) => {
           if (String(input).endsWith(`/${VERSION}`)) {
             attempts++;
+            cacheControls.push(new Headers(init?.headers).get("cache-control"));
             return Promise.resolve(
               attempts === 1
                 ? new Response("", { status: 404 })
@@ -1291,6 +1293,7 @@ describe("failed publish diagnostics", () => {
     );
     assertEquals(error.classification, "lookup");
     assertEquals(attempts, 2);
+    assertEquals(cacheControls, ["no-cache", "no-cache"]);
     assertEquals(now, 120_000);
     assertStringIncludes(lines.join("\n"), `${PACKAGE_NAME}@${VERSION}: published`);
   });

@@ -416,7 +416,11 @@ async function attemptRegistryLookup(
         options.packageName,
         options.version,
       ),
-      { signal },
+      {
+        signal,
+        // Revalidate cached misses so the short diagnostic settle check sees publication.
+        headers: options.versionOnly ? { "Cache-Control": "no-cache" } : undefined,
+      },
     );
     if (response.status === 404) {
       return {
