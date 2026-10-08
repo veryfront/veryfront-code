@@ -1349,11 +1349,10 @@ it("binary e2e cancellation stops signal-ignoring descendants and preserves exit
   assert(step, "cancellation supervisor must exist");
   const script = String(step.run);
   assert(script.startsWith("exec python3 -u - <<'PY'\n"));
-  const supervisor = script.slice(script.indexOf("\n") + 1, script.lastIndexOf("\nPY"));
   const harness = String.raw`
 import os, pathlib, select, signal, subprocess, sys, tempfile, time
 
-supervisor = sys.argv[1]
+step_script = sys.argv[1]
 with tempfile.TemporaryDirectory() as directory:
     deno = pathlib.Path(directory) / "deno"
     env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
@@ -1362,12 +1361,12 @@ with tempfile.TemporaryDirectory() as directory:
         deno.chmod(0o755)
     for code in (0, 17):
         fixture("import os, sys\nassert os.environ['VERYFRONT_BINARY_FRESH'] == '1'\nassert sys.argv[1:] == ['task', 'test:e2e:binary']\nsys.exit(" + str(code) + ")\n")
-        result = subprocess.run([sys.executable, "-u", "-c", supervisor], env=env, timeout=10)
+        result = subprocess.run(["bash", "-c", step_script], env=env, timeout=10)
         assert result.returncode == code, result.returncode
     for signum in (signal.SIGINT, signal.SIGTERM):
         descendant = "import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(120)"
         fixture("import signal,subprocess,sys,time\nsignal.signal(signal.SIGINT,signal.SIG_IGN)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nsubprocess.Popen([sys.executable,'-u','-c'," + repr(descendant) + "])\ntime.sleep(120)\n")
-        process = subprocess.Popen([sys.executable, "-u", "-c", supervisor], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(["bash", "-c", step_script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             assert select.select([process.stdout], [], [], 10)[0], "descendant not ready"
             assert process.stdout.readline().strip() == "ready"
@@ -1383,8 +1382,8 @@ with tempfile.TemporaryDirectory() as directory:
                 process.wait()
 print("success, failure, SIGINT, SIGTERM: passed")
 `;
-  const result = await new Deno.Command("python3", {
-    args: ["-c", harness, supervisor],
+  const result = await new Deno.Command("bash", {
+    args: ["-c", 'exec python3 -c "$1" "$2"', "binary-e2e-fixture", harness, script],
     stdout: "piped",
     stderr: "piped",
   }).output();
