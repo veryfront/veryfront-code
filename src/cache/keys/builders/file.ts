@@ -80,6 +80,11 @@ function encodeVersionedQualifier(ctx: FileOperationContext): string {
   return `${encodeCacheKeySegment(ctx.environmentName ?? "")}:${encodeCacheKeySegment(releaseId)}`;
 }
 
+/** Whether an operation prefix can use the raw project identity safely. */
+export function canUseLegacyFileOperationPrefix(prefix: string, projectSlug: string): boolean {
+  return isCacheKeyPassThroughSafe(`${prefix}:entry`) && !projectSlug.includes(":");
+}
+
 // Keep ordinary prefixes stable. Version the source type when URI escaping
 // would make the API rewrite a concrete key or refuse its deletion glob.
 function buildApiFileOperationPrefix(
@@ -89,9 +94,7 @@ function buildApiFileOperationPrefix(
 ): string {
   const legacy = buildFileOperationPrefix(prefix, ctx, unknownKey);
   if (!ctx) return legacy;
-  const legacyIsApiSafe = isCacheKeyPassThroughSafe(`${legacy}:entry`) &&
-    !ctx.projectSlug.includes(":");
-  if (legacyIsApiSafe) return legacy;
+  if (canUseLegacyFileOperationPrefix(legacy, ctx.projectSlug)) return legacy;
   const sourceType = ctx.sourceType === "environment" ? "env" : ctx.sourceType;
   return `${buildVersionedFileOperationProjectPrefix(prefix, sourceType, ctx.projectSlug)}${
     encodeVersionedQualifier(ctx)
