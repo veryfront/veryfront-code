@@ -44,6 +44,7 @@ import {
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
 import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
@@ -2709,12 +2710,14 @@ async function withProjectRunRuntimeObservations<T>(
         { event: type, payload },
       ) => coerceWireEvent(type, payload));
       await mirror.appendEvents(
-        events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
-          if (typeof candidate.type !== "string") {
-            throw new Error("Invalid encoded project run observation event");
-          }
-          return isPermittedProjectRunObservationEventType(candidate.type);
-        }),
+        normalizeConversationRunEvents(
+          events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
+            if (typeof candidate.type !== "string") {
+              throw new Error("Invalid encoded project run observation event");
+            }
+            return isPermittedProjectRunObservationEventType(candidate.type);
+          }),
+        ),
       );
     };
   };
