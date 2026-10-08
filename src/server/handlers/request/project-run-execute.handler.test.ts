@@ -8270,6 +8270,86 @@ describe("project run inference credential header", () => {
     }, operation);
   }
 
+  it("replays the full execution entry after a lost receipt without duplicating the attempt", async () => {
+    const runId = "run_entry_receipt_redelivery";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const recorded = new Map<string, string>();
+    const requests: { key: string; body: string }[] = [];
+    let executions = 0;
+    const originalNow = Date.now;
+    const dispatch = async (attemptId: string, elapsedMs: number) => {
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId,
+          attemptId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          executions++;
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      Date.now = () => originalNow() + elapsedMs;
+      try {
+        const result = await handler.handle(signed.request, ctx);
+        assertExists(result.response);
+        return await result.response.json();
+      } finally {
+        Date.now = originalNow;
+      }
+    };
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          const observed = observeFetchRequestInit(init);
+          const key = new Headers(observed.headers).get("idempotency-key");
+          assertExists(key);
+          if (typeof observed.body !== "string") throw new Error("Expected encoded append body");
+          const body = observed.body;
+          requests.push({ key, body });
+          const existing = recorded.get(key);
+          if (existing !== undefined && existing !== body) {
+            return Response.json({ error: "Idempotency conflict" }, { status: 409 });
+          }
+          if (existing === undefined) recorded.set(key, body);
+          if (requests.length === 1) throw new Error("Accepted entry receipt was lost");
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: recorded.size,
+            appended_count: existing === undefined ? 1 : 0,
+          });
+        }, async () => {
+          const randomnessBefore = crypto.randomUUID();
+          assertEquals((await dispatch("attempt-redelivered", 0)).success, false);
+          assertEquals(executions, 0);
+          const randomnessAfter = crypto.randomUUID();
+          assertEquals(randomnessBefore === randomnessAfter, false);
+          assertEquals((await dispatch("attempt-redelivered", 1_000)).success, true);
+          assertEquals(executions, 1);
+          assertEquals(requests[1], requests[0]);
+          assertEquals(recorded.size, 1);
+          assertEquals((await dispatch("attempt-new", 2_000)).success, true);
+          assertEquals(executions, 2);
+          assertEquals(requests[2]?.key === requests[0]?.key, false);
+          assertEquals(requests[2]?.body === requests[0]?.body, false);
+          assertEquals(recorded.size, 2);
+        }),
+    );
+  });
+
   async function withCapturedConsole<T>(
     fn: () => Promise<T>,
   ): Promise<{ value: T; lines: string[] }> {

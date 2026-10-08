@@ -1,4 +1,3 @@
-import { randomUUID as createObservationOccurrenceId } from "node:crypto";
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
@@ -2544,13 +2543,26 @@ function createProjectRunObservationMirror(input: {
   };
   return {
     appendEvents: (events) => append(events),
-    appendExecutionEntry: () =>
-      append([{
+    appendExecutionEntry: async () => {
+      // A redelivered trusted attempt records the same logical entry and exact payload.
+      const hash = await computeObservationHash(privateJsonStringify([
+        "project-runtime-execution-entry-v1",
+        input.runId,
+        input.canonicalRunId,
+        input.attemptId,
+      ]));
+      const segment = (start: number, end: number) =>
+        IntrinsicReflectApply(StringSlice, hash, [start, end]) as string;
+      const occurrenceId = `${segment(0, 8)}-${segment(8, 12)}-8${segment(13, 16)}-8${
+        segment(17, 20)
+      }-${segment(20, 32)}`;
+      await append([{
         type: "RUNTIME_EVENT_RECORDED",
         runtime: "veryfront",
         kind: "runtime_context",
         value: { runId: input.runId },
-      }], createObservationOccurrenceId()),
+      }], occurrenceId);
+    },
     handleChunk: async () => {},
     takeModelCallCaptureReceipt(modelCallId) {
       const key = modelCallId.toLowerCase();
