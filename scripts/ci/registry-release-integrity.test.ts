@@ -1227,22 +1227,27 @@ describe("failed publish diagnostics", () => {
     const lines: string[] = [];
     const waits: number[] = [];
     let lookups = 0;
-    const options = ["missing-a", "missing-b"].map((packageName) => ({
-      packageName,
-      version: VERSION,
-      expectedGitHead: GIT_HEAD,
-      maxAttempts: 181,
-      retryDelayMs: 10_000,
-      requestTimeoutMs: 15_000,
-      delay: (ms: number) => {
-        waits.push(ms);
-        return Promise.resolve();
-      },
-      fetcher: () => {
-        lookups++;
-        return Promise.resolve(new Response("", { status: 404 }));
-      },
-    }));
+    const options = ["missing-a", "missing-b"].map((packageName) => {
+      let now = 0;
+      return {
+        packageName,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 181,
+        retryDelayMs: 10_000,
+        requestTimeoutMs: 15_000,
+        now: () => now,
+        delay: (ms: number) => {
+          waits.push(ms);
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: () => {
+          lookups++;
+          return Promise.resolve(new Response("", { status: 404 }));
+        },
+      };
+    });
     const error = await captureError(() =>
       diagnoseRegistryPackages(options, (line) => lines.push(line))
     );
