@@ -131,7 +131,9 @@ function withPolicyMetadata(
   message: Message,
   toolCallIds: readonly string[],
 ): Message {
-  const metadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
+  const metadata: Record<string, unknown> = {
+    ...(objectHasOwn(message, "metadata") ? message.metadata ?? {} : {}),
+  };
   delete metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
   if (toolCallIds.length > 0) {
     metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY] = [...toolCallIds];
@@ -424,7 +426,9 @@ export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
   for (let index = 0; index < boundedMessageCount; index++) {
     if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
-    const trustedToolCallIds = message.metadata?.[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
+    const trustedToolCallIds = objectHasOwn(message, "metadata")
+      ? message.metadata?.[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY]
+      : undefined;
     if (!arrayIsArray(trustedToolCallIds)) continue;
     const trustedToolCallIdSet = new Set(
       trustedToolCallIds.filter((value) => typeof value === "string"),
