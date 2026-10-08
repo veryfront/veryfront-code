@@ -5,6 +5,12 @@ import {
   primordialArrayPush,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  privateTextSlice,
+  privateTextSplit,
+  privateTextStartsWith,
+} from "#veryfront/security/private-text.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
@@ -148,11 +154,9 @@ export function createAgUiEncoderState(
 }
 
 function serializeToolInput(input: unknown): string {
-  try {
-    return JSON.stringify(input ?? {});
-  } catch {
-    return "{}";
-  }
+  const serialized = privateJsonStringify(input ?? {});
+  if (serialized === undefined) throw new TypeError("Observed tool input is not JSON data");
+  return serialized;
 }
 
 function getMessageId(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): string {
@@ -290,7 +294,7 @@ function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEven
 
   if (typeof data.model === "string") {
     state.metadata.model = data.model;
-    const provider = data.model.split("/")[0];
+    const provider = privateTextSplit(data.model, "/")[0];
     if (provider) {
       state.metadata.provider = provider;
     }
@@ -862,8 +866,8 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     state.manuallyPaused = true;
     return [];
   }
-  if (event.type.startsWith("data-")) {
-    const name = event.type.slice("data-".length);
+  if (privateTextStartsWith(event.type, "data-")) {
+    const name = privateTextSlice(event.type, "data-".length);
     if (name.length === 0) {
       return [];
     }
