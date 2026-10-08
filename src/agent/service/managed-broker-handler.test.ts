@@ -4,7 +4,7 @@ import {
   inheritHostedAgentPauseCapability,
 } from "../hosted/manual-pause-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import type {
@@ -1144,6 +1144,7 @@ describe("managed broker handler", () => {
           signal: sessionController.signal,
           settlementSignal: controller.signal,
           fetch: (_url, init) => {
+            assert(init && "body" in init, "fetch must receive request options");
             if (JSON.parse(String(init?.body)).settled) {
               receipts++;
               assertEquals(sessionController.signal.aborted, true);
@@ -1211,6 +1212,7 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
+          assert(init && "body" in init, "fetch must receive request options");
           if (JSON.parse(String(init?.body)).settled) receipts++;
           return Promise.resolve(Response.json({ stop: true }));
         },
@@ -1257,6 +1259,7 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
+          assert(init && "body" in init, "fetch must receive request options");
           if (!JSON.parse(String(init?.body)).settled) {
             return Promise.resolve(Response.json({ stop: true }));
           }
