@@ -10,20 +10,24 @@ The sandbox client talks to an authenticated sandbox API. You need either Veryfr
 
 ## Prerequisites
 
-- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`) or a self-hosted
-  `/sandboxes` API and matching `VERYFRONT_API_URL`.
+- A reachable `/sandboxes` API and credentials for that API.
+- Outside a scoped Veryfront Cloud request, set both `VERYFRONT_API_URL` and
+  `VERYFRONT_API_TOKEN`, or pass `apiUrl` and `authToken` explicitly.
 - A reachable network from the process that calls `Sandbox.create()`.
 
 ## Create a sandbox
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
 self-hosted apps, CI, and other runtimes outside a Veryfront-hosted request,
-provide credentials explicitly. Set `VERYFRONT_API_TOKEN`, and set
-`VERYFRONT_API_URL` when you need a non-default API endpoint.
+set both the API URL and credentials. The client has no default API URL:
 
-Inside a Veryfront-hosted request, the client can use request-scoped
-credentials automatically. In that path, you do not need to set
-`VERYFRONT_API_TOKEN` separately for the request.
+```bash
+export VERYFRONT_API_URL="<API_URL>"
+export VERYFRONT_API_TOKEN="<TOKEN>"
+```
+
+Inside a scoped Veryfront Cloud request, the client uses the request’s API URL
+and credentials. You do not need separate environment values for that request.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
