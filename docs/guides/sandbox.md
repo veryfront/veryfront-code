@@ -226,3 +226,27 @@ A retained always-on workspace is not replaced automatically after a missing,
 inaccessible or unhealthy runtime response. Its ID stays available on the
 client so you can inspect it or reconnect with renewed credentials. Create a
 new workspace explicitly when you intend to replace it.
+
+## Migrate from the previous sandbox SDK
+
+Deploy the canonical `/sandboxes` API before upgrading SDK consumers. Update
+callers to these names. This release removes the old names without aliases.
+
+| Previous name                         | Current name         |
+| ------------------------------------- | -------------------- |
+| `executeCommand()`                    | `runCommand()`       |
+| `executeStream()`                     | `streamCommand()`    |
+| `ExecOptions`                         | `CommandOptions`     |
+| `ExecResult`                          | `CommandResult`      |
+| `ExecStreamEvent`                     | `CommandStreamEvent` |
+| `SandboxSession`                      | `SandboxDetails`     |
+| Creation option `projectId`           | `projectReference`   |
+| Runtime resolver argument `sessionId` | `sandboxId`          |
+
+`SandboxDetails` uses camelCase metadata fields, including `shortId`,
+`createdAt`, `workspaceStorage` and `ttlMode`. Command IDs remain opaque strings.
+
+Review cleanup calls when upgrading. `close()` detaches from existing and
+persistent workspaces. Use `delete()` when you intend to remove the sandbox and
+its files. Remove old server contracts only after every caller and runtime
+image uses the canonical API.
