@@ -31,9 +31,9 @@ function nullableText(value: unknown): string | null {
 /** @internal Decode control-plane metadata without exposing transport credentials. */
 export function parseSandboxDetails(value: unknown): SandboxDetails {
   const input = record(value);
-  const access = input.access_scope ?? "project";
-  const storage = input.workspace_storage ?? "ephemeral";
-  const lifetime = input.ttl_mode ?? "default";
+  const access = input.access_scope;
+  const storage = input.workspace_storage;
+  const lifetime = input.ttl_mode;
   if (
     (access !== "project" && access !== "private") ||
     (storage !== "ephemeral" && storage !== "persistent") ||

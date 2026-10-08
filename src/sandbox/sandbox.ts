@@ -217,6 +217,9 @@ export class Sandbox {
   /** Update cleanup policy without changing access or storage. */
   async updateLifetime(input: SandboxLifetimeInput): Promise<SandboxDetails> {
     const policy = buildSandboxCreateInput(input);
+    const state = getSandboxPrivateState(this);
+    // An always-on update can commit even if its response is lost. Preserve the workspace until a temporary policy is confirmed.
+    if (policy.ttl_mode === "always_on") state.deleteOnClose = false;
     const details = parseSandboxDetails(
       await this.#requestControlPlane("", {
         method: "PATCH",
@@ -226,7 +229,6 @@ export class Sandbox {
         }),
       }),
     );
-    const state = getSandboxPrivateState(this);
     state.deleteOnClose = state.createdByClient && details.workspaceStorage !== "persistent" &&
       details.ttlMode !== "always_on";
     return details;

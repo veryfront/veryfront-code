@@ -140,6 +140,42 @@ describe("Sandbox", () => {
     assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
   });
 
+  for (
+    const outcome of [
+      "lost response",
+      "malformed response",
+      "missing policy",
+      "null policy",
+    ] as const
+  ) {
+    it(`preserves the workspace when an always-on update has a ${outcome}`, async () => {
+      mockFetch([
+        jsonResponse({ id: "ambiguous-update", endpoint: "https://sb.test", status: "running" }),
+        outcome === "lost response"
+          ? () => {
+            throw new Error("Connection lost after update");
+          }
+          : outcome === "malformed response"
+          ? jsonResponse({ malformed: true })
+          : jsonResponse({
+            id: "ambiguous-update",
+            short_id: "ambiguous",
+            endpoint: "https://sb.test",
+            status: "running",
+            access_scope: "project",
+            created_at: "2026-10-08T00:00:00Z",
+            project_id: null,
+            ...(outcome === "null policy" ? { ttl_mode: null, workspace_storage: null } : {}),
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await assertRejects(() => sandbox.updateLifetime({ ttlMode: "always_on" }), Error);
+      await sandbox.close();
+      assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 0);
+    });
+  }
+
   for (const ttlMode of ["default", "duration"] as const) {
     for (
       const [owned, storage] of [[true, "ephemeral"], [true, "persistent"], [
@@ -3517,7 +3553,7 @@ describe("Sandbox", () => {
   });
 
   describe("list()", () => {
-    it("should list sandbox sessions", async () => {
+    it("lists sandboxes with explicit policy metadata", async () => {
       mockFetch([
         jsonResponse({
           data: [
@@ -3526,6 +3562,9 @@ describe("Sandbox", () => {
               short_id: "s1",
               endpoint: "https://sb1.test",
               status: "running",
+              access_scope: "project",
+              workspace_storage: "ephemeral",
+              ttl_mode: "default",
               created_at: "2026-01-01T00:00:00Z",
             },
             {
@@ -3533,6 +3572,9 @@ describe("Sandbox", () => {
               short_id: "s2",
               endpoint: "https://sb2.test",
               status: "deleting",
+              access_scope: "project",
+              workspace_storage: "ephemeral",
+              ttl_mode: "default",
               created_at: "2026-01-02T00:00:00Z",
             },
           ],
@@ -4039,6 +4081,35 @@ describe("Sandbox", () => {
       await lazy.close();
     }
   });
+  for (const selector of ["projectReference", "environmentId"] as const) {
+    for (const value of ["", "   "]) {
+      it(`rejects an empty ${selector} before provisioning`, async () => {
+        mockFetch([]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com", [selector]: value };
+        await assertRejects(() => Sandbox.create(options), Error, selector);
+        await assertRejects(
+          async () => {
+            Sandbox.createLazy(options);
+          },
+          Error,
+          selector,
+        );
+        assertEquals(fetchCalls.length, 0);
+      });
+    }
+  }
+  it("rejects an empty dynamic project selector before provisioning", async () => {
+    mockFetch([]);
+    const sandbox = Sandbox.createLazy({
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+      getProjectId: () => "",
+    });
+    await assertRejects(() => sandbox.ensure(), Error, "projectReference");
+    await sandbox.close();
+    assertEquals(fetchCalls.length, 0);
+  });
+
   it("rejects retired project selectors instead of silently billing a different project", async () => {
     mockFetch([]);
     const options = {

@@ -7,6 +7,7 @@ export function buildSandboxCreateInput(
   projectReference = options.projectReference,
 ) {
   assertSandboxCreationOptions(options);
+  assertSandboxSelector(projectReference, "projectReference");
   const accessScope = options.accessScope ?? "project";
   const ttlMode = options.ttlMode ?? "default";
   if (
@@ -42,7 +43,15 @@ export function buildSandboxCommandOptions(options?: import("./types.ts").Comman
 
 /** @internal Refuse retired selectors instead of silently changing the billing project. */
 export function assertSandboxCreationOptions(options: SandboxOptions): void {
+  assertSandboxSelector(options.projectReference, "projectReference");
+  assertSandboxSelector(options.environmentId, "environmentId");
   if (Object.hasOwn(options, "projectId")) {
     throw CONFIG_INVALID.create({ detail: "Use projectReference instead of projectId" });
+  }
+}
+
+function assertSandboxSelector(value: unknown, field: string): void {
+  if (value !== undefined && (typeof value !== "string" || value.trim().length === 0)) {
+    throw CONFIG_INVALID.create({ detail: `${field} must be a non-empty string` });
   }
 }

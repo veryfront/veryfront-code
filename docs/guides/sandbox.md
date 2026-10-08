@@ -174,6 +174,10 @@ under `/workspace` survive runtime replacement. Running processes and changes
 outside `/workspace` do not persist. Use `sandbox.delete()` to delete the
 sandbox and its workspace files.
 
+If an always-on lifetime update fails or its response is lost, `close()` preserves the workspace. Confirm its policy before changing it back to temporary cleanup or deleting it.
+
+Supplied `projectReference` and `environmentId` values must be non-empty. Omit an optional selector instead of passing an empty configuration value.
+
 `Sandbox.list()` returns access, storage and lifetime metadata. Storage and
 lifetime are separate policies. Changing cleanup does not migrate temporary
 files to persistent storage.
