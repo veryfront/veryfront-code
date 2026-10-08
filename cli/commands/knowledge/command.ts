@@ -291,7 +291,13 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[], okfBundle = fa
   return { skipped, uploadTargets };
 }
 
-const OKF_COMPANION_REFERENCE_KEYS = new Set(["attester", "computation", "executor"]);
+const OKF_COMPANION_REFERENCE_KEYS = new Set([
+  "attester",
+  "computation",
+  "executor",
+  "resource",
+  "sources",
+]);
 const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
 function okfBundleSkipMessage(): string {
   return "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.";
@@ -674,7 +680,10 @@ export async function collectKnowledgeSources(
       limit: 100,
     });
 
-  let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
+  const initialPrefix = options.okfBundle && uploadPrefix && !uploadPrefix.endsWith("/")
+    ? `${uploadPrefix}/`
+    : uploadPrefix || undefined;
+  let uploads = await listUploadsForPrefix(initialPrefix);
   deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle);
   if (!options.okfBundle) {

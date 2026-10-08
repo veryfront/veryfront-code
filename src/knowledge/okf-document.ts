@@ -132,6 +132,18 @@ export function inspectOkfDocument(
     }
     try {
       metadata = decodeOkfMetadata(framed.frontMatter);
+      if (kind === "index" && normalizedPath === rootIndexPath) {
+        const version = metadata.okf_version;
+        const declaresVersion = (typeof version === "string" && version.trim().length > 0) ||
+          (typeof version === "number" && Number.isFinite(version));
+        if (Object.keys(metadata).length !== 1 || !declaresVersion) {
+          diagnostics.push({
+            code: "invalid_frontmatter",
+            message:
+              "Bundle-root index.md frontmatter must contain only an okf_version declaration.",
+          });
+        }
+      }
       const diagnostic = kind === "concept" ? getOkfTypeDiagnostic(metadata) : undefined;
       if (diagnostic) diagnostics.push(diagnostic);
     } catch (error) {

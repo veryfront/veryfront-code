@@ -50,7 +50,7 @@ veryfront knowledge ingest --path ./bundle --all --okf-bundle
 Bundle mode requires an explicit root and `--all`; it does not accept positional
 sources. Documents retain their metadata, Markdown, links and relative paths,
 including files in hidden directories. Document envelopes are validated before
-upload. Referenced computation, executor and attester companions are preserved
+upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
 with their relative paths, regardless of filename extension. Unreferenced viewer
 artifacts are excluded. The same rules apply to a bundle under `uploads/...`.
 

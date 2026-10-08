@@ -85,12 +85,14 @@ export function buildKnowledgeIngestRunResult(input: {
       source_mode: input.sourceMode,
       knowledge_path: input.knowledgePath,
       okf_bundle: input.okfBundle ?? false,
-      pending_acceptance: [
-        "job_retry_idempotence",
-        "derived_link_index",
-        "provider_file_flow",
-        "full_okf_import_export_roundtrip",
-      ],
+      pending_acceptance: input.okfBundle
+        ? [
+          "job_retry_idempotence",
+          "derived_link_index",
+          "provider_file_flow",
+          "full_okf_import_export_roundtrip",
+        ]
+        : [],
     },
     summary: {
       requested_count: input.requestedCount,

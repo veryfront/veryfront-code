@@ -134,7 +134,7 @@ describe("OKF document inspection", () => {
       inspectOkfDocument("topic.md", "---\n---\nBody").diagnostics[0]?.code,
       "missing_type",
     );
-    assertEquals(inspectOkfDocument("index.md", "---\n---\nNavigation").envelopeConforms, true);
+    assertEquals(inspectOkfDocument("index.md", "---\n---\nNavigation").envelopeConforms, false);
     const duplicate = "---\ntype: First\ntype: Second\n---\nBody";
     assertEquals(
       inspectOkfDocument("topic.md", duplicate).diagnostics[0]?.code,
@@ -155,7 +155,7 @@ for (const [label, newline] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
       assertEquals(inspected.source, source);
       assertEquals(
         inspected.diagnostics.map((diagnostic) => diagnostic.code),
-        path === "topic.md" ? ["missing_type"] : [],
+        path === "topic.md" ? ["missing_type"] : path === "index.md" ? ["invalid_frontmatter"] : [],
       );
     }
   });
@@ -255,5 +255,20 @@ it("uses explicit bundle roots for canonical lookup paths", () => {
   assertEquals(
     inspectOkfDocument("other/index.md", source, { bundleRoot: "knowledge" }).envelopeConforms,
     false,
+  );
+});
+
+it("accepts root index envelopes only when they declare the version", () => {
+  for (const yaml of ["{}", "type: Topic", "okf_version: 0.2\ntitle: Index", "okf_version: null"]) {
+    const source = `---\n${yaml}\n---\nNavigation\n`;
+    const value = inspectOkfDocument("index.md", source);
+    assertEquals(value.envelopeConforms, false);
+    assertEquals(value.source, source);
+    assertEquals(value.body, "Navigation\n");
+  }
+  assertEquals(inspectOkfDocument("index.md", "# Navigation\n").envelopeConforms, true);
+  assertEquals(
+    inspectOkfDocument("index.md", "---\nokf_version: 0.3\n---\nNavigation").envelopeConforms,
+    true,
   );
 });

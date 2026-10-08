@@ -621,14 +621,16 @@ describe("collectKnowledgeSources", () => {
 
   it("skips remote OKF viewer artifacts before downloading uploads", async () => {
     const client = createMockClient({
-      get: () =>
-        Promise.resolve({
+      get: (_path, params) => {
+        assertEquals(params?.path, "uploads/bundle/");
+        return Promise.resolve({
           data: [
             { type: "file", path: "uploads/bundle/topic.md" },
             { type: "file", path: "uploads/bundle/viz.html" },
           ],
           page_info: { next: null },
-        }),
+        });
+      },
     });
     const downloadCalls: string[][] = [];
 
@@ -668,7 +670,7 @@ describe("collectKnowledgeSources", () => {
     const remoteFiles = new Map([
       [
         "uploads/bundle/topic.md",
-        "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nattester:\n  resource: references/check.json\n---\nRevenue\n",
+        "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\nattester:\n  resource: references/check.json\n---\nRevenue\n",
       ],
       ["uploads/bundle/scripts/revenue.js", "export const revenue = 1;\r\n"],
       ["uploads/bundle/bin/run", "#!/bin/sh\necho run\n"],
@@ -1962,11 +1964,13 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
   const files = new Map([
     [
       "topic.md",
-      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nattester:\n  resource: references/check.json\n---\nRevenue\n",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\nattester:\n  resource: references/check.json\n---\nRevenue\n",
     ],
     ["scripts/revenue.js", "export const revenue = 42;\r\n"],
     ["bin/run", "#!/bin/sh\necho run\n"],
     ["references/check.json", '{"ok":true}\n'],
+    ["references/schema.json", '{"type":"object"}\n'],
+    ["references/raw.json", '{"value":42}\n'],
   ]);
   try {
     for (const [path, content] of files) {
@@ -1983,7 +1987,14 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
     });
     assertEquals(
       collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
-      ["bin/run", "references/check.json", "scripts/revenue.js", "topic.md"],
+      [
+        "bin/run",
+        "references/check.json",
+        "references/raw.json",
+        "references/schema.json",
+        "scripts/revenue.js",
+        "topic.md",
+      ],
     );
     assertEquals(
       collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
