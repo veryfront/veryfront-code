@@ -183,7 +183,7 @@
     {
       "id": "power-bi__refresh_dataset",
       "name": "Refresh Dataset",
-      "description": "Refresh dataset",
+      "description": "Start dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -209,7 +209,7 @@
     {
       "id": "power-bi__refresh_workspace_dataset",
       "name": "Refresh Workspace Dataset",
-      "description": "Refresh workspace dataset",
+      "description": "Start workspace dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -53,6 +53,20 @@ describe("integration endpoint specs", () => {
       }
     }
   });
+  it("keeps asynchronous and conversation-window semantics in short summaries", () => {
+    const expected: [string, string, string][] = [
+      ["adyen", "create_refund", "Start payment refund"],
+      ["azure-blob-storage", "copy_blob", "Start blob copy"],
+      ["power-bi", "refresh_dataset", "Start dataset refresh"],
+      ["power-bi", "refresh_workspace_dataset", "Start workspace dataset refresh"],
+      ["whatsapp", "send_text_message", "Send text within 24-hour window"],
+      ["whatsapp", "send_media_message", "Send media within 24-hour window"],
+      ["whatsapp", "send_template_message", "Send template to start conversation"],
+    ];
+    for (const [connectorName, toolName, summary] of expected) {
+      assertEquals(getTool(connectorName, toolName).description, summary);
+    }
+  });
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",

@@ -519,7 +519,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__create_refund",
       "name": "Create Refund",
-      "description": "Create refund",
+      "description": "Start payment refund",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4660,7 +4660,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__copy_blob",
       "name": "Copy Blob",
-      "description": "Copy blob",
+      "description": "Start blob copy",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -43436,7 +43436,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__refresh_dataset",
       "name": "Refresh Dataset",
-      "description": "Refresh dataset",
+      "description": "Start dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -43463,7 +43463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__refresh_workspace_dataset",
       "name": "Refresh Workspace Dataset",
-      "description": "Refresh workspace dataset",
+      "description": "Start workspace dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57227,7 +57227,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "whatsapp__send_text_message",
       "name": "Send Text Message",
-      "description": "Send text message",
+      "description": "Send text within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57268,7 +57268,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__send_template_message",
       "name": "Send Template Message",
-      "description": "Send template message",
+      "description": "Send template to start conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57304,7 +57304,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__send_media_message",
       "name": "Send Media Message",
-      "description": "Send media message",
+      "description": "Send media within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

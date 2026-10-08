@@ -44,7 +44,7 @@
     {
       "id": "whatsapp__send_text_message",
       "name": "Send Text Message",
-      "description": "Send text message",
+      "description": "Send text within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -89,7 +89,7 @@
     {
       "id": "whatsapp__send_template_message",
       "name": "Send Template Message",
-      "description": "Send template message",
+      "description": "Send template to start conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -129,7 +129,7 @@
     {
       "id": "whatsapp__send_media_message",
       "name": "Send Media Message",
-      "description": "Send media message",
+      "description": "Send media within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

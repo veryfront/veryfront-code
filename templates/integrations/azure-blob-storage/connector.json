@@ -291,7 +291,7 @@
     {
       "id": "azure-blob-storage__copy_blob",
       "name": "Copy Blob",
-      "description": "Copy blob",
+      "description": "Start blob copy",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

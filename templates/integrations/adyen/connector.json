@@ -233,7 +233,7 @@
     {
       "id": "adyen__create_refund",
       "name": "Create Refund",
-      "description": "Create refund",
+      "description": "Start payment refund",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
