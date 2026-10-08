@@ -160,6 +160,10 @@ function createHostedChatFinalizeDetachedBuildState(
             : part.input,
           output: fallback.output,
           errorText: fallback.errorText,
+          ...(typeof part.providerExecuted !== "boolean" &&
+              typeof fallback.providerExecuted === "boolean"
+            ? { providerExecuted: fallback.providerExecuted }
+            : {}),
         };
       });
       const mirrored = buildFinalizedMessageState({
@@ -207,7 +211,10 @@ function createHostedChatFinalizeDetachedBuildState(
 
     return {
       finalizedMessage: finalizedFallbackMessage,
-      hasContent: fallbackParts.some((part) => part.type !== "step-start"),
+      hasContent: !shouldFailEmptyHostedFinalizedMessage({
+        isAborted: false,
+        message: finalizedFallbackMessage,
+      }),
       fallbackChunks,
       hasIncompleteToolParts: hasIncompleteFallbackToolParts,
     };

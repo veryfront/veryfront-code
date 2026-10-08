@@ -251,6 +251,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toToolInput(toolCall?.input ?? part.input),
+          ...providerExecutionFields(toolResult),
           ...providerExecutionFields(toolCall ?? part),
           outputState: toolResult ? "output-available" : "input-available",
           ...(toolResult ? { output: toolResult.output } : {}),
