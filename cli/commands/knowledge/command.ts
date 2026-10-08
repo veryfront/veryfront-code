@@ -5,7 +5,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
   error: Error & { issues: unknown[] };
 };
 import { createFileSystem, getEnv } from "veryfront/platform";
-import { basename, extname } from "veryfront/platform/path";
+import { basename, dirname, extname, join, normalize } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { parseArgsOrThrow } from "#cli/shared/args";
@@ -19,6 +19,7 @@ import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
+import { inspectOkfDocument } from "veryfront/knowledge";
 import { classifyKnowledgeSourcePath } from "./source-policy.ts";
 import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
 import {
@@ -290,6 +291,107 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[], okfBundle = fa
   return { skipped, uploadTargets };
 }
 
+const OKF_COMPANION_REFERENCE_KEYS = new Set(["attester", "computation", "executor"]);
+const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
+function okfBundleSkipMessage(): string {
+  return "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.";
+}
+
+function isMarkdownPath(path: string): boolean {
+  return extname(path).toLowerCase() === ".md";
+}
+
+function looksLikeExternalReference(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#");
+}
+
+function resolveOkfCompanionReference(documentPath: string, reference: string): string | null {
+  const trimmed = reference.trim();
+  if (!trimmed || looksLikeExternalReference(trimmed)) return null;
+
+  const [withoutHash] = trimmed.split("#", 1);
+  const [withoutQuery] = (withoutHash ?? "").split("?", 1);
+  const path = withoutQuery?.trim();
+  if (!path) return null;
+
+  const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  const rawPath = path.startsWith("/")
+    ? path.replace(/^\/+/, "")
+    : documentDir === "."
+    ? path
+    : join(documentDir, path);
+  const normalized = normalize(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    return null;
+  }
+  if (normalized.split("/").includes("..")) return null;
+  return commandHelpers.normalizeKnowledgeRelativePath(normalized, "OKF companion relative path");
+}
+
+function collectCompanionReferencesFromValue(input: {
+  documentPath: string;
+  value: unknown;
+  key?: string;
+  insideCompanionField: boolean;
+  referencedPaths: Set<string>;
+}): void {
+  const insideCompanionField = input.insideCompanionField ||
+    (input.key !== undefined && OKF_COMPANION_REFERENCE_KEYS.has(input.key));
+  if (typeof input.value === "string") {
+    if (insideCompanionField) {
+      const referencedPath = resolveOkfCompanionReference(input.documentPath, input.value);
+      if (referencedPath !== null) input.referencedPaths.add(referencedPath);
+    }
+    return;
+  }
+  if (Array.isArray(input.value)) {
+    for (const item of input.value) {
+      collectCompanionReferencesFromValue({
+        documentPath: input.documentPath,
+        value: item,
+        insideCompanionField,
+        referencedPaths: input.referencedPaths,
+      });
+    }
+    return;
+  }
+  if (input.value == null || typeof input.value !== "object") return;
+  for (const [key, value] of Object.entries(input.value)) {
+    collectCompanionReferencesFromValue({
+      documentPath: input.documentPath,
+      value,
+      key,
+      insideCompanionField: insideCompanionField && OKF_COMPANION_PATH_KEYS.has(key),
+      referencedPaths: input.referencedPaths,
+    });
+  }
+}
+
+async function collectReferencedOkfCompanionPaths(
+  sources: KnowledgeSource[],
+  bundleRoot: string,
+): Promise<Set<string>> {
+  const referencedPaths = new Set<string>();
+  for (const source of sources) {
+    const relativePath = commandHelpers.deriveOkfBundleRelativePath(source, bundleRoot);
+    if (!isMarkdownPath(relativePath)) continue;
+    let markdown: string;
+    try {
+      markdown = await Deno.readTextFile(source.localPath);
+    } catch {
+      continue;
+    }
+    const inspected = inspectOkfDocument(relativePath, markdown);
+    collectCompanionReferencesFromValue({
+      documentPath: relativePath,
+      value: inspected.metadata,
+      insideCompanionField: false,
+      referencedPaths,
+    });
+  }
+  return referencedPaths;
+}
+
 function filterOkfBundleUploadTargets(
   uploadTargets: string[],
   skipped: KnowledgeIngestSkippedFileResult[],
@@ -298,18 +400,69 @@ function filterOkfBundleUploadTargets(
   if (!okfBundle) return uploadTargets;
   const markdownTargets: string[] = [];
   for (const uploadPath of uploadTargets) {
-    if (extname(uploadPath).toLowerCase() === ".md") {
+    if (isMarkdownPath(uploadPath)) {
       markdownTargets.push(uploadPath);
       continue;
     }
     skipped.push(commandHelpers.createSkippedKnowledgeSource({
       source: formatKnowledgeUploadSource(uploadPath),
       reason: "unsupported_file_type",
-      message:
-        "OKF bundle mode only ingests Markdown documents; generated viewer artifacts are skipped.",
+      message: okfBundleSkipMessage(),
     }));
   }
   return markdownTargets;
+}
+
+async function downloadOkfBundleUploads(input: {
+  uploadTargets: string[];
+  bundleRoot: string;
+  skipped: KnowledgeIngestSkippedFileResult[];
+  downloadUploads: (uploadPaths: string[]) => Promise<DownloadResult[]>;
+}): Promise<DownloadResult[]> {
+  const markdownTargets: string[] = [];
+  const companionCandidates: string[] = [];
+  for (const uploadPath of input.uploadTargets) {
+    if (isMarkdownPath(uploadPath)) {
+      markdownTargets.push(uploadPath);
+    } else {
+      companionCandidates.push(uploadPath);
+    }
+  }
+
+  const markdownDownloads = markdownTargets.length > 0
+    ? await input.downloadUploads(markdownTargets)
+    : [];
+  const markdownSources = markdownDownloads.map((download) => ({
+    kind: "upload" as const,
+    input: input.bundleRoot,
+    uploadPath: download.uploadPath,
+    localPath: download.localPath,
+  }));
+  const referencedPaths = await collectReferencedOkfCompanionPaths(
+    markdownSources,
+    input.bundleRoot,
+  );
+  const referencedCompanionTargets: string[] = [];
+  for (const uploadPath of companionCandidates) {
+    const relativePath = commandHelpers.deriveOkfBundleRelativePath(
+      { kind: "upload", input: input.bundleRoot, uploadPath, localPath: uploadPath },
+      input.bundleRoot,
+    );
+    if (referencedPaths.has(relativePath)) {
+      referencedCompanionTargets.push(uploadPath);
+      continue;
+    }
+    input.skipped.push(commandHelpers.createSkippedKnowledgeSource({
+      source: formatKnowledgeUploadSource(uploadPath),
+      reason: "unsupported_file_type",
+      message: okfBundleSkipMessage(),
+    }));
+  }
+
+  const companionDownloads = referencedCompanionTargets.length > 0
+    ? await input.downloadUploads(referencedCompanionTargets)
+    : [];
+  return [...markdownDownloads, ...companionDownloads];
 }
 
 function buildSourceReference(source: KnowledgeSource): string {
@@ -329,17 +482,26 @@ function validateOkfBundleOptions(
 
 function isMarkdownKnowledgeSource(source: KnowledgeSource): boolean {
   const path = source.kind === "upload" ? source.uploadPath : source.localPath;
-  return extname(path).toLowerCase() === ".md";
+  return isMarkdownPath(path);
 }
 
-function filterOkfBundleCollection(
+async function filterOkfBundleCollection(
   collection: KnowledgeSourceCollection,
   okfBundle: boolean | undefined,
-): KnowledgeSourceCollection {
+  bundleRoot?: string,
+): Promise<KnowledgeSourceCollection> {
   if (!okfBundle) return collection;
+  if (!bundleRoot) {
+    throw new Error("OKF bundle mode requires an explicit bundle root.");
+  }
+  const referencedPaths = await collectReferencedOkfCompanionPaths(collection.sources, bundleRoot);
   const filtered: KnowledgeSourceCollection = { sources: [], skipped: [...collection.skipped] };
   for (const source of collection.sources) {
-    if (isMarkdownKnowledgeSource(source)) {
+    const relativePath = commandHelpers.deriveOkfBundleRelativePath(source, bundleRoot);
+    if (
+      isMarkdownKnowledgeSource(source) ||
+      referencedPaths.has(relativePath)
+    ) {
       filtered.sources.push(source);
       continue;
     }
@@ -347,8 +509,7 @@ function filterOkfBundleCollection(
       source: buildSourceReference(source),
       localSourcePath: source.localPath,
       reason: "unsupported_file_type",
-      message:
-        "OKF bundle mode only ingests Markdown documents; generated viewer artifacts are skipped.",
+      message: okfBundleSkipMessage(),
     }));
   }
   return filtered;
@@ -375,9 +536,6 @@ function buildOkfBundleRelativePaths(
   const remotePaths = new Map<string, string>();
   for (const source of sources) {
     const relativePath = commandHelpers.deriveOkfBundleRelativePath(source, options.path);
-    if (!relativePath.toLowerCase().endsWith(".md")) {
-      throw new Error(`OKF bundle mode only ingests Markdown documents: ${relativePath}`);
-    }
     const remotePath = deriveOkfBundleRemotePath(relativePath, options.knowledgePath);
     const previous = remotePaths.get(remotePath);
     if (previous !== undefined) {
@@ -480,10 +638,14 @@ export async function collectKnowledgeSources(
       });
     }
 
-    return filterOkfBundleCollection({
-      sources: resolvedSources,
-      skipped,
-    }, options.okfBundle);
+    return await filterOkfBundleCollection(
+      {
+        sources: resolvedSources,
+        skipped,
+      },
+      options.okfBundle,
+      options.path,
+    );
   }
 
   if (!options.path || !options.all) {
@@ -491,13 +653,14 @@ export async function collectKnowledgeSources(
   }
 
   if (!isProjectUploadReference(options.path) && await fs.exists(options.path)) {
-    return filterOkfBundleCollection(
+    return await filterOkfBundleCollection(
       await collectLocalFiles(
         options.path,
         options.okfBundle ? true : options.recursive,
         options.okfBundle,
       ),
       options.okfBundle,
+      options.path,
     );
   }
 
@@ -514,7 +677,9 @@ export async function collectKnowledgeSources(
   let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
   deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle);
-  uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
+  if (!options.okfBundle) {
+    uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
+  }
 
   if (
     !uploadTargets.length && skipped.length === 0 && uploadPrefix && !uploadPrefix.endsWith("/")
@@ -522,24 +687,39 @@ export async function collectKnowledgeSources(
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
     deps.signal?.throwIfAborted();
     ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle));
-    uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
+    if (!options.okfBundle) {
+      uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
+    }
   }
 
   if (!uploadTargets.length && skipped.length === 0) {
     throw new Error(`No supported uploads found under ${displayUploadPrefix}`);
   }
 
-  const downloads = uploadTargets.length > 0 ? await deps.downloadUploads(uploadTargets) : [];
+  const downloads = options.okfBundle
+    ? await downloadOkfBundleUploads({
+      uploadTargets,
+      bundleRoot: options.path,
+      skipped,
+      downloadUploads: deps.downloadUploads,
+    })
+    : uploadTargets.length > 0
+    ? await deps.downloadUploads(uploadTargets)
+    : [];
   deps.signal?.throwIfAborted();
-  return filterOkfBundleCollection({
-    sources: downloads.map((download) => ({
-      kind: "upload",
-      input: options.path!,
-      uploadPath: download.uploadPath,
-      localPath: download.localPath,
-    })),
-    skipped,
-  }, options.okfBundle);
+  return await filterOkfBundleCollection(
+    {
+      sources: downloads.map((download) => ({
+        kind: "upload",
+        input: options.path!,
+        uploadPath: download.uploadPath,
+        localPath: download.localPath,
+      })),
+      skipped,
+    },
+    options.okfBundle,
+    options.path,
+  );
 }
 
 export async function ingestResolvedSources(

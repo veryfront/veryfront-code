@@ -659,8 +659,73 @@ describe("collectKnowledgeSources", () => {
       localSourcePath: null,
       reason: "unsupported_file_type",
       message:
-        "OKF bundle mode only ingests Markdown documents; generated viewer artifacts are skipped.",
+        "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.",
     }]);
+  });
+
+  it("preserves referenced remote OKF companion assets before upload", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-okf-remote-companions-" });
+    const remoteFiles = new Map([
+      [
+        "uploads/bundle/topic.md",
+        "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nattester:\n  resource: references/check.json\n---\nRevenue\n",
+      ],
+      ["uploads/bundle/scripts/revenue.js", "export const revenue = 1;\r\n"],
+      ["uploads/bundle/bin/run", "#!/bin/sh\necho run\n"],
+      ["uploads/bundle/references/check.json", '{"ok":true}\n'],
+      ["uploads/bundle/viz.html", "<html>viewer</html>"],
+    ]);
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [...remoteFiles.keys()].map((path) => ({ type: "file", path })),
+          page_info: { next: null },
+        }),
+    });
+    const downloadCalls: string[][] = [];
+
+    try {
+      const collection = await collectKnowledgeSources(
+        createKnowledgeCommandArgs({ path: "uploads/bundle", all: true, okfBundle: true }),
+        {
+          client,
+          projectSlug: "my-project",
+          downloadUploads: async (uploadPaths) => {
+            downloadCalls.push(uploadPaths);
+            const downloads = [];
+            for (const uploadPath of uploadPaths) {
+              const localPath = join(tempDir, uploadPath);
+              await Deno.mkdir(dirname(localPath), { recursive: true });
+              await Deno.writeTextFile(localPath, remoteFiles.get(uploadPath) ?? "");
+              downloads.push({ uploadPath, localPath });
+            }
+            return downloads;
+          },
+        },
+      );
+
+      assertEquals(downloadCalls, [["uploads/bundle/topic.md"], [
+        "uploads/bundle/scripts/revenue.js",
+        "uploads/bundle/bin/run",
+        "uploads/bundle/references/check.json",
+      ]]);
+      assertEquals(
+        collection.sources.map((source) =>
+          source.kind === "upload" ? source.uploadPath : source.localPath
+        ).sort(),
+        [
+          "uploads/bundle/bin/run",
+          "uploads/bundle/references/check.json",
+          "uploads/bundle/scripts/revenue.js",
+          "uploads/bundle/topic.md",
+        ],
+      );
+      assertEquals(collection.skipped.map((skipped) => skipped.source), [
+        "uploads/bundle/viz.html",
+      ]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
   });
 
   it("skips unsupported files when listing uploads by prefix instead of failing", async () => {
@@ -1629,10 +1694,38 @@ describe("runKnowledgeParser", () => {
       assertStringIncludes(markdown, 'description: "Quarterly performance summary"');
       assertStringIncludes(markdown, "generated:");
       assertStringIncludes(markdown, `by: "veryfront/${VERSION}"`);
-      assertStringIncludes(markdown, 'resource: "uploads/contracts/q1-report.txt"');
+      // The upload is not copied beside this concept, so it cannot be a
+      // standardized relative provenance resource.
+      assertEquals(markdown.includes("sources:"), false);
+      assertEquals(markdown.includes("resource:"), false);
       assertEquals(markdown.includes("added:"), false);
       assertStringIncludes(markdown, "# Q1 Report");
       assertStringIncludes(markdown, "Quarterly revenue increased 12% year over year.");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("retains standardized source provenance for absolute URLs", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-url-" });
+    const filePath = join(tempDir, "source.txt");
+    const outputDir = join(tempDir, "knowledge-output");
+
+    try {
+      await Deno.writeTextFile(filePath, "Source text.");
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        slug: "source",
+        sourceReference: "https://example.com/source.txt",
+      });
+
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, 'source: "https://example.com/source.txt"');
+      assertStringIncludes(markdown, "sources:");
+      assertStringIncludes(markdown, "  - id: source");
+      assertStringIncludes(markdown, 'resource: "https://example.com/source.txt"');
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
@@ -1860,4 +1953,102 @@ describe("runKnowledgeParsers", () => {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
   });
+});
+
+it("preserves referenced computation executor and attester UTF-8 companions byte for byte", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-companions-" });
+  const outputDir = join(root, "output");
+  const bundle = join(root, "bundle");
+  const files = new Map([
+    [
+      "topic.md",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nattester:\n  resource: references/check.json\n---\nRevenue\n",
+    ],
+    ["scripts/revenue.js", "export const revenue = 42;\r\n"],
+    ["bin/run", "#!/bin/sh\necho run\n"],
+    ["references/check.json", '{"ok":true}\n'],
+  ]);
+  try {
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+    await Deno.writeTextFile(join(bundle, "viz.html"), "<html>viewer</html>");
+    await Deno.writeTextFile(join(bundle, "scripts", "orphan.js"), "export {};\n");
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      ["bin/run", "references/check.json", "scripts/revenue.js", "topic.md"],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["scripts/orphan.js", "viz.html"],
+    );
+    const uploaded = new Map<string, string>();
+    const result = await ingestResolvedSources(collection.sources, options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      outputDir,
+      runParser: runKnowledgeParser,
+      uploadKnowledgeFile: async (remotePath, localPath) => {
+        uploaded.set(remotePath, await Deno.readTextFile(localPath));
+        return { path: remotePath };
+      },
+    });
+    assertEquals(result.failed, []);
+    assertEquals(
+      [...uploaded].sort(),
+      [...files].map(([path, content]) => [`knowledge/${path}`, content]).sort(),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("fails referenced OKF companion assets that are not valid UTF-8", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-binary-companion-" });
+  const outputDir = join(root, "output");
+  const bundle = join(root, "bundle");
+  try {
+    await Deno.mkdir(join(bundle, "bin"), { recursive: true });
+    await Deno.writeTextFile(
+      join(bundle, "topic.md"),
+      "---\ntype: Attested Computation\nexecutor: bin/run.wasm\n---\nRevenue\n",
+    );
+    await Deno.writeFile(join(bundle, "bin", "run.wasm"), new Uint8Array([0xff, 0xfe, 0xfd]));
+
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      ["bin/run.wasm", "topic.md"],
+    );
+    assertEquals(collection.skipped, []);
+
+    const result = await ingestResolvedSources(collection.sources, options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      outputDir,
+      runParser: runKnowledgeParser,
+      uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+    });
+    assertEquals(result.ingested.map((item) => item.remotePath), ["knowledge/topic.md"]);
+    assertEquals(result.failed.length, 1);
+    assertEquals(result.failed[0]?.source.endsWith("bin/run.wasm"), true);
+    assertStringIncludes(
+      result.failed[0]?.message ?? "",
+      "not valid UTF-8 and cannot be uploaded through text knowledge storage",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
