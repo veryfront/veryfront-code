@@ -9493,9 +9493,18 @@ describe("project run inference credential header", () => {
     );
   });
 
-  for (const failure of ["transport", "wrong-run", "invalid-capture", "invalid-json"] as const) {
+  for (
+    const failure of [
+      "transport",
+      "wrong-run",
+      "invalid-capture",
+      "invalid-json",
+      "pre-append",
+    ] as const
+  ) {
     it(`fails closed when task code catches a mandatory output observation failure (${failure})`, async () => {
       let caughtObservationFailure = false;
+      let caughtFailureMessage = "";
       const runId = `run_observation_append_failed_${failure}`;
       const canonicalRunId = "11111111-1111-4111-8111-111111111111";
       const projectId = "22222222-2222-4222-8222-222222222222";
@@ -9503,12 +9512,33 @@ describe("project run inference credential header", () => {
       const handler = new ProjectRunExecuteHandler(createDeps({
         runTask: async () => {
           try {
-            await withLocalChildRuntime(
-              new AgentRuntime("observation-probe", { model: "test/model", system: "Observe" }),
-              () => observeGeneratedAgentTurn("observed-message", { text: "Output must persist." }),
-            );
-          } catch {
+            if (failure === "pre-append") {
+              let output: unknown = "observed";
+              for (let depth = 0; depth < 140; depth++) output = { nested: output };
+              await executeLocalChild({
+                agentId: "observation-probe",
+                input: "test",
+                toolName: "invoke_agent",
+                toolInput: {},
+                execute: async (control) => {
+                  assertExists(control?.onEvent);
+                  await control.onEvent({
+                    type: "data-observation-probe",
+                    data: output,
+                  });
+                  return { text: "done", toolCalls: 1, status: "completed" };
+                },
+              });
+            } else {
+              await withLocalChildRuntime(
+                new AgentRuntime("observation-probe", { model: "test/model", system: "Observe" }),
+                () =>
+                  observeGeneratedAgentTurn("observed-message", { text: "Output must persist." }),
+              );
+            }
+          } catch (error) {
             caughtObservationFailure = true;
+            caughtFailureMessage = error instanceof Error ? error.message : "";
           }
           return { success: true, result: { ignored: true }, durationMs: 1 };
         },
@@ -9538,6 +9568,14 @@ describe("project run inference credential header", () => {
             const body = requestJsonBody(init);
             assertExists(body);
             appendCalls++;
+            if (failure === "pre-append") {
+              if (!Array.isArray(body.events)) throw new Error("Expected observation events");
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: appendCalls,
+                appended_count: body.events.length,
+              });
+            }
             if (appendCalls === 1) {
               return Response.json({
                 run_id: canonicalRunId,
@@ -9559,10 +9597,11 @@ describe("project run inference credential header", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const payload = await result.response.json();
+      assertEquals(caughtObservationFailure, true);
+      if (failure === "pre-append") assertStringIncludes(caughtFailureMessage, "structural limit");
       assertEquals(payload.success, false);
       assertStringIncludes(payload.error, "Project run observation sink is disabled");
-      assertEquals(caughtObservationFailure, true);
-      assertEquals(appendCalls, 2);
+      if (failure !== "pre-append") assertEquals(appendCalls, 2);
     });
   }
 

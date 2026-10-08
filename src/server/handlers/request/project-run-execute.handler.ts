@@ -2710,33 +2710,40 @@ async function withProjectRunRuntimeObservations<T>(
   const createObserver = () => {
     const encoder = createAgUiEncoderState();
     return async (event: AgUiRuntimeStreamEvent) => {
-      // Parent entry is recorded once by this host boundary; nested agent contexts
-      // must not create a second parent execution-start occurrence.
-      if (event.type === "data-veryfront.runtime_context") return;
-      const events = primordialArrayMap(
-        mapRuntimeStreamEventToAgUiEvents(encoder, event),
-        ({ event: type, payload }) => {
-          const candidate = coerceWireEvent(type, payload);
-          if (typeof candidate.type !== "string") {
-            throw new Error(
-              "Invalid encoded project run observation event",
-            );
-          }
-          return { ...candidate, type: candidate.type };
-        },
-      );
-      const normalized = normalizeConversationRunEvents(
-        primordialArrayFilter(
-          events,
-          (candidate) => isPermittedProjectRunObservationEventType(candidate.type),
-        ),
-      );
-      for (
-        const batch of primordialArrayValues(
-          buildConversationRunEventBatches({ events: normalized, maxEventsPerBatch: 100 }),
-        )
-      ) {
-        await mirror.appendEvents(batch);
+      try {
+        // Parent entry is recorded once by this host boundary; nested agent contexts
+        // must not create a second parent execution-start occurrence.
+        if (event.type === "data-veryfront.runtime_context") return;
+        const events = primordialArrayMap(
+          mapRuntimeStreamEventToAgUiEvents(encoder, event),
+          ({ event: type, payload }) => {
+            const candidate = coerceWireEvent(type, payload);
+            if (typeof candidate.type !== "string") {
+              throw new Error(
+                "Invalid encoded project run observation event",
+              );
+            }
+            return { ...candidate, type: candidate.type };
+          },
+        );
+        const normalized = normalizeConversationRunEvents(
+          primordialArrayFilter(
+            events,
+            (candidate) => isPermittedProjectRunObservationEventType(candidate.type),
+          ),
+        );
+        for (
+          const batch of primordialArrayValues(
+            buildConversationRunEventBatches({ events: normalized, maxEventsPerBatch: 100 }),
+          )
+        ) {
+          await mirror.appendEvents(batch);
+        }
+      } catch (error) {
+        // Encoding and batching failures also lose mandatory evidence, even when
+        // project code catches the error before any append reaches the API.
+        mirror.dispose();
+        throw error;
       }
     };
   };
