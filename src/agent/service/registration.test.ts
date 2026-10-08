@@ -247,6 +247,7 @@ describe("agent/agent-service-registration", () => {
   it("recovers initial registration after a transient control-plane failure", async () => {
     using time = new FakeTime();
     let attempts = 0;
+    const log = recordingLogger();
     const fetch: typeof globalThis.fetch = () => {
       attempts++;
       return Promise.resolve(
@@ -255,16 +256,48 @@ describe("agent/agent-service-registration", () => {
           : jsonResponse(serviceResponse),
       );
     };
-    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)).then(
+    const pending = createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    ).then(
       (lifecycle) => ({ lifecycle, error: undefined }),
       (error: unknown) => ({ lifecycle: undefined, error }),
     );
     await time.tickAsync(1_000);
     const outcome = await pending;
     outcome.lifecycle?.stop();
+    assertEquals(log.warnings.length, 1);
+    assertEquals(
+      log.warnings[0]?.message,
+      "Agent service registration retrying after transient failure",
+    );
+    assertEquals(log.warnings[0]?.metadata?.attempt, 1);
+    assertEquals(log.warnings[0]?.metadata?.retryInMs, 250);
+    assertEquals(
+      log.warnings[0]?.metadata?.error,
+      "Agent runtime registration request failed with HTTP 500",
+    );
     assertEquals(attempts, 2, "startup must retry a transient failure before giving up");
     assertEquals(outcome.error, undefined);
     assert(outcome.lifecycle, "registration must recover before heartbeat setup");
+  });
+
+  it("preserves a classified startup transport rejection without retrying", async () => {
+    let attempts = 0;
+    const log = recordingLogger();
+    const failure = NETWORK_ERROR.create({
+      detail: "synthetic registration refusal",
+      context: { httpStatus: 403 },
+    });
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.reject(failure);
+    };
+    const error = await assertRejects(() =>
+      createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch, { logger: log.logger }))
+    );
+    assertEquals(error, failure, "the original typed rejection must retain its classification");
+    assertEquals(attempts, 1);
+    assertEquals(log.warnings.length, 0);
   });
 
   it("leaves permanent startup failures visible without retrying", async () => {
