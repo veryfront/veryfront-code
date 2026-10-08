@@ -46,7 +46,10 @@ import {
 import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
 import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
+import {
+  buildConversationRunEventBatches,
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+} from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
@@ -2709,16 +2712,22 @@ async function withProjectRunRuntimeObservations<T>(
       const events = mapRuntimeStreamEventToAgUiEvents(encoder, event).map((
         { event: type, payload },
       ) => coerceWireEvent(type, payload));
-      await mirror.appendEvents(
-        normalizeConversationRunEvents(
-          events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
-            if (typeof candidate.type !== "string") {
-              throw new Error("Invalid encoded project run observation event");
-            }
-            return isPermittedProjectRunObservationEventType(candidate.type);
-          }),
-        ),
+      const normalized = normalizeConversationRunEvents(
+        events.filter((candidate): candidate is Record<string, unknown> & { type: string } => {
+          if (typeof candidate.type !== "string") {
+            throw new Error("Invalid encoded project run observation event");
+          }
+          return isPermittedProjectRunObservationEventType(candidate.type);
+        }),
       );
+      for (
+        const batch of buildConversationRunEventBatches({
+          events: normalized,
+          maxEventsPerBatch: 100,
+        })
+      ) {
+        await mirror.appendEvents(batch);
+      }
     };
   };
 

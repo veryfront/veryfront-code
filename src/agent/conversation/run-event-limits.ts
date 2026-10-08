@@ -1,3 +1,5 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 /**
@@ -31,4 +33,51 @@ export function getPrivateRunEventAppendRequestByteLength(event: unknown): numbe
   } catch {
     return Number.POSITIVE_INFINITY;
   }
+}
+
+const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
+
+function getConversationRunEventJsonByteLength(event: unknown): number {
+  return privateByteLength(encodePrivateText(privateJsonStringify(
+    event,
+    null,
+    undefined,
+    MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  )));
+}
+
+/** Build ordered byte-bounded batches for normalized durable events. */
+export function buildConversationRunEventBatches<T>(input: {
+  events: T[];
+  maxEventsPerBatch: number;
+  maxBatchPayloadBytes?: number;
+}): T[][] {
+  const maxBatchPayloadBytes = input.maxBatchPayloadBytes ??
+    DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES;
+  const batches: T[][] = [];
+  let currentBatch: T[] = [];
+  let currentBatchBytes = 0;
+
+  for (const event of input.events) {
+    const eventBytes = getConversationRunEventJsonByteLength(event);
+
+    if (
+      currentBatch.length > 0 &&
+      (currentBatch.length >= input.maxEventsPerBatch ||
+        currentBatchBytes + eventBytes > maxBatchPayloadBytes)
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchBytes = 0;
+    }
+
+    currentBatch.push(event);
+    currentBatchBytes += eventBytes;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
 }

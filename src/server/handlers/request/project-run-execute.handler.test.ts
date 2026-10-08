@@ -8533,6 +8533,82 @@ describe("project run inference credential header", () => {
     assertStringIncludes(String(tool.content), "tool result truncated");
   });
 
+  it("persists child text beyond the append request limit in ordered bounded batches", async () => {
+    const runId = "run_public_observation_limit";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const limit = 240 * 1024;
+    const text = "x".repeat(10 * 1024 * 1024 + 10_000);
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-child",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: text });
+            await control.onEvent({
+              type: "tool-output-available",
+              toolCallId: "lookup",
+              output: text,
+            });
+            return { text, toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          const body = observeFetchRequestInit(init).body;
+          if (
+            typeof body !== "string" || new TextEncoder().encode(body).byteLength > 10 * 1024 * 1024
+          ) return Response.json({ error: "Append body too large" }, { status: 413 });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
+          for (const event of payload.events) {
+            if (new TextEncoder().encode(JSON.stringify(event)).byteLength > limit) {
+              return Response.json({ error: "Event too large" }, { status: 413 });
+            }
+            appended.push(event);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const deltas = appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
+    assertEquals(deltas.map((event) => event.delta).join(""), text);
+    assertEquals(deltas.length > 1, true);
+    const tool = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(tool);
+    assertStringIncludes(String(tool.content), "tool result truncated");
+  });
+
   async function withCapturedConsole<T>(
     fn: () => Promise<T>,
   ): Promise<{ value: T; lines: string[] }> {

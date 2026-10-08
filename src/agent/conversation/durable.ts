@@ -69,7 +69,10 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "./run-event-normalization.ts";
-import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "./run-event-limits.ts";
+import {
+  buildConversationRunEventBatches,
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+} from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
   isPrivateConversationRunEvent,
@@ -156,8 +159,6 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
     },
   };
 }
-
-const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
 function backfillPurePrivateEventResponseCursor(
   responseBody: unknown,
@@ -1000,45 +1001,6 @@ export async function recoverConversationRunAppendExecution(input: {
     errorMessage: recovered.errorMessage ?? "Conversation run append failed",
     ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
   };
-}
-
-function getConversationRunEventJsonByteLength(event: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(event)).byteLength;
-}
-
-function buildConversationRunEventBatches(input: {
-  events: unknown[];
-  maxEventsPerBatch: number;
-  maxBatchPayloadBytes?: number;
-}): unknown[][] {
-  const maxBatchPayloadBytes = input.maxBatchPayloadBytes ??
-    DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES;
-  const batches: unknown[][] = [];
-  let currentBatch: unknown[] = [];
-  let currentBatchBytes = 0;
-
-  for (const event of input.events) {
-    const eventBytes = getConversationRunEventJsonByteLength(event);
-
-    if (
-      currentBatch.length > 0 &&
-      (currentBatch.length >= input.maxEventsPerBatch ||
-        currentBatchBytes + eventBytes > maxBatchPayloadBytes)
-    ) {
-      batches.push(currentBatch);
-      currentBatch = [];
-      currentBatchBytes = 0;
-    }
-
-    currentBatch.push(event);
-    currentBatchBytes += eventBytes;
-  }
-
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
-
-  return batches;
 }
 
 /** Flush conversation run event batches. */
