@@ -574,3 +574,47 @@ Deno.test("recovered reasoning preserves the persisted prefix and appends missin
     assertEquals(repeated.sanitizedFinalizedMessage, state.sanitizedFinalizedMessage);
   }
 });
+
+Deno.test("fully streamed tool and text retain both original orders without fallback replay", () => {
+  const tool = {
+    type: "tool-bash" as const,
+    toolCallId: "c",
+    input: { command: "x" },
+    state: "output-available" as const,
+    output: "ok",
+  };
+  const text = { type: "text" as const, text: "Done" };
+  const toolContent = [
+    { type: "tool-call", toolCallId: "c", toolName: "bash", input: tool.input },
+    { type: "tool-result", toolCallId: "c", toolName: "bash", output: "ok" },
+  ];
+  for (const toolFirst of [true, false]) {
+    const responseMessage = {
+      id: "m",
+      role: "assistant" as const,
+      parts: toolFirst ? [tool, text] : [text, tool],
+    };
+    const content = toolFirst ? [...toolContent, text] : [text, ...toolContent];
+    const finalStep = { response: { messages: [{ role: "assistant", content }] } };
+    const state = buildFinalizedMessageState({
+      responseMessage,
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.sanitizedFinalizedMessage, responseMessage);
+    const mirrored = createMirroredToolChunkState();
+    mirrored.startedToolCallIds.add("c");
+    mirrored.inputAvailableToolCallIds.add("c");
+    mirrored.outputAvailableToolCallIds.add("c");
+    assertEquals(
+      buildFinalizedMessageFallbackChunks({
+        ...state,
+        finalStep,
+        mirroredToolChunkState: mirrored,
+        capturedMessageId: "m",
+      }),
+      [],
+    );
+  }
+});
