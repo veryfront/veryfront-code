@@ -7966,6 +7966,12 @@ describe("project run execution span", () => {
     callerSpanContext?: otelApi.SpanContext,
     lineage: { parentRunId?: string; rootRunId?: string } = {},
     caller: { headers?: Record<string, string>; baggage?: Record<string, string> } = {},
+    execution: {
+      kind?: "workflow";
+      target?: string;
+      deps?: Partial<ProjectRunExecuteHandlerDeps>;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<{
     spans: ReadableSpan[];
     body: Record<string, unknown>;
@@ -7982,11 +7988,12 @@ describe("project run execution span", () => {
     setGlobalContextAccessor(otelApi.context as never);
 
     try {
-      const handler = new ProjectRunExecuteHandler(createDeps({ runTask }));
+      const handler = new ProjectRunExecuteHandler(createDeps({ runTask, ...execution.deps }));
       const body = {
         runId: "run_task_traced",
-        kind: "task",
-        target: "task:sync-calendar-events",
+        kind: execution.kind ?? "task",
+        target: execution.target ??
+          (execution.kind === "workflow" ? "workflow:publish" : "task:sync-calendar-events"),
         projectId: "proj-1",
         ...lineage,
       };
@@ -8011,7 +8018,11 @@ describe("project run execution span", () => {
         : tracedContext;
       const result = await otelApi.context.with(
         callerContext,
-        () => handler.handle(request, createCtx(publicKeyPem)),
+        () =>
+          handler.handle(
+            execution.signal ? new Request(request, { signal: execution.signal }) : request,
+            createCtx(publicKeyPem),
+          ),
       );
       assertEquals(result.response?.status, 200);
       await provider.forceFlush();
@@ -8040,7 +8051,98 @@ describe("project run execution span", () => {
     assertEquals(span.attributes["run.id"], "run_task_traced");
     assertEquals(span.attributes["run.kind"], "task");
     assertEquals(span.attributes["project.id"], "proj-1");
-    assertEquals(span.status.code === SpanStatusCode.ERROR, false);
+    assertEquals(span.status.code, SpanStatusCode.OK);
+    assertEquals(spans.some((candidate) => candidate.status.code === SpanStatusCode.ERROR), false);
+  });
+
+  it("preserves an execution error reported by a task that returns successfully", async () => {
+    const { setActiveSpanErrorStatus } = await import(
+      "#veryfront/observability/tracing/otlp-setup.ts"
+    );
+    const { spans } = await executeTracedTask(async () => {
+      setActiveSpanErrorStatus(new Error("Task reported an execution failure"));
+      return { success: true, result: { recovered: true }, durationMs: 5 };
+    });
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.status.code, SpanStatusCode.ERROR);
+  });
+
+  it("preserves a public callback-owned ERROR after successful task completion", async () => {
+    const { publicTrace } = await import("#veryfront/observability/tracing/api-shim.ts");
+    const { spans } = await executeTracedTask(async () => {
+      publicTrace.getActiveSpan()?.setStatus({ code: SpanStatusCode.ERROR });
+      return { success: true, result: "recovered", durationMs: 5 };
+    });
+    assertEquals(
+      spans.find((span) => span.name === "project_run.execute")?.status.code,
+      SpanStatusCode.ERROR,
+    );
+  });
+
+  for (const outcome of ["completed", "waiting", "cancelled"] as const) {
+    it(`reports the actual ${outcome} workflow outcome on its root`, async () => {
+      const { spans, body } = await executeTracedTask(createDeps().runTask, undefined, {}, {}, {
+        kind: "workflow",
+        deps: {
+          sleep: async () => {},
+          createWorkflowClient: async (config, options) => ({
+            ...await createDeps().createWorkflowClient(config, options),
+            statePersistence: "durable",
+            getRun: async () => ({
+              status: outcome,
+              output: "done",
+              currentNodes: outcome === "waiting" ? ["review"] : [],
+              pendingApprovals: outcome === "waiting" ? [{ id: "approval", nodeId: "review" }] : [],
+            }),
+          }),
+        },
+      });
+      const root = spans.find((span) => span.name === "project_run.execute");
+      assertExists(root);
+      assertEquals(
+        root.status.code,
+        outcome === "completed"
+          ? SpanStatusCode.OK
+          : outcome === "cancelled"
+          ? SpanStatusCode.ERROR
+          : SpanStatusCode.UNSET,
+      );
+      if (outcome === "completed") {
+        assertEquals(spans.some((span) => span.status.code === SpanStatusCode.ERROR), false);
+      }
+      assertEquals(body.success, outcome !== "cancelled");
+      if (outcome === "waiting") assertEquals(body.status, "waiting");
+    });
+  }
+
+  it("does not mark an aborted task response completed", async () => {
+    const controller = new AbortController();
+    const { spans } = await executeTracedTask(
+      async () => {
+        controller.abort(new Error("cancelled"));
+        return { success: true, result: "late result", durationMs: 5 };
+      },
+      undefined,
+      {},
+      {},
+      { signal: controller.signal },
+    );
+    const root = spans.find((span) => span.name === "project_run.execute");
+    assertExists(root);
+    assertEquals(root.status.code === SpanStatusCode.OK, false);
+  });
+
+  it("does not infer completion from a special executor success boolean", async () => {
+    const { spans } = await executeTracedTask(createDeps().runTask, undefined, {}, {}, {
+      target: "task:style-artifact-build",
+      deps: { executeStyleArtifactBuild: async () => ({ success: true, result: "ready" }) },
+    });
+    assertEquals(
+      spans.find((span) => span.name === "project_run.execute")?.status.code,
+      SpanStatusCode.UNSET,
+    );
   });
 
   it("names the parent and root run of a child run on the execution span", async () => {
@@ -8086,6 +8188,20 @@ describe("project run execution span", () => {
     assertEquals(span.status.code, SpanStatusCode.ERROR);
     assertEquals(span.status.message, "Error");
     assertEquals(JSON.stringify(span.events).includes("INV-4471"), false);
+  });
+
+  it("preserves output-limit failure after a task reports completion", async () => {
+    const { spans, body } = await executeTracedTask(async () => ({
+      success: true,
+      result: "x".repeat(1_048_575),
+      durationMs: 5,
+    }));
+    assertEquals(body.success, false);
+    assertEquals(body.error_code, "OUTPUT_TOO_LARGE");
+    assertEquals(
+      spans.find((span) => span.name === "project_run.execute")?.status.code,
+      SpanStatusCode.ERROR,
+    );
   });
 
   it("reports an unserializable run result as a failed execution", async () => {

@@ -26,7 +26,9 @@ import {
   defaultTextMapSetter,
   getTracer,
   getTracerProviderRevision,
+  hasObservedSpanError,
   type Link,
+  observeSpanError,
   propagation as shimPropagation,
   type Span,
   SpanKind,
@@ -270,6 +272,7 @@ function startSpanWithFallback(
 }
 
 function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDetail): void {
+  observeSpanError(span);
   // Sanitization runs on caller-supplied values on every error path, so it is guarded
   // like the span calls are: a throw here would turn a handled failure into a thrown one,
   // and telemetry must never change the outcome it reports on. Defence in depth -- probing
@@ -614,6 +617,16 @@ export function setActiveSpanErrorStatus(error: unknown): void {
   if (!span) return;
 
   setSpanErrorStatus(span, error, "withoutStack");
+}
+
+/** Marks verified domain completion without replacing an observed execution failure. */
+export function markSpanCompleted(span: Span): void {
+  const raw = unwrapPublicSpan(span);
+  if (hasObservedSpanError(raw)) return;
+  runTelemetryOperation(
+    () => raw.setStatus({ code: SpanStatusCode.OK }),
+    "Failed to set completed span status",
+  );
 }
 
 /**

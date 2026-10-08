@@ -73,6 +73,7 @@ import type { RuntimeAdapter } from "#veryfront/platform";
 import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import {
   activeSpanLink,
+  markSpanCompleted,
   setActiveSpanErrorStatus,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -1095,6 +1096,7 @@ async function executeDiscoveredTaskRun(
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
   runChild?: ReturnType<typeof createTaskChildRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1134,6 +1136,8 @@ async function executeDiscoveredTaskRun(
       : signal,
     debug: ctx.debug,
   });
+
+  if (result.success && !signal.aborted && !control?.signal.aborted) onCompleted?.();
 
   return {
     success: result.success,
@@ -1807,6 +1811,7 @@ async function executeWorkflowRun(
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -1851,6 +1856,7 @@ async function executeWorkflowRun(
         acknowledgePause,
         releaseStop,
         runAgentNode,
+        onCompleted,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -1883,6 +1889,7 @@ async function runDiscoveredWorkflow(
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -2151,6 +2158,7 @@ async function runDiscoveredWorkflow(
     }
 
     if (run.status === "completed") {
+      onCompleted?.();
       return {
         success: true,
         result: run.output,
@@ -4166,6 +4174,7 @@ function executeProjectRun(
   acknowledgeStop?: () => Promise<void>,
   acknowledgePause?: (decisionStopped?: AbortSignal) => Promise<boolean | undefined>,
   releaseStop?: () => void,
+  onCompleted?: () => void,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(
@@ -4207,6 +4216,7 @@ function executeProjectRun(
                     sleep: deps.sleep,
                   })(child);
                 },
+                onCompleted,
               );
           }
         } finally {
@@ -4243,6 +4253,7 @@ function executeProjectRun(
       }
       return await runAgentNode(invocation);
     },
+    onCompleted,
   );
 }
 
@@ -4336,7 +4347,11 @@ export class ProjectRunExecuteHandler extends BaseHandler {
 
         return await withSpan(
           "project_run.execute",
-          async () => {
+          async (span) => {
+            let completed = false;
+            const onCompleted = () => {
+              completed = true;
+            };
             const startedAt = this.deps.now();
             try {
               const limited = enforceRunOutputLimit(
@@ -4350,6 +4365,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     acknowledgeStop,
                     acknowledgePause,
                     releaseStop,
+                    onCompleted,
                   )
                   : await runWithProjectRunInferenceCredential(
                     inferenceToken,
@@ -4363,11 +4379,13 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                         acknowledgeStop,
                         acknowledgePause,
                         releaseStop,
+                        onCompleted,
                       ),
                   ),
               );
               const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
+              else if (completed && !executionSignal.aborted) markSpanCompleted(span);
               return this.respond(
                 builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
               );
