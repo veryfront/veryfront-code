@@ -33,6 +33,8 @@ export function completeOnResponseBodyConsumption(
     errorOnAbort?: boolean;
     /** Optional terminal notification. It does not change ownership of pending cancellation work. */
     onOutcome?: (outcome: ResponseBodyOutcome) => void;
+    /** Keep ownership until the returned body is consumed, even after the source closes. */
+    waitForConsumption?: boolean;
   } = {},
 ): Response {
   const notifyOutcome = (outcome: ResponseBodyOutcome): void => {
@@ -95,10 +97,10 @@ export function completeOnResponseBodyConsumption(
   // response without explicitly consuming or cancelling the wrapper.
   void reader.closed.then(
     () => {
-      if (!cancellationPending) complete("completed");
+      if (!options.waitForConsumption && !cancellationPending) complete("completed");
     },
     () => {
-      if (!cancellationPending) complete("error");
+      if (!options.waitForConsumption && !cancellationPending) complete("error");
     },
   );
 

@@ -367,6 +367,38 @@ describe("server/runtime-handler/request-lifecycle", () => {
       });
     }
 
+    for (const settleResponseBody of [false, true]) {
+      it(`keeps ordinary response bodies tracked until terminal consumption (explicit=${settleResponseBody})`, async () => {
+        startRequestTracking("lifecycle-final-chunk", "slug", "/", "GET", "preview", "rel-1");
+        const response = completeRequestTrackingOnResponseEnd(
+          "lifecycle-final-chunk",
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("final HTML"));
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/html" } },
+          ),
+          false,
+          undefined,
+          undefined,
+          settleResponseBody,
+        );
+        const reader = response.body!.getReader();
+        try {
+          assertEquals(new TextDecoder().decode((await reader.read()).value), "final HTML");
+          await Promise.resolve();
+          assertEquals(requestTracker.getInFlightCount(), 1);
+          assertEquals((await reader.read()).done, true);
+          assertEquals(requestTracker.getInFlightCount(), 0);
+        } finally {
+          await reader.cancel().catch(() => {});
+        }
+      });
+    }
+
     it("keeps ordinary response bodies tracked until consumed", async () => {
       const beforeCount = requestTracker.getInFlightCount();
       startRequestTracking(

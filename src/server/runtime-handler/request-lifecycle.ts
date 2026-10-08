@@ -149,10 +149,16 @@ export function completeRequestTrackingOnResponseEnd(
   const settle = () => {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
   };
-  if (settleResponseBody) return completeOnResponseBodyConsumption(response, settle);
+  if (settleResponseBody) {
+    return completeOnResponseBodyConsumption(response, settle, undefined, undefined, {
+      waitForConsumption: true,
+    });
+  }
   return isEventStreamResponse(response)
     ? completeOnResponseBodySettlement(response, settle)
-    : completeOnResponseBodyConsumption(response, settle, undefined, { highWaterMark: 0 });
+    : completeOnResponseBodyConsumption(response, settle, undefined, { highWaterMark: 0 }, {
+      waitForConsumption: true,
+    });
 }
 
 /**
