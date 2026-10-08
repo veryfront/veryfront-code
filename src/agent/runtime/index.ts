@@ -173,14 +173,20 @@ import {
   isInterruptedClientToolCall,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
+  isToolResultPart,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 
 import {
   enforceSkillPolicy,
+  hasTrustedPlatformPolicyToolDefinition,
+  inheritTrustedPlatformPolicyToolResultPart,
   isFormInputToolName,
   isLoadSkillToolName,
+  markTrustedPlatformPolicyToolResultPart,
+  prepareTrustedPlatformPolicyMessageForPersistence,
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
@@ -329,6 +335,7 @@ export {
   collectPersistedToolResults,
   isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
+  isToolResultPart,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
   type StreamedToolCallMaterialization,
@@ -624,7 +631,10 @@ function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
       writable: true,
     });
   }
-  return detached as MessagePart;
+  const cloned = detached as MessagePart;
+  return isToolResultPart(part) && isToolResultPart(cloned)
+    ? inheritTrustedPlatformPolicyToolResultPart(part, cloned)
+    : cloned;
 }
 
 function cloneMessagePartForCommit(part: MessagePart): MessagePart {
@@ -681,7 +691,10 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       writable: true,
     });
   }
-  return detached as MessagePart;
+  const cloned = detached as MessagePart;
+  return isToolResultPart(part) && isToolResultPart(cloned)
+    ? inheritTrustedPlatformPolicyToolResultPart(part, cloned)
+    : cloned;
 }
 
 function cloneMessageForCommit(message: Message): Message {
@@ -1638,8 +1651,15 @@ function toolNotVisibleError(toolName: string): string {
 function resolveToolExecutionAuthority(input: {
   toolName: string;
   plan: ToolExposurePlan;
-}): { kind: "visible" } | undefined {
-  return isToolVisibleForStep(input.toolName, input.plan) ? { kind: "visible" } : undefined;
+}): { kind: "visible"; toolDefinition: ToolDefinition } | undefined {
+  for (let index = 0; index < input.plan.visible.length; index++) {
+    if (!ObjectHasOwn(input.plan.visible, index)) continue;
+    const toolDefinition = input.plan.visible[index];
+    if (toolDefinition !== undefined && toolDefinition.name === input.toolName) {
+      return { kind: "visible", toolDefinition };
+    }
+  }
+  return undefined;
 }
 
 function buildStreamFinishUsage(
@@ -1750,6 +1770,24 @@ function parseToolResultJson(result: string): unknown {
   }
 }
 
+function createPolicyAwareToolResultMessage(
+  toolCallId: string,
+  toolName: string,
+  result: unknown,
+  toolDefinition?: ToolDefinition,
+  providerExecuted = false,
+): Message {
+  const message = createToolResultMessage(toolCallId, toolName, result, providerExecuted);
+  const part = message.parts[0];
+  if (
+    part !== undefined && isToolResultPart(part) &&
+    hasTrustedPlatformPolicyToolDefinition(toolDefinition)
+  ) {
+    markTrustedPlatformPolicyToolResultPart(part);
+  }
+  return message;
+}
+
 function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): boolean {
   const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
   if (!normalized || typeof normalized !== "object" || depth > 3) {
@@ -1764,8 +1802,14 @@ function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): 
   );
 }
 
-function isSubmittedFormInputExecutionResult(toolName: string, result: unknown): boolean {
-  return isFormInputToolName(toolName) && containsSubmittedFormInputExecutionResult(result);
+function isSubmittedFormInputExecutionResult(
+  toolName: string,
+  result: unknown,
+  toolDefinition?: ToolDefinition,
+): boolean {
+  return isFormInputToolName(toolName) &&
+    hasTrustedPlatformPolicyToolDefinition(toolDefinition) &&
+    containsSubmittedFormInputExecutionResult(result);
 }
 
 type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
@@ -2271,6 +2315,7 @@ export class AgentRuntime {
     const checkpoints = getRuntimeProviderReplayCheckpoints(this.config);
     if (!checkpoints?.length) return;
     const history = mapPrivateArray(await this.memory.getMessages(), cloneMessageForCommit);
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
     applyProviderReplayCheckpointsToMessages(
       concatPrivateArrays(history, inputMessages),
       checkpoints,
@@ -2512,6 +2557,7 @@ export class AgentRuntime {
     try {
       if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
         history = await turnMemory.getMessages();
+        restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
         if (history.length > 0) validated = concatPrivateArrays(history, committedInputMessages);
         // Durable provider replay metadata can keep a reasoning-only assistant
         // turn in the actual provider request. Attach it before validation so
@@ -2543,9 +2589,14 @@ export class AgentRuntime {
         });
       }
       for (let index = 0; index < committedInputMessages.length; index++) {
-        await turnMemory.add(committedInputMessages[index]!);
+        await turnMemory.add(
+          prepareTrustedPlatformPolicyMessageForPersistence(committedInputMessages[index]!),
+        );
       }
       persisted = await turnMemory.getMessages();
+      // Newly admitted messages carry only sidecars rebuilt from live runtime
+      // ownership. Restore those marks after serializing adapters clone parts.
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory(persisted);
       if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
         if (validateProjectedMessages) {
           await validateProjectedMessages(persisted, validated);
@@ -2563,7 +2614,8 @@ export class AgentRuntime {
     const finalization = createPrivateDeferred<void>();
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
-      addMessage: (message) => turnMemory.add(message),
+      addMessage: (message) =>
+        turnMemory.add(prepareTrustedPlatformPolicyMessageForPersistence(message)),
       prepareTerminalDispatch: async () => {
         // Preserve validated admission before a terminal transport can commit.
         // Keep the turn queue held while receipts use a fresh transaction.
@@ -3619,12 +3671,17 @@ export class AgentRuntime {
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
         ): Promise<void> => {
-          const toolResultMessage = createToolResultMessage(
+          const executionAuthority = resolveToolExecutionAuthority({
+            toolName: generatedToolResult.toolName,
+            plan: effectiveToolExposurePlan,
+          });
+          const toolResultMessage = createPolicyAwareToolResultMessage(
             generatedToolResult.toolCallId,
             generatedToolResult.toolName,
             generatedToolResult.isError === true
               ? { error: stringifyToolError(generatedToolResult.result) }
               : generatedToolResult.result,
+            executionAuthority?.toolDefinition,
             generatedToolResult.providerExecuted === true,
           );
           pushPrivateArray(currentMessages, toolResultMessage);
@@ -3964,6 +4021,7 @@ export class AgentRuntime {
                 hasSubmittedFormInput: skillState.hasSubmittedFormInput,
                 skillToolAvailability: skillState.activeSkillToolAvailability,
                 toolInput: tc.input,
+                toolDefinition: executionAuthority?.toolDefinition,
               },
             );
             if (!policyCheck.allowed) {
@@ -4060,13 +4118,17 @@ export class AgentRuntime {
                 if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
                   agentWriteFinalResponseToolGuardEnabled = true;
                 }
-                // Track skill policy from successful load_skill results
-                if (isLoadSkillToolName(tc.toolName)) {
+                // Track skill policy only from successful framework-owned load_skill results.
+                if (
+                  isLoadSkillToolName(tc.toolName) &&
+                  hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+                ) {
                   skillState.applySuccessfulResult(result);
                 }
                 const submittedFormInput = isSubmittedFormInputExecutionResult(
                   tc.toolName,
                   result,
+                  executionAuthority?.toolDefinition,
                 );
                 skillState.markFormInputSubmitted(submittedFormInput);
                 if (submittedFormInput) {
@@ -4076,10 +4138,11 @@ export class AgentRuntime {
                 }
               }
 
-              const toolResultMessage = createToolResultMessage(
+              const toolResultMessage = createPolicyAwareToolResultMessage(
                 tc.toolCallId,
                 tc.toolName,
                 result,
+                executionAuthority?.toolDefinition,
               );
               pushPrivateArray(currentMessages, toolResultMessage);
               await persistMessage(toolResultMessage);
@@ -4482,12 +4545,14 @@ export class AgentRuntime {
         try {
           // The trusted parked call was already exposed in the prior segment.
           // Recheck current authorization without requiring its lost step visibility.
-          if (
-            !intrinsicArraySome(
-              effectiveToolExposurePlan.authorized,
-              (tool) => tool.name === resumeToolCall.name,
-            )
-          ) {
+          const resumeExecutionAuthority = resolveToolExecutionAuthority({
+            toolName: resumeToolCall.name,
+            plan: {
+              ...effectiveToolExposurePlan,
+              visible: effectiveToolExposurePlan.authorized,
+            },
+          });
+          if (resumeExecutionAuthority === undefined) {
             throw new Error(toolNotVisibleError(resumeToolCall.name));
           }
           const policyCheck = enforceSkillPolicy(resumeToolCall.name, {
@@ -4495,6 +4560,7 @@ export class AgentRuntime {
             hasSubmittedFormInput: skillState.hasSubmittedFormInput,
             skillToolAvailability: skillState.activeSkillToolAvailability,
             toolInput: toolCall.args,
+            toolDefinition: resumeExecutionAuthority.toolDefinition,
           });
           if (!policyCheck.allowed) throw new Error(policyCheck.error);
 
@@ -4557,10 +4623,11 @@ export class AgentRuntime {
               ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
             });
           }
-          const toolResultMessage = createToolResultMessage(
+          const toolResultMessage = createPolicyAwareToolResultMessage(
             resumeToolCall.id,
             resumeToolCall.name,
             result,
+            resumeExecutionAuthority.toolDefinition,
           );
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
@@ -5133,12 +5200,17 @@ export class AgentRuntime {
           return;
         }
 
-        const toolResultMessage = createToolResultMessage(
+        const executionAuthority = resolveToolExecutionAuthority({
+          toolName: toolResult.toolName,
+          plan: effectiveToolExposurePlan,
+        });
+        const toolResultMessage = createPolicyAwareToolResultMessage(
           toolResult.toolCallId,
           toolResult.toolName,
           toolResult.error === undefined
             ? toolResult.output
             : { error: stringifyToolError(toolResult.error) },
+          executionAuthority?.toolDefinition,
           toolResult.providerExecuted === true,
         );
         pushPrivateArray(currentMessages, toolResultMessage);
@@ -5298,6 +5370,10 @@ export class AgentRuntime {
         };
         const matchingResult = finalToolResults.get(tc.id);
         const persistedResult = currentStepToolResults.get(tc.id);
+        const executionAuthority = resolveToolExecutionAuthority({
+          toolName: tc.name,
+          plan: effectiveToolExposurePlan,
+        });
 
         if (
           streamedBatchCompletionDeferred && tc.providerExecuted !== true && !matchingResult &&
@@ -5340,12 +5416,16 @@ export class AgentRuntime {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
-            if (isLoadSkillToolName(tc.name)) {
+            if (
+              isLoadSkillToolName(tc.name) &&
+              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+            ) {
               skillState.applySuccessfulResult(matchingResult.output);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               matchingResult.output,
+              executionAuthority?.toolDefinition,
             );
             skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
@@ -5365,12 +5445,16 @@ export class AgentRuntime {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
-            if (isLoadSkillToolName(tc.name)) {
+            if (
+              isLoadSkillToolName(tc.name) &&
+              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+            ) {
               skillState.applySuccessfulResult(persistedResult.result);
             }
             const submittedFormInput = isSubmittedFormInputExecutionResult(
               tc.name,
               persistedResult.result,
+              executionAuthority?.toolDefinition,
             );
             skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
@@ -5472,10 +5556,6 @@ export class AgentRuntime {
           continue;
         }
 
-        const executionAuthority = resolveToolExecutionAuthority({
-          toolName: tc.name,
-          plan: effectiveToolExposurePlan,
-        });
         if (
           shouldHandleToolResultRead({
             toolName: tc.name,
@@ -5497,7 +5577,12 @@ export class AgentRuntime {
               toolCallId: toolCall.id,
               output: result,
             });
-            const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
+            const toolResultMessage = createPolicyAwareToolResultMessage(
+              tc.id,
+              tc.name,
+              result,
+              executionAuthority?.toolDefinition,
+            );
             pushPrivateArray(currentMessages, toolResultMessage);
             await persistMessage(toolResultMessage);
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
@@ -5547,6 +5632,7 @@ export class AgentRuntime {
             hasSubmittedFormInput: skillState.hasSubmittedFormInput,
             skillToolAvailability: skillState.activeSkillToolAvailability,
             toolInput: toolCall.args,
+            toolDefinition: executionAuthority.toolDefinition,
           },
         );
         if (!policyCheck.allowed) {
@@ -5613,10 +5699,17 @@ export class AgentRuntime {
 
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
-            if (isLoadSkillToolName(tc.name)) {
+            if (
+              isLoadSkillToolName(tc.name) &&
+              hasTrustedPlatformPolicyToolDefinition(executionAuthority.toolDefinition)
+            ) {
               skillState.applySuccessfulResult(result);
             }
-            const submittedFormInput = isSubmittedFormInputExecutionResult(tc.name, result);
+            const submittedFormInput = isSubmittedFormInputExecutionResult(
+              tc.name,
+              result,
+              executionAuthority.toolDefinition,
+            );
             skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
@@ -5643,7 +5736,12 @@ export class AgentRuntime {
             });
           }
 
-          const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
+          const toolResultMessage = createPolicyAwareToolResultMessage(
+            tc.id,
+            tc.name,
+            result,
+            executionAuthority.toolDefinition,
+          );
           if (!currentStepToolResults.has(tc.id)) {
             pushPrivateArray(currentMessages, toolResultMessage);
             await persistMessage(toolResultMessage);

@@ -5,17 +5,54 @@ import {
   applySkillActivationResult,
   enforceSkillPolicy,
   extractSkillToolAvailability,
+  filterToolsAfterSubmittedFormInput,
   hasSubmittedFormInputResult,
+  hasTrustedPlatformPolicyToolDefinition,
   hydrateActiveSkillStateFromMessages,
   INACTIVE_SKILL_TOOL_AVAILABILITY,
   isSkillBodyLoadRequest,
+  markTrustedPlatformPolicyToolDefinition,
+  markTrustedPlatformPolicyToolResultPart,
+  prepareTrustedPlatformPolicyMessageForPersistence,
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
+import type { ToolDefinition } from "#veryfront/tool";
+import type { ToolResultPart } from "../types.ts";
 import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
+
+function policyToolDefinition(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} tool`,
+    parameters: { type: "object", properties: {} },
+  };
+}
+
+function platformPolicyToolDefinition(name: string): ToolDefinition {
+  return markTrustedPlatformPolicyToolDefinition(policyToolDefinition(name));
+}
+
+function markTrustedFormResultMessages<T extends Message[]>(messages: T): T {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === "tool-result" && part.toolName.includes("form_input")) {
+        markTrustedPlatformPolicyToolResultPart(part as ToolResultPart);
+      }
+    }
+  }
+  return messages;
+}
 
 describe("src/agent/runtime skill policy helpers", () => {
   it("hydrates ordinary message parts without consulting their iterator", () => {
@@ -60,6 +97,7 @@ describe("src/agent/runtime skill policy helpers", () => {
         return Array.prototype.some;
       },
     });
+    markTrustedFormResultMessages(messages);
     assertEquals(hasSubmittedFormInputResult(messages), true);
     assertEquals(reads, 0);
   });
@@ -105,11 +143,13 @@ describe("src/agent/runtime skill policy helpers", () => {
     it("blocks repeated intake after a submitted form without blocking skill references", () => {
       const formResult = enforceSkillPolicy("form_input", {
         hasSubmittedFormInput: true,
+        toolDefinition: platformPolicyToolDefinition("form_input"),
       });
       assertEquals(formResult.allowed, false);
       assertEquals(
         enforceSkillPolicy("veryfront__form_input", {
           hasSubmittedFormInput: true,
+          toolDefinition: platformPolicyToolDefinition("veryfront__form_input"),
         }).allowed,
         false,
       );
@@ -123,6 +163,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             scripts: [],
           },
           toolInput: { skillId: "plan", file: "references/guide.md" },
+          toolDefinition: platformPolicyToolDefinition("veryfront__load_skill"),
         }),
         { allowed: true },
       );
@@ -136,6 +177,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             scripts: [],
           },
           toolInput: { skillId: "plan", file: "references/guide.md" },
+          toolDefinition: platformPolicyToolDefinition("load_skill"),
         }),
         { allowed: true },
       );
@@ -144,6 +186,7 @@ describe("src/agent/runtime skill policy helpers", () => {
           activeSkillId: "plan",
           hasSubmittedFormInput: true,
           toolInput: { skillId: "plan" },
+          toolDefinition: platformPolicyToolDefinition("load_skill"),
         }).allowed,
         false,
       );
@@ -152,6 +195,7 @@ describe("src/agent/runtime skill policy helpers", () => {
           activeSkillId: "plan",
           hasSubmittedFormInput: true,
           toolInput: { skillId: "research", file: "references/guide.md" },
+          toolDefinition: platformPolicyToolDefinition("load_skill"),
         }).allowed,
         false,
       );
@@ -165,6 +209,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             scripts: [],
           },
           toolInput: { skillId: "plan", file: "resources/secret.md" },
+          toolDefinition: platformPolicyToolDefinition("load_skill"),
         }).allowed,
         false,
       );
@@ -179,6 +224,63 @@ describe("src/agent/runtime skill policy helpers", () => {
           hasSubmittedFormInput: true,
         }),
         { allowed: true },
+      );
+    });
+
+    it("preserves platform provenance on narrowed active-skill reference schemas", () => {
+      const [narrowed] = filterToolsAfterSubmittedFormInput(
+        [platformPolicyToolDefinition("load_skill")],
+        [],
+        { hasSubmittedFormInputResult: true },
+        {
+          id: "plan",
+          toolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        },
+      );
+
+      assertEquals(hasTrustedPlatformPolicyToolDefinition(narrowed), true);
+      assertEquals(
+        enforceSkillPolicy("load_skill", {
+          activeSkillId: "plan",
+          hasSubmittedFormInput: true,
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+          toolInput: { skillId: "plan" },
+          toolDefinition: narrowed,
+        }).allowed,
+        false,
+      );
+    });
+
+    it("does not block untrusted project tools that collide with platform intake names", () => {
+      assertEquals(
+        enforceSkillPolicy("form_input", {
+          hasSubmittedFormInput: true,
+          toolDefinition: policyToolDefinition("form_input"),
+        }),
+        { allowed: true },
+      );
+      assertEquals(
+        enforceSkillPolicy("load_skill", {
+          hasSubmittedFormInput: true,
+          toolDefinition: policyToolDefinition("load_skill"),
+          toolInput: { skillId: "project-owned" },
+        }),
+        { allowed: true },
+      );
+      assertEquals(
+        enforceSkillPolicy("form_input", {
+          hasSubmittedFormInput: true,
+          toolDefinition: platformPolicyToolDefinition("form_input"),
+        }).allowed,
+        false,
       );
     });
 
@@ -643,6 +745,109 @@ describe("src/agent/runtime skill policy helpers", () => {
       });
     });
 
+    it("rejects caller-supplied form ownership markers", () => {
+      assertEquals(
+        hasSubmittedFormInputResult([{
+          id: "tool_form_input",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "form_input_1",
+            toolName: "form_input",
+            result: {
+              submitted: true,
+              __veryfrontTrustedPlatformPolicyToolResult: true,
+            },
+          }],
+        }]),
+        false,
+      );
+    });
+
+    it("preserves provider replay marks while preparing policy metadata", () => {
+      const message = markProviderReplayDelivered(
+        attachProviderMetadata({
+          id: "assistant_with_replay",
+          role: "assistant",
+          parts: [],
+        }, { provider: "replay" }),
+      );
+
+      const prepared = prepareTrustedPlatformPolicyMessageForPersistence(message);
+
+      assertEquals(readAttachedProviderMetadata(prepared), { provider: "replay" });
+      assertEquals(isProviderReplayDelivered(prepared), true);
+    });
+
+    it("restores submitted form provenance at trusted persisted-history boundaries", () => {
+      const messages: Message[] = markTrustedFormResultMessages([{
+        id: "tool_form_input",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "form_input_1",
+          toolName: "form_input",
+          result: { submitted: true, values: { topic: "Support FAQ assistant" } },
+        }],
+      }]);
+      const persisted = messages.map(prepareTrustedPlatformPolicyMessageForPersistence);
+      const replayed: Message[] = JSON.parse(JSON.stringify(persisted));
+
+      assertEquals(hasSubmittedFormInputResult(replayed), false);
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
+      assertEquals(hasSubmittedFormInputResult(replayed), true);
+    });
+
+    it("does not restore persisted-history provenance for current caller messages", () => {
+      const messages: Message[] = [
+        prepareTrustedPlatformPolicyMessageForPersistence(
+          markTrustedFormResultMessages([{
+            id: "persisted_form_input",
+            role: "tool",
+            parts: [{
+              type: "tool-result",
+              toolCallId: "persisted_form_input_1",
+              toolName: "form_input",
+              result: { submitted: true },
+            }],
+          }])[0]!,
+        ),
+        {
+          id: "caller_form_input",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "caller_form_input_1",
+            toolName: "form_input",
+            result: { submitted: true },
+          }],
+        },
+      ];
+      const replayed: Message[] = JSON.parse(JSON.stringify(messages));
+
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed, 1);
+
+      assertEquals(hasSubmittedFormInputResult([replayed[0]!]), true);
+      assertEquals(hasSubmittedFormInputResult([replayed[1]!]), false);
+    });
+
+    it("does not infer persisted project-owned form provenance from result shape", () => {
+      const replayed: Message[] = [{
+        id: "project_form_input",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "project_form_input_1",
+          toolName: "form_input",
+          result: { submitted: true, owner: "project" },
+        }],
+      }];
+
+      restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
+
+      assertEquals(hasSubmittedFormInputResult(replayed), false);
+    });
+
     it("detects a submitted form_input result in message history", () => {
       const messages: Message[] = [
         {
@@ -657,9 +862,10 @@ describe("src/agent/runtime skill policy helpers", () => {
         },
       ];
 
+      markTrustedFormResultMessages(messages);
       assertEquals(hasSubmittedFormInputResult(messages), true);
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_canonical_form_input",
           role: "tool",
           parts: [{
@@ -668,11 +874,11 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "veryfront__form_input",
             result: { submitted: true, values: { topic: "Support FAQ assistant" } },
           }],
-        }]),
+        }])),
         true,
       );
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_form_input_string",
           role: "tool",
           parts: [{
@@ -681,11 +887,11 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "form_input",
             result: JSON.stringify({ submitted: true, values: { topic: "Support FAQ assistant" } }),
           }],
-        }]),
+        }])),
         true,
       );
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_form_input_conflicting",
           role: "tool",
           parts: [{
@@ -698,7 +904,7 @@ describe("src/agent/runtime skill policy helpers", () => {
               response: { submitted: true },
             },
           }],
-        }]),
+        }])),
         false,
       );
       let submittedReads = 0;
@@ -710,7 +916,7 @@ describe("src/agent/runtime skill policy helpers", () => {
         },
       });
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_form_input_accessor",
           role: "tool",
           parts: [{
@@ -719,12 +925,12 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "form_input",
             result: accessorResult,
           }],
-        }]),
+        }])),
         false,
       );
       assertEquals(submittedReads, 0);
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_form_input_nested",
           role: "tool",
           parts: [{
@@ -733,11 +939,11 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "form_input",
             result: { response: { submitted: true, values: { topic: "Support FAQ assistant" } } },
           }],
-        }]),
+        }])),
         true,
       );
       assertEquals(
-        hasSubmittedFormInputResult([{
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([{
           id: "tool_form_input_pending",
           role: "tool",
           parts: [{
@@ -746,7 +952,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             toolName: "form_input",
             result: { submitted: false, values: {} },
           }],
-        }]),
+        }])),
         false,
       );
       for (
@@ -757,7 +963,7 @@ describe("src/agent/runtime skill policy helpers", () => {
         ]
       ) {
         assertEquals(
-          hasSubmittedFormInputResult([{
+          hasSubmittedFormInputResult(markTrustedFormResultMessages([{
             id: "tool_form_input_error",
             role: "tool",
             parts: [{
@@ -766,7 +972,7 @@ describe("src/agent/runtime skill policy helpers", () => {
               toolName: "form_input",
               result,
             }],
-          }]),
+          }])),
           false,
         );
       }
@@ -791,7 +997,7 @@ describe("src/agent/runtime skill policy helpers", () => {
         false,
       );
       assertEquals(
-        hasSubmittedFormInputResult([
+        hasSubmittedFormInputResult(markTrustedFormResultMessages([
           {
             id: "tool_form_input_before_recovery",
             role: "tool",
@@ -807,7 +1013,7 @@ describe("src/agent/runtime skill policy helpers", () => {
             role: "user",
             parts: [{ type: "text", text: "Retry with available tools." }],
           }),
-        ]),
+        ])),
         true,
       );
       assertEquals(

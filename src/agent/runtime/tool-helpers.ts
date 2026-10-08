@@ -4,6 +4,7 @@ import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-proven
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -248,7 +249,10 @@ async function getRemoteToolDefinitions(options?: {
     ) {
       return;
     }
-    if (trustedPlatform) trustedPlatformDefinitions.set(definition, true);
+    if (trustedPlatform) {
+      trustedPlatformDefinitions.set(definition, true);
+      markTrustedPlatformPolicyToolDefinition(definition);
+    }
     seenToolNames.add(definition.name);
     intrinsicReflectApply(intrinsicArrayPush, definitions, [definition]);
   };
@@ -520,6 +524,9 @@ function addToolDefinition(
   tool: Tool<any, any>,
 ): void {
   const def = toolToProviderDefinition({ ...tool, id: name });
+  if (hasTrustedHostToolProvenance(tool)) {
+    markTrustedPlatformPolicyToolDefinition(def);
+  }
   logToolDefinition(name, def);
   intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
 }
@@ -611,6 +618,9 @@ export async function getAvailableTools(
     );
     const tools = visibleTools.map(([name, tool]) => {
       const def = toolToProviderDefinition(tool);
+      if (hasTrustedHostToolProvenance(tool)) {
+        markTrustedPlatformPolicyToolDefinition(def);
+      }
       logToolDefinition(name, def);
       return def;
     }).filter((def) => {

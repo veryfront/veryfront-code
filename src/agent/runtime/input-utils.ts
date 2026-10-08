@@ -2,11 +2,13 @@ import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { Message } from "#veryfront/agent/types.ts";
+import { inheritTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
+import { isToolResultPart } from "./tool-result-continuation.ts";
 
 const syntheticMessageIds = createPrivateWeakStore<object, true>();
 const syntheticMessageTimestamps = createPrivateWeakStore<object, true>();
@@ -52,6 +54,23 @@ export function propagateSyntheticMessageMarks(source: Message, target: Message)
     const timestamp = syntheticMessageTimestampValues.get(source);
     if (timestamp !== undefined) syntheticMessageTimestampValues.set(target, timestamp);
   }
+}
+
+function preserveTrustedToolResultPartMarks(source: Message, target: Message): Message {
+  const sourceParts = source.parts;
+  const targetParts = target.parts;
+  const partCount = Math.min(sourceParts.length, targetParts.length);
+  for (let index = 0; index < partCount; index++) {
+    const sourcePart = sourceParts[index];
+    const targetPart = targetParts[index];
+    if (
+      sourcePart !== undefined && targetPart !== undefined &&
+      isToolResultPart(sourcePart) && isToolResultPart(targetPart)
+    ) {
+      inheritTrustedPlatformPolicyToolResultPart(sourcePart, targetPart);
+    }
+  }
+  return target;
 }
 
 export function normalizeInput(input: string | Message[]): Message[] {
@@ -100,9 +119,10 @@ export function normalizeInput(input: string | Message[]): Message[] {
           : syntheticMessageTimestampValues.get(msg) ?? normalized.timestamp!,
       );
     }
+    const normalizedWithTrustedParts = preserveTrustedToolResultPartMarks(msg, normalized);
     return isRuntimeGeneratedUserMessage(msg)
-      ? markRuntimeGeneratedUserMessage(normalized)
-      : normalized;
+      ? markRuntimeGeneratedUserMessage(normalizedWithTrustedParts)
+      : normalizedWithTrustedParts;
   });
 }
 

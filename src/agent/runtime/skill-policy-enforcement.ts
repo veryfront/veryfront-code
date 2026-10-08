@@ -1,6 +1,17 @@
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
-import type { Message } from "../types.ts";
+import type { Message, ToolResultPart } from "../types.ts";
 import type { ToolDefinition } from "#veryfront/tool";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   isSkillToolAvailable,
@@ -19,7 +30,7 @@ import {
   readToolResultOwnDataProperty,
   UNREADABLE_TOOL_RESULT_PROPERTY,
 } from "#veryfront/tool/result.ts";
-import { isToolResultPart } from "./tool-result-continuation.ts";
+import { isToolResultPart } from "./tool-result-part.ts";
 import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
 import {
   extractSkillDelegationOverrides,
@@ -44,6 +55,10 @@ export {
 const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
+const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
+const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, true>();
+const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
+  "__veryfrontTrustedPlatformPolicyToolResultIds";
 
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
@@ -60,6 +75,106 @@ const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set(
   FORM_INPUT_TOOL_ID,
   CANONICAL_FORM_INPUT_TOOL_ID,
 ]);
+
+/** Mark a model-facing tool schema as the framework-owned platform control tool it represents. */
+export function markTrustedPlatformPolicyToolDefinition<T extends ToolDefinition>(
+  definition: T,
+): T {
+  trustedPlatformPolicyToolDefinitions.set(definition, true);
+  return definition;
+}
+
+/** Check platform control provenance without trusting the public tool name. */
+export function hasTrustedPlatformPolicyToolDefinition(definition: unknown): boolean {
+  return typeof definition === "object" && definition !== null &&
+    trustedPlatformPolicyToolDefinitions.get(definition) === true;
+}
+
+/** Mark a runtime-created tool result as coming from a trusted platform control tool. */
+export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
+  part: T,
+): T {
+  trustedPlatformPolicyToolResults.set(part, true);
+  return part;
+}
+
+function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
+  return trustedPlatformPolicyToolResults.get(part) === true;
+}
+
+/** Preserve trusted runtime-created form-result provenance across internal clones. */
+export function inheritTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
+  source: ToolResultPart,
+  target: T,
+): T {
+  if (isToolResultPart(source) && hasTrustedPlatformPolicyToolResultPart(source)) {
+    markTrustedPlatformPolicyToolResultPart(target);
+  }
+  return target;
+}
+
+function getTrustedPlatformPolicyToolResultIdsForPersistence(
+  message: Message,
+): string[] {
+  const toolCallIds: string[] = [];
+  for (let index = 0; index < message.parts.length; index++) {
+    if (!objectHasOwn(message.parts, index)) continue;
+    const part = message.parts[index]!;
+    if (isToolResultPart(part) && hasTrustedPlatformPolicyToolResultPart(part)) {
+      toolCallIds[toolCallIds.length] = part.toolCallId;
+    }
+  }
+  return toolCallIds;
+}
+
+function withPolicyMetadata(
+  message: Message,
+  toolCallIds: readonly string[],
+): Message {
+  const metadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
+  delete metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
+  if (toolCallIds.length > 0) {
+    metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY] = [...toolCallIds];
+  }
+  let nextMessage = {
+    ...message,
+    ...(Object.keys(metadata).length > 0 ? { metadata } : { metadata: undefined }),
+  };
+  const providerMetadata = readAttachedProviderMetadata(message);
+  if (providerMetadata !== undefined) {
+    nextMessage = attachProviderMetadata(nextMessage, providerMetadata);
+  }
+  if (isProviderReplayDelivered(message)) {
+    markProviderReplayDelivered(nextMessage);
+  }
+  return isRuntimeGeneratedUserMessage(message)
+    ? markRuntimeGeneratedUserMessage(nextMessage)
+    : nextMessage;
+}
+
+/**
+ * Prepare a runtime-created message for durable memory. Caller-supplied
+ * metadata is cleared first; only live WeakStore provenance can create the
+ * persisted ownership sidecar.
+ */
+export function prepareTrustedPlatformPolicyMessageForPersistence(message: Message): Message {
+  return withPolicyMetadata(message, getTrustedPlatformPolicyToolResultIdsForPersistence(message));
+}
+
+/** Remove persisted ownership sidecars from caller-supplied messages before admission. */
+export function stripTrustedPlatformPolicyMessageMetadata(message: Message): Message {
+  return withPolicyMetadata(message, []);
+}
+
+function isTrustedPlatformPolicyTool(
+  toolName: string,
+  definition?: ToolDefinition,
+): boolean {
+  if (!isFormInputToolName(toolName) && !isLoadSkillToolName(toolName)) {
+    return false;
+  }
+  return hasTrustedPlatformPolicyToolDefinition(definition);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   try {
@@ -295,6 +410,41 @@ export function isSubmittedFormInputResult(result: unknown): boolean {
   return false;
 }
 
+/**
+ * Restore form-submission provenance after reading messages from runtime-owned
+ * persistence. Do not apply this to caller-supplied message arrays: public
+ * payloads can forge names and result shapes, while this boundary only receives
+ * history previously admitted by the runtime.
+ */
+export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
+  messages: readonly Message[],
+  messageCount: number = messages.length,
+): void {
+  const boundedMessageCount = Math.max(0, Math.min(messages.length, messageCount));
+  for (let index = 0; index < boundedMessageCount; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const trustedToolCallIds = message.metadata?.[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
+    if (!arrayIsArray(trustedToolCallIds)) continue;
+    const trustedToolCallIdSet = new Set(
+      trustedToolCallIds.filter((value) => typeof value === "string"),
+    );
+    const parts = message.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) &&
+        trustedToolCallIdSet.has(part.toolCallId) &&
+        isFormInputToolName(part.toolName) &&
+        isSubmittedFormInputResult(part.result)
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part);
+      }
+    }
+  }
+}
+
 function latestUserMessageIndex(messages: readonly Message[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
     if (!objectHasOwn(messages, index)) continue;
@@ -316,7 +466,9 @@ export function hasSubmittedFormInputResult(messages: readonly Message[]): boole
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) && isFormInputToolName(part.toolName) &&
+        isToolResultPart(part) &&
+        hasTrustedPlatformPolicyToolResultPart(part) &&
+        isFormInputToolName(part.toolName) &&
         isSubmittedFormInputResult(part.result)
       ) return true;
     }
@@ -352,17 +504,20 @@ export function filterToolsAfterSubmittedFormInput(
   for (let index = 0; index < tools.length; index++) {
     const tool = tools[index];
     if (tool === undefined) continue;
-    if (POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name)) {
+    if (
+      POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name) &&
+      isTrustedPlatformPolicyTool(tool.name, tool)
+    ) {
       continue;
     }
-    if (!isLoadSkillToolName(tool.name)) {
+    if (!isLoadSkillToolName(tool.name) || !isTrustedPlatformPolicyTool(tool.name, tool)) {
       filtered[filtered.length] = tool;
       continue;
     }
     if (!activeSkill?.id || activeSkillReferences.length === 0) {
       continue;
     }
-    filtered[filtered.length] = {
+    filtered[filtered.length] = markTrustedPlatformPolicyToolDefinition({
       ...tool,
       parameters: {
         type: "object",
@@ -373,7 +528,7 @@ export function filterToolsAfterSubmittedFormInput(
         required: ["skillId", "file"],
         additionalProperties: false,
       },
-    };
+    });
   }
   return filtered;
 }
@@ -387,6 +542,7 @@ export type SkillPolicyOptions = {
   skillToolAvailability?: SkillToolAvailability;
   activeSkillId?: string;
   toolInput?: unknown;
+  toolDefinition?: ToolDefinition;
 };
 
 function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
@@ -428,7 +584,8 @@ export function enforceSkillPolicy(
 ): SkillPolicyResult {
   if (
     options.hasSubmittedFormInput === true &&
-    POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName)
+    POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName) &&
+    isTrustedPlatformPolicyTool(toolName, options.toolDefinition)
   ) {
     return {
       allowed: false,
@@ -440,6 +597,7 @@ export function enforceSkillPolicy(
   if (
     options.hasSubmittedFormInput === true &&
     isLoadSkillToolName(toolName) &&
+    isTrustedPlatformPolicyTool(toolName, options.toolDefinition) &&
     !isActiveSkillReferenceLoad(options)
   ) {
     return {

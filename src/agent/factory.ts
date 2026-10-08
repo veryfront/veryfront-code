@@ -360,7 +360,10 @@ function resolveToolsConfiguration(input: {
   for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
     const registration = SKILL_TOOL_REGISTRATIONS[index]!;
     if (!toolRegistry.has(registration.id)) {
-      toolRegistryInternal.registerShared(registration.id, registration.create());
+      toolRegistryInternal.registerShared(
+        registration.id,
+        markTrustedHostToolProvenance(registration.create()),
+      );
     }
   }
 

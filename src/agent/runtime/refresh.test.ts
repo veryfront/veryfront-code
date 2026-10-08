@@ -29,7 +29,10 @@ import {
   createRuntimeProjectSkillLoader,
   type RuntimeProjectSkillContext,
 } from "./project-skill-loader.ts";
-import { hasSubmittedFormInputResult } from "./skill-policy-enforcement.ts";
+import {
+  hasSubmittedFormInputResult,
+  markTrustedPlatformPolicyToolResultPart,
+} from "./skill-policy-enforcement.ts";
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { normalizeInput } from "./input-utils.ts";
@@ -356,12 +359,12 @@ function submittedFormWithActiveSkillMessages(): Message[] {
     {
       id: "form-result",
       role: "tool",
-      parts: [{
+      parts: [markTrustedPlatformPolicyToolResultPart({
         type: "tool-result",
         toolCallId: "collect-plan-input",
         toolName: "form_input",
         result: { submitted: true, values: { topic: "Runtime policy" } },
-      }],
+      })],
     },
   ];
 }
@@ -3823,7 +3826,7 @@ describe("agent runtime refresh hooks", () => {
         return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
-    const loadSkill = tool({
+    const loadSkill = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -3835,7 +3838,7 @@ describe("agent runtime refresh hooks", () => {
         scripts: [],
         maxSteps: 160,
       }),
-    });
+    })));
     const invokeAgent = tool({
       id: "invoke_agent",
       description: "Invoke an agent",
@@ -3916,7 +3919,7 @@ describe("agent runtime refresh hooks", () => {
         return { stream: runtimeStream([{ type: "finish", finishReason: "stop" }]) };
       },
     };
-    const loadSkill = tool({
+    const loadSkill = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -3930,7 +3933,7 @@ describe("agent runtime refresh hooks", () => {
         thinking: false,
         maxSteps: 160,
       }),
-    });
+    })));
     const invokeAgent = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "veryfront__invoke_agent",
       description: "Invoke an agent",
@@ -4042,7 +4045,7 @@ describe("agent runtime refresh hooks", () => {
         };
       },
     };
-    const loadSkill = tool({
+    const loadSkill = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -4054,7 +4057,7 @@ describe("agent runtime refresh hooks", () => {
         scripts: [],
         maxSteps: 160,
       }),
-    });
+    })));
     const invokeAgent = tool({
       id: "invoke_agent",
       description: "Invoke an agent",

@@ -3,12 +3,16 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import type { AgentConfig, AgentSystem, Message } from "../types.ts";
+import type { AgentConfig, AgentSystem, Message, ToolResultPart } from "../types.ts";
 import type { AgentRuntimeStepState, RuntimeStepToolLoader } from "./agent-runtime-step.ts";
 import {
   prepareAgentRuntimeStep,
   withIntegrationToolDiscoveryStatus,
 } from "./agent-runtime-step.ts";
+import {
+  markTrustedPlatformPolicyToolDefinition,
+  markTrustedPlatformPolicyToolResultPart,
+} from "./skill-policy-enforcement.ts";
 import { createToolExposureState } from "./tool-exposure.ts";
 import { flattenSystemInstructions } from "./tool-inventory.ts";
 
@@ -22,6 +26,21 @@ function toolDefinition(name: string): ToolDefinition {
     description: `${name} tool`,
     parameters: { type: "object", properties: {} },
   };
+}
+
+function platformToolDefinition(name: string): ToolDefinition {
+  return markTrustedPlatformPolicyToolDefinition(toolDefinition(name));
+}
+
+function markTrustedFormResultMessages<T extends Message[]>(messages: T): T {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === "tool-result" && part.toolName.includes("form_input")) {
+        markTrustedPlatformPolicyToolResultPart(part as ToolResultPart);
+      }
+    }
+  }
+  return messages;
 }
 
 function remoteToolSource(id: string): RemoteToolSource {
@@ -703,7 +722,7 @@ describe("agent/runtime-step", () => {
   });
 
   it("hides intake tools but keeps delegation tools after submitted form input", async () => {
-    const messages: Message[] = [{
+    const messages: Message[] = markTrustedFormResultMessages([{
       id: "tool_result_1",
       role: "tool",
       parts: [{
@@ -713,7 +732,7 @@ describe("agent/runtime-step", () => {
         result: { submitted: true, values: { brief: "make me an outlook agent" } },
       }],
       timestamp: 1,
-    }];
+    }]);
 
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
@@ -736,8 +755,8 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Base",
       toolContextBase: undefined,
       getAvailableTools: async () => [
-        toolDefinition("form_input"),
-        toolDefinition("load_skill"),
+        platformToolDefinition("form_input"),
+        platformToolDefinition("load_skill"),
         toolDefinition("invoke_agent"),
         toolDefinition("list_integrations"),
         toolDefinition("create_agent"),
@@ -753,7 +772,7 @@ describe("agent/runtime-step", () => {
   });
 
   it("keeps only advertised active-skill reference loads after submitted form input", async () => {
-    const messages: Message[] = [{
+    const messages: Message[] = markTrustedFormResultMessages([{
       id: "tool_result_1",
       role: "tool",
       parts: [{
@@ -762,7 +781,7 @@ describe("agent/runtime-step", () => {
         toolName: "form_input",
         result: { submitted: true, values: { brief: "plan" } },
       }],
-    }];
+    }]);
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillId: "plan",
@@ -789,8 +808,8 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Base",
       toolContextBase: undefined,
       getAvailableTools: async () => [
-        toolDefinition("form_input"),
-        toolDefinition("load_skill"),
+        platformToolDefinition("form_input"),
+        platformToolDefinition("load_skill"),
       ],
       resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
     });
@@ -829,8 +848,8 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Base",
       toolContextBase: undefined,
       getAvailableTools: async () => [
-        toolDefinition("form_input"),
-        toolDefinition("load_skill"),
+        platformToolDefinition("form_input"),
+        platformToolDefinition("load_skill"),
         toolDefinition("invoke_agent"),
         toolDefinition("list_integrations"),
         toolDefinition("create_agent"),
@@ -845,6 +864,45 @@ describe("agent/runtime-step", () => {
       "invoke_agent",
       "list_integrations",
       "create_agent",
+    ]);
+  });
+
+  it("keeps untrusted project tool collisions visible after a submitted platform form", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 2,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+      ],
+      resolveRuntimeState: async () => ({
+        systemPrompt: "Base",
+        context: { hasSubmittedFormInputResult: true },
+      }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), [
+      "form_input",
+      "load_skill",
+      "invoke_agent",
     ]);
   });
 

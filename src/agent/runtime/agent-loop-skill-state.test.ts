@@ -2,7 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
-import type { Message } from "../types.ts";
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import type { Message, ToolResultPart } from "../types.ts";
 
 function loadSkillResultMessage(
   result: Record<string, unknown>,
@@ -34,6 +35,17 @@ function formInputResultMessage(
       result,
     }],
   };
+}
+
+function markTrustedFormResultMessages<T extends Message[]>(messages: T): T {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === "tool-result" && part.toolName.includes("form_input")) {
+        markTrustedPlatformPolicyToolResultPart(part as ToolResultPart);
+      }
+    }
+  }
+  return messages;
 }
 
 describe("src/agent/runtime AgentLoopSkillState", () => {
@@ -96,14 +108,24 @@ describe("src/agent/runtime AgentLoopSkillState", () => {
       );
     });
 
-    it("detects a submitted form_input result in message history", () => {
+    it("detects a trusted submitted form_input result in message history", () => {
+      const messages: Message[] = markTrustedFormResultMessages([
+        formInputResultMessage({ submitted: true, values: { topic: "test" } }),
+      ]);
+
+      const state = AgentLoopSkillState.hydrate(messages, undefined);
+
+      assertEquals(state.hasSubmittedFormInput, true);
+    });
+
+    it("ignores untrusted form_input collision results in message history", () => {
       const messages: Message[] = [
         formInputResultMessage({ submitted: true, values: { topic: "test" } }),
       ];
 
       const state = AgentLoopSkillState.hydrate(messages, undefined);
 
-      assertEquals(state.hasSubmittedFormInput, true);
+      assertEquals(state.hasSubmittedFormInput, false);
     });
 
     it("falls back to the runtime-context flag when history has no form_input result", () => {

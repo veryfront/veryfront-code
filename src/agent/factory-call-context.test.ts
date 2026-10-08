@@ -14,6 +14,8 @@ import { agent } from "./index.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
+import { getAvailableTools } from "./runtime/tool-helpers.ts";
+import { hasTrustedPlatformPolicyToolDefinition } from "./runtime/skill-policy-enforcement.ts";
 import type { AgentConfig, RuntimeStateRequest } from "./types.ts";
 
 /** Runs one generate() call through a stub provider and returns the system prompt it saw. */
@@ -346,6 +348,23 @@ describe("agent/factory call context", () => {
       '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("create_file"), false);
+  });
+
+  it("marks factory-registered shared skill tools as trusted platform policy tools", async () => {
+    agent({
+      id: "trusted-shared-skill-tools",
+      system: "Use skills.",
+      tools: true,
+      skills: true,
+    });
+
+    const definitions = await getAvailableTools(true, {
+      includeSkillTools: true,
+      strictConfiguredToolsOnly: true,
+    });
+    const loadSkill = definitions.find((definition) => definition.name === "load_skill");
+
+    assertEquals(hasTrustedPlatformPolicyToolDefinition(loadSkill), true);
   });
 
   it("preserves skill tool metadata when the direct factory selects that tool", async () => {

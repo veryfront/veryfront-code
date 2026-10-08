@@ -14,6 +14,7 @@ import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import {
   captureProviderReplayCheckpoint,
   createProviderReplayCheckpointEmissionState,
@@ -61,7 +62,7 @@ function skillDelegationTools(callbacks: {
   onInvoke?: (task: string) => void;
 } = {}) {
   return {
-    load_skill: tool({
+    load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -78,7 +79,7 @@ function skillDelegationTools(callbacks: {
           maxSteps: 6,
         };
       },
-    }),
+    }))),
     invoke_agent: tool({
       id: "invoke_agent",
       description: "Invoke a child agent",
