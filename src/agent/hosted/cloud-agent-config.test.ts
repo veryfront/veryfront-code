@@ -1,4 +1,4 @@
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
@@ -111,7 +111,8 @@ describe("cloud agent service runtime options", () => {
       );
 
       assertEquals(tools.invoke_agent, projectInvokeAgent);
-      assertEquals(await tools.invoke_agent?.execute({}), {
+      assert(tools.invoke_agent && typeof tools.invoke_agent.execute === "function");
+      assertEquals(await tools.invoke_agent.execute({}), {
         owner: "project",
         marker: "project-invoke-agent",
       });
