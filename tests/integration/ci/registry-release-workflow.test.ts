@@ -251,6 +251,8 @@ async function runReleaseScript({
   failedUploadAttempts = 0,
   uploadFailureStatus = 1,
   failedPublishAttempts = 0,
+  publishedAssetsDir = "",
+  publishedPrerelease = true,
 }: {
   stateDir: string;
   asset: string;
@@ -260,6 +262,8 @@ async function runReleaseScript({
   failedUploadAttempts?: number;
   uploadFailureStatus?: UploadFailureStatus;
   failedPublishAttempts?: number;
+  publishedAssetsDir?: string;
+  publishedPrerelease?: boolean;
 }): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
   const uploadCount = `${stateDir}/upload-count`;
@@ -280,11 +284,30 @@ async function runReleaseScript({
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
+        '    if [[ "$*" == *"--json isPrerelease"* ]]; then',
+        '      printf "%s\\n" "$PUBLISHED_PRERELEASE"',
+        "      return 0",
+        "    fi",
         '    case "$(cat "$RELEASE_STATE")" in',
         "      missing) return 1 ;;",
         '      draft) printf "true\\n" ;;',
         '      published) printf "false\\n" ;;',
         "    esac",
+        "    return 0",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "download" ]; then',
+        "    shift 3",
+        '    local pattern="" output=""',
+        '    while [ "$#" -gt 0 ]; do',
+        '      case "$1" in',
+        "        --repo) shift 2 ;;",
+        '        --pattern) pattern="$2"; shift 2 ;;',
+        '        --output) output="$2"; shift 2 ;;',
+        "        *) return 1 ;;",
+        "      esac",
+        "    done",
+        '    [ -f "$PUBLISHED_ASSETS_DIR/$pattern" ] || return 1',
+        '    cp "$PUBLISHED_ASSETS_DIR/$pattern" "$output"',
         "    return 0",
         "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "create" ]; then',
@@ -347,6 +370,8 @@ async function runReleaseScript({
       FAILED_UPLOAD_ATTEMPTS: String(failedUploadAttempts),
       UPLOAD_FAILURE_STATUS: String(uploadFailureStatus),
       FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
+      PUBLISHED_ASSETS_DIR: publishedAssetsDir,
+      PUBLISHED_PRERELEASE: String(publishedPrerelease),
     },
     stdout: "piped",
     stderr: "piped",
@@ -2281,6 +2306,46 @@ describe("canonical public RC material verification", () => {
           stderr: "piped",
         }).output();
         assertEquals(result.success, failure === "", decoder.decode(result.stderr));
+      });
+    });
+  }
+});
+
+describe("immutable public release recovery", () => {
+  for (const state of ["matching", "missing", "mismatched", "wrong-mode"] as const) {
+    it(`reverifies ${state} existing publication without mutation`, async () => {
+      await withTempDir(async (stateDir) => {
+        const asset = `${stateDir}/veryfront-linux-x64`;
+        const metadata = `${stateDir}/release-metadata.json`;
+        const publishedAssetsDir = `${stateDir}/published`;
+        await Deno.mkdir(publishedAssetsDir);
+        await Deno.writeTextFile(asset, "qualified binary");
+        await Deno.writeTextFile(metadata, '{"sourceCommit":"qualified-source"}');
+        await Deno.copyFile(asset, `${publishedAssetsDir}/veryfront-linux-x64`);
+        if (state !== "missing") {
+          await Deno.writeTextFile(
+            `${publishedAssetsDir}/release-metadata.json`,
+            state === "mismatched"
+              ? '{"sourceCommit":"other-source"}'
+              : '{"sourceCommit":"qualified-source"}',
+          );
+        }
+        const output = await runReleaseScript({
+          stateDir,
+          asset,
+          extraAssets: [metadata],
+          initialReleaseState: "published",
+          publishedAssetsDir,
+          publishedPrerelease: state !== "wrong-mode",
+        });
+        assertEquals(output.code, state === "matching" ? 0 : 1, decoder.decode(output.stderr));
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim().split("\n");
+        assertEquals(
+          calls.filter((call) => /^release (create|upload|edit|delete) /.test(call)),
+          [],
+        );
+        assertEquals(decoder.decode(output.stderr).includes("Retrying"), false);
+        assertEquals(await Deno.readTextFile(`${stateDir}/release-state`), "published");
       });
     });
   }
