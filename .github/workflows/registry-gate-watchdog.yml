@@ -1,0 +1,80 @@
+name: Registry gate watchdog
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Run id to inspect (empty scans active main runs)
+        type: string
+        default: ""
+      dry_run:
+        description: Report decisions without cancellation, rerun, or comments
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/registry-gate-watchdog.yml
+      - scripts/ci/registry-gate-watchdog.ts
+      - scripts/ci/registry-gate-watchdog.test.ts
+      - scripts/ci/registry-gate-watchdog.md
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/registry-gate-watchdog.yml
+      - scripts/ci/registry-gate-watchdog.ts
+      - scripts/ci/registry-gate-watchdog.test.ts
+      - scripts/ci/registry-gate-watchdog.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-gate-watchdog
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+      - name: Check watchdog source
+        run: |
+          deno fmt --check --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts scripts/ci/registry-gate-watchdog.md
+          deno lint --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts
+          deno check --frozen --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts
+          deno task test:file scripts/ci/registry-gate-watchdog.test.ts
+
+  watchdog:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs: contract
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+      - name: Recover an unstarted RC gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          args=()
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          if [ -n "$RUN_ID" ]; then args+=("--run-id=$RUN_ID"); fi
+          deno run --no-config --allow-net=api.github.com \
+            --allow-env=GITHUB_REPOSITORY,GH_TOKEN,GITHUB_STEP_SUMMARY \
+            --allow-write="$GITHUB_STEP_SUMMARY" \
+            scripts/ci/registry-gate-watchdog.ts "${args[@]}"
