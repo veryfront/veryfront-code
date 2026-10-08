@@ -30,12 +30,63 @@ const INFERENCE_TOKEN = "project-run-inference-token";
 const BROADER_TOKEN = "broader-project-runtime-token";
 const encoder = new TextEncoder();
 
+function createProjectRunEventToken(input: {
+  runId: string;
+  projectId: string;
+  canonicalRunId: string;
+  attemptId?: string;
+}): string {
+  return `test.${
+    btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        runId: input.runId,
+        projectId: input.projectId,
+        projectExecutionAttempt: {
+          canonicalRunId: input.canonicalRunId,
+          workerId: "worker",
+          attemptId: input.attemptId ?? "attempt",
+        },
+      }),
+    )
+  }.signature`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Answers every model call with one streamed completion and records its bearer. */
-function captureModelAuthorizations(): Array<string | null> {
+function captureModelAuthorizations(
+  options: { projectId?: string } = {},
+): Array<string | null> {
   const authorizations: Array<string | null> = [];
   installMockFetch(
     (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
+      const runEventsPath = new URL(request.url).pathname.match(/^\/runs\/([0-9a-f-]+)\/events$/i);
+      if (runEventsPath) {
+        const payload: unknown = await request.json();
+        const events = isRecord(payload) && Array.isArray(payload.events) ? payload.events : [];
+        const captures = events.filter(isRecord)
+          .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+          .flatMap((event, index) =>
+            typeof event.modelCallId === "string" && options.projectId
+              ? [{
+                event_id: String(index + 1),
+                project_id: options.projectId,
+                run_id: runEventsPath[1],
+                model_call_id: event.modelCallId,
+              }]
+              : []
+          );
+        return Response.json({
+          run_id: runEventsPath[1],
+          latest_event_id: 1,
+          appended_count: events.length,
+          ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+        });
+      }
       authorizations.push(request.headers.get("Authorization"));
       return new Response(
         new ReadableStream({
@@ -127,7 +178,8 @@ describe("project-run inference credential", () => {
   });
 
   it("routes a task agent's model call through the execute request's inference header", async () => {
-    const authorizations = captureModelAuthorizations();
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const authorizations = captureModelAuthorizations({ projectId });
     const managed = createManagedModelAgent("project-run-task-agent");
     const deps = {
       runTask: async () => {
@@ -146,7 +198,8 @@ describe("project-run inference credential", () => {
       runId: "run_task_smoke",
       kind: "task",
       target: "task:smoke",
-      projectId: "proj-1",
+      projectId,
+      canonicalRunId: "11111111-1111-4111-8111-111111111111",
     };
     const path = "/api/control-plane/runs/run_task_smoke/execute";
     const rawBody = JSON.stringify(body);
@@ -163,14 +216,18 @@ describe("project-run inference credential", () => {
         "x-veryfront-control-plane-jws": jws,
         "x-token": BROADER_TOKEN,
         "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: body.runId,
+          projectId: body.projectId,
+          canonicalRunId: body.canonicalRunId,
+        }),
       },
       body: rawBody,
     });
 
-    const result = await new ProjectRunExecuteHandler(deps).handle(
-      request,
-      createCtx(publicKeyPem),
-    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = body.projectId;
+    const result = await new ProjectRunExecuteHandler(deps).handle(request, ctx);
 
     assertExists(result.response);
     assertEquals(await result.response.json(), {
