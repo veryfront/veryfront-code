@@ -30,6 +30,16 @@ describe("findFrontDoorBypasses", () => {
       assertEquals(groupsOf(source), ["fetch-assignment"]);
     });
 
+    it("does not count local fetch type annotations, but still counts global writes", () => {
+      const source = [
+        "const fetch: typeof globalThis.fetch = stub;",
+        "const injected: typeof /* type query */ globalThis.fetch = stub;",
+        "const multiline: typeof\nglobalThis.fetch = stub;",
+        "globalThis.fetch = stub;",
+      ].join("\n");
+      assertEquals(groupsOf(source), ["fetch-assignment"]);
+    });
+
     it("does not count comparisons or reads", () => {
       const source = [
         "if (globalThis.fetch === original) return;",
