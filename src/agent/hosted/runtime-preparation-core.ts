@@ -792,8 +792,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         selector: definition.skills === false ? [] : definition.skills,
       });
       const availableSkillIds = skills.allowedSkillIds;
-      const hasKnownEmptySkillManifest = availableSkillIds !== undefined &&
-        availableSkillIds.length === 0;
+      const hasKnownEmptySkillManifest = availableSkillIds?.length === 0;
       if (
         sourceToolNames !== undefined || request.allowedToolNames === undefined ||
         hasKnownEmptySkillManifest
@@ -819,13 +818,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           effectiveSourceTools !== null
         ) {
           const requestedToolNames = normalizeToolNames(request.allowedToolNames);
-          for (let index = 0; index < requestedToolNames.length; index++) {
-            const name = requestedToolNames[index];
+          forEachPrivateArray(requestedToolNames, (name) => {
             if (
               name !== undefined && includes(EMPTY_SKILL_MANIFEST_TOOL_NAMES, name) &&
               includes(trustedGrantedLocalToolNames, name) && !effectiveSourceTools.has(name)
             ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
-          }
+          });
         }
         allowedToolNames = intersectNames(
           normalizeGrantedToolNames(grant.allowedToolNames),

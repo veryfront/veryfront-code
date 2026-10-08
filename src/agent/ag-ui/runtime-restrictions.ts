@@ -467,7 +467,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
       const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
       if (toolName === undefined) continue;
       if (allowedTools[toolName] === true) {
-        if (tools[toolName] === undefined) tools[toolName] = true;
+        tools[toolName] ??= true;
       } else {
         tools[toolName] = false;
       }

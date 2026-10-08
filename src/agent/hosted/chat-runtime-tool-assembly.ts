@@ -1,3 +1,4 @@
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { withPlatformMcpPolicyAliases } from "../platform-mcp-tool-source.ts";
@@ -152,10 +153,9 @@ function ownDataValue(value: HostToolSet[string], key: PropertyKey): unknown {
 function trustedHostToolNames(tools: HostToolSet): string[] {
   const trustedNames: string[] = [];
   const names = ownKeys(tools);
-  for (let index = 0; index < names.length; index++) {
-    const name = names[index]!;
+  forEachPrivateArray(names, (name) => {
     const descriptor = apply(objectGetOwnPropertyDescriptor, Object, [tools, name]);
-    if (!descriptor || !objectHasOwn(descriptor, "value")) continue;
+    if (!descriptor || !objectHasOwn(descriptor, "value")) return;
     if (hasTrustedHostToolProvenance(descriptor.value)) {
       defineOwnDataProperty(trustedNames, trustedNames.length, name, {
         enumerable: true,
@@ -163,7 +163,7 @@ function trustedHostToolNames(tools: HostToolSet): string[] {
         writable: true,
       });
     }
-  }
+  });
   return trustedNames;
 }
 

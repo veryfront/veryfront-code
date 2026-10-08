@@ -1,4 +1,5 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
 import { type HostedChatRequest, hostedChatRuntimeOverridesSchema } from "./chat-request.ts";
 import type {
@@ -220,6 +221,19 @@ export function resolveHostedRuntimeThinkingOverride(input: {
   };
 }
 
+function addConfiguredDelegateToolNames(
+  toolNames: Set<string>,
+  delegates: readonly string[],
+): void {
+  forEachPrivateArray(delegates, (id) => {
+    if (id !== undefined) toolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  });
+}
+
+function isLegacyDelegationToolName(toolName: string): boolean {
+  return toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID;
+}
+
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
@@ -241,11 +255,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
   if (isKnowledgeEnabled(input.configuredKnowledge) && !deniedToolNames.has("search_knowledge")) {
     configuredToolNames.add("search_knowledge");
   }
-  const delegates = input.configuredDelegates ?? [];
-  for (let index = 0; index < delegates.length; index++) {
-    const id = delegates[index];
-    if (id !== undefined) configuredToolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
-  }
+  addConfiguredDelegateToolNames(configuredToolNames, input.configuredDelegates ?? []);
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
@@ -258,8 +268,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
     if (deniedToolNames.has(toolName)) continue;
     if (
       configuredToolNames.has(toolName) ||
-      ((toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID) &&
-        hasImplicitLegacyDelegation)
+      (isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation)
     ) selectedToolNames.add(toolName);
   }
   return [...selectedToolNames];

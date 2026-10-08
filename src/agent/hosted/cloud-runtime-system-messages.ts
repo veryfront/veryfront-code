@@ -26,10 +26,10 @@ export function resolveHostedRuntimeSkillLoaderToolName(
   availableToolNames?: readonly string[],
 ): RuntimeSkillLoaderToolName | undefined {
   if (availableToolNames === undefined) return undefined;
-  if (availableToolNames.includes(LOAD_SKILL_TOOL_ID)) return LOAD_SKILL_TOOL_ID;
   if (availableToolNames.includes(CANONICAL_LOAD_SKILL_TOOL_ID)) {
     return CANONICAL_LOAD_SKILL_TOOL_ID;
   }
+  if (availableToolNames.includes(LOAD_SKILL_TOOL_ID)) return LOAD_SKILL_TOOL_ID;
   return undefined;
 }
 

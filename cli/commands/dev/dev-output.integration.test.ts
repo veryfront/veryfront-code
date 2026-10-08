@@ -14,7 +14,6 @@ import { withTestContext } from "../../../tests/_helpers/context.ts";
 import {
   createTrackedRequests,
   fetchWithTimeout,
-  pollUrlReady,
   waitForPromiseWithTimeout,
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
@@ -249,6 +248,7 @@ interface PageReader {
 }
 
 interface PageResponse {
+  readonly status: number;
   readonly body: { getReader(): PageReader } | null;
 }
 
@@ -259,13 +259,18 @@ async function waitForPageContent(
   expected: string,
   timeoutMs: number = TEST_TIMEOUTS.SERVER_STARTUP,
   requestPage: PageRequest = fetchWithTimeout,
+  requestTimeoutMs = 1_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await requestPage(`http://127.0.0.1:${port}/`, 1_000);
+      const remainingMs = deadline - Date.now();
+      const response = await requestPage(
+        `http://127.0.0.1:${port}/`,
+        Math.max(1, Math.min(requestTimeoutMs, remainingMs)),
+      );
       const content = await readResponseTextAndRelease(response);
-      if (content.includes(expected)) return;
+      if (response.status === 200 && content.includes(expected)) return;
     } catch {
       // The server may be between reloads.
     }
@@ -297,13 +302,13 @@ async function requestPageAndApi(
   port: number,
   request: typeof fetchWithTimeout,
 ): Promise<void> {
-  const pageResponse = await request(`http://127.0.0.1:${port}/`);
-  try {
-    assertEquals(pageResponse.status, 200);
-    assertStringIncludes(await pageResponse.text(), "quiet dev logs page");
-  } finally {
-    await pageResponse.body?.cancel().catch(() => {});
-  }
+  await waitForPageContent(
+    port,
+    "quiet dev logs page",
+    TEST_TIMEOUTS.SERVER_STARTUP,
+    request,
+    3_000,
+  );
 
   const apiResponse = await request(`http://127.0.0.1:${port}/api/ping`);
   try {
@@ -348,6 +353,7 @@ describe(
       const cancelled: string[] = [];
       const released: string[] = [];
       const failedResponse: PageResponse = {
+        status: 503,
         body: {
           getReader: () => ({
             read: () => Promise.reject(new DOMException("Body read aborted", "AbortError")),
@@ -361,6 +367,7 @@ describe(
       };
       let successfulRead = false;
       const successfulResponse: PageResponse = {
+        status: 200,
         body: {
           getReader: () => ({
             read: (): Promise<ReadableStreamReadResult<Uint8Array>> => {
@@ -382,13 +389,37 @@ describe(
       const responses = [failedResponse, successfulResponse];
       const requests: Array<{ url: string; timeoutMs: number }> = [];
 
-      await waitForPageContent(4_246, "updated dev logs page", 1_000, (url, timeoutMs) => {
+      await waitForPageContent(4_246, "updated dev logs page", 3_000, (url, timeoutMs) => {
         requests.push({ url, timeoutMs });
         return Promise.resolve(responses.shift()!);
       });
 
       assertEquals(cancelled, ["failed", "successful"]);
       assertEquals(released, ["failed", "successful"]);
+      assertEquals(requests, [
+        { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
+        { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
+      ]);
+    });
+
+    it("keeps polling when a non-200 page response contains the expected content", async () => {
+      const responses = [
+        new Response("updated dev logs page", { status: 500 }),
+        new Response("updated dev logs page", { status: 200 }),
+      ];
+      const requests: Array<{ url: string; timeoutMs: number }> = [];
+
+      await waitForPageContent(
+        4_246,
+        "updated dev logs page",
+        3_000,
+        (url, timeoutMs) => {
+          requests.push({ url, timeoutMs });
+          return Promise.resolve(responses.shift()!);
+        },
+        1_000,
+      );
+
       assertEquals(requests, [
         { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
         { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
@@ -404,14 +435,6 @@ describe(
           const port = await context.allocatePort();
           const run = startVeryfrontDev(context.projectDir, port);
           context.addCleanup(run.stop);
-
-          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
-            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-            requestTimeoutMs: 1_000,
-            verifyWithSecondRequest: false,
-            request: run.request,
-          });
-          assert(ready.ready, `dev server did not become ready:\n${run.output()}`);
 
           await requestPageAndApi(port, run.request);
           await run.stop();
@@ -441,14 +464,6 @@ describe(
           const port = await context.allocatePort();
           const run = startVeryfrontDev(context.projectDir, port, ["--debug"]);
           context.addCleanup(run.stop);
-
-          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
-            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-            requestTimeoutMs: 1_000,
-            verifyWithSecondRequest: false,
-            request: run.request,
-          });
-          assert(ready.ready, `debug dev server did not become ready:\n${run.output()}`);
 
           await requestPageAndApi(port, run.request);
           await run.stop();
@@ -484,13 +499,13 @@ describe(
           const run = startVeryfrontDev(context.projectDir, port, [], {}, true);
           context.addCleanup(run.stop);
 
-          const ready = await pollUrlReady(`http://127.0.0.1:${port}/`, {
-            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-            requestTimeoutMs: 1_000,
-            verifyWithSecondRequest: false,
-            request: run.request,
-          });
-          assert(ready.ready, `HMR dev server did not become ready:\n${run.output()}`);
+          await waitForPageContent(
+            port,
+            "quiet dev logs page",
+            TEST_TIMEOUTS.SERVER_STARTUP,
+            run.request,
+            3_000,
+          );
 
           await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),

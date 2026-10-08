@@ -239,6 +239,17 @@ describe("cloud runtime system messages", () => {
     assertStringIncludes(legacyText, "Call load_skill({ inventory:");
     assertEquals(legacyText.includes("Call veryfront__load_skill({ inventory:"), false);
 
+    const collisionText = buildInteractiveVeryfrontCloudRuntimeInstructions({
+      agentConfig: createAgent({ instructions: "Base instructions" }),
+      projectId: "project-123",
+      branchId: null,
+      instructions: "",
+      skills,
+      availableToolNames: ["load_skill", "tool_search", "veryfront__load_skill"],
+    }).map((message) => message.content).join("\n");
+    assertStringIncludes(collisionText, "Call veryfront__load_skill({ inventory:");
+    assertEquals(collisionText.includes("Call load_skill({ inventory:"), false);
+
     const defaultText = buildInteractiveVeryfrontCloudRuntimeInstructions({
       agentConfig: createAgent({ instructions: "Base instructions" }),
       projectId: "project-123",

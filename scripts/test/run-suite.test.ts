@@ -470,9 +470,10 @@ describe("migration command surface", () => {
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
   });
 
-  it("gives cwd-mutating fixtures their own process without serializing peers", () => {
+  it("gives process-sensitive fixtures their own process without serializing peers", () => {
     const mutators = [
       ...UNIT_CWD_FILES,
+      "cli/commands/dev/dev-output.integration.test.ts",
       "tests/integration/adapters/shell-adapter.test.ts",
       "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
       "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",

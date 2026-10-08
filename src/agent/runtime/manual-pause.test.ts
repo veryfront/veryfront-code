@@ -444,8 +444,10 @@ it("holds an oversized pause until its dispatch stops without claiming confirmat
     token: "pause-test-token",
     signal: cancellation.signal,
     fetch: (url, init) => {
-      if (init?.method === "POST") {
-        assertEquals(JSON.parse(String(init.body)), { checkpoint: null });
+      if (init && "method" in init && init.method === "POST") {
+        assertEquals("body" in init ? JSON.parse(String(init.body)) : undefined, {
+          checkpoint: null,
+        });
         releaseRequested = true;
         return Promise.resolve(Response.json({ stop: true }));
       }
