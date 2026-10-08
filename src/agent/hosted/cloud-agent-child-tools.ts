@@ -13,6 +13,7 @@ import {
   toolRegistry,
 } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -297,7 +298,11 @@ export function buildHostedChildGlobalTools(
           (input.childConfig.toolNames === undefined
             ? input.childConfig.deniedToolNames?.includes("load_skill") !== true
             : input.childConfig.toolNames.includes("load_skill")))
-      ? { load_skill: createLoadSkillTool(context, input.childToolContext) }
+      ? {
+        load_skill: markTrustedHostToolProvenance(
+          createLoadSkillTool(context, input.childToolContext),
+        ),
+      }
       : {}),
     ...(input.childConfig?.delegateIds?.length
       ? buildHostedDelegateTools(context, {
