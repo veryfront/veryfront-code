@@ -56,6 +56,7 @@ describe("RC publication process", () => {
             "run",
             "--frozen",
             "--allow-read",
+            "--allow-write",
             "--allow-run=bash",
             "--allow-env",
             "scripts/ci/publish-rc-packages.ts",
@@ -83,4 +84,105 @@ describe("RC publication process", () => {
       });
     });
   }
+});
+
+describe("shared RC metadata recovery budget", () => {
+  it("shares polling time across independent publisher shells", async () => {
+    await withTempDir(async (directory) => {
+      const file = `${directory}/budget.json`;
+      await Deno.writeTextFile(file, '{"spent":0}');
+      const statuses: number[] = [];
+      const diagnostics: string[] = [];
+      for (let index = 0; index < 2; index++) {
+        const result = await new Deno.Command("bash", {
+          args: [
+            "-euo",
+            "pipefail",
+            "-c",
+            [
+              "source scripts/ci/publish-npm-packages.sh",
+              "reads=0",
+              'lookup_npm_git_head() { reads=$((reads + 1)); PUBLISHED_GIT_HEAD=""; if [ "$reads" -ge 3 ]; then PUBLISHED_GIT_HEAD="$GITHUB_SHA"; fi; }',
+              "sleep() { :; }",
+              "wait_for_npm_git_head veryfront",
+            ].join("\n"),
+          ],
+          env: {
+            NPM_GIT_HEAD_SHARED_BUDGET_FILE: file,
+            NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "20",
+            NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+            NPM_GIT_HEAD_WAIT_ATTEMPTS: "5",
+            GITHUB_SHA: "expected-head",
+            VERSION: "0.1.0-rc.1",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        statuses.push(result.code);
+        diagnostics.push(
+          new TextDecoder().decode(result.stderr).replaceAll(directory, "<fixture>"),
+        );
+      }
+      assertEquals(statuses, [0, 1], diagnostics.join("\n"));
+      assertEquals(JSON.parse(await Deno.readTextFile(file)).spent, 20);
+    });
+  });
+});
+
+describe("atomic metadata budget updates", () => {
+  for (
+    const [operation, amount, limit, expectedSpent, expectedStatuses] of [
+      ["charge", "1", "0", 4, [0, 0, 0, 0]],
+      ["reserve", "10", "20", 20, [0, 0, 2, 2]],
+    ] as const
+  ) {
+    it(`serializes concurrent ${operation} updates without resetting the release counter`, async () => {
+      await withTempDir(async (directory) => {
+        const path = `${directory}/budget.json`;
+        await Deno.writeTextFile(path, '{"spent":0}');
+        const results = await Promise.all(
+          Array.from({ length: 4 }, () =>
+            new Deno.Command(Deno.execPath(), {
+              args: [
+                "run",
+                "--frozen",
+                "--allow-read",
+                "--allow-write",
+                "scripts/ci/npm-metadata-budget.ts",
+                operation,
+                path,
+                amount,
+                limit,
+              ],
+              stdout: "piped",
+              stderr: "piped",
+            }).output()),
+        );
+        assertEquals(results.map((result) => result.code).sort(), [...expectedStatuses]);
+        assertEquals(JSON.parse(await Deno.readTextFile(path)).spent, expectedSpent);
+      });
+    });
+  }
+
+  it("fails closed on corrupted shared state", async () => {
+    await withTempDir(async (directory) => {
+      const path = `${directory}/budget.json`;
+      await Deno.writeTextFile(path, '{"spent":-1}');
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--frozen",
+          "--allow-read",
+          "--allow-write",
+          "scripts/ci/npm-metadata-budget.ts",
+          "read",
+          path,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.success, false);
+      assertEquals(await Deno.readTextFile(path), '{"spent":-1}');
+    });
+  });
 });

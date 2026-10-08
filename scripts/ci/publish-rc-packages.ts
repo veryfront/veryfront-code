@@ -63,24 +63,36 @@ if (import.meta.main) {
       }),
     });
   }
-  await publishPackages(entries, async ({ name, directory }) => {
-    const status = await new Deno.Command("bash", {
-      args: [
-        "-euo",
-        "pipefail",
-        "-c",
-        'source scripts/ci/publish-npm-packages.sh; run_rc_publish_package "$1"',
-        "rc-package",
-        directory,
-      ],
-      stdin: "null",
-      stdout: "inherit",
-      stderr: "inherit",
-    }).spawn().status;
-    if (!status.success) {
-      throw new Error(
-        `RC publication failed for ${name} (status ${status.code})`,
-      );
-    }
-  });
+  const initialSpent = Number(Deno.env.get("NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS") ?? "0");
+  if (!Number.isSafeInteger(initialSpent) || initialSpent < 0) {
+    throw new Error("Invalid initial metadata budget");
+  }
+  const budgetDirectory = await Deno.makeTempDir({ prefix: "veryfront-rc-budget-" });
+  const budgetFile = `${budgetDirectory}/metadata.json`;
+  try {
+    await Deno.writeTextFile(budgetFile, JSON.stringify({ spent: initialSpent }));
+    await publishPackages(entries, async ({ name, directory }) => {
+      const status = await new Deno.Command("bash", {
+        args: [
+          "-euo",
+          "pipefail",
+          "-c",
+          'source scripts/ci/publish-npm-packages.sh; run_rc_publish_package "$1"',
+          "rc-package",
+          directory,
+        ],
+        env: { NPM_GIT_HEAD_SHARED_BUDGET_FILE: budgetFile },
+        stdin: "null",
+        stdout: "inherit",
+        stderr: "inherit",
+      }).spawn().status;
+      if (!status.success) {
+        throw new Error(
+          `RC publication failed for ${name} (status ${status.code})`,
+        );
+      }
+    });
+  } finally {
+    await Deno.remove(budgetDirectory, { recursive: true });
+  }
 }
