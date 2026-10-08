@@ -214,6 +214,17 @@ function parseKnownProblemBodyInternal(
     return inferencePolicyError(getOwnDataProperty(body, "model"));
   }
 
+  if (
+    allowInferencePolicy &&
+    getOwnDataProperty(body, "code") === "ai_provider_spend_check_unavailable"
+  ) {
+    return {
+      code: "ai_provider_spend_check_unavailable",
+      message: "Veryfront cannot verify provider spend. Contact your administrator.",
+      status: 503,
+    };
+  }
+
   const slugValue = getOwnDataProperty(body, "slug");
   const errorValue = getOwnDataProperty(body, "error");
   const suggestionValue = getOwnDataProperty(body, "suggestion");

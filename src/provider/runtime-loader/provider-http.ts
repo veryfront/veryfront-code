@@ -818,6 +818,22 @@ function buildProviderErrorFromBody(
 ): ProviderError {
   const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
 
+  if (
+    isVeryfrontGatewayResponse(response) && !context.truncated && context.status === 503 &&
+    context.parsedBody?.code === "ai_provider_spend_check_unavailable"
+  ) {
+    return preserveStructuredResponseBody(
+      new ProviderRequestError({
+        provider,
+        status: 503,
+        message: context.message,
+        retryable: true,
+        ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+      }),
+      rawBody,
+    );
+  }
+
   const policyRefusal = classifyInferencePolicyRefusal(context, response);
   if (policyRefusal !== undefined) return policyRefusal;
 
