@@ -678,8 +678,11 @@ function readHttpStatusForLog(error: Error): number | undefined {
   return undefined;
 }
 
-/** Fixed parser classifications only; never retain the provider message itself. */
+/** Fixed direct/delegated parser classifications only; never retain provider text. */
 const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
+  "SSE buffer exceeded 8388608 code units",
+  "SSE event framing was malformed",
+  "URL citation annotation was malformed",
   "added function call id or name was missing",
   "added function call was not in its initial state",
   "added message content part annotations were not empty",
@@ -772,9 +775,11 @@ const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
   "reasoning text event was malformed",
   "refusal delta was malformed",
   "response lifecycle status did not match its event type",
+  "stream chunk was not binary data",
   "stream contained choice data after its finish reason",
   "stream contained data after its done marker",
   "stream contained data after its terminal event",
+  "stream contained invalid UTF-8",
   "stream contained multiple done markers",
   "stream contained multiple terminal events",
   "stream contained no choice envelope",
@@ -801,8 +806,18 @@ const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
   "tool call was incomplete",
   "tool-call finish contained no tool calls",
   "tool_calls delta was not an array",
+  "trailing SSE event was malformed",
+  "web-search action exceeded the tool-input limit",
+  "web-search action type was unsupported",
+  "web-search action was malformed",
+  "web-search find-in-page action was malformed",
   "web-search lifecycle event referenced an unknown item",
   "web-search lifecycle moved backward or repeated a phase",
+  "web-search open-page action was malformed",
+  "web-search output item identity or status was malformed",
+  "web-search search action was malformed",
+  "web-search source was malformed",
+  "web-search sources were malformed",
 ]);
 const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
   /^(?:OpenAI|openai) request failed: invalid successful stream \(([^)]+)\)$/;
