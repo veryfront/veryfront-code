@@ -1112,6 +1112,24 @@ describe("main release gate folding", () => {
 });
 
 describe("trusted merge-group cancellation workflow", () => {
+  it("keeps self-pin updates manual without disabling weekly third-party updates", async () => {
+    const config = asRecord(
+      parse(await readRepoFile(".github/dependabot.yml")),
+      "Dependabot config",
+    );
+    assert(Array.isArray(config.updates));
+    const updates = config.updates.map((entry) => asRecord(entry, "Dependabot update"));
+    const actions = updates.filter((entry) => entry["package-ecosystem"] === "github-actions");
+    assertEquals(actions.length, 1);
+    const action = actions[0];
+    assert(action);
+    assertEquals(action.directory, "/");
+    assertEquals(asRecord(action.schedule, "Actions schedule").interval, "weekly");
+    assertEquals(action.ignore, [{
+      "dependency-name": "veryfront/veryfront-code/.github/workflows/*",
+    }]);
+  });
+
   it("observes every merge and artifact gate prerequisite independently without privileged test jobs", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
     const artifactGate = asRecord(jobs["quality-gate-artifact"], "artifact quality gate");
