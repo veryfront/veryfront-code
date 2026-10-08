@@ -62,6 +62,8 @@ const sandbox = Sandbox.createLazy({
 });
 ```
 
+For custom runtime routing, `resolveRuntimeEndpoint` receives `{ endpoint, sandboxId }` and returns the runtime URL. Supply an explicit `authToken`; custom routing does not use stored login credentials.
+
 Use `getProjectId()` when the billing project is selected at runtime. It is read when the sandbox is created:
 
 ```ts

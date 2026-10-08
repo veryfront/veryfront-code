@@ -51,7 +51,7 @@ export interface LazySandboxOptions extends SandboxOptions {
   execStartTimeoutMs?: number;
   execStartMaxAttempts?: number;
   execStartRetryDelayMs?: number;
-  resolveRuntimeEndpoint?: (input: { endpoint: string; sessionId: string }) => string;
+  resolveRuntimeEndpoint?: (input: { endpoint: string; sandboxId: string }) => string;
 }
 
 interface SandboxSessionRecord {
@@ -179,7 +179,7 @@ export class LazySandbox {
   private readonly resolveRuntimeEndpointOption:
     | ((input: {
       endpoint: string;
-      sessionId: string;
+      sandboxId: string;
     }) => string)
     | undefined;
 
@@ -1017,7 +1017,7 @@ export class LazySandbox {
 
   #resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
     const defaultEndpoint = resolveDefaultSandboxRuntimeEndpoint({ endpoint });
-    const resolved = this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
+    const resolved = this.resolveRuntimeEndpointOption?.({ endpoint, sandboxId: sessionId }) ??
       defaultEndpoint;
     if (
       normalizeDataPlaneBaseUrl(resolved) !== normalizeDataPlaneBaseUrl(defaultEndpoint) &&

@@ -2349,8 +2349,8 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
-        resolveRuntimeEndpoint: ({ sessionId }) =>
-          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local/`,
+        resolveRuntimeEndpoint: ({ sandboxId }) =>
+          `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local/`,
       });
 
       try {
@@ -2769,8 +2769,8 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         execStartRetryDelayMs: 0,
-        resolveRuntimeEndpoint: ({ sessionId }) =>
-          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local`,
+        resolveRuntimeEndpoint: ({ sandboxId }) =>
+          `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local`,
       });
 
       try {
