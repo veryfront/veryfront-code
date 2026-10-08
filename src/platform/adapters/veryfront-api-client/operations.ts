@@ -224,6 +224,7 @@ export interface ListFilesOptions {
   sortOrder?: "asc" | "desc";
   /** Branch listings only: list file metadata and checksums without `content`. */
   withoutContent?: boolean;
+  signal?: AbortSignal;
 }
 
 /** Every branch listing field except `content`. */
@@ -253,6 +254,8 @@ export interface FileDetail {
 export interface GetFileOptions {
   /** True when the caller is probing an optional candidate and expects a possible 404. */
   expectedMissing?: boolean;
+  /** Caller-owned cancellation signal for the backing API request. */
+  signal?: AbortSignal;
 }
 
 export interface StyleArtifactSelector {
@@ -468,8 +471,8 @@ export class VeryfrontAPIOperations {
     return getListProjectsResponseSchema().parse(raw).data;
   }
 
-  async getProject(projectRef: string): Promise<Project> {
-    const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`);
+  async getProject(projectRef: string, signal?: AbortSignal): Promise<Project> {
+    const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`, { signal });
     return getProjectSchema().parse(raw);
   }
 
@@ -517,7 +520,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal: options.signal });
     const response = options.withoutContent
       ? getListBranchFileMetadataResponseSchema().parse(raw)
       : getListBranchFilesResponseSchema().parse(raw);
@@ -577,7 +580,10 @@ export class VeryfrontAPIOperations {
         }?${params}`;
         logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
-        const raw = await this.request(url, { expected404: options.expectedMissing === true });
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          signal: options.signal,
+        });
         const response = getBranchFileDetailSchema().parse(raw);
 
         return {
@@ -617,6 +623,7 @@ export class VeryfrontAPIOperations {
         const raw = await this.request(url, {
           expected404: options.expectedMissing === true,
           jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+          signal: options.signal,
         });
         return requireBoundedFileContentBytes(raw, admittedMaximum);
       },
@@ -644,7 +651,7 @@ export class VeryfrontAPIOperations {
       pattern: options.pattern,
     });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal: options.signal });
     const response = getListEnvironmentFilesResponseSchema().parse(raw);
 
     return {
@@ -694,7 +701,10 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
-        const raw = await this.request(url, { expected404: options.expectedMissing === true });
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          signal: options.signal,
+        });
         const response = getEnvironmentFileDetailSchema().parse(raw);
 
         return {
@@ -733,6 +743,7 @@ export class VeryfrontAPIOperations {
         const raw = await this.request(url, {
           expected404: options.expectedMissing === true,
           jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+          signal: options.signal,
         });
         return requireBoundedFileContentBytes(raw, admittedMaximum);
       },
@@ -757,7 +768,8 @@ export class VeryfrontAPIOperations {
     }/files?${params}`;
     logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
-    const raw = await this.request(url, { signal });
+    const requestSignal = signal ?? options.signal;
+    const raw = await this.request(url, { signal: requestSignal });
     const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {
@@ -774,12 +786,13 @@ export class VeryfrontAPIOperations {
     options: Omit<ListFilesOptions, "cursor"> = {},
     signal?: AbortSignal,
   ): Promise<ProjectFile[]> {
+    const requestSignal = signal ?? options.signal;
     return listAllFiles((cursor) =>
       this.listReleaseFiles(
         projectRef,
         version,
         { ...options, cursor, limit: DEFAULT_PAGE_LIMIT },
-        signal,
+        requestSignal,
       )
     );
   }
@@ -799,7 +812,10 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
-        const raw = await this.request(url, { expected404: options.expectedMissing === true });
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          signal: options.signal,
+        });
         const response = getReleaseFileDetailSchema().parse(raw);
 
         return {
@@ -838,6 +854,7 @@ export class VeryfrontAPIOperations {
         const raw = await this.request(url, {
           expected404: options.expectedMissing === true,
           jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+          signal: options.signal,
         });
         return requireBoundedFileContentBytes(raw, admittedMaximum);
       },
@@ -850,7 +867,10 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
+  lookupProjectByDomain(
+    domain: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<LookupDomainResponse | null> {
     return withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
@@ -859,7 +879,7 @@ export class VeryfrontAPIOperations {
         logger.debug("lookupProjectByDomain", { domain });
 
         try {
-          const raw = await this.request(url);
+          const raw = await this.request(url, { signal: options.signal });
           const project = getProjectWithEnvironmentsSchema().parse(raw);
 
           const matchingEnv = project.environments?.find((env) =>

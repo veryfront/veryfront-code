@@ -5,7 +5,7 @@ import * as generateModule from "npm:@babel/generator@7.29.1";
 import process from "node:process";
 import type traverseDefault from "npm:@babel/traverse@7.29.0";
 import type { NodePath } from "npm:@babel/traverse@7.29.0";
-import * as t from "npm:@babel/types@7.29.0";
+import * as t from "npm:@babel/types@7.29.8";
 
 // @babel/traverse loads `debug`, which enumerates process.env at module load.
 // Keep the codemod's env permission limited to Babel's compatibility flag.

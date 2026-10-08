@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as publicTargetModule from "veryfront/runs/target";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -41,6 +41,54 @@ describe("veryfront/runs/target", () => {
 });
 
 describe("createRunsApiTransport", () => {
+  it("does not replay documented dispatch acceptance after a committed response is lost", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../../../docs/guides/runs.md", import.meta.url),
+    );
+    const factory = guide.match(/const executorSdk = createRunsSdk\(\{[\s\S]*?\n\}\);/)?.[0];
+    assert(factory, "The executor guide must define its own transport.");
+    const sdk = new Function(
+      "createRunsSdk",
+      "createRunsApiTransport",
+      "executionRenewalToken",
+      `${factory}; return executorSdk;`,
+    )(
+      createRunsSdk,
+      (options: Parameters<typeof createRunsApiTransport>[0]) =>
+        createRunsApiTransport({ ...options, baseUrl: BASE_URL }),
+      "execution-renewal-token",
+    ) as ReturnType<typeof createRunsSdk>;
+    let committed = false;
+    let attempts = 0;
+    await withMockFetch((url, init) => {
+      const request = new Request(url, init as RequestInit);
+      assertEquals(request.headers.get("Authorization"), "Bearer execution-renewal-token");
+      assertEquals(request.headers.get("x-veryfront-run-dispatch-acceptance"), "true");
+      attempts++;
+      if (!committed) {
+        committed = true;
+        return Promise.reject(new Error("acceptance committed but response lost"));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ code: "RUN_CONFLICT" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }, () =>
+      assertRejects(
+        () =>
+          sdk.createRunHeartbeat({
+            ...RUNS_OPERATION_FIXTURES.createRunHeartbeat.input,
+            headers: { "x-veryfront-run-dispatch-acceptance": "true" },
+          }),
+        Error,
+        "acceptance committed but response lost",
+      ));
+    assertEquals(committed, true);
+    assertEquals(attempts, 1);
+  });
+
   it("sends the token as a bearer credential to the configured origin", async () => {
     const transport = createRunsApiTransport({
       baseUrl: BASE_URL,

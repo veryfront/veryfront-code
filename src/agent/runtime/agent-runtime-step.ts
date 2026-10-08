@@ -72,6 +72,8 @@ export type RuntimeStepToolLoader = (
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    unavailableOptionalRemoteToolNames?: string[];
+    unavailableOptionalRemoteToolPrefixes?: string[];
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
@@ -105,6 +107,8 @@ export interface PrepareAgentRuntimeStepInput {
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
   getAvailableTools: RuntimeStepToolLoader;
+  unavailableOptionalRemoteToolNames?: string[];
+  unavailableOptionalRemoteToolPrefixes?: string[];
   supportsToolCalling: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
@@ -268,6 +272,8 @@ export async function prepareAgentRuntimeStep(
       forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
       remoteToolSources: input.remoteToolSources,
       remoteToolContext: toolContext,
+      unavailableOptionalRemoteToolNames: input.unavailableOptionalRemoteToolNames,
+      unavailableOptionalRemoteToolPrefixes: input.unavailableOptionalRemoteToolPrefixes,
       onIntegrationToolDiscovery: (result) => {
         integrationToolDiscovery = result;
       },

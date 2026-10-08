@@ -7,6 +7,7 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
+import { isHostedConfigRequestCancellation } from "#veryfront/config/request-cancellation.ts";
 import { errorToResponse, isVeryfrontError } from "#veryfront/errors";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
@@ -118,6 +119,12 @@ export async function withRequestTimeout(
       );
 
       return { response, settled };
+    }
+
+    if (options.signal?.aborted && isHostedConfigRequestCancellation(e)) {
+      // This waiter belongs to the disconnected caller. Independent worker failures
+      // and the timeout response above retain their existing reporting semantics.
+      return { response: new Response(null, { status: 499 }), settled };
     }
 
     const error = e instanceof Error ? e : new Error(String(e));

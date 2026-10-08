@@ -77,11 +77,19 @@ import {
   runWithMandatoryRunEventSink,
   scopeAsyncIterableWithMandatoryRunEventSink,
 } from "../../runtime/run-event-sink-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  type RuntimeObservationWriterCapability,
+} from "../../runtime/runtime-observation-carrier.ts";
 import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
 } from "./durable-run-event-sink.ts";
+import {
+  primordialPromiseCatch,
+  primordialPromiseResolve,
+} from "../../platform/compat/primordials/promise.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -138,6 +146,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   streamBootstrapKeepaliveIntervalMs?: number;
   streamBootstrapTimeoutMs?: number;
   durableRunEventMirror?: ConversationRunChunkMirror;
+  runtimeObservationWriterCapability?: RuntimeObservationWriterCapability;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -365,18 +374,32 @@ export async function createHostedChatExecutionRuntimeBootstrap(
       abortSignal: streamAbortSignal,
     })
     : undefined;
-
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    if (runEventSink && input.runtimeObservationWriterCapability) {
+      bindRuntimeObservationWriterCapability(
+        runEventSink,
+        input.runtimeObservationWriterCapability,
+      );
+    }
     bindHostedAgentPauseLifetime(input.lifecycleAdapter, streamAbortSignal);
     const startStream = () =>
       input.agent.stream({
         messages: input.finalMessages,
         abortSignal: streamAbortSignal,
+        ...(input.runtimeObservationWriterCapability ? { runtimeObservations: true } : {}),
       });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
       () => runEventSink ? runWithMandatoryRunEventSink(runEventSink, startStream) : startStream(),
+    );
+    // A cancelled UI iterator can fail before detached finalization reaches
+    // `steps`. Observe it at creation so that ordering cannot leave the provider
+    // cancellation rejection ownerless; finalization still awaits the original
+    // promise and preserves its result.
+    void primordialPromiseCatch(
+      primordialPromiseResolve(streamResult.steps),
+      () => undefined,
     );
   } catch (error) {
     rootStreamWatchdog.dispose();
@@ -423,6 +446,12 @@ async function createBootstrappedHostedChatRuntime(
       conversationId: input.conversationId,
       ...(input.rootRunContext.privateDurableRunMirror
         ? { durableRunEventMirror: input.rootRunContext.privateDurableRunMirror }
+        : {}),
+      ...(input.rootRunContext.privateRuntimeObservationWriterCapability
+        ? {
+          runtimeObservationWriterCapability:
+            input.rootRunContext.privateRuntimeObservationWriterCapability,
+        }
         : {}),
       abortSignal: input.abortSignal,
       traceStream: input.traceStream,

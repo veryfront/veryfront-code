@@ -11,13 +11,13 @@ import { WorkflowExecutor } from "./workflow-executor.ts";
 import type { WorkflowNode, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   type ReadableSpan,
   SimpleSpanProcessor,
-} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,

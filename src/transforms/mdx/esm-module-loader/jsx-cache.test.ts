@@ -854,12 +854,17 @@ describe("pruneSupersededJsxArtifacts", () => {
     removeJsxArtifactUnlessServed,
     retainJsxArtifact,
     scheduleJsxCachePruneRetry,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
-  afterEach(() => {
+  afterEach(async () => {
     // A pass that leaves protected variants behind arms an unref'd follow-up
-    // timer; drop it so no test observes a neighbour's pending cleanup.
+    // timer; drain already-started filesystem work so no test observes a
+    // neighbour's pending cleanup.
     cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
+    cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
   });
 
   /** A clock far enough ahead that every artifact written now is prunable. */
@@ -2267,10 +2272,12 @@ describe("jsx artifact references", () => {
     jsxArtifactActiveRefCount,
     removeJsxArtifactUnlessServed,
     wasJsxArtifactRecentlyServed,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
-  afterEach(() => {
+  afterEach(async () => {
     cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenance();
   });
 
   it("pins the artifacts a rewritten module imports until released", async () => {
@@ -3155,10 +3162,7 @@ describe("scheduled prune bound", () => {
     }
     ensureJsxCacheSweepArmed(`${persistedTestPrefix}queued`);
 
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (hasScheduledJsxCachePrune(persisted)) break;
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
+    await waitForJsxCacheMaintenance();
 
     assertEquals(
       hasScheduledJsxCachePrune(persisted),

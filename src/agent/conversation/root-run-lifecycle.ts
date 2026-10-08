@@ -11,11 +11,22 @@ import {
   type HostedConversationRunChunkMirrorInstrumentation,
 } from "./run-chunk-mirror.ts";
 import { type ConversationRunEvent } from "./run-events.ts";
+import {
+  createRuntimeObservationWriterCapability,
+  hasRuntimeObservationCaptureOptIn,
+  revokeRuntimeObservationWriterCapability,
+  type RuntimeObservationCaptureOptIn,
+  type RuntimeObservationWriterCapability,
+  type RuntimeObservationWriterScope,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { getUuidSchema } from "#veryfront/schemas/common.ts";
+import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   getActiveHostedRunEventWriterCapability,
+  hostedRunCanonicalId,
 } from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for conversation root run lifecycle. */
@@ -72,6 +83,8 @@ export interface HostedConversationRootRunContext {
   durableRunMirror: ConversationRunChunkMirror | null;
   /** Mirror authorized for private checkpoint events, when a service token was verified. */
   privateDurableRunMirror: ConversationRunChunkMirror | null;
+  /** Opaque capability privately proved by the exact-run writer capability. */
+  privateRuntimeObservationWriterCapability?: RuntimeObservationWriterCapability;
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
@@ -102,6 +115,8 @@ export interface PrepareHostedConversationRootRunContextInput {
     typeof persistLatestConversationUserMessage
   >[0]["onFailure"];
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
 }
 
 function isConversationRunEvent(value: unknown): value is ConversationRunEvent {
@@ -125,6 +140,39 @@ function toHostedConversationRootRunState(
   };
 }
 
+function isUuid(value: string | null | undefined): value is string {
+  return typeof value === "string" && getUuidSchema().safeParse(value).success;
+}
+
+function revokeRuntimeObservationWriterOnMirrorDispose(
+  mirror: ConversationRunChunkMirror,
+  capability: RuntimeObservationWriterCapability,
+): ConversationRunChunkMirror {
+  return {
+    timing: mirror.timing,
+    handleChunk: (chunk) => mirror.handleChunk(chunk),
+    appendEvents: (events) => mirror.appendEvents(events),
+    ...(mirror.takeModelCallCaptureReceipt
+      ? {
+        takeModelCallCaptureReceipt: (modelCallId: string) =>
+          mirror.takeModelCallCaptureReceipt?.(modelCallId),
+      }
+      : {}),
+    ...(mirror.takeToolCallAdmissionReceipt
+      ? {
+        takeToolCallAdmissionReceipt: (occurrenceId: string) =>
+          mirror.takeToolCallAdmissionReceipt?.(occurrenceId),
+      }
+      : {}),
+    flush: (options) => mirror.flush(options),
+    getSnapshot: () => mirror.getSnapshot(),
+    dispose: () => {
+      revokeRuntimeObservationWriterCapability(capability);
+      mirror.dispose();
+    },
+  };
+}
+
 /** Context for prepare hosted conversation root run. */
 export async function prepareHostedConversationRootRunContext(
   input: PrepareHostedConversationRootRunContextInput,
@@ -137,6 +185,7 @@ export async function prepareHostedConversationRootRunContext(
   }
   let durableRunMirror: ConversationRunChunkMirror | null = null;
   let privateDurableRunMirror: ConversationRunChunkMirror | null = null;
+  let privateRuntimeObservationWriterCapability: RuntimeObservationWriterCapability | undefined;
   const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   const startConversationRootRun = createConversationRootRunStartAdapter({
     authToken: input.authToken,
@@ -177,6 +226,19 @@ export async function prepareHostedConversationRootRunContext(
         await durableRunMirror.appendEvents(events);
       },
       createMirror: (run) => {
+        const canonicalRunId = hostedRunCanonicalId(runEventWriterCapability, run.runId);
+        let runtimeObservationScope: RuntimeObservationWriterScope | undefined;
+        if (
+          hasRuntimeObservationCaptureOptIn(
+            input.runtimeObservationCaptureOptIn,
+          ) && isUuid(canonicalRunId) && isUuid(input.projectId)
+        ) {
+          runtimeObservationScope = {
+            runId: run.runId,
+            canonicalRunId,
+            projectId: input.projectId,
+          };
+        }
         const mirrorOptions = {
           conversationId: run.conversationId,
           latestEventId: run.latestEventId,
@@ -185,8 +247,32 @@ export async function prepareHostedConversationRootRunContext(
         };
         privateDurableRunMirror = createHostedConversationRunChunkMirrorFromCapability(
           runEventWriterCapability,
-          { ...mirrorOptions, expectedRunId: run.runId },
+          {
+            ...mirrorOptions,
+            expectedRunId: run.runId,
+            ...(runtimeObservationScope ? { runtimeObservations: true } : {}),
+          },
         ) ?? null;
+        privateRuntimeObservationWriterCapability =
+          privateDurableRunMirror && runtimeObservationScope
+            ? createRuntimeObservationWriterCapability({
+              scope: runtimeObservationScope,
+              assertActive: () => {
+                const snapshot = privateDurableRunMirror?.getSnapshot();
+                if (!snapshot || snapshot.disabled) {
+                  throw new DurableRunEventPersistenceError(
+                    "Model call capture scope is no longer active",
+                  );
+                }
+              },
+            })
+            : undefined;
+        if (privateDurableRunMirror && privateRuntimeObservationWriterCapability) {
+          privateDurableRunMirror = revokeRuntimeObservationWriterOnMirrorDispose(
+            privateDurableRunMirror,
+            privateRuntimeObservationWriterCapability,
+          );
+        }
         durableRunMirror = privateDurableRunMirror ?? createHostedConversationRunChunkMirror({
           ...mirrorOptions,
           apiUrl: input.apiUrl,
@@ -206,6 +292,9 @@ export async function prepareHostedConversationRootRunContext(
     durableRootRun: toHostedConversationRootRunState(rootRunLifecycle.run),
     durableRunMirror,
     privateDurableRunMirror,
+    ...(privateRuntimeObservationWriterCapability
+      ? { privateRuntimeObservationWriterCapability }
+      : {}),
     effectiveParentRunId: rootRunLifecycle.effectiveParentRunId,
     effectiveParentMessageId: rootRunLifecycle.effectiveParentMessageId,
     publishParentRunEvents: rootRunLifecycle.publishParentRunEvents

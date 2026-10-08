@@ -31,6 +31,7 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -224,6 +225,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const startTime = Date.now();
 
       captureHostApiEnvironment();
+      trustOperatorConfiguredVeryfrontApiOrigins();
 
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {

@@ -36,6 +36,10 @@ import {
   isProviderReplayCheckpointEmissionEnabled,
   PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV,
 } from "./chat-preparation.ts";
+import {
+  createRuntimeObservationCaptureOptIn,
+  type RuntimeObservationCaptureOptIn,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 /**
  * Full runtime context for a running cloud agent service instance.
@@ -60,6 +64,13 @@ export function resolveProviderReplayCheckpointEmissionBootstrap(
   return isProviderReplayCheckpointEmissionEnabled(
     environment?.[PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV] ?? "",
   );
+}
+
+/** Resolve the deployment-owned exact capture opt-in. */
+export function resolveRuntimeObservationCaptureBootstrap(input: {
+  hostedModelCallCapture?: boolean;
+}): RuntimeObservationCaptureOptIn | undefined {
+  return input.hostedModelCallCapture === true ? createRuntimeObservationCaptureOptIn() : undefined;
 }
 
 /** Creates the shared runtime context for a cloud agent service instance. */
@@ -93,6 +104,7 @@ export function createNodeVeryfrontCloudAgentServiceContext(
       env: options.env,
       processTarget,
     }),
+    runtimeObservationCaptureOptIn: resolveRuntimeObservationCaptureBootstrap(options),
     trace,
     defaultAgentId: null as string | null,
     projectSteeringByAgentId: new Map<string, HostedAgentProjectSteering>(),

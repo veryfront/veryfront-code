@@ -52,7 +52,7 @@ export const defaultChatTheme: ChatTheme = {
       "rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-transparent px-4 py-3 text-sm font-mono text-[var(--foreground)]",
   },
   input:
-    "w-full bg-transparent border-none text-[15px] leading-6 text-[var(--foreground)] placeholder:text-[var(--faint)] focus:outline-none focus:ring-0",
+    "w-full bg-transparent border-none text-[15px] leading-6 text-[var(--foreground)] placeholder:text-[var(--input-placeholder)] focus:outline-none focus:ring-0",
   button:
     "flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--secondary)] transition-[background-color,color] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
   loading: "size-2 bg-[var(--edge-medium)] rounded-full animate-pulse",

@@ -439,6 +439,8 @@ describe("Storybook UI workbench", () => {
     assertStringIncludes(tokenSource, "font-family:Inter");
     assertStringIncludes(previewSource, "Inter, ui-sans-serif");
     assertStringIncludes(bridgeSource, "font-family: Inter, ui-sans-serif");
+    assertStringIncludes(tokenSource, '"--input-placeholder": "var(--soft)"');
+    assertStringIncludes(previewSource, "--input-placeholder: var(--soft);");
   });
 
   it("uses explicit Vite aliases for Veryfront source imports instead of package exports", async () => {

@@ -48,10 +48,15 @@ import { runWithHostedRequestPreparationSignal } from "./request-preparation-con
 import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
+import { buildResponseInit } from "./response-init.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
+const NativeObjectPrototype = Object.prototype;
 const NativeRequest = Request;
+const NativeResponse = Response;
 const RequestClone = Request.prototype.clone;
 const RequestJson = Request.prototype.json;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
@@ -63,6 +68,17 @@ const ObjectEntries = Object.entries;
 const ObjectFromEntries = Object.fromEntries;
 const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
+
+function createVersionResponse(deploymentArtifact: string | null): Response {
+  const init = buildResponseInit(NativeObjectPrototype, 200, "");
+  const headers = init.headers as Record<string, string>;
+  headers["Cache-Control"] = "no-store";
+  headers["Content-Type"] = "application/json";
+  return new NativeResponse(
+    privateJsonStringify({ artifact: deploymentArtifact }),
+    init,
+  );
+}
 
 function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
   if (!getter) throw new TypeError("Request accessor is unavailable");
@@ -147,6 +163,8 @@ export type AgentServiceDetachedCleanupInput<TExecution extends object> =
 /** Options accepted by hosted agent service route set. */
 export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   forwardedConfigNamespace?: string;
+  /** Exact immutable deployment artifact tag served by GET /version. */
+  deploymentArtifact?: string | null;
   /** Exact immutable source snapshot served by control-plane runtime invocations. */
   runtimeSource?: HostedRuntimeSourceIdentity;
   authenticateRequest: (
@@ -311,6 +329,7 @@ function createAgUiSetupErrorResponse(input: {
 export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
+  const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
   const runtimeSource = options.runtimeSource
@@ -599,6 +618,11 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   ) => handleDurableChatRunControlRequest(input, "cancel");
 
   const routes: AgentServiceRoute[] = [
+    {
+      method: "GET",
+      path: "/version",
+      handler: () => createVersionResponse(deploymentArtifact),
+    },
     {
       method: "POST",
       path: "/api/ag-ui",

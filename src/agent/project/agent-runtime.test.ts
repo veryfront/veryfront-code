@@ -861,3 +861,12 @@ Deno.test("project agent settings survive code to hosted definition roundtrip", 
     assertEquals(hostedAgent.config[key], settings[key]);
   }
 });
+
+Deno.test("project agent definitions preserve optional Studio MCP", async () => {
+  const definition = await createRuntimeAgentDefinitionFromAgent(agent({
+    id: "optional-studio",
+    system: "Use available project tools.",
+    mcpServers: [{ kind: "veryfront-studio", required: false }],
+  }));
+  assertEquals(definition.mcpServers, [{ kind: "veryfront-studio", required: false }]);
+});

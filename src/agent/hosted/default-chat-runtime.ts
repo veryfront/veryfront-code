@@ -27,10 +27,14 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
-import { createRuntimeObservationCapability } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  attachRuntimeObservationWriterLiveness,
+  createRuntimeObservationCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
-import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
+import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -239,6 +243,12 @@ async function buildToolAssembly(
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
+  const runtimeObservationWriterCapability = input.options.runtimeObservationWriterCapability;
+  attachRuntimeObservationWriterLiveness(runtimeObservationWriterCapability, () => {
+    if (input.taskContext.projectId !== input.options.projectId) {
+      throw new Error("Runtime observation writer project scope is no longer active");
+    }
+  });
   const localTools = await input.buildLocalTools(input.taskContext);
   const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
@@ -308,6 +318,7 @@ async function buildToolAssembly(
         taskContext: input.taskContext,
       });
       if (changed) {
+        revokeRuntimeObservationWriterCapability(runtimeObservationWriterCapability);
         incrementSteeringRevision(input.taskContext);
       }
     },
@@ -330,6 +341,8 @@ export type PreparedHostedRuntimeAgentOptions = {
   taskContext: HostedRuntimeStateResolverContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
+  /** Runtime route resolved by trusted preparation; the catalog model id stays canonical. */
+  runtimeModelId?: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   refreshSystem?: () => Promise<AgentSystem> | AgentSystem;
 };
@@ -352,7 +365,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
   });
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: input.runtimeAgentId ?? resolveRuntimeAgentId(input.options.agentId),
-    model: input.modelId,
+    model: input.runtimeModelId ?? input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
@@ -575,6 +588,10 @@ export async function createDefaultHostedChatRuntime(
         cloudContext,
         () => resolveVeryfrontCloudModelId(input.options.model),
       );
+      const runtimeModelId = runWithVeryfrontCloudContext(
+        cloudContext,
+        () => resolveRuntimeModel(modelId),
+      );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });
@@ -607,6 +624,7 @@ export async function createDefaultHostedChatRuntime(
               taskContext,
               toolAssembly,
               modelId,
+              runtimeModelId,
               sourceIntegrationPolicy: input.sourceIntegrationPolicy,
               ...(refreshSystem && liveProjectSteering
                 ? {

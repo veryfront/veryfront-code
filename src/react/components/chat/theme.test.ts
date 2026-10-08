@@ -45,7 +45,19 @@ describe("chat theme", () => {
     assert(css.includes("--background: #F0EFE9;"));
     assert(css.includes("--secondary: #FFFFFF;"));
     assert(css.includes("--chat-message-user: var(--primary);"));
+    assert(css.includes("--input-placeholder: var(--soft);"));
     assertEquals(chatTokens.light["--chat-background"], "0 0% 100%");
+  });
+
+  it("chat input defaults consume the semantic placeholder token", () => {
+    assert(
+      theme.defaultChatTheme.input?.includes("placeholder:text-[var(--input-placeholder)]"),
+      "default chat inputs inherit the readable placeholder token",
+    );
+    assert(
+      !theme.defaultChatTheme.input?.includes("placeholder:text-[var(--faint)]"),
+      "default chat inputs must not use the low-contrast faint token",
+    );
   });
 
   it("theme module does not expose the removed variant utility", () => {

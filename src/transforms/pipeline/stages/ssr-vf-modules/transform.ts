@@ -11,7 +11,8 @@ import {
 } from "#veryfront/transforms/esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
+import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
@@ -22,7 +23,13 @@ import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { findRelativeImports } from "./import-finder.ts";
-import { resolveRelativeFrameworkImport, resolveVeryfrontSourcePath } from "./path-resolver.ts";
+import {
+  resolveRelativeFrameworkImport,
+  resolveRootBundledExtensionSourcePath,
+  resolveVeryfrontSourcePath,
+} from "./path-resolver.ts";
+import { ROOT_BUNDLED_EXTENSION_SOURCES } from "#veryfront/extensions/root-bundled-sources.ts";
+import { resolveVeryfrontModuleTarget } from "../../../veryfront-module-urls.ts";
 import {
   createFrameworkSpecifierResolver,
   reactReExportToEsmUrl,
@@ -58,6 +65,42 @@ const CYCLE_PLACEHOLDER_MARKER = "vf-cycle-9f4a21b7";
  * it is a reliable sentinel on its own.
  */
 const CYCLE_PLACEHOLDER_PREFIX = "/* Cycle detected:";
+
+function isFrameworkSourceSpecifier(specifier: string): boolean {
+  return specifier.startsWith("#veryfront/") ||
+    resolveVeryfrontModuleTarget(specifier)?.startsWith("./src/") === true ||
+    Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier);
+}
+
+/** Preserve root-bundled SDK edges after npm emission rewrites aliases to relative paths. */
+export async function restoreRootBundledSourceSpecifiers(
+  content: string,
+  sourcePath: string,
+  frameworkRoot = FRAMEWORK_ROOT,
+): Promise<string> {
+  const coreRoot = join(frameworkRoot, "src");
+  const entries = Object.entries(ROOT_BUNDLED_EXTENSION_SOURCES).map(([specifier, entry]) => ({
+    specifier,
+    typescript: join(frameworkRoot, entry),
+    javascript: join(frameworkRoot, entry.replace(/\.ts$/, ".js")),
+  }));
+  const isExtensionEntry = entries.some((entry) =>
+    sourcePath === entry.typescript || sourcePath === entry.javascript
+  );
+  if (!isExtensionEntry && !isWithinDirectory(coreRoot, sourcePath)) return content;
+  return await replaceSpecifiers(content, (specifier) => {
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
+    const target = join(dirname(sourcePath), specifier);
+    const extension = entries.find((entry) =>
+      target === entry.typescript || target === entry.javascript
+    );
+    if (extension) return extension.specifier;
+    if (isExtensionEntry && isWithinDirectory(coreRoot, target)) {
+      return `#veryfront/${relative(coreRoot, target).replaceAll("\\", "/")}`;
+    }
+    return null;
+  });
+}
 
 /**
  * Check if a transformed code string is a cycle placeholder.
@@ -173,7 +216,10 @@ async function compileFallbackSource(
     target: "es2022",
     supported: ESBUILD_SUPPORTED_FEATURES,
   });
-  return await upgradeImportAssertions(result.code);
+  return await restoreRootBundledSourceSpecifiers(
+    await upgradeImportAssertions(result.code),
+    sourcePath,
+  );
 }
 
 /**
@@ -285,6 +331,19 @@ async function rewriteFallbackRelativeImports(
   const reactImportMap = getReactImportMap(ctx.reactVersion);
 
   const replacements = new Map<string, string>();
+  for (const imported of await parseImports(code)) {
+    const specifier = imported.n;
+    if (!specifier || !isFrameworkSourceSpecifier(specifier) || replacements.has(specifier)) {
+      continue;
+    }
+    const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
+    if (resolved) replacements.set(specifier, resolved);
+    else if (Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)) {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: `${LOG_PREFIX} Could not resolve root-bundled framework import "${specifier}"`,
+      });
+    }
+  }
   for (const specifier of relativeImports) {
     // Skip non-code imports the runtime cannot load this way.
     if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
@@ -325,6 +384,8 @@ async function rewriteFallbackRelativeImports(
   // so SSR links against the single esm.sh React bundle (see
   // resolveReactSpecifier).
   const rewritten = await replaceSpecifiers(code, (specifier) => {
+    const replacement = replacements.get(specifier);
+    if (replacement) return replacement;
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return replacements.get(specifier) ?? null;
     }
@@ -464,20 +525,23 @@ async function transformFrameworkCodeUncoalesced(
       supported: ESBUILD_SUPPORTED_FEATURES,
     });
 
-    let transformed = await upgradeImportAssertions(result.code);
+    let transformed = await restoreRootBundledSourceSpecifiers(
+      await upgradeImportAssertions(result.code),
+      sourcePath,
+    );
 
     // Collect and recursively resolve all #veryfront/ imports
     const veryfrontReplacements = new Map<string, string>();
     const transformedImports = await parseImports(transformed);
     for (const importSpecifier of transformedImports) {
       const specifier = importSpecifier.n;
-      if (!specifier?.startsWith("#veryfront/")) continue;
+      if (!specifier || !isFrameworkSourceSpecifier(specifier)) continue;
       if (veryfrontReplacements.has(specifier)) continue;
 
       const resolved = await resolveAndTransformVeryfrontImport(specifier, ctx);
       if (resolved) {
         veryfrontReplacements.set(specifier, resolved);
-      } else if (throwOnMissingImport) {
+      } else if (throwOnMissingImport || Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)) {
         throw IMPORT_RESOLUTION_ERROR.create({
           detail:
             `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
@@ -672,7 +736,9 @@ export async function resolveAndTransformVeryfrontImport(
   specifier: string,
   ctx: TransformContext,
 ): Promise<string | null> {
-  const sourcePath = await resolveVeryfrontSourcePath(specifier);
+  const sourcePath = Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)
+    ? await resolveRootBundledExtensionSourcePath(specifier)
+    : await resolveVeryfrontSourcePath(specifier);
   if (!sourcePath) return null;
 
   try {
@@ -709,7 +775,8 @@ export async function resolveAndTransformVeryfrontImport(
     }
 
     // Cache the transformed code to filesystem
-    const cachePath = await cacheTransformedCode(transformed, specifier, ctx.fs);
+    // Public, internal, and relative imports of one source must share module state.
+    const cachePath = await cacheTransformedCode(transformed, sourcePath, ctx.fs);
     const fileUrl = `file://${cachePath}`;
 
     // Store in memory cache for this session

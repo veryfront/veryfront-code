@@ -49,6 +49,8 @@ export interface GuardedOutboundFetchOptions {
   authorizeUrl?: (url: URL) => void | Promise<void>;
   /** Observe each redirect after its guarded destination request succeeds. */
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
+  /** Host-only observer called once the transport dispatches a request. */
+  onRequestDispatched?: () => void;
 }
 
 /** Host-owned transport primitives used after outbound policy validation. */
@@ -289,10 +291,10 @@ function getTrustedHostTransport(): TrustedHostTransport {
   if (bunExtraCaFile) {
     return {
       fetch: capturedHostFetch,
-      async pinnedFetch(url, addresses, init) {
+      async pinnedFetch(url, addresses, init, _tls, onRequestDispatched) {
         return await fetchWithPinnedAddresses(url, addresses, init, {
           trustedCaCertificates: await loadBunTrustedCaCertificates(),
-        });
+        }, onRequestDispatched);
       },
     };
   }
@@ -364,6 +366,7 @@ async function fetchWithHostTransport(
       await options.authorizeUrl?.(url);
     },
     onRedirect: options.onRedirect,
+    onRequestDispatched: options.onRequestDispatched,
     allowedResolvedAddressesForTests: transport.allowedResolvedAddressesForTests,
     options: {
       allowInternalEgress: allowInternalEgress ||
@@ -543,6 +546,7 @@ function createOriginBoundFetchWithTransport(
   transport: OutboundFetchTransport,
   allowHostInternalEgress = false,
   allowOperatorVeryfrontApiOrigin = false,
+  onRequestDispatched?: () => void,
   retainTransportSettlement = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
@@ -607,9 +611,9 @@ function createOriginBoundFetchWithTransport(
           )) as typeof transport.fetch,
         ...(pinnedFetch
           ? {
-            pinnedFetch: ((url, addresses, requestInit) =>
+            pinnedFetch: ((url, addresses, requestInit, tls, dispatched) =>
               track(
-                pinnedFetch(url, addresses, requestInit),
+                pinnedFetch(url, addresses, requestInit, tls, dispatched),
                 requestInit.signal,
               )) as WorkerEgressPinnedFetch,
           }
@@ -621,6 +625,7 @@ function createOriginBoundFetchWithTransport(
         guardedInput,
         createNativeRequestInit(init, { redirect: "error" }),
         {
+          onRequestDispatched,
           authorizeUrl(url) {
             if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
               throw new OutboundRequestBlockedError(
@@ -780,6 +785,7 @@ export async function guardedExactHttpLoopbackOutboundFetch(
         await options.authorizeUrl?.(url);
       },
       onRedirect: options.onRedirect,
+      onRequestDispatched: options.onRequestDispatched,
     },
     getTrustedHostTransport(),
     true,
@@ -805,13 +811,29 @@ export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
  *
  * @internal Veryfront Cloud gateway and billing requests only.
  */
-export function createVeryfrontApiOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
-  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), false, true);
+export function createVeryfrontApiOriginBoundOutboundFetch(
+  baseUrl: string,
+  onRequestDispatched?: () => void,
+): typeof fetch {
+  return createOriginBoundFetchWithTransport(
+    baseUrl,
+    getTrustedHostTransport(),
+    false,
+    true,
+    onRequestDispatched,
+  );
 }
 
 /** Authenticated API download boundary. Retains actual transport settlement after cancellation. */
 export function createVeryfrontApiDownloadOutboundFetch(baseUrl: string): typeof fetch {
-  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), false, true, true);
+  return createOriginBoundFetchWithTransport(
+    baseUrl,
+    getTrustedHostTransport(),
+    false,
+    true,
+    undefined,
+    true,
+  );
 }
 
 /** @internal Bind a host-selected sandbox runtime origin while allowing private service DNS. */

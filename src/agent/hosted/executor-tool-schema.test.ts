@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
+import { createExecutorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
+import {
+  executorAgentFailureCode,
+  getExecutorAgentFailureCodeSchema,
+} from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import {
   executorToolBytes,
@@ -14,6 +20,16 @@ import {
 } from "./executor-tool-schema.ts";
 
 describe("executor tool schema", () => {
+  it("accepts every curated model failure at hosted agent and tool boundaries", () => {
+    for (const code of CURATED_PROVIDER_FAILURE_CODES) {
+      assertEquals(getExecutorAgentFailureCodeSchema().safeParse(code).success, true, code);
+      assertEquals(
+        executorAgentFailureCode(createExecutorModelFailure(code), "EXECUTOR_AGENT_STREAM_FAILED"),
+        code,
+      );
+    }
+  });
+
   it("preserves the existing node and depth limits while measuring array-heavy JSON", () => {
     const value = { items: Array.from({ length: 50_000 }, () => []) };
     assertEquals(executorToolBytes(executorToolJson(value)), 150_011);

@@ -560,6 +560,12 @@ replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
 event named `veryfront.runtime_context` for durable replay and diagnostics.
 
+Runtime context does not count as assistant output.
+A detached stream that ends without cancellation, assistant output, or a reported
+stream error fails with `EMPTY_RESPONSE`.
+This check does not replace cancellation or a reported stream error with
+`EMPTY_RESPONSE`.
+
 ## Dynamic system prompts
 
 The `system` property accepts a string, a function, or an async function:

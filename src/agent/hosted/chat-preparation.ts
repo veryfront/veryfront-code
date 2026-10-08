@@ -18,6 +18,7 @@ import type {
   HostedChatRuntimeProjectSteering,
 } from "./chat-runtime-contract.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { RuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   type HostedConversationRootRunContext,
   prepareHostedConversationRootRunContext,
@@ -109,6 +110,9 @@ export type HostedChatRuntimePreparationRootRunContext = {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   durableRunMirror?: ConversationRunChunkMirror | null;
   privateDurableRunMirror?: ConversationRunChunkMirror | null;
+  privateRuntimeObservationWriterCapability?: HostedConversationRootRunContext[
+    "privateRuntimeObservationWriterCapability"
+  ];
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */
@@ -171,6 +175,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -379,6 +385,8 @@ export type HostedChatExecutionPreparationInput<
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
 };
@@ -602,6 +610,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
           isProviderReplayCheckpointEmissionEnabled(),
         input.serverResolvedProviderReplayCheckpoints,
       ),
+      ...(input.rootRunContext?.privateRuntimeObservationWriterCapability
+        ? {
+          runtimeObservationWriterCapability:
+            input.rootRunContext.privateRuntimeObservationWriterCapability,
+        }
+        : {}),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
@@ -676,6 +690,9 @@ export async function prepareHostedChatExecution<
         parentMessageId: normalized.parentMessageId,
         providedRun: input.request.durableRootRun,
         persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...(input.runtimeObservationCaptureOptIn
+          ? { runtimeObservationCaptureOptIn: input.runtimeObservationCaptureOptIn }
+          : {}),
         ...input.rootRun,
       }, { abortSignal: input.abortSignal }),
   );

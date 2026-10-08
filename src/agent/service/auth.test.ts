@@ -803,13 +803,13 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(
       result.error.errorCode,
-      "FORBIDDEN",
-      "a project-access timeout must map to FORBIDDEN",
+      "SERVER_ERROR",
+      "a project-access timeout must map to SERVER_ERROR",
     );
     assertEquals(
       result.error.statusCode,
-      403,
-      "a project-access timeout must map to 403",
+      503,
+      "a project-access timeout must map to 503",
     );
   });
 
@@ -880,17 +880,50 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(
       result.error.statusCode,
-      403,
-      "a degraded project API is reported as a 403",
+      503,
+      "a degraded project API is reported as a 503",
     );
     assertEquals(
       result.error.errorCode,
-      "FORBIDDEN",
-      "a degraded project API is reported as FORBIDDEN",
+      "SERVER_ERROR",
+      "a degraded project API is reported as SERVER_ERROR",
     );
   });
 
-  it("maps failed project access fetches to FORBIDDEN", async () => {
+  it("reports an unavailable project API without exposing its response body", async () => {
+    const fetchMock = createFetchMock(
+      new Response("synthetic-private-upstream-body", { status: 503 }),
+    );
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({ NODE_ENV: "production", VERYFRONT_API_URL: "https://api.example.test" }),
+    });
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+    assertEquals(result, {
+      success: false,
+      error: {
+        statusCode: 503,
+        errorCode: "SERVER_ERROR",
+        message: "Project access could not be verified",
+      },
+    });
+    assertEquals(fetchMock.calls.length, 1, "verification must not replay the request");
+  });
+
+  it("keeps an unauthenticated project response as a denial", async () => {
+    const fetchMock = createFetchMock(new Response("Unauthorized", { status: 401 }));
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({ NODE_ENV: "production", VERYFRONT_API_URL: "https://api.example.test" }),
+    });
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+    assertEquals(result.success, false);
+    if (result.success) throw new Error("Expected project access to fail");
+    assertEquals(result.error.statusCode, 403);
+    assertEquals(result.error.errorCode, "FORBIDDEN");
+  });
+
+  it("maps failed project access fetches to SERVER_ERROR", async () => {
     const fetchMock: HostedServiceAuthFetch = () => Promise.reject(new Error("boom"));
     const auth = createHostedServiceAuth({
       fetch: fetchMock,
@@ -904,7 +937,7 @@ describe("agent/agent-service-auth", () => {
 
     assertEquals(result.success, false);
     if (result.success) throw new Error("Expected project access to fail");
-    assertEquals(result.error.statusCode, 403);
-    assertEquals(result.error.errorCode, "FORBIDDEN");
+    assertEquals(result.error.statusCode, 503);
+    assertEquals(result.error.errorCode, "SERVER_ERROR");
   });
 });

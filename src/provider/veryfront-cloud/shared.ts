@@ -22,7 +22,6 @@ import {
 import {
   getCurrentVeryfrontCloudContext,
   getCurrentVeryfrontCloudModelCallCapture,
-  markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
 import {
   canVeryfrontCloudCatalogRefuse,
@@ -504,7 +503,11 @@ function toNeutralRouteRequest(
   text: string,
   provider: string,
 ): Request {
+  // The headers hold the bearer. Reading the body awaited, and rewriting it
+  // runs JSON.stringify, which calls any toJSON project code installed: check
+  // after both, right before the headers change.
   const wireBody = toWireModelBody(text, provider);
+  assertNativeRequestProcessing();
   if (wireBody === undefined) {
     return withCredentialHeaders(request, headers, text);
   }
@@ -527,12 +530,14 @@ function sendOnNeutralRoute(
   headers: Headers,
   wireModelProvider: string | undefined,
   initBody: unknown,
+  onRequestDispatched: () => void,
 ): Promise<Response> {
   const send = (outbound: Request): Promise<Response> =>
     IntrinsicReflectApply(
       PromisePrototypeThen,
       createVeryfrontApiOriginBoundOutboundFetch(
         apiBaseUrl,
+        onRequestDispatched,
       )(outbound),
       [normalizeNeutralGatewayRefusal],
     ) as Promise<Response>;
@@ -757,54 +762,68 @@ export function createVeryfrontCloudFetch(
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-id"]);
     IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-model-call-capture-event-id"]);
-    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
 
-    if (projectSlug) {
-      IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
-    }
-
+    // Everything that can reach project code (the cloud context store, the
+    // caller's init) is read before the bearer joins the headers, so nothing
+    // can replace an array intrinsic between the check below and the send.
     const modelCallCapture = getCurrentVeryfrontCloudModelCallCapture();
-    if (modelCallCapture) {
-      IntrinsicReflectApply(HeadersSet, headers, [
-        "x-veryfront-model-call-id",
-        modelCallCapture.modelCallId,
-      ]);
-      IntrinsicReflectApply(HeadersSet, headers, [
-        "x-veryfront-model-call-capture-event-id",
-        modelCallCapture.eventId,
-      ]);
-    }
-
+    const captureHeaders = modelCallCapture
+      ? {
+        modelCallId: `${modelCallCapture.modelCallId}`,
+        eventId: `${modelCallCapture.eventId}`,
+      }
+      : undefined;
     const cloudContext = getCurrentVeryfrontCloudContext();
     const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
+    const initBody = readOwnInitField(init, "body");
+    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
+    // origin; resolved per call since it snapshots the host transport eagerly.
+    const wireModelProvider = options?.wireModelProvider;
+    const neutralRoute = options?.neutralRoute;
+
+    // Setting the bearer pushes it onto the header list's internal array.
+    assertNativeRequestProcessing();
+    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
+    if (projectSlug) {
+      IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
+    }
+    if (captureHeaders) {
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-id",
+        captureHeaders.modelCallId,
+      ]);
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-model-call-capture-event-id",
+        captureHeaders.eventId,
+      ]);
+    }
     if (billingGroupId) {
       IntrinsicReflectApply(HeadersSet, headers, [
         "x-veryfront-billing-group-id",
         billingGroupId,
       ]);
-      markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
-    // origin; resolved per call since it snapshots the host transport eagerly.
-    const wireModelProvider = options?.wireModelProvider;
+    // Native pinned transport observes commitment to send after its refusal checks.
+    // Marking is monotonic, so a refused concurrent call cannot undo real usage.
+    const dispatched = (): void => {
+      if (billingGroupId && cloudContext) cloudContext.billingGroupUsed = true;
+    };
     const responsePromise = IntrinsicReflectApply(
       PromisePrototypeThen,
-      wireModelProvider || options?.neutralRoute
-        ? sendOnNeutralRoute(
-          apiBaseUrl,
-          request,
-          headers,
-          wireModelProvider,
-          readOwnInitField(init, "body"),
-        )
-        : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
+      wireModelProvider || neutralRoute
+        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, initBody, dispatched)
+        : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl, dispatched)(
           withCredentialHeaders(request, headers),
         ),
-      [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
+      [(response: Response) => {
+        // A response also proves dispatch for injected or broker transports.
+        dispatched();
+        return markVeryfrontGatewayResponse(response);
+      }, rethrowAsGatewayTransportFailure],
     ) as Promise<Response>;
     if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
     return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [

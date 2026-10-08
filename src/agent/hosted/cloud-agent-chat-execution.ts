@@ -383,6 +383,9 @@ export async function prepareChatExecutionWithinProjectRuntime(
       serverEnvelopeVerified: req.serverEnvelopeVerified === true,
     }),
     providerReplayCheckpointEmissionEnabled: context.providerReplayCheckpointEmissionEnabled,
+    ...(context.runtimeObservationCaptureOptIn
+      ? { runtimeObservationCaptureOptIn: context.runtimeObservationCaptureOptIn }
+      : {}),
     // Sourced from the verified run-event token, never from forwardedProps, so
     // it is trusted on the durable-chat path without trusting that body.
     ...(req.serverResolvedIntegrationToolNames?.length
@@ -553,6 +556,7 @@ export function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
 ): CreateAgentServiceRuntimeOptions<NodeVeryfrontCloudAgentServicePreparedExecution> {
   return {
     serviceName: context.options.serviceName,
+    deploymentArtifact: context.options.deploymentArtifact,
     runtimeSource: context.options.runtimeSource,
     forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
       DEFAULT_FORWARDED_CONFIG_NAMESPACE,

@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
+import { bootstrapProd, type BootstrapResult, isLocalCliProxyMode } from "./bootstrap.ts";
 import { cwd, exit, getEnv, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -216,6 +216,8 @@ interface DirectProductionServerDependencies {
 
 interface StartProductionServerDependencies {
   bootstrap: typeof bootstrapProd;
+  /** Whether the CLI's local `start` command set this process up; defaults to the env marker. */
+  isLocalCliProxyMode?: () => boolean;
 }
 
 /** Starts production server. */
@@ -261,6 +263,33 @@ export function startProductionServerWithDependencies(
         localProjects,
       } = options;
 
+      // The interceptor is the CLI's in-process proxy (`veryfront start`),
+      // which writes the resolved x-token onto a request in the isolate
+      // project code shares. That is acceptable for a developer's own token on
+      // their machine only. A deployed runtime (hosted proxy mode without the
+      // local CLI marker) gets its credentials from a separate proxy hop.
+      // Checked again after bootstrap, which can load PROXY_MODE from the
+      // project environment.
+      // Read once, before bootstrap loads project code that could set the
+      // marker. A supplied bootstrap has already evaluated project code, so
+      // the environment marker proves nothing then; only an explicit
+      // attestation from the caller counts.
+      const localCliProxyMode = dependencies.isLocalCliProxyMode
+        ? dependencies.isLocalCliProxyMode()
+        : suppliedBootstrap === undefined && isLocalCliProxyMode();
+      const refuseHostedInterceptor = (hostedProxyConfig = false) => {
+        if (
+          requestInterceptor && (hostedProxyConfig || getEnv("PROXY_MODE") === "1") &&
+          !localCliProxyMode
+        ) {
+          throw new TypeError(
+            "requestInterceptor (combined mode) is for local development only and is refused " +
+              "in hosted proxy mode",
+          );
+        }
+      };
+      refuseHostedInterceptor();
+
       const baseAdapter = suppliedBootstrap?.adapter ?? options.adapter ?? (await runtime.get());
       let initialOnRecycle = options.onMemoryRecycle;
       if (!suppliedBootstrap && initialOnRecycle) {
@@ -299,6 +328,8 @@ export function startProductionServerWithDependencies(
           if (ownsMemoryMonitoring && !config.enabled) stopMemoryMonitoring();
           ownsMemoryMonitoring = config.enabled;
         }
+        // After ownership is recorded, so a refusal still disposes the bootstrap.
+        refuseHostedInterceptor(bootstrap.config.fs?.veryfront?.proxyMode === true);
         const adapter = bootstrap.adapter;
         const nodeWebSocketServerProvider = suppliedBootstrap === undefined
           ? bootstrap.nodeWebSocketServerProvider

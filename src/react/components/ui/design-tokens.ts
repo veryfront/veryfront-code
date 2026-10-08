@@ -92,7 +92,7 @@ const TOKENS_LIGHT = {
   "--border": "var(--outline-border)",
   "--input": "var(--input-bg)",
   "--input-border": "var(--edge-medium)",
-  "--input-placeholder": "var(--faint)",
+  "--input-placeholder": "var(--soft)",
   "--ring": "var(--edge-medium)",
   "--success": "var(--status-success)",
   "--chat-bubble": "var(--primary)",

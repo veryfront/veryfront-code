@@ -15,6 +15,7 @@ import {
   isCyclePlaceholder,
   reactReExportToEsmUrl,
   resolveAndTransformVeryfrontImport,
+  restoreRootBundledSourceSpecifiers,
   stripJsonAttributesFromModuleImports,
   transformFrameworkCode,
 } from "./transform.ts";
@@ -28,6 +29,34 @@ import {
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
 import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+
+describe("root-bundled npm source edges", () => {
+  it("restores exact bundled entry and SDK imports without opening relative traversal", async () => {
+    const root = "/framework";
+    assertStringIncludes(
+      await restoreRootBundledSourceSpecifiers(
+        'import factory from "../../extensions/ext-eval-report-mlflow/src/index.js";',
+        "/framework/src/extensions/builtin-extensions.js",
+        root,
+      ),
+      '"@veryfront/ext-eval-report-mlflow"',
+    );
+    const entry = "/framework/extensions/ext-eval-report-mlflow/src/index.js";
+    assertStringIncludes(
+      await restoreRootBundledSourceSpecifiers(
+        'import { getEnv } from "../../../src/platform/env.js";',
+        entry,
+        root,
+      ),
+      '"#veryfront/platform/env.js"',
+    );
+    const unrelated = 'import secret from "../../../../secret.js";';
+    assertEquals(await restoreRootBundledSourceSpecifiers(unrelated, entry, root), unrelated);
+    const tenant =
+      'import factory from "../framework/extensions/ext-eval-report-mlflow/src/index.js";';
+    assertEquals(await restoreRootBundledSourceSpecifiers(tenant, "/tenant/page.js", root), tenant);
+  });
+});
 
 describe("reactReExportToEsmUrl", () => {
   const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
@@ -115,6 +115,7 @@ function createRouteSet(input: {
     input: HostedAgentServiceDetachedExecutionInput<{ executionId: string }>,
   ) => Promise<void>;
   resolveRuntimeOwnerInvokeUrl?: (request: Request) => Promise<string | null>;
+  deploymentArtifact?: string | null;
 } = {}) {
   const tracker = createDetachedRunTracker<AgUiResumeValue>();
   const preparedRequests: ParsedHostedChatRequest[] = [];
@@ -122,6 +123,7 @@ function createRouteSet(input: {
 
   const routeSet = createHostedAgentServiceRouteSet<{ executionId: string }>({
     tracker,
+    deploymentArtifact: input.deploymentArtifact,
     runtimeSource: input.runtimeSource === null ? undefined : input.runtimeSource ?? runtimeSource,
     authenticateRequest: input.authenticateRequest ??
       (async (request): Promise<HostedServiceAuthenticatedRequest | Response> => {
@@ -159,6 +161,7 @@ Deno.test("agent service routes expose the default paths", () => {
   const { routeSet } = createRouteSet();
 
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
+    "GET /version",
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
     "POST /api/runs/:runId/resume",
@@ -166,6 +169,104 @@ Deno.test("agent service routes expose the default paths", () => {
     "POST /api/runs",
     "POST /api/control-plane/runs/:runId/stream",
   ]);
+});
+
+Deno.test("agent service route set validates deploymentArtifact at factory boundary", async () => {
+  assertThrows(
+    () => createRouteSet({ deploymentArtifact: "latest" }),
+    TypeError,
+    "deploymentArtifact must be null or an immutable artifact tag",
+  );
+
+  const inheritedOptions = Object.assign(
+    Object.create({
+      deploymentArtifact: "20261007183045-ffffffffffff",
+    }),
+    {
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+      verifyProjectAccess: async () => ({ success: true as const }),
+      verifyRunCancellationToken: () => Promise.resolve(true),
+      verifyRunEventAppendToken: () => Promise.resolve(false),
+      prepareExecution: async () => ({ executionId: "exec-1" }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    },
+  );
+  const inheritedRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    inheritedOptions,
+  );
+  const inheritedVersionRoute = inheritedRouteSet.routes.find((route) => route.path === "/version");
+  const inheritedResponse = await inheritedVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+  assertEquals(await inheritedResponse?.json(), { artifact: null });
+
+  let accessorReads = 0;
+  const accessorOptions = {
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+    verifyProjectAccess: async () => ({ success: true as const }),
+    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunEventAppendToken: () => Promise.resolve(false),
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {},
+  };
+  Object.defineProperty(accessorOptions, "deploymentArtifact", {
+    get() {
+      accessorReads += 1;
+      return "20261007183045-ffffffffffff";
+    },
+    configurable: true,
+  });
+
+  const accessorRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    accessorOptions,
+  );
+  const accessorVersionRoute = accessorRouteSet.routes.find((route) => route.path === "/version");
+  const accessorResponse = await accessorVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+
+  assertEquals(accessorReads, 0);
+  assertEquals(await accessorResponse?.json(), { artifact: null });
+
+  const traceMutatingOptions = {
+    deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+    verifyProjectAccess: async () => ({ success: true as const }),
+    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunEventAppendToken: () => Promise.resolve(false),
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {},
+  };
+  Object.defineProperty(traceMutatingOptions, "trace", {
+    get() {
+      traceMutatingOptions.deploymentArtifact = "20261007183100-bbbbbbbbbbbb";
+      return undefined;
+    },
+    configurable: true,
+  });
+
+  const traceMutatingRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    traceMutatingOptions,
+  );
+  const traceMutatingVersionRoute = traceMutatingRouteSet.routes.find((route) =>
+    route.path === "/version"
+  );
+  const traceMutatingResponse = await traceMutatingVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+
+  assertEquals(await traceMutatingResponse?.json(), {
+    artifact: "20261007183045-a1b2c3d4e5f6",
+  });
 });
 
 it("preserves resume signals when custom authentication consumes the body", async () => {

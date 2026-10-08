@@ -2,7 +2,10 @@ import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  guardedExactHttpLoopbackOutboundFetch,
+} from "#cli/outbound-fetch";
 import { getHostSecret } from "#cli/process-env";
 
 const applyIntrinsic = Reflect.apply;
@@ -53,7 +56,9 @@ export async function fetchRemoteProjects(
       // Keep invalid URL failures inside the existing discovery error path.
     }
   }
-  const transport = explicitLoopback ? guardedExactHttpLoopbackOutboundFetch : guardedOutboundFetch;
+  const transport: typeof fetch = explicitLoopback
+    ? guardedExactHttpLoopbackOutboundFetch
+    : (input, init) => createVeryfrontApiOriginBoundOutboundFetch(apiUrl)(input, init);
   const user = apiKeyCredential ? null : await validateToken(token, env, { transport });
 
   if (!apiKeyCredential && !user) {

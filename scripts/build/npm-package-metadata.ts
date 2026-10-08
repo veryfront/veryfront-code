@@ -107,6 +107,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"gcp-metadata",
 	"github-slugger",
 	"jose",
+	// Retain the install exclusion for legacy metadata; the shell extension
+	// delegates to Sandbox and no longer declares this interpreter.
 	"just-bash",
 	"lightningcss",
 	"mdast-util-mdx",

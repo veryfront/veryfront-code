@@ -46,6 +46,7 @@ import {
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
+  VERYFRONT_STUDIO_TOOL_PREFIX,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
   type AgentServiceVeryfrontStudioMcpServerConfig,
@@ -89,6 +90,7 @@ import {
 } from "#veryfront/internal-agents/schema.ts";
 import {
   AUTHENTICATION_REQUIRED,
+  CONFIG_INVALID,
   errorToResponse,
   INVALID_ARGUMENT,
   isVeryfrontError,
@@ -684,6 +686,45 @@ function isExplicitStudioMcpServer(
   return server.kind === "veryfront-studio";
 }
 
+function withoutOptionalStudioMcpServers(agent: Agent): Agent {
+  const skippedToolNames = new Set<string>();
+  let skippedOptionalStudio = false;
+  const mcpServers = agent.config.mcpServers?.filter((server) => {
+    if (isExplicitStudioMcpServer(server) && server.required === false) {
+      skippedOptionalStudio = true;
+      for (const toolName of server.toolPolicy?.allow ?? []) skippedToolNames.add(toolName);
+      return false;
+    }
+    return true;
+  });
+  const unchangedServers = mcpServers?.length === agent.config.mcpServers?.length;
+  if (unchangedServers) return agent;
+  const runtimeConfig = agent.config as Agent["config"] & RuntimeRemoteToolConfig;
+  const unavailableNames = [
+    ...(runtimeConfig.__vfUnavailableOptionalRemoteToolNames ?? []),
+    ...skippedToolNames,
+  ];
+  const unavailablePrefixes = skippedOptionalStudio
+    ? [
+      ...(runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes ?? []),
+      VERYFRONT_STUDIO_TOOL_PREFIX,
+    ]
+    : runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes;
+  return {
+    ...agent,
+    config: {
+      ...agent.config,
+      ...(mcpServers === undefined ? {} : { mcpServers }),
+      ...(unavailableNames.length > 0
+        ? { __vfUnavailableOptionalRemoteToolNames: [...new Set(unavailableNames)] }
+        : {}),
+      ...(unavailablePrefixes && unavailablePrefixes.length > 0
+        ? { __vfUnavailableOptionalRemoteToolPrefixes: [...new Set(unavailablePrefixes)] }
+        : {}),
+    },
+  };
+}
+
 async function withExplicitVeryfrontStudioRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -695,15 +736,25 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0) return input.agent;
 
+  const required = configuredServers.some((server) => server.required !== false);
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
   if (!clientAllowsStudioMcp(clientProfile)) {
+    if (!required) return withoutOptionalStudioMcpServers(input.agent);
     throw PERMISSION_DENIED.create({
       detail: "Studio MCP tools require an authorized Studio client profile.",
     });
   }
+  if (!studioMcpUrl && !required) return withoutOptionalStudioMcpServers(input.agent);
   if (!input.token) {
     throw AUTHENTICATION_REQUIRED.create({
       detail: "Studio MCP tools require a request-scoped API token.",
+    });
+  }
+
+  if (!studioMcpUrl) {
+    throw CONFIG_INVALID.create({
+      detail: "Required Studio MCP tools require a configured Studio transport.",
     });
   }
 
@@ -714,9 +765,6 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   }).filter((toolName) =>
     configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
   );
-
-  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
-  if (!studioMcpUrl) return input.agent;
 
   const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];

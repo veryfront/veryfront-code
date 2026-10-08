@@ -100,7 +100,13 @@ async function verifyHostedAgUiProjectAccess(input: {
 
   return Response.json(
     { errorCode: access.error.errorCode, message: access.error.message },
-    { status: access.error.statusCode === 404 ? 404 : 403 },
+    {
+      status: access.error.statusCode === 503 && access.error.errorCode === "SERVER_ERROR"
+        ? 503
+        : access.error.statusCode === 404
+        ? 404
+        : 403,
+    },
   );
 }
 

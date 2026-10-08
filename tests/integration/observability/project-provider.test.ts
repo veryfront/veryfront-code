@@ -391,7 +391,7 @@ describe("project trace SDK provider", () => {
     });
     span.addEvent("snapshot.event", { marker: "synthetic-private-event" });
     const sdkSpan =
-      span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.9.0").ReadableSpan;
+      span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.10.0").ReadableSpan;
     const keys = Object.keys;
     const map = Array.prototype.map;
     let exposed = 0;
@@ -508,7 +508,7 @@ describe("project trace SDK provider", () => {
       span.end();
       // The SDK span remains reachable after end; queued data must be independent.
       const ended =
-        span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.9.0").ReadableSpan;
+        span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.10.0").ReadableSpan;
       (ended.attributes.spanValues as number[]).push(999);
       (ended.events[0]!.attributes!.eventValues as number[]).push(999);
       (ended.links[0]!.attributes!.linkValues as number[]).push(999);

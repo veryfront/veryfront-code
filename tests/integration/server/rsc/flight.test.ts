@@ -7,6 +7,10 @@ import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
+function isAddressInUseError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Address already in use");
+}
+
 describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
   afterAll(async () => {
@@ -29,15 +33,25 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await remove(`${context.projectDir}/app`, { recursive: true });
           await writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home");
 
-          const port = await getFreePort();
-          h = await startProductionServer({
-            projectDir: context.projectDir,
-            port,
-            bindAddress: "127.0.0.1",
-            defaultProjectSlug: context.projectId,
-            defaultProjectId: context.projectId,
-          });
+          let port = 0;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            port = await getFreePort();
+            try {
+              h = await startProductionServer({
+                projectDir: context.projectDir,
+                port,
+                bindAddress: "127.0.0.1",
+                defaultProjectSlug: context.projectId,
+                defaultProjectId: context.projectId,
+              });
+              break;
+            } catch (error) {
+              if (!isAddressInUseError(error) || attempt === 4) throw error;
+              await delay(25);
+            }
+          }
 
+          if (h === null) throw new Error("Production server did not start");
           await h.ready;
           await delay(200);
 

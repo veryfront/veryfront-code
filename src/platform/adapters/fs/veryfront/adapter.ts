@@ -1,6 +1,15 @@
 import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
+import {
+  cancelSharedInitialization,
+  drainSharedInitialization,
+  isSharedInitializationAborted,
+  joinSharedInitialization,
+  onSharedInitializationSettled,
+  type SharedInitialization,
+  startSharedInitialization,
+} from "../../shared-initialization.ts";
 import { createHash, type Hash } from "node:crypto";
 import { createError, toError } from "#veryfront/errors";
 import type {
@@ -111,6 +120,8 @@ const SourceSnapshotHashPrototype = IntrinsicReflectApply(
 ) as Hash;
 const HashPrototypeUpdate = SourceSnapshotHashPrototype.update;
 const HashPrototypeDigest = SourceSnapshotHashPrototype.digest;
+const VeryfrontApiClientPrototype = VeryfrontApiClient.prototype;
+const VeryfrontApiClientInitializeForHost = VeryfrontApiClientPrototype.initializeForHost;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
@@ -817,6 +828,7 @@ async function computeSourceSnapshotFingerprint(
 interface BranchSnapshotRecoveryOptions<T> {
   isRecoverableMissResult?: (result: T) => boolean;
   requirePendingSourceInvalidation?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -845,8 +857,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
-  private initializationPromise: Promise<void> | null = null;
-  private initializationGeneration = 0;
+  private initializationFlight: SharedInitialization | null = null;
   private exactReadInitializationPromise: Promise<void> | null = null;
   private exactReadInitializationGeneration = 0;
 
@@ -879,7 +890,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | null = null;
   private readonly fileListRetentionMs: number;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
-  private readonly branchMissRecoveryPromises = new Map<string, Promise<void>>();
+  private readonly branchMissRecoveryFlights = new Map<string, SharedInitialization<void>>();
   private readonly branchMissRecoveryFailures = new Map<string, number>();
   /** Last successful source check and generation of the materialized snapshot. */
   private sourceSnapshotCheckedAt = 0;
@@ -981,10 +992,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return `${this.apiBaseUrl}|${this.#getSourceSnapshotIdentity(context)}`;
   }
 
-  #fetchSourceListing(context: ResolvedContentContext): ReturnType<
-    typeof fetchSourceListingForContext
-  > {
-    return fetchSourceListingForContext(this.client, context, this.#getSourceContentKey(context));
+  #fetchSourceListing(
+    context: ResolvedContentContext,
+    signal?: AbortSignal,
+  ): ReturnType<typeof fetchSourceListingForContext> {
+    return fetchSourceListingForContext(
+      this.client,
+      context,
+      this.#getSourceContentKey(context),
+      signal,
+    );
   }
 
   /**
@@ -1291,25 +1308,72 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async initialize(): Promise<void> {
-    if (this.initializationPromise) {
-      await this.initializationPromise;
-      return;
+  async initialize(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (this.initializationFlight && isSharedInitializationAborted(this.initializationFlight)) {
+      await drainSharedInitialization(this.initializationFlight, signal);
+      return await this.initialize(signal);
     }
+    let flight = this.initializationFlight;
+    if (!flight) {
+      flight = this.#startInitializationFlight();
+    }
+    await joinSharedInitialization(flight, signal);
+  }
 
-    const initialization = this.#performInitialization();
-    const initializationGeneration = ++this.initializationGeneration;
-    this.initializationPromise = initialization;
+  /** @internal Retain ownership of physical initialization after caller abort. */
+  async initializeForHost(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (this.initializationFlight && isSharedInitializationAborted(this.initializationFlight)) {
+      await drainSharedInitialization(this.initializationFlight);
+      return await this.initializeForHost(signal);
+    }
+    if (this.initialized) return;
+
+    const flight = this.initializationFlight ?? this.#startInitializationFlight();
     try {
-      await initialization;
+      await joinSharedInitialization(flight, signal);
     } finally {
-      if (this.initializationGeneration === initializationGeneration) {
-        this.initializationPromise = null;
-      }
+      await drainSharedInitialization(flight);
     }
   }
 
-  async #performInitialization(): Promise<void> {
+  #startInitializationFlight(): SharedInitialization {
+    const flight = startSharedInitialization((sharedSignal) =>
+      this.#performInitialization(sharedSignal)
+    );
+    this.initializationFlight = flight;
+    onSharedInitializationSettled(flight, () => {
+      if (this.initializationFlight === flight) {
+        this.initializationFlight = null;
+      }
+    });
+    return flight;
+  }
+
+  async #initializeClientForHost(signal?: AbortSignal): Promise<void> {
+    const ownInitializeDescriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [this.client, "initialize"],
+    ) as PropertyDescriptor | undefined;
+    const ownInitializeForHostDescriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [this.client, "initializeForHost"],
+    ) as PropertyDescriptor | undefined;
+    const ownInitialize = typeof ownInitializeDescriptor?.value === "function"
+      ? ownInitializeDescriptor.value
+      : undefined;
+    const ownInitializeForHost = typeof ownInitializeForHostDescriptor?.value === "function"
+      ? ownInitializeForHostDescriptor.value
+      : undefined;
+    const hostInitialize = ownInitializeForHost ?? ownInitialize ??
+      VeryfrontApiClientInitializeForHost;
+    await (IntrinsicReflectApply(hostInitialize, this.client, [signal]) as Promise<void>);
+  }
+
+  async #performInitialization(signal?: AbortSignal): Promise<void> {
     const initStartTime = performanceNow();
     const projectSlug = this.client.getProjectSlug();
 
@@ -1331,7 +1395,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     logger.debug("Step 1: client.initialize START", { projectSlug });
     const step1Start = performanceNow();
-    await this.client.initialize();
+    await this.#initializeClientForHost(signal);
     logger.debug("Step 1: client.initialize DONE", {
       projectSlug,
       duration: formatDuration(performanceNow() - step1Start),
@@ -1342,7 +1406,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const step2Start = performanceNow();
 
     const cachedProject = this.client.getCachedProject();
-    this.projectData = cachedProject ?? (await this.client.getProject(projectId));
+    this.projectData = cachedProject ?? (await this.client.getProject(projectId, signal));
 
     logger.debug(
       `[VeryfrontFSAdapter] Step 2: getProject DONE (${cachedProject ? "from cache" : "from API"})`,
@@ -1361,6 +1425,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.client,
         this.contentSource,
         this.projectSlug,
+        signal,
       );
       this.setContentContext(resolvedContext);
       logger.debug("Step 3: resolveContentSource DONE", {
@@ -1403,7 +1468,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const fetchedListing = await this.#fetchSourceListing(initializationContext);
+      const fetchedListing = await this.#fetchSourceListing(initializationContext, signal);
       let files = fetchedListing.files;
       const fileSummary = summarizeFileList(files);
 
@@ -1457,6 +1522,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         ignorePromiseRejection(this.triggerCSSPregeneration(files));
       }
 
+      throwIfAborted(signal);
       this.initialized = true;
 
       logger.debug("initialize COMPLETE", {
@@ -1522,6 +1588,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
   #getBranchMissRecoveryKey(path: string): string {
     const normalizedPath = this.normalizer.normalize(path);
     return `${this.#getBranchMissRecoveryKeyPrefix()}${normalizedPath}`;
+  }
+
+  #clearBranchMissRecoveryFlights(): void {
+    for (const flight of this.branchMissRecoveryFlights.values()) {
+      cancelSharedInitialization(flight);
+    }
+    this.branchMissRecoveryFlights.clear();
   }
 
   #hasRecentBranchMissRecoveryFailure(key: string): boolean {
@@ -1595,23 +1668,30 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+  async #refreshBranchSnapshotAfterMiss(path: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
     const recoveryScope = this.#getBranchMissRecoveryScope();
-    let recoveryPromise = this.branchMissRecoveryPromises.get(recoveryScope);
+    let flight = this.branchMissRecoveryFlights.get(recoveryScope);
 
-    if (!recoveryPromise) {
+    if (flight && isSharedInitializationAborted(flight)) {
+      await drainSharedInitialization(flight, signal);
+      return await this.#refreshBranchSnapshotAfterMiss(path, signal);
+    }
+
+    if (!flight) {
       const normalizedPath = this.normalizer.normalize(path);
-      recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
-      this.branchMissRecoveryPromises.set(recoveryScope, recoveryPromise);
+      flight = startSharedInitialization((sharedSignal) =>
+        this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`, sharedSignal)
+      );
+      this.branchMissRecoveryFlights.set(recoveryScope, flight);
+      onSharedInitializationSettled(flight, () => {
+        if (this.branchMissRecoveryFlights.get(recoveryScope) === flight) {
+          this.branchMissRecoveryFlights.delete(recoveryScope);
+        }
+      });
     }
 
-    try {
-      await recoveryPromise;
-    } finally {
-      if (this.branchMissRecoveryPromises.get(recoveryScope) === recoveryPromise) {
-        this.branchMissRecoveryPromises.delete(recoveryScope);
-      }
-    }
+    await joinSharedInitialization(flight, signal);
   }
 
   async #withBranchSnapshotRecovery<T>(
@@ -1625,8 +1705,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.#refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
       } catch (refreshError) {
+        throwIfAborted(options?.signal);
         this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after result miss", {
           path: this.normalizer.normalize(path),
@@ -1647,8 +1728,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.#refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
       } catch (refreshError) {
+        throwIfAborted(options?.signal);
         this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after not-found miss", {
           path: this.normalizer.normalize(path),
@@ -2252,8 +2334,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  async #performSourceSnapshotRefresh(reason: string): Promise<void> {
-    await this.#ensureInitialized();
+  async #performSourceSnapshotRefresh(reason: string, signal?: AbortSignal): Promise<void> {
+    await this.#ensureInitialized(signal);
+    throwIfAborted(signal);
 
     if (!this.contentContext) {
       logger.debug("Skipping source snapshot refresh without content context", {
@@ -2271,7 +2354,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousVersion = this.sourceSnapshotVersion;
     const refreshListing = this.#beginSourceListing();
-    const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext);
+    const fetchedListing = await this.#fetchSourceListing(effectiveRefreshContext, signal);
+    throwIfAborted(signal);
     let files = fetchedListing.files;
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
@@ -2383,18 +2467,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async #refreshSourceSnapshot(reason: string): Promise<void> {
-    await this.#ensureInitialized();
+  async #refreshSourceSnapshot(reason: string, signal?: AbortSignal): Promise<void> {
+    await this.#ensureInitialized(signal);
 
     while (true) {
-      this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
-      const refresh = this.sourceSnapshotRefreshPromise;
+      throwIfAborted(signal);
+      if (signal) {
+        await this.#performSourceSnapshotRefresh(reason, signal);
+      } else {
+        this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
+        const refresh = this.sourceSnapshotRefreshPromise;
 
-      try {
-        await refresh;
-      } finally {
-        if (this.sourceSnapshotRefreshPromise === refresh) {
-          this.sourceSnapshotRefreshPromise = null;
+        try {
+          await refresh;
+        } finally {
+          if (this.sourceSnapshotRefreshPromise === refresh) {
+            this.sourceSnapshotRefreshPromise = null;
+          }
         }
       }
 
@@ -2534,9 +2623,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.wsManager.getPokeMetrics();
   }
 
-  async readFile(path: string): Promise<string> {
-    await this.#ensureInitialized();
-    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+  async readFile(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
+    await this.#ensureInitialized(options.signal);
+    return this.#withBranchSnapshotRecovery(
+      path,
+      () => this.readOps.readTextFile(path, options),
+      { signal: options.signal },
+    );
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
@@ -2553,14 +2646,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
     );
   }
 
-  async readTextFile(path: string): Promise<string> {
-    await this.#ensureInitialized();
-    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+  async readTextFile(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
+    await this.#ensureInitialized(options.signal);
+    return this.#withBranchSnapshotRecovery(
+      path,
+      () => this.readOps.readTextFile(path, options),
+      { signal: options.signal },
+    );
   }
 
-  async readOptionalTextFile(path: string): Promise<string> {
-    await this.#ensureInitialized();
-    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
+  async readOptionalTextFile(
+    path: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<string> {
+    await this.#ensureInitialized(options.signal);
+    return this.#withBranchSnapshotRecovery(
+      path,
+      () => this.readOps.readOptionalTextFile(path, options),
+      { signal: options.signal },
+    );
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
@@ -2622,14 +2726,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
-    this.initializationGeneration++;
-    this.initializationPromise = null;
+    cancelSharedInitialization(this.initializationFlight ?? undefined);
     this.exactReadInitializationPromise = null;
     this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.clearRetainedFileList();
-    this.branchMissRecoveryPromises.clear();
+    this.#clearBranchMissRecoveryFlights();
     this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
@@ -2766,7 +2869,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
-    this.branchMissRecoveryPromises.clear();
+    this.#clearBranchMissRecoveryFlights();
     this.branchMissRecoveryFailures.clear();
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
@@ -2852,7 +2955,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.clearRetainedFileList();
-      this.branchMissRecoveryPromises.clear();
+      this.#clearBranchMissRecoveryFlights();
       this.branchMissRecoveryFailures.clear();
       this.sourceSnapshotCheckedAt = 0;
       this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
@@ -2887,9 +2990,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.client;
   }
 
-  async #ensureInitialized(): Promise<boolean> {
+  async #ensureInitialized(signal?: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
     if (this.initialized) return false;
-    await this.initialize();
+    await this.initialize(signal);
     return true;
   }
 

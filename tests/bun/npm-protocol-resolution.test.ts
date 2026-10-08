@@ -1,4 +1,4 @@
-import { BasicTracerProvider } from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+import { BasicTracerProvider } from "npm:@opentelemetry/sdk-trace-base@2.10.0";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -36,7 +36,7 @@ describe("Bun npm protocol resolution", () => {
     const extensionSource =
       'import { defineExtension } from "veryfront/extensions";\nexport const marker = "kept";\n';
     const testSource =
-      'import { BasicTracerProvider } from "npm:@opentelemetry/sdk-trace-base@2.9.0";\nexport const marker = "kept";\n';
+      'import { BasicTracerProvider } from "npm:@opentelemetry/sdk-trace-base@2.10.0";\nexport const marker = "kept";\n';
 
     for (
       const extensionPath of [

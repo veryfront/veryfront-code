@@ -611,6 +611,16 @@ export function registerVeryfrontCloudModelFacts(
   builtModelFacts.set(model, read);
 }
 
+/** @internal Preserve trusted facts when this package wraps a known model object. */
+export function forwardVeryfrontCloudModelFacts(
+  source: ModelRuntime,
+  target: ModelRuntime,
+): void {
+  const read = builtModelFacts.get(source);
+  if (read === undefined) return;
+  builtModelFacts.set(target, read);
+}
+
 /**
  * @internal The facts a Veryfront Cloud model built by this package currently
  * calls with, so a record of a call describes the request actually sent.

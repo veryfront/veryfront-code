@@ -1202,6 +1202,46 @@ describe("tool-helpers", () => {
       assertEquals(calls, []);
     });
 
+    it("matches unavailable optional remote tools through captured intrinsics", async () => {
+      toolRegistryInternal.clearAll();
+      const originalIncludes = Array.prototype.includes;
+      const originalStartsWith = String.prototype.startsWith;
+      let includesCalls = 0;
+      let startsWithCalls = 0;
+      try {
+        Array.prototype.includes = function poisonedIncludes() {
+          includesCalls += 1;
+          throw new Error("patched includes must not classify optional tools");
+        } as typeof Array.prototype.includes;
+        String.prototype.startsWith = function poisonedStartsWith() {
+          startsWithCalls += 1;
+          throw new Error("patched startsWith must not classify optional tools");
+        } as typeof String.prototype.startsWith;
+
+        assertEquals(
+          await getAvailableTools({ studio_suggestions: true }, {
+            includeIntegrationTools: false,
+            unavailableOptionalRemoteToolNames: ["studio_suggestions"],
+          }),
+          [],
+        );
+        assertEquals(
+          await getAvailableTools({ studio_suggestions: true }, {
+            includeIntegrationTools: false,
+            unavailableOptionalRemoteToolPrefixes: ["studio_"],
+          }),
+          [],
+        );
+      } finally {
+        Array.prototype.includes = originalIncludes;
+        String.prototype.startsWith = originalStartsWith;
+        toolRegistryInternal.clearAll();
+      }
+
+      assertEquals(includesCalls, 0);
+      assertEquals(startsWithCalls, 0);
+    });
+
     it("merges generic remote MCP tool sources into available tools", async () => {
       toolRegistryInternal.clearAll();
 

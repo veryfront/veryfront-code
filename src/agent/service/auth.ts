@@ -795,9 +795,9 @@ export function createHostedServiceAuth(
           return {
             success: false,
             error: {
-              statusCode: 403,
-              errorCode: "FORBIDDEN",
-              message: "No access to project",
+              statusCode: 503,
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
             },
           };
         }
@@ -813,9 +813,9 @@ export function createHostedServiceAuth(
         return {
           success: false,
           error: {
-            statusCode: 403,
-            errorCode: "FORBIDDEN",
-            message: "No access to project",
+            statusCode: 503,
+            errorCode: "SERVER_ERROR",
+            message: "Project access could not be verified",
           },
         };
       }

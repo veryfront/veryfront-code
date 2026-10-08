@@ -12,7 +12,12 @@ import {
 
 import { cliErrorBoundary, type VeryfrontError } from "veryfront/errors";
 import { cliLogger, isVerbose, VERSION } from "#cli/utils";
-import { showCommandHelp, showMainHelp } from "./help/index.ts";
+import {
+  getStructuredCommandHelp,
+  getStructuredMainHelp,
+  showCommandHelp,
+  showMainHelp,
+} from "./help/index.ts";
 import { setColorOverride, shouldUseColor } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
@@ -137,6 +142,27 @@ function showHelp(command?: string, showAll = false): void {
     return;
   }
   showMainHelp(showAll);
+}
+
+async function outputHelpJson(command: string | undefined, showAll: boolean): Promise<boolean> {
+  if (command) {
+    const help = getStructuredCommandHelp(command);
+    if (!help) {
+      await outputCliJsonError("help", {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "unknown-command",
+        message: `Unknown command: ${command}`,
+      });
+      return false;
+    }
+
+    await outputJson(createSuccessEnvelope("help", { topic: command, help }));
+    return true;
+  }
+
+  await outputJson(createSuccessEnvelope("help", getStructuredMainHelp(showAll)));
+  return true;
 }
 
 function commandNameForJson(args: ParsedArgs): string {
@@ -281,7 +307,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     : undefined;
 
   if ((args.help || args.h) && !duplicatedBinaryTarget) {
-    showHelp(command, args.all === true);
+    let helpTopic = command;
+    if (command === "help") {
+      helpTopic = typeof args._[1] === "string" ? args._[1] : undefined;
+    }
+    if (isJsonMode()) {
+      const ok = await outputHelpJson(helpTopic, args.all === true);
+      await updateCheck;
+      exitProcess(ok ? 0 : 2);
+      return;
+    }
+    showHelp(helpTopic, args.all === true);
     await updateCheck;
     exitProcess(0);
     return;
@@ -289,7 +325,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (command === "help") {
     const topic = args._[1];
-    showHelp(typeof topic === "string" ? topic : undefined, args.all === true);
+    const helpTopic = typeof topic === "string" ? topic : undefined;
+    if (isJsonMode()) {
+      const ok = await outputHelpJson(helpTopic, args.all === true);
+      await updateCheck;
+      exitProcess(ok ? 0 : 2);
+      return;
+    }
+    showHelp(helpTopic, args.all === true);
     await updateCheck;
     exitProcess(0);
     return;

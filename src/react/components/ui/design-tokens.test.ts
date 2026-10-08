@@ -13,6 +13,45 @@ import {
  * the light and dark palettes are swapped; every colour assertion below names
  * the mode it belongs to instead.
  */
+
+interface RgbColor {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+function channelToLinear(channel: number): number {
+  const normalized = channel / 255;
+  return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function relativeLuminance(color: RgbColor): number {
+  return 0.2126 * channelToLinear(color.red) +
+    0.7152 * channelToLinear(color.green) +
+    0.0722 * channelToLinear(color.blue);
+}
+
+function contrastRatio(left: RgbColor, right: RgbColor): number {
+  const leftLuminance = relativeLuminance(left);
+  const rightLuminance = relativeLuminance(right);
+  const lighter = Math.max(leftLuminance, rightLuminance);
+  const darker = Math.min(leftLuminance, rightLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function alphaComposite(foreground: RgbColor, background: RgbColor, alpha: number): RgbColor {
+  return {
+    red: foreground.red * alpha + background.red * (1 - alpha),
+    green: foreground.green * alpha + background.green * (1 - alpha),
+    blue: foreground.blue * alpha + background.blue * (1 - alpha),
+  };
+}
+
+const TEMPLATE_LIGHT_INPUT = { red: 255, green: 255, blue: 255 };
+const TEMPLATE_LIGHT_FOREGROUND = { red: 1, green: 1, blue: 1 };
+const TEMPLATE_DARK_INPUT = { red: 51, green: 51, blue: 51 };
+const TEMPLATE_DARK_FOREGROUND = { red: 240, green: 239, blue: 233 };
+
 function splitByColorMode(): { light: string; dark: string } {
   const css = generateTokenCSS();
   const darkIndex = css.indexOf("@media(prefers-color-scheme:dark)");
@@ -84,6 +123,59 @@ describe("design-tokens dual scope", () => {
         `the color-mix ${variant} alert fill belongs to the dark rules`,
       );
     }
+  });
+
+  it("keeps input placeholders on the readable semantic token", () => {
+    const { light, dark } = splitByColorMode();
+
+    assertStringIncludes(
+      light,
+      "--input-placeholder:var(--soft)",
+      "light controls use the readable placeholder token",
+    );
+    assertStringIncludes(
+      dark,
+      "--input-placeholder:var(--soft)",
+      "dark controls use the readable placeholder token",
+    );
+
+    const lightPlaceholder = alphaComposite(
+      TEMPLATE_LIGHT_FOREGROUND,
+      TEMPLATE_LIGHT_INPUT,
+      0.7,
+    );
+    const lightFaintPlaceholder = alphaComposite(
+      TEMPLATE_LIGHT_FOREGROUND,
+      TEMPLATE_LIGHT_INPUT,
+      0.25,
+    );
+    const darkPlaceholder = alphaComposite(
+      TEMPLATE_DARK_FOREGROUND,
+      TEMPLATE_DARK_INPUT,
+      0.7,
+    );
+    const darkFaintPlaceholder = alphaComposite(
+      TEMPLATE_DARK_FOREGROUND,
+      TEMPLATE_DARK_INPUT,
+      0.25,
+    );
+
+    assert(
+      contrastRatio(lightPlaceholder, TEMPLATE_LIGHT_INPUT) >= 4.5,
+      "light template placeholder stays above normal-text contrast",
+    );
+    assert(
+      contrastRatio(darkPlaceholder, TEMPLATE_DARK_INPUT) >= 4.5,
+      "dark template placeholder stays above normal-text contrast",
+    );
+    assert(
+      contrastRatio(lightFaintPlaceholder, TEMPLATE_LIGHT_INPUT) < 4.5,
+      "the old light faint placeholder did not meet normal-text contrast",
+    );
+    assert(
+      contrastRatio(darkFaintPlaceholder, TEMPLATE_DARK_INPUT) < 4.5,
+      "the old faint placeholder did not meet normal-text contrast",
+    );
   });
 
   it("ships a border token for every alert fill, in both color modes", () => {

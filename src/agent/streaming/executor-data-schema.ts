@@ -1,4 +1,7 @@
-import { OUTPUT_SCHEMA_INVALID_ERROR } from "#veryfront/chat/provider-error-registry.ts";
+import {
+  AGENT_PROVIDER_AUTH_ERROR,
+  OUTPUT_SCHEMA_INVALID_ERROR,
+} from "#veryfront/chat/provider-error-registry.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import {
   ExecutorAgentError,
@@ -222,7 +225,9 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
       return {
         type: "error",
         code,
-        error: code === OUTPUT_SCHEMA_INVALID_ERROR.code
+        error: code === AGENT_PROVIDER_AUTH_ERROR.code
+          ? AGENT_PROVIDER_AUTH_ERROR.message
+          : code === OUTPUT_SCHEMA_INVALID_ERROR.code
           ? OUTPUT_SCHEMA_INVALID_ERROR.message
           : code,
       };

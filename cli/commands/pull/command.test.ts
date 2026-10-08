@@ -122,7 +122,7 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
     dependencies: {
       react: "^19.2.4",
       "react-dom": "^19.2.4",
-      veryfront: `^${VERSION}`,
+      veryfront: VERSION,
     },
     devDependencies: {
       "@types/react": "^19.2.0",
@@ -164,7 +164,7 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
   dependencies: {
     react: "^19.2.4",
     "react-dom": "^19.2.4",
-    veryfront: `^${VERSION}`,
+    veryfront: VERSION,
   },
   devDependencies: {
     "@types/react": "^19.2.0",
