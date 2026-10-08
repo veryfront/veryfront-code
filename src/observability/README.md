@@ -329,3 +329,12 @@ values that are not recognizable URLs may still contain sensitive data. Keep
 attribute keys bounded and values low-cardinality. Prefer route templates,
 operation kinds, and status classes over raw IDs, arbitrary paths, request
 bodies, SQL statements, or user-provided text.
+
+### Successful-stream parser diagnostics
+
+Wrapped OpenAI HTTP-200 parser failures retain a `streamIssue` classification
+when the issue exactly matches the fixed chat or Responses stream parser
+allowlist. The full provider error message remains redacted. Unknown labels,
+modified issue text and caller-supplied values do not enter this field.
+This diagnostic does not alter stream validation, retries, terminal errors
+or client-visible messages.

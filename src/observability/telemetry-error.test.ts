@@ -957,6 +957,47 @@ describe("observability/telemetry-error", () => {
       ]);
     });
 
+    it("records a fixed successful-stream parser issue without exposing provider text", () => {
+      const failure = new ProviderRequestError({
+        provider: "openai",
+        status: 200,
+        retryable: false,
+        message: "OpenAI request failed: invalid successful stream (tool call was incomplete)",
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 200,
+        retryable: false,
+        streamIssue: "tool call was incomplete",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("withholds unknown, altered and credential-bearing stream issue text", () => {
+      for (
+        const message of [
+          "OpenAI request failed: invalid successful stream (synthetic-secret)",
+          "OpenAI request failed: invalid successful stream (tool call was incomplete synthetic-secret)",
+          "synthetic-secret request failed: invalid successful stream (tool call was incomplete)",
+        ]
+      ) {
+        const failure = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message,
+        });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          messageRedacted: true,
+        }]);
+      }
+    });
+
     it("logs only allowlisted error names and transient codes", () => {
       const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
       const customCode = Object.assign(new Error("x"), { code: "account-123456" });

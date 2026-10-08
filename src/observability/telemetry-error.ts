@@ -614,6 +614,8 @@ export interface LoggedErrorCause {
   provider?: string;
   status?: number;
   retryable?: boolean;
+  /** An exact fixed protocol issue from the successful HTTP stream parser. */
+  streamIssue?: string;
 }
 
 /**
@@ -676,6 +678,98 @@ function readHttpStatusForLog(error: Error): number | undefined {
   return undefined;
 }
 
+/** Fixed parser classifications only; never retain the provider message itself. */
+const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
+  "added message content was not an array",
+  "added message role was not assistant",
+  "added message was not in its initial state",
+  "choice delta content had an invalid type",
+  "choice delta content part type was unsupported",
+  "choice delta content part was not an object",
+  "choice delta refusal part was malformed",
+  "choice delta role was not assistant",
+  "choice delta text part was malformed",
+  "choice delta was not an object",
+  "choice finish reason was malformed",
+  "choice had neither a delta nor a finish reason",
+  "choices was not an array",
+  "completed function call id changed",
+  "completed function call name changed",
+  "completed function-call arguments malformed",
+  "completed message value was malformed",
+  "completed output item type changed",
+  "completed output referenced an unknown item",
+  "done marker arrived before a finish reason",
+  "event had neither choices nor usage",
+  "event type was missing",
+  "event was not an object",
+  "first choice was not an object",
+  "function call id was reused",
+  "function call was incomplete",
+  "function-call arguments completed twice",
+  "function-call delta was malformed",
+  "message content index was malformed",
+  "message content part completed twice",
+  "message content part was added twice",
+  "message content part was not an object",
+  "message delta followed a completed part",
+  "message value completed twice",
+  "output item was added twice",
+  "provider emitted an error event",
+  "reasoning content part was added twice",
+  "reasoning delta was malformed",
+  "reasoning summary index was malformed",
+  "reasoning summary part completed twice",
+  "reasoning summary part was added twice",
+  "reasoning summary part was malformed",
+  "reasoning text completed twice",
+  "reasoning text event was malformed",
+  "refusal delta was malformed",
+  "stream contained choice data after its finish reason",
+  "stream contained data after its done marker",
+  "stream contained data after its terminal event",
+  "stream contained multiple done markers",
+  "stream contained multiple terminal events",
+  "stream contained no choice envelope",
+  "stream ended before a finish reason",
+  "stream ended before a terminal response event",
+  "stream ended with unfinished output items",
+  "stream ended with unfinished tool calls",
+  "terminal response status was missing",
+  "tool call arguments delta was malformed",
+  "tool call arguments were not valid JSON object text",
+  "tool call delta was not an object",
+  "tool call function name changed while streaming",
+  "tool call function name was malformed",
+  "tool call function was not an object",
+  "tool call id changed while streaming",
+  "tool call id was malformed",
+  "tool call id was reused",
+  "tool call id was reused at another index",
+  "tool call index was malformed",
+  "tool call type was not function",
+  "tool call was incomplete",
+  "tool-call finish contained no tool calls",
+  "tool_calls delta was not an array",
+]);
+const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
+  /^(?:OpenAI|openai) request failed: invalid successful stream \(([^)]+)\)$/;
+
+function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
+  if (
+    entry.name !== "ProviderRequestError" || entry.provider !== "openai" || entry.status !== 200
+  ) return;
+  const message = readOwnErrorDataField(error, "message");
+  if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
+  const match = apply(regExpExec, SUCCESSFUL_OPENAI_STREAM_MESSAGE, [message]) as
+    | RegExpExecArray
+    | null;
+  const issue = match?.[1];
+  if (typeof issue === "string" && apply(setHas, LOGGABLE_OPENAI_STREAM_ISSUES, [issue]) === true) {
+    entry.streamIssue = issue;
+  }
+}
+
 function addBoundedProviderDiagnostics(error: Error, entry: LoggedErrorCause): void {
   const rawName = readNativeErrorNameWithoutHooks(error);
   if (apply(setHas, LOGGABLE_PROVIDER_ERROR_NAMES, [rawName]) === true) {
@@ -725,6 +819,7 @@ export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] |
         const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
         if (knownCode !== undefined) entry.code = knownCode;
         addBoundedProviderDiagnostics(cause, entry);
+        addSuccessfulStreamIssueForLog(cause, entry);
       }
       if (isLoggableCauseMessage(snapshot.message)) {
         entry.message = snapshot.message;
