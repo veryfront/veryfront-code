@@ -44,17 +44,18 @@ function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boo
 
 type TextMatch = { indexes: number[]; length: number };
 
-/** Assign physical text fragments jointly so repeated prefixes cannot steal an occurrence. */
-function assignFallbackTextOccurrences(
+/** Bound every reconciliation search, including the legacy single-occurrence path. */
+function createFallbackTextSearchBudget(
   persisted: readonly { text: string }[],
   fallback: readonly { text: string }[],
-): TextMatch[] {
-  if (persisted.length === 0) return fallback.map(() => ({ indexes: [], length: 0 }));
+): () => void {
+  // These paths perform no occurrence search and remain linear for large replay.
   if (
-    persisted.length === fallback.length &&
-    persisted.every((part, index) => part.text.trim() === fallback[index]!.text.trim())
+    persisted.length === 0 || fallback.length === 0 ||
+    (persisted.length === fallback.length &&
+      persisted.every((part, index) => part.text.trim() === fallback[index]!.text.trim()))
   ) {
-    return fallback.map((part, index) => ({ indexes: [index], length: part.text.trim().length }));
+    return () => {};
   }
   // Provider-controlled fragments must not cause an unbounded finalization search.
   const failSearch = (): never => {
@@ -67,6 +68,22 @@ function assignFallbackTextOccurrences(
   const consumeSearchStep = (): void => {
     if (--remainingSearchSteps < 0) failSearch();
   };
+  return consumeSearchStep;
+}
+
+/** Assign physical text fragments jointly so repeated prefixes cannot steal an occurrence. */
+function assignFallbackTextOccurrences(
+  persisted: readonly { text: string }[],
+  fallback: readonly { text: string }[],
+  consumeSearchStep: () => void,
+): TextMatch[] {
+  if (persisted.length === 0) return fallback.map(() => ({ indexes: [], length: 0 }));
+  if (
+    persisted.length === fallback.length &&
+    persisted.every((part, index) => part.text.trim() === fallback[index]!.text.trim())
+  ) {
+    return fallback.map((part, index) => ({ indexes: [index], length: part.text.trim().length }));
+  }
   const candidates = fallback.map((part) => {
     const matches = new Map<string, TextMatch>();
     matches.set("", { indexes: [], length: 0 });
@@ -275,8 +292,9 @@ export function buildFinalizedMessageState(
   const consumedTextIndexes = new Set<number>();
   const fallbackTextCount = finalStepFallbackParts.filter((part) => part.type === "text").length;
   const fallbackTextParts = finalStepFallbackParts.filter((part) => part.type === "text");
+  const consumeSearchStep = createFallbackTextSearchBudget(persistedTextParts, fallbackTextParts);
   const assignedTextMatches = fallbackTextCount > 1
-    ? assignFallbackTextOccurrences(persistedTextParts, fallbackTextParts)
+    ? assignFallbackTextOccurrences(persistedTextParts, fallbackTextParts, consumeSearchStep)
     : [];
   let fallbackTextIndex = 0;
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
@@ -301,6 +319,7 @@ export function buildFinalizedMessageState(
           const indexes = availableIndexes.slice(0, count);
           const texts = indexes.map((index) => persistedTextParts[index]!.text);
           const prefixLength = Math.max(...["\n\n", "\n", " ", ""].map((separator) => {
+            consumeSearchStep();
             const prefix = texts.join(separator).trim();
             return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
           }));

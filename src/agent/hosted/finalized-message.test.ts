@@ -1090,6 +1090,30 @@ Deno.test("adversarial repeated fragments fail within the shared reconciliation 
   assertEquals(responseMessage, before);
 });
 
+for (const count of [129, 5000, 128]) {
+  Deno.test(`single fallback text rejects ${count} persisted fragments within reconciliation bounds`, () => {
+    const responseMessage = {
+      id: "m",
+      role: "assistant" as const,
+      parts: Array.from({ length: count }, () => ({ type: "text" as const, text: "a" })),
+    };
+    const before = structuredClone(responseMessage);
+    const error = assertThrows(
+      () =>
+        buildFinalizedMessageState({
+          responseMessage,
+          finalStep: { text: count === 5000 ? "a" : "a".repeat(count) },
+          isAborted: false,
+          incompleteToolCallsPartErrorText: "tool error",
+        }),
+      Error,
+      "exceeded its search budget",
+    );
+    assertEquals(error.name, "FallbackTextReconciliationLimitError");
+    assertEquals(responseMessage, before);
+  });
+}
+
 Deno.test("empty persisted text recovers many provider blocks without occurrence search", () => {
   const content = Array.from(
     { length: 100 },

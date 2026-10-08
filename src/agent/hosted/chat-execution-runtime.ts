@@ -816,7 +816,7 @@ export function createHostedChatExecutionRuntime(
 
   const capturedMirroredMessage = (): ChatUiMessage | undefined => {
     const snapshot = messageProjection.snapshot();
-    if (!snapshot.id || snapshot.parts.length === 0) return undefined;
+    if (!snapshot.id) return undefined;
     const message = getChatUiMessageSchema().parse(snapshot);
     type Part = (typeof message.parts)[number];
     const isDataPart = (part: Part): part is Extract<Part, { type: `data-${string}` }> =>
@@ -838,6 +838,7 @@ export function createHostedChatExecutionRuntime(
     }
 
     finishHandlerStarted = true;
+    const mirroredMessage = capturedMirroredMessage();
     await finalizeDetachedStreamEnd({
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
@@ -845,8 +846,9 @@ export function createHostedChatExecutionRuntime(
       lastStreamError,
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
-      mirroredDurableOutput,
-      mirroredMessage: capturedMirroredMessage(),
+      // Missing identity cannot attest to a completed mirrored response.
+      mirroredDurableOutput: mirroredMessage !== undefined && mirroredDurableOutput,
+      mirroredMessage,
       incompleteToolCallsPartErrorText,
       cleanup: input.bootstrap.cleanup,
       logger: input.logger,

@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import {
+  type ChatUiMessage,
+  type ChatUiMessageChunk,
+  getChatUiMessageSchema,
+  type MessageMetadata,
+} from "../../chat/types.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
 import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
@@ -12,6 +17,7 @@ import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirro
 import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import {
   createMirroredToolChunkState,
+  isDurableMirroredOutputChunk,
   recordMirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
@@ -2148,11 +2154,7 @@ describe("agent/hosted-chat-finalization", () => {
           streamError: mode === "provider-error" ? new Error("provider stream failed") : null,
         });
         const substantive = mode === "text" || mode === "signed-reasoning";
-        const status = mode === "aborted"
-          ? "cancelled"
-          : substantive || mode === "mirrored"
-          ? "completed"
-          : "failed";
+        const status = mode === "aborted" ? "cancelled" : substantive ? "completed" : "failed";
         assertEquals(terminalStates[0]!.status, status);
         assertEquals(
           terminalStates[0]!.terminalErrorCode,
@@ -2242,6 +2244,55 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
     assertEquals("output" in terminalStates[0]!, false);
   });
+
+  for (const partType of ["text", "reasoning"] as const) {
+    for (const substantive of [false, true]) {
+      it(`${substantive ? "completes substantive" : "fails framing-only"} detached mirrored ${partType}`, async () => {
+        const calls: string[] = [];
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const projection = createChatStreamMessageProjection("assistant-message-1");
+        const chunks = [
+          { type: `${partType}-start` as const, id: "content-1" },
+          ...(substantive
+            ? [{ type: `${partType}-delta` as const, id: "content-1", delta: "Content" }]
+            : []),
+          { type: `${partType}-end` as const, id: "content-1" },
+        ] satisfies Parameters<typeof projection.append>[0][];
+        for (const chunk of chunks) projection.append(chunk);
+        const snapshot = getChatUiMessageSchema().parse(projection.snapshot());
+        const mirroredDurableOutput = chunks.some(isDurableMirroredOutputChunk);
+        assertEquals(mirroredDurableOutput, true);
+        await finalizeHostedChatRun({
+          kind: "detached",
+          isAborted: false,
+          mirroredDurableOutput,
+          mirroredMessage: createResponseMessage({
+            parts: snapshot.parts.filter((part) =>
+              part.type === "text" || part.type === "reasoning"
+            ),
+          }),
+          streamResult: createStreamResult({}),
+          lifecycleAdapter: createLifecycleAdapter({
+            calls,
+            terminalStates,
+            mirror: createDurableRunMirror({ calls }),
+          }),
+          mirroredToolChunkState: createMirroredToolChunkState(),
+          capturedMessageId: "assistant-message-1",
+          incompleteToolCallsPartErrorText: "Tool call did not complete",
+          cleanup: async () => {
+            calls.push("cleanup");
+          },
+          streamError: null,
+        });
+        assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [[
+          substantive ? "completed" : "failed",
+          substantive ? undefined : "EMPTY_RESPONSE",
+        ]]);
+        assertEquals(calls.at(-1), "cleanup");
+      });
+    }
+  }
 
   it("completes detached empty output when durable output was mirrored", async () => {
     const calls: string[] = [];

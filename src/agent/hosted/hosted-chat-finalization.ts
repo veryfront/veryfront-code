@@ -469,7 +469,15 @@ export async function finalizeHostedChatRun(
       });
     hasOutput = true;
   } else {
-    const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
+    // Framing events can mark the mirror as having output without assistant content.
+    // When present, the captured projection is authoritative about that content.
+    const hasMirroredContent = input.mirroredMessage
+      ? !shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message: input.mirroredMessage })
+      : input.mirroredDurableOutput;
+    const state = createHostedChatFinalizeDetachedBuildState({
+      ...input,
+      mirroredDurableOutput: hasMirroredContent,
+    })(finalStep);
 
     // A detached run can complete on mirrored output alone (for example a late
     // provider body-read failure leaves the final step empty). The empty
@@ -487,8 +495,8 @@ export async function finalizeHostedChatRun(
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
-    emptyFailure = !input.isAborted && !input.mirroredDurableOutput && !state.hasContent;
-    hasOutput = input.mirroredDurableOutput || state.hasContent;
+    emptyFailure = !input.isAborted && !hasMirroredContent && !state.hasContent;
+    hasOutput = hasMirroredContent || state.hasContent;
   }
 
   if (emptyFailure) {

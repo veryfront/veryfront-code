@@ -1487,6 +1487,79 @@ describe("agent/hosted-chat-execution-runtime", () => {
     );
   });
 
+  for (const partType of ["text", "reasoning"] as const) {
+    for (
+      const mode of [
+        "framing",
+        "orphan-end",
+        "unidentified-end",
+        "substantive",
+        "fallback",
+      ] as const
+    ) {
+      it(`finalizes detached ${partType} ${mode} from the actual hosted mirroring path`, async () => {
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const mirroredChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+        const runtime = createHostedChatExecutionRuntime({
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          originalMessages: [],
+          runContext: { withContext: (fn) => fn() },
+          abortSignal: new AbortController().signal,
+          bootstrap: {
+            cleanup: async () => {},
+            lifecycleAdapter: createLifecycleAdapter({
+              terminalStates,
+              ...(mode === "unidentified-end" ? { messageId: null } : {}),
+              durableRunMirror: createDurableRunMirror({ chunks: mirroredChunks, flushes: [] }),
+            }),
+            rootStreamWatchdog: createRootStreamWatchdog({ disposed: () => {} }),
+            streamResult: {
+              steps: Promise.resolve([mode === "fallback" ? { text: "Recovered content" } : {}]),
+              toUIMessageStream: async function* () {
+                yield {
+                  type: "start",
+                  ...(mode === "unidentified-end" ? {} : { messageId: "stream-message-1" }),
+                };
+                if (mode !== "orphan-end" && mode !== "unidentified-end") {
+                  yield { type: `${partType}-start`, id: "part-1" };
+                }
+                if (mode === "substantive") {
+                  yield { type: `${partType}-delta`, id: "part-1", delta: "Content" };
+                }
+                yield { type: `${partType}-end`, id: "part-1" };
+              },
+            },
+            streamingMessageId: "stream-message-1",
+            capturedMessageId: mode === "unidentified-end" ? null : "stream-message-1",
+            ...(mode === "unidentified-end" ? {} : { capturedConversationId: "conversation-1" }),
+            mirroredToolChunkState: createMirroredToolChunkState(),
+          },
+        });
+        for await (const _chunk of runtime.agentUIStream) {
+          /* Drain actual mirror and projection. */
+        }
+        await runtime.waitForFinish();
+        assertEquals(
+          mirroredChunks.some((chunk) => chunk.type === `${partType}-end`),
+          true,
+        );
+        assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [[
+          mode === "substantive" || mode === "fallback" ? "completed" : "failed",
+          mode === "substantive" || mode === "fallback" ? undefined : "EMPTY_RESPONSE",
+        ]]);
+        if (mode === "fallback") {
+          assertEquals(
+            mirroredChunks.some((chunk) =>
+              chunk.type === "text-delta" && chunk.delta === "Recovered content"
+            ),
+            true,
+          );
+        }
+      });
+    }
+  }
+
   it("finalizes detached streams when the finish handler never runs", async () => {
     let disposed = 0;
     const terminalStates: HostedLifecycleTerminalState[] = [];
