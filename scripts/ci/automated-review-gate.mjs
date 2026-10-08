@@ -11,6 +11,11 @@ const CODEX_REVIEW_SUMMARY_MARKER =
   "<!-- codex-pull-request-review-summary -->";
 const CODEX_REVIEW_SUMMARY_ROW =
   /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
+const CODEX_SECURITY_SUMMARY_METADATA =
+  /^<!-- codex-security-review:v1 (\{[^\r\n]{1,4096}\}) -->$/;
+const CODEX_SECURITY_SUMMARY_ROW = new RegExp(
+  CODEX_REVIEW_SUMMARY_ROW.source.replace("📝", "🔒").replace("Code Review", "Security Review"),
+);
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 // The review bot bills the code review and the optional security review against
@@ -167,6 +172,44 @@ function parseCompletedCodexSummary(comment) {
     typeof comment?.body !== "string"
   ) return undefined;
   const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
+  // The connector now includes its separate security-review display in this
+  // comment. It is never code-review proof: retain the exact Code Review row,
+  // head resolution, pinned identity, epoch and later reaction requirements.
+  let securityRow;
+  if (lines[1]?.startsWith("<!-- codex-security-review:")) {
+    const metadataMatch = CODEX_SECURITY_SUMMARY_METADATA.exec(lines[1]);
+    if (!metadataMatch) return undefined;
+    let metadata;
+    try {
+      metadata = JSON.parse(metadataMatch[1]);
+    } catch {
+      return undefined;
+    }
+    const keys = [
+      "blockingSeverityThreshold", "headSha", "mergeGateEnabled",
+      "pullRequestNumber", "repository", "status",
+    ];
+    if (
+      !metadata || typeof metadata !== "object" || Array.isArray(metadata) ||
+      Object.keys(metadata).length !== keys.length ||
+      !keys.every((key) => Object.hasOwn(metadata, key)) ||
+      !["P0", "P1", "P2", "P3"].includes(metadata.blockingSeverityThreshold) ||
+      typeof metadata.headSha !== "string" || !FULL_SHA.test(metadata.headSha) ||
+      typeof metadata.mergeGateEnabled !== "boolean" ||
+      !Number.isSafeInteger(metadata.pullRequestNumber) || metadata.pullRequestNumber < 1 ||
+      typeof metadata.repository !== "string" ||
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(metadata.repository) ||
+      metadata.status !== "completed"
+    ) return undefined;
+    lines[1] = "";
+    securityRow = CODEX_SECURITY_SUMMARY_ROW.exec(lines[9] ?? "");
+    if (
+      !securityRow || securityRow[1] !== securityRow[2] ||
+      securityRow[4].trim().length === 0 ||
+      !metadata.headSha.toLowerCase().startsWith(securityRow[3].toLowerCase())
+    ) return undefined;
+    lines.splice(9, 1);
+  }
   const expectedPrefix = [
     CODEX_REVIEW_SUMMARY_MARKER,
     "",
@@ -192,6 +235,13 @@ function parseCompletedCodexSummary(comment) {
   const updatedAt = Date.parse(updatedAtText);
   const updatedAtIsWholeSecond =
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(updatedAtText);
+  const securityCompletedAt = securityRow ? Date.parse(securityRow[1]) : undefined;
+  if (
+    securityCompletedAt !== undefined &&
+    (!Number.isFinite(securityCompletedAt) ||
+      (securityCompletedAt > updatedAt &&
+        (!updatedAtIsWholeSecond || securityCompletedAt >= updatedAt + 1000)))
+  ) return undefined;
   if (
     !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
     !Number.isFinite(updatedAt) || createdAt > updatedAt ||

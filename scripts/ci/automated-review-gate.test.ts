@@ -171,6 +171,23 @@ function codexReviewSummary(
   };
 }
 
+function codexSecurityReviewSummary() {
+  const summary = codexReviewSummary();
+  const lines = (summary.body as string).split("\n");
+  const securityRow = lines[8].replace("📝 **Code Review**", "🔒 **Security Review**");
+  lines[1] = `<!-- codex-security-review:v1 ${JSON.stringify({
+    blockingSeverityThreshold: "P0",
+    headSha: HEAD,
+    mergeGateEnabled: false,
+    pullRequestNumber: 5013,
+    repository: "veryfront/veryfront-code",
+    status: "completed",
+  })} -->`;
+  lines.splice(9, 0, securityRow);
+  summary.body = lines.join("\n");
+  return summary;
+}
+
 function codexCompletionReaction(
   overrides: Record<string, unknown> = {},
 ) {
@@ -329,6 +346,65 @@ describe("automated review evidence", () => {
       ))?.source,
       "codex-comment",
       "legacy immutable no-findings proof remains valid",
+    );
+  });
+
+  it("accepts a completed code review with the connector's security summary format", async () => {
+    const summary = codexSecurityReviewSummary();
+    const evidence = {
+      reviews: [], comments: [summary], reactions: [codexCompletionReaction()],
+    };
+    assertEquals(
+      (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))?.source,
+      "codex-summary",
+    );
+    assertEquals(
+      await findAutomatedReview({ ...evidence, reactions: [] }, HEAD, () => Promise.resolve(HEAD)),
+      undefined,
+    );
+    assertEquals(await findAutomatedReview(evidence, OTHER_HEAD, () => Promise.resolve(HEAD)), undefined);
+    assertEquals(
+      await findAutomatedReview(
+        evidence, HEAD, () => Promise.resolve(HEAD), undefined,
+        Date.parse("2026-09-06T14:33:00Z"),
+      ),
+      undefined,
+      "a completed security display cannot revive code proof from before a review reset",
+    );
+  });
+
+  it("rejects malformed and ambiguous security displays without accepting them as code proof", async () => {
+    const summary = codexSecurityReviewSummary();
+    const body = summary.body as string;
+    const securityRow = body.split("\n")[9];
+    const cases = [
+      { ...summary, body: body.replace('"status":"completed"', '"status":"pending"') },
+      { ...summary, body: body.replace(`"headSha":"${HEAD}"`, `"headSha":"${OTHER_HEAD}"`) },
+      { ...summary, body: body.replace("codex-security-review:v1 {", "codex-security-review:v1 [") },
+      { ...summary, body: body.replace("📝 **Code Review**", "🔒 **Security Review**") },
+      { ...summary, body: body.replace(`${securityRow}\n`, `${securityRow}\n${securityRow}\n`) },
+      { ...summary, body: body.replace(`${securityRow}\n`, `${securityRow}\n| Unknown review | ✅ | head | Manual |\n`) },
+      { ...summary, user: bot("chatgpt-codex-connector[bot]", CODEX_ID + 1) },
+    ];
+    for (const comment of cases) {
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [comment], reactions: [codexCompletionReaction()] },
+          HEAD, () => Promise.resolve(HEAD),
+        ),
+        undefined,
+      );
+    }
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [], comments: [summary],
+          reactions: [codexCompletionReaction({ created_at: summary.updated_at })],
+        },
+        HEAD, () => Promise.resolve(HEAD),
+      ),
+      undefined,
+      "the pinned completion reaction must still be later than the entire updated summary",
     );
   });
 
