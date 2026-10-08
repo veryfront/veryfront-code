@@ -177,15 +177,51 @@ function parseCompletedCodexSummary(comment) {
     "| Review | Status | Commit | Review trigger |",
     "| --- | --- | --- | --- |",
   ];
-  if (
-    expectedPrefix.some((line, index) => lines[index] !== line) ||
-    (lines[9] !== undefined && lines[9] !== "") ||
-    lines.slice(9).some((line) => /^\|.*\|$/.test(line.trim()))
-  ) return undefined;
+  let securityMetadata;
+  if (lines[1] !== "") {
+    const metadata = /^<!-- codex-security-review:v1 (.+) -->$/.exec(lines[1] ?? "");
+    if (!metadata) return undefined;
+    try {
+      securityMetadata = JSON.parse(metadata[1]);
+    } catch {
+      return undefined;
+    }
+    if (
+      !securityMetadata || typeof securityMetadata !== "object" ||
+      Array.isArray(securityMetadata) ||
+      typeof securityMetadata.headSha !== "string" ||
+      !FULL_SHA.test(securityMetadata.headSha) ||
+      securityMetadata.status !== "completed" ||
+      typeof securityMetadata.mergeGateEnabled !== "boolean"
+    ) return undefined;
+  }
+  if (expectedPrefix.some((line, index) =>
+    index !== 1 && lines[index] !== line
+  )) return undefined;
   const row = CODEX_REVIEW_SUMMARY_ROW.exec(lines[8] ?? "");
   if (!row || row[1] !== row[2] || row[4].trim().length === 0) {
     return undefined;
   }
+  let endOfRows = 9;
+  let securityCompletedAt;
+  if (securityMetadata) {
+    const securityRow = CODEX_REVIEW_SUMMARY_ROW.exec(
+      (lines[9] ?? "").replace("🔒 **Security Review**", "📝 **Code Review**"),
+    );
+    if (
+      !lines[9]?.startsWith("| 🔒 **Security Review** |") ||
+      !securityRow || securityRow[1] !== securityRow[2] ||
+      securityRow[3] !== row[3] || securityRow[4].trim().length === 0 ||
+      !securityMetadata.headSha.toLowerCase().startsWith(row[3].toLowerCase())
+    ) return undefined;
+    securityCompletedAt = Date.parse(securityRow[1]);
+    if (!Number.isFinite(securityCompletedAt)) return undefined;
+    endOfRows = 10;
+  }
+  if (
+    (lines[endOfRows] !== undefined && lines[endOfRows] !== "") ||
+    lines.slice(endOfRows).some((line) => /^\|.*\|$/.test(line.trim()))
+  ) return undefined;
   const completedAt = Date.parse(row[1]);
   const createdAt = Date.parse(comment?.created_at ?? "");
   const updatedAtText = comment?.updated_at ?? "";
@@ -195,10 +231,14 @@ function parseCompletedCodexSummary(comment) {
   if (
     !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
     !Number.isFinite(updatedAt) || createdAt > updatedAt ||
+    (securityCompletedAt !== undefined &&
+      (securityCompletedAt < createdAt ||
+        (securityCompletedAt > updatedAt &&
+          (!updatedAtIsWholeSecond || securityCompletedAt >= updatedAt + 1000)))) ||
     (completedAt > updatedAt &&
       (!updatedAtIsWholeSecond || completedAt >= updatedAt + 1000))
   ) return undefined;
-  return { shortRef: row[3], completedAt, updatedAt };
+  return { shortRef: row[3], completedAt, updatedAt, securityHead: securityMetadata?.headSha };
 }
 
 async function resolvedCompletedCodexSummary(
@@ -210,6 +250,8 @@ async function resolvedCompletedCodexSummary(
   const summary = parseCompletedCodexSummary(comment);
   if (
     !summary ||
+    (summary.securityHead !== undefined &&
+      summary.securityHead.toLowerCase() !== headSha.toLowerCase()) ||
     (boundary !== undefined &&
       (summary.completedAt <= boundary.time ||
         summary.updatedAt <= boundary.time)) ||

@@ -261,6 +261,28 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review evidence", () => {
+  it("accepts completed security metadata and rejects contradictory summary rows", async () => {
+    const original = codexReviewSummary().body;
+    const metadata = `<!-- codex-security-review:v1 ${JSON.stringify({ blockingSeverityThreshold: "P0", headSha: HEAD, mergeGateEnabled: false, pullRequestNumber: 4425, repository: "veryfront/veryfront-code", status: "completed" })} -->`;
+    const lines = original.split("\n");
+    lines[1] = metadata;
+    lines.splice(9, 0, lines[8].replace("📝 **Code Review**", "🔒 **Security Review**"));
+    const body = lines.join("\n");
+    const evidence = (value: string) => ({ reviews: [], comments: [codexReviewSummary({ body: value })], reactions: [codexCompletionReaction()] });
+    const resolveHead = () => Promise.resolve(HEAD);
+    assertEquals((await findAutomatedReview(evidence(body), HEAD, resolveHead))?.source, "codex-summary");
+    for (const invalid of [
+      body.replace(metadata, "<!-- codex-security-review:v1 malformed -->"),
+      body.replace(`"headSha":"${HEAD}"`, `"headSha":"${"f".repeat(40)}"`),
+      body.replace('"status":"completed"', '"status":"pending"'),
+      body.replace(`"headSha":"${HEAD}"`, `"headSha":["${HEAD}"]`),
+      body.replace("🔒 **Security Review**", "📝 **Code Review**"),
+      body.replace("🔒 **Security Review**", "Unknown review"),
+      body.replace(lines[9], `${lines[9]}\n${lines[9]}`),
+      body.replace(lines[9], lines[9].replace(HEAD.slice(0, 7), "f".repeat(7))),
+    ]) assertEquals(await findAutomatedReview(evidence(invalid), HEAD, resolveHead), undefined);
+  });
+
   it("accepts fractional completion within GitHub's represented update second", async () => {
     const resolveHead = () => Promise.resolve(HEAD);
     const summary = codexReviewSummary({
