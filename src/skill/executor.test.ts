@@ -10,7 +10,6 @@ import {
   installMockFetch as createSandboxFetchMock,
   jsonResponse,
   type MockResponseEntry,
-  ndjsonResponse,
   textResponse,
 } from "../sandbox/sandbox.test-helpers.ts";
 import {
@@ -44,7 +43,7 @@ function mockFetch(responses: MockResponseEntry[]): void {
   installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
-function pendingErrorNdjsonResponse(error: Error): {
+function pendingErrorCommandResponse(error: Error): {
   response: Response;
   reject: () => void;
 } {
@@ -58,7 +57,7 @@ function pendingErrorNdjsonResponse(error: Error): {
   return {
     response: new Response(body, {
       status: 200,
-      headers: { "Content-Type": "application/x-ndjson" },
+      headers: { "Content-Type": "application/json" },
     }),
     reject: () => rejectBody(error),
   };
@@ -388,7 +387,7 @@ describe("src/skill/executor", () => {
           });
         },
         commandResponse([{ type: "exit", exitCode: 0 }]),
-        ndjsonResponse([
+        commandResponse([
           { type: "stdout", data: "cloud-snapshot\n" },
           { type: "exit", exitCode: 0 },
         ]),
@@ -408,6 +407,7 @@ describe("src/skill/executor", () => {
       });
 
       assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
+      assertStringIncludes(fetchCalls[3]!.url, "/commands/run");
       assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
       const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
         files: Array<{ path: string; content: string }>;
@@ -421,7 +421,7 @@ describe("src/skill/executor", () => {
     it("handles a late sandbox command rejection after timeout", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
-      const pendingCommand = pendingErrorNdjsonResponse(new Error("sandbox process killed"));
+      const pendingCommand = pendingErrorCommandResponse(new Error("sandbox process killed"));
       mockFetch([
         jsonResponse({
           id: "session-timeout",

@@ -431,22 +431,9 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const cmdString = sandboxRoot === undefined
         ? invocation
         : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
-      const commandPromise = (async () => {
-        let stdout = "";
-        let stderr = "";
-        let exitCode = 1;
-        for await (
-          const event of sandbox.streamCommand(cmdString, {
-            timeoutSeconds: Math.ceil(timeoutMs / 1000),
-          })
-        ) {
-          if (event.type === "stdout") stdout += event.data ?? "";
-          if (event.type === "stderr") stderr += event.data ?? "";
-          if (event.type === "exit") exitCode = event.exitCode ?? 1;
-          if (event.type === "error") throw new Error(event.data ?? "Sandbox script failed");
-        }
-        return { stdout, stderr, exitCode };
-      })();
+      const commandPromise = sandbox.runCommand(cmdString, {
+        timeoutSeconds: Math.ceil(timeoutMs / 1000),
+      });
       const result = await withTimeout(commandPromise, timeoutMs);
 
       if (result === TIMEOUT_SENTINEL) {
