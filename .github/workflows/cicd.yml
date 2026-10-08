@@ -2329,7 +2329,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Diagnose failed RC publish
+        if: ${{ needs.prerelease.result != 'success' }}
+        env:
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT INT TERM
+          docker run --rm --init \
+            --name "$container_name" \
+            --user 1000:1000 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges=true --network=bridge \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --workdir /source --env RC_VERSION --env GITHUB_SHA \
+            node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 \
+            node --experimental-transform-types --input-type=module -e '
+          import { readFileSync } from "node:fs";
+          import { diagnoseRegistryPackages, REQUEST_TIMEOUT_MS } from "./scripts/ci/registry-release-integrity.ts";
+          const version = process.env.RC_VERSION;
+          if (!version) throw new Error("Exact RC version is required for diagnostics.");
+          const names = ["veryfront"];
+          for (const member of JSON.parse(readFileSync("deno.json", "utf8")).workspace) {
+            if (!member.startsWith("./extensions/")) continue;
+            const manifest = JSON.parse(readFileSync(`${member}/deno.json`, "utf8"));
+            if (manifest.veryfront?.npm?.publish === false) continue;
+            names.push(manifest.name, ...(manifest.veryfront?.npm?.runtimePackages ?? []).map(pkg => pkg.name));
+          }
+          await diagnoseRegistryPackages(names.map(packageName => ({
+            packageName, version, expectedGitHead: process.env.GITHUB_SHA,
+            maxAttempts: 2, retryDelayMs: 120000, requestTimeoutMs: REQUEST_TIMEOUT_MS,
+          })));
+          '
       - name: Build registry validation image
+        if: ${{ needs.prerelease.result == 'success' }}
         timeout-minutes: 5
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
@@ -2359,6 +2393,7 @@ jobs:
           DOCKERFILE
           docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
       - name: Validate exact registry release
+        if: ${{ needs.prerelease.result == 'success' }}
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}

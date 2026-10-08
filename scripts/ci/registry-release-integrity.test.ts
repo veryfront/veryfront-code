@@ -1,6 +1,7 @@
 import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  diagnoseRegistryPackages,
   formatRegistryReleaseFailure,
   pollRegistryPackage,
   pollRegistryPackages,
@@ -1218,5 +1219,74 @@ describe("RC tag verification within registry propagation", () => {
     );
     assertEquals(error.classification, "lookup");
     assertStringIncludes(error.safeReason ?? "", "HTTP 500");
+  });
+});
+
+describe("failed publish diagnostics", () => {
+  it("lists every missing version after one settle window and still fails", async () => {
+    const lines: string[] = [];
+    const waits: number[] = [];
+    let lookups = 0;
+    const options = ["missing-a", "missing-b"].map((packageName) => ({
+      packageName,
+      version: VERSION,
+      expectedGitHead: GIT_HEAD,
+      maxAttempts: 181,
+      retryDelayMs: 10_000,
+      requestTimeoutMs: 15_000,
+      delay: (ms: number) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+      fetcher: () => {
+        lookups++;
+        return Promise.resolve(new Response("", { status: 404 }));
+      },
+    }));
+    const error = await captureError(() =>
+      diagnoseRegistryPackages(options, (line) => lines.push(line))
+    );
+    assertEquals(error.classification, "lookup");
+    assertEquals(lookups, 4);
+    assertEquals(waits, [120_000, 120_000]);
+    for (const name of ["missing-a", "missing-b"]) {
+      assertStringIncludes(lines.join("\n"), `${name}@${VERSION}: missing-version`);
+    }
+  });
+
+  it("reports a version accepted during settling as published but keeps failed publishing red", async () => {
+    const lines: string[] = [];
+    let attempts = 0;
+    let now = 0;
+    const error = await captureError(() =>
+      diagnoseRegistryPackages([{
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 181,
+        retryDelayMs: 10_000,
+        requestTimeoutMs: 15_000,
+        now: () => now,
+        delay: (ms: number) => {
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: (input: RequestInfo | URL) => {
+          if (String(input).endsWith(`/${VERSION}`)) {
+            attempts++;
+            return Promise.resolve(
+              attempts === 1
+                ? new Response("", { status: 404 })
+                : Response.json(publishedPackage()),
+            );
+          }
+          return Promise.resolve(Response.json(installIndex()));
+        },
+      }], (line) => lines.push(line))
+    );
+    assertEquals(error.classification, "lookup");
+    assertEquals(attempts, 2);
+    assertEquals(now, 120_000);
+    assertStringIncludes(lines.join("\n"), `${PACKAGE_NAME}@${VERSION}: published`);
   });
 });

@@ -54,6 +54,8 @@ export interface PollRegistryPackageOptions {
   retryDelayMs: number;
   requestTimeoutMs: number;
   requireRcTag?: boolean;
+  /** Check version presence only when diagnosing a failed publish. */
+  versionOnly?: boolean;
   fetcher?: typeof fetch;
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
@@ -437,6 +439,16 @@ async function attemptRegistryLookup(
       );
     }
     const metadata = await response.json() as RegistryPackageMetadata;
+    if (options.versionOnly) {
+      if (metadata.name !== options.packageName || metadata.version !== options.version) {
+        throw new RegistryReleaseError(
+          "wrong-version",
+          `${spec} returned different package metadata.`,
+          registryErrorContext(options, "exact version metadata mismatch"),
+        );
+      }
+      return { kind: "metadata", metadata };
+    }
     const incomplete = incompleteMetadataError(metadata, options);
     if (incomplete) return { kind: "failure", failure: incomplete };
     validateMetadata(metadata, options);
@@ -536,6 +548,7 @@ interface CliOptions {
   registryUrl: string;
   packages: string[];
   requireRcTag: boolean;
+  diagnostic: boolean;
 }
 
 function readCliOptions(args: string[]): CliOptions {
@@ -544,9 +557,11 @@ function readCliOptions(args: string[]): CliOptions {
   let registryUrl = DEFAULT_REGISTRY_URL;
   const packages: string[] = [];
   let requireRcTag = false;
+  let diagnostic = false;
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
-    if (argument === "--require-rc-tag") requireRcTag = true;
+    if (argument === "--diagnostic") diagnostic = true;
+    else if (argument === "--require-rc-tag") requireRcTag = true;
     else if (argument === "--version") version = args[++index] ?? "";
     else if (argument === "--git-head") gitHead = args[++index] ?? "";
     else if (argument === "--registry-url") registryUrl = args[++index] ?? "";
@@ -558,11 +573,11 @@ function readCliOptions(args: string[]): CliOptions {
     packages.some((name) => !name)
   ) {
     throw new Error(
-      "Usage: registry-release-integrity.ts --version <VERSION> --git-head <SHA> [--registry-url <URL>] [--require-rc-tag] --package <NAME> [--package <NAME> ...]",
+      "Usage: registry-release-integrity.ts --version <VERSION> --git-head <SHA> [--registry-url <URL>] [--require-rc-tag] [--diagnostic] --package <NAME> [--package <NAME> ...]",
     );
   }
   normalizedRegistryUrl(registryUrl);
-  return { version, gitHead, registryUrl, packages, requireRcTag };
+  return { version, gitHead, registryUrl, packages, requireRcTag, diagnostic };
 }
 
 function sanitizeFailureContextPart(value: string): string {
@@ -620,6 +635,35 @@ export async function pollRegistryPackages(
   await Promise.all(packages.map(pollRegistryPackage));
 }
 
+/** Diagnose partial publication without spending the successful publish budget. */
+export async function diagnoseRegistryPackages(
+  packages: readonly PollRegistryPackageOptions[],
+  report: (line: string) => void = console.log,
+): Promise<never> {
+  const results = await Promise.allSettled(packages.map((options) =>
+    pollRegistryPackage({
+      ...options,
+      versionOnly: true,
+      maxAttempts: 2,
+      retryDelayMs: 120_000,
+      budgetMs: 120_000,
+    })
+  ));
+  results.forEach((result, index) => {
+    const options = packages[index]!;
+    const status = result.status === "fulfilled"
+      ? "published"
+      : result.reason instanceof RegistryReleaseError
+      ? result.reason.classification
+      : "lookup";
+    report(`${options.packageName}@${options.version}: ${status}`);
+  });
+  throw new RegistryReleaseError(
+    "lookup",
+    "Publish did not succeed; registry diagnostics cannot authorize a release.",
+  );
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
   // Read individually: enumerating the environment needs unrestricted access,
@@ -632,7 +676,7 @@ async function main(args: string[]): Promise<void> {
       "VF_REGISTRY_PROPAGATION_DELAY_MS",
     ),
   });
-  await pollRegistryPackages(options.packages.map((packageName) => ({
+  const packages = options.packages.map((packageName) => ({
     packageName,
     version: options.version,
     expectedGitHead: options.gitHead,
@@ -641,7 +685,9 @@ async function main(args: string[]): Promise<void> {
     ...budget,
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
     onRetry: console.log,
-  })));
+  }));
+  if (options.diagnostic) await diagnoseRegistryPackages(packages);
+  await pollRegistryPackages(packages);
   console.log(
     `Registry release integrity: ${options.packages.length} exact package versions verified.`,
   );

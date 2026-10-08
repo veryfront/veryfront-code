@@ -2235,3 +2235,34 @@ describe("RC publication alongside the reused main Sonar scan", () => {
     }
   });
 });
+
+it("diagnoses failed RC publishing without building or executing installed packages", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const diagnostic = namedStep(registry, "Diagnose failed RC publish");
+  assertEquals(diagnostic.if, "${{ needs.prerelease.result != 'success' }}");
+  for (const name of ["Build registry validation image", "Validate exact registry release"]) {
+    assertEquals(namedStep(registry, name).if, "${{ needs.prerelease.result == 'success' }}");
+  }
+  for (
+    const required of [
+      "diagnoseRegistryPackages",
+      "--user 1000:1000",
+      "--read-only",
+      "--cap-drop ALL",
+      "--security-opt no-new-privileges=true",
+      "--network=bridge",
+      "target=/source,readonly",
+      "runtimePackages",
+      "npm?.publish === false",
+    ]
+  ) {
+    assertStringIncludes(String(diagnostic.run), required);
+  }
+  assertEquals(String(diagnostic.run).includes("docker build"), false);
+  assertEquals(String(diagnostic.run).includes("npm install"), false);
+  assertEquals(
+    asRecord(diagnostic.env, "diagnostic env").RC_VERSION,
+    "${{ needs.prerelease.outputs.version }}",
+  );
+});
