@@ -974,6 +974,31 @@ describe("observability/telemetry-error", () => {
       }]);
     });
 
+    it("records fixed Responses argument and terminal validation issues while retaining redaction", () => {
+      for (
+        const issue of [
+          "function call arguments were not valid JSON object text",
+          "completed function-call arguments name changed",
+          "terminal response status did not match its event type",
+        ]
+      ) {
+        const failure = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message: `openai request failed: invalid successful stream (${issue})`,
+        });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          streamIssue: issue,
+          messageRedacted: true,
+        }]);
+      }
+    });
+
     it("withholds unknown, altered and credential-bearing stream issue text", () => {
       for (
         const message of [
