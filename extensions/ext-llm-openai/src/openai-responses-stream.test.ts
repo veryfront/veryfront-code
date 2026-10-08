@@ -1,4 +1,6 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { summarizeErrorCausesForLog } from "#veryfront/observability/telemetry-error.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
@@ -64,6 +66,63 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  it("logs fixed contextual parser issues and withholds provider-controlled classifications", async () => {
+    const cases = [
+      {
+        events: [{ type: "response.output_text.delta", item_id: "missing", delta: "private text" }],
+        issue: "message delta referenced an unknown message item",
+      },
+      {
+        events: [{ type: "response.output_item.added", item: null }],
+        issue: "added output item was not an object",
+      },
+      {
+        events: [
+          { type: "response.output_item.added", item: { type: "reasoning", id: "r1" } },
+          { type: "response.output_item.done", item: { type: "reasoning", id: "r1", summary: {} } },
+        ],
+        issue: "completed reasoning summary was not an array",
+      },
+      {
+        events: [
+          {
+            type: "response.output_item.added",
+            item: { type: "message", id: "m1", role: "assistant", content: [] },
+          },
+          {
+            type: "response.output_text.annotation.added",
+            item_id: "m1",
+            content_index: 0,
+            annotation_index: 0,
+            annotation: { type: "url_citation", url: "private-url" },
+          },
+        ],
+        issue: undefined,
+        privateIssue: "output-text annotation 0: URL citation annotation was malformed",
+      },
+      {
+        events: [{ type: "private-provider-event" }],
+        issue: undefined,
+        privateIssue: "event type private-provider-event was unsupported",
+      },
+    ];
+    for (const { events, issue, privateIssue } of cases) {
+      const error = await assertRejects(
+        () => collectParts(streamFromText(events.map(data).join(""))),
+        ProviderRequestError,
+      );
+      assertEquals(
+        error.message,
+        `openai request failed: invalid successful stream (${issue ?? privateIssue})`,
+      );
+      const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+      assertExists(causes);
+      assertEquals(causes[0]?.streamIssue, issue);
+      assertEquals(causes[0]?.messageRedacted, true);
+      assertEquals(JSON.stringify(causes).includes("private"), false);
+    }
+  });
+
   it("reads gateway amounts sent as decimal strings from Responses usage", () => {
     assertEquals(
       extractOpenAIResponsesUsage({
