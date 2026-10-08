@@ -19,6 +19,7 @@ import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import {
   assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
@@ -297,6 +298,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       instructions: projectInstructions,
       skills: promptSkills,
       availableToolNames: modelVisibleToolNames,
+      skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(modelVisibleToolNames),
     });
 
     const instructionsWithToolInventory = withRuntimeToolInventory(

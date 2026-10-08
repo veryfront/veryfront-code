@@ -84,7 +84,10 @@ import {
   applyDefaultResearchArtifactPath,
   shouldRetryCreateResearchArtifactAsUpdate,
 } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
-import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "#veryfront/agent/hosted/cloud-runtime-system-messages.ts";
+import {
+  buildInteractiveVeryfrontCloudRuntimeInstructions,
+  resolveHostedRuntimeSkillLoaderToolName,
+} from "#veryfront/agent/hosted/cloud-runtime-system-messages.ts";
 import {
   type ExecutorRuntimeGrantData,
   ExecutorRuntimePreparationError,
@@ -870,6 +873,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
                 : [],
               environmentContext: steering.environmentContext,
               availableToolNames: allowedToolNames,
+              skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(allowedToolNames),
             })
             : definition.system ?? definition.instructions),
         temperature: request.temperature ?? definition.temperature,

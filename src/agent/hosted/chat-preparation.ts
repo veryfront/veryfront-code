@@ -29,6 +29,7 @@ import {
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "../runtime/message-preparation.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { AgentConfig } from "../types.ts";
 import {
   type ResolvedHostedRuntimeRequestConfig,
@@ -63,6 +64,7 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
@@ -141,6 +143,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   instructions: string;
   skills: RuntimeSkillDefinition[];
   availableToolNames?: readonly string[];
+  skillLoaderToolName?: RuntimeSkillLoaderToolName;
 };
 
 /** Input payload for hosted chat runtime creation preparation. */
@@ -525,6 +528,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
     instructions: steering.instructions,
     skills: promptSkills,
     availableToolNames: initialModelVisibleToolNames,
+    skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(initialModelVisibleToolNames),
   });
   return {
     creationOptions: {
