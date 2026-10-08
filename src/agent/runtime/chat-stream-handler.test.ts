@@ -1095,7 +1095,7 @@ describe("chat-stream-handler", () => {
       assertEquals(chunks, ["a", "b"]);
     });
 
-    it("times out an idle stream before any output starts", async () => {
+    it("rejects an idle stream before any output instead of completing with zero usage", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
       const result = {
@@ -1103,11 +1103,15 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", {
-        streamIdleTimeoutMs: 10,
-      });
+      await assertRejects(
+        () =>
+          processStream(result, state, controller, encoder, "t", {
+            streamIdleTimeoutMs: 10,
+          }),
+        Error,
+      );
 
-      assertEquals(state.finishReason, "stop");
+      assertEquals(state.finishReason, null);
       assertEquals(events, []);
     });
 
