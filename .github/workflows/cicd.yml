@@ -2347,20 +2347,25 @@ jobs:
             node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 \
             node --experimental-transform-types --input-type=module -e '
           import { readFileSync } from "node:fs";
-          import { diagnoseRegistryPackages, REQUEST_TIMEOUT_MS } from "./scripts/ci/registry-release-integrity.ts";
-          const version = process.env.RC_VERSION;
-          if (!version) throw new Error("Exact RC version is required for diagnostics.");
-          const names = ["veryfront"];
-          for (const member of JSON.parse(readFileSync("deno.json", "utf8")).workspace) {
-            if (!member.startsWith("./extensions/")) continue;
-            const manifest = JSON.parse(readFileSync(`${member}/deno.json`, "utf8"));
-            if (manifest.veryfront?.npm?.publish === false) continue;
-            names.push(manifest.name, ...(manifest.veryfront?.npm?.runtimePackages ?? []).map(pkg => pkg.name));
+          import { diagnoseRegistryPackages, formatRegistryReleaseFailure, REQUEST_TIMEOUT_MS } from "./scripts/ci/registry-release-integrity.ts";
+          try {
+            const version = process.env.RC_VERSION;
+            if (!version) throw new Error("Exact RC version is required for diagnostics.");
+            const names = ["veryfront"];
+            for (const member of JSON.parse(readFileSync("deno.json", "utf8")).workspace) {
+              if (!member.startsWith("./extensions/")) continue;
+              const manifest = JSON.parse(readFileSync(`${member}/deno.json`, "utf8"));
+              if (manifest.veryfront?.npm?.publish === false) continue;
+              names.push(manifest.name, ...(manifest.veryfront?.npm?.runtimePackages ?? []).map(pkg => pkg.name));
+            }
+            await diagnoseRegistryPackages(names.map(packageName => ({
+              packageName, version, expectedGitHead: process.env.GITHUB_SHA,
+              maxAttempts: 2, retryDelayMs: 120000, requestTimeoutMs: REQUEST_TIMEOUT_MS,
+            })));
+          } catch (error) {
+            console.error(formatRegistryReleaseFailure(error));
+            process.exit(1);
           }
-          await diagnoseRegistryPackages(names.map(packageName => ({
-            packageName, version, expectedGitHead: process.env.GITHUB_SHA,
-            maxAttempts: 2, retryDelayMs: 120000, requestTimeoutMs: REQUEST_TIMEOUT_MS,
-          })));
           '
       - name: Build registry validation image
         if: ${{ needs.prerelease.result == 'success' }}
