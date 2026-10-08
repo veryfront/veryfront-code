@@ -1,3 +1,10 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import {
+  encodePrivateText,
+  PrivateTextEncoder,
+  privateTextSlice,
+} from "#veryfront/security/private-text.ts";
 import {
   primordialArrayFlatMap,
   primordialArrayMap,
@@ -5,7 +12,10 @@ import {
   primordialArraySlice,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
-import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
+import {
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
   getCanonicalPrivateConversationRunEventType,
@@ -25,7 +35,7 @@ const MAX_SUMMARY_ARRAY_ITEMS = 8;
 const MAX_SUMMARY_OBJECT_KEYS = 24;
 const MAX_SUMMARY_STRING_BYTES = 8 * 1024;
 
-const encoder = new TextEncoder();
+const encoder = new PrivateTextEncoder();
 
 type ConversationRunEventRecord = Record<string, unknown> & { type: string };
 
@@ -36,10 +46,22 @@ function hasStringField<TField extends "delta" | "content">(
   return typeof event[field] === "string";
 }
 
+function measureConversationRunEventJsonByteLength(value: unknown): number {
+  return privateByteLength(encodePrivateText(
+    privateJsonStringify(
+      value,
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    ),
+    encoder,
+  ));
+}
+
 /** Return conversation run event JSON byte length. */
 export function getConversationRunEventJsonByteLength(value: unknown): number {
   try {
-    return encoder.encode(JSON.stringify(value)).byteLength;
+    return measureConversationRunEventJsonByteLength(value);
   } catch {
     return Number.POSITIVE_INFINITY;
   }
@@ -85,7 +107,11 @@ export function normalizeConversationRunEvent(
     return [event];
   }
   event = normalizeChildRunLifecycleEvent(event);
-  if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
+  // Invalid private serialization must fail the mandatory observation sink;
+  // only valid oversized data may become a bounded omission or summary.
+  if (
+    measureConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+  ) {
     return [event];
   }
 
@@ -246,7 +272,7 @@ function truncateEventStringFieldToLimit(
 
   const buildCandidate = (prefixLength: number): ConversationRunEventRecord => {
     if (prefixLength >= value.length) return event;
-    const truncatedValue = `${value.slice(0, prefixLength)}${suffix}`;
+    const truncatedValue = `${privateTextSlice(value, 0, prefixLength)}${suffix}`;
     return mirrorField
       ? { ...event, [field]: truncatedValue, [mirrorField]: truncatedValue }
       : { ...event, [field]: truncatedValue };
@@ -361,7 +387,9 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
       if (
-        getConversationRunEventJsonByteLength(buildPart(value.slice(startIndex, mid))) <=
+        getConversationRunEventJsonByteLength(
+          buildPart(privateTextSlice(value, startIndex, mid)),
+        ) <=
           MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
       ) {
         bestEndIndex = mid;
@@ -377,7 +405,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
       return [event];
     }
 
-    primordialArrayPush(parts, buildPart(value.slice(startIndex, bestEndIndex)));
+    primordialArrayPush(parts, buildPart(privateTextSlice(value, startIndex, bestEndIndex)));
     startIndex = bestEndIndex;
   }
 
@@ -385,7 +413,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
 }
 
 function splitUtf8String(value: string, maxBytes: number): string[] {
-  if (encoder.encode(value).byteLength <= maxBytes) {
+  if (privateByteLength(encodePrivateText(value, encoder)) <= maxBytes) {
     return [value];
   }
 
@@ -399,8 +427,8 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
 
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      const slice = value.slice(startIndex, mid);
-      if (encoder.encode(slice).byteLength <= maxBytes) {
+      const slice = privateTextSlice(value, startIndex, mid);
+      if (privateByteLength(encodePrivateText(slice, encoder)) <= maxBytes) {
         bestEndIndex = mid;
         low = mid + 1;
       } else {
@@ -408,7 +436,7 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
       }
     }
 
-    primordialArrayPush(parts, value.slice(startIndex, bestEndIndex));
+    primordialArrayPush(parts, privateTextSlice(value, startIndex, bestEndIndex));
     startIndex = bestEndIndex;
   }
 
@@ -416,13 +444,13 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
 }
 
 function truncateUtf8String(value: string, maxBytes: number, suffix: string): string {
-  if (encoder.encode(value).byteLength <= maxBytes) {
+  if (privateByteLength(encodePrivateText(value, encoder)) <= maxBytes) {
     return value;
   }
 
-  const suffixBytes = encoder.encode(suffix).byteLength;
+  const suffixBytes = privateByteLength(encodePrivateText(suffix, encoder));
   if (suffixBytes >= maxBytes) {
-    return suffix.slice(0, Math.max(1, maxBytes));
+    return privateTextSlice(suffix, 0, Math.max(1, maxBytes));
   }
 
   const prefixBudget = maxBytes - suffixBytes;

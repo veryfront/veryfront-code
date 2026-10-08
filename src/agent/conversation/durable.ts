@@ -1,3 +1,6 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { terminalRoute } from "./terminal-route.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
@@ -1877,25 +1880,30 @@ export async function appendConversationRunEvents(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const requestBody = JSON.stringify({
-      ...(input.expectedPreviousEventId !== undefined
-        ? { expected_previous_event_id: input.expectedPreviousEventId }
-        : {}),
-      ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
-        ? {
-          expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
-        }
-        : {}),
-      ...(submittedToolCallAdmissionStarts.length > 0
-        ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
-        : {}),
-      ...(submittedRuntimeObservations.length > 0
-        ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
-        : {}),
-      events: normalizedEvents,
-    });
+    const requestBody = privateJsonStringify(
+      {
+        ...(input.expectedPreviousEventId !== undefined
+          ? { expected_previous_event_id: input.expectedPreviousEventId }
+          : {}),
+        ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
+          ? {
+            expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
+          }
+          : {}),
+        ...(submittedToolCallAdmissionStarts.length > 0
+          ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
+          : {}),
+        ...(submittedRuntimeObservations.length > 0
+          ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
+          : {}),
+        events: normalizedEvents,
+      },
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
     if (
-      new TextEncoder().encode(requestBody).byteLength >
+      privateByteLength(encodePrivateText(requestBody)) >
         MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
     ) {
       throw new DurableRunEventPersistenceError(
