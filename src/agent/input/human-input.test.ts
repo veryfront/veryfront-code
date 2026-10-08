@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RunCancelledError, RunResumeSessionManager } from "../index.ts";
@@ -298,6 +299,7 @@ describe("agent/human-input", () => {
   });
 
   it("polls durable human input snapshots until a resolution is available", async () => {
+    using time = new FakeTime();
     const snapshots: Array<{
       status: "open" | "submitted" | "expired";
       values: Record<string, string | number | boolean | null>;
@@ -306,7 +308,7 @@ describe("agent/human-input", () => {
       { status: "submitted", values: { repo: "veryfront" } },
     ];
 
-    const result = await waitForDurableHumanInputResolution({
+    const pending = waitForDurableHumanInputResolution({
       deadline: Date.now() + 100,
       pollIntervalMs: 1,
       getSnapshot: () => snapshots.shift() ?? { status: "expired" as const, values: {} },
@@ -319,6 +321,11 @@ describe("agent/human-input", () => {
           : undefined,
     });
 
+    await time.runMicrotasks();
+    assertEquals(snapshots.length, 1, "the open snapshot must wait for the polling interval");
+    await time.tickAsync(1);
+    const result = await pending;
+    assertEquals(snapshots.length, 0, "the next poll must consume the submitted snapshot");
     assertEquals(result, {
       submitted: true,
       values: {
