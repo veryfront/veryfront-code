@@ -11,6 +11,7 @@ import {
   startRequestTracking,
 } from "./request-lifecycle.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { gracefullyShutdownProductionServerWithDependencies } from "../graceful-shutdown.ts";
 
 describe("server/runtime-handler/request-lifecycle", () => {
   afterEach(() => {
@@ -295,7 +296,78 @@ describe("server/runtime-handler/request-lifecycle", () => {
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
 
-    it("should complete non-streaming responses immediately", () => {
+    for (const outcome of ["close", "cancel", "error"] as const) {
+      it(`drains delayed HTML on ${outcome} before aborting the server`, async () => {
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        const source = new ReadableStream<Uint8Array>({
+          start(value) {
+            controller = value;
+            value.enqueue(new TextEncoder().encode("<html>"));
+          },
+        });
+        startRequestTracking("lifecycle-html-shutdown", "slug", "/", "GET", "preview", "rel-1");
+        const response = completeRequestTrackingOnResponseEnd(
+          "lifecycle-html-shutdown",
+          new Response(source, { headers: { "content-type": "text/html", "x-release": "rel-1" } }),
+          false,
+        );
+        const reader = response.body!.getReader();
+        const events: string[] = [];
+        let startedDrain!: () => void;
+        const drainStarted = new Promise<void>((resolve) => startedDrain = resolve);
+        const shutdown = gracefullyShutdownProductionServerWithDependencies({
+          signal: "SIGTERM",
+          drainTimeoutMs: 1000,
+          abort: () => {
+            events.push("abort");
+          },
+          stop: () => {
+            events.push("stop");
+            return Promise.resolve();
+          },
+          logger: { info: () => {}, warn: () => {} },
+        }, {
+          markServerShuttingDown: () => {},
+          setServerInitialized: () => {},
+          requestTracker: {
+            getInFlightCount: () => requestTracker.getInFlightCount(),
+            waitForDrain: (timeout) => {
+              startedDrain();
+              return requestTracker.waitForDrain(timeout, 1);
+            },
+            shutdown: () => requestTracker.shutdown(),
+          },
+          shutdownTelemetry: () => Promise.resolve(),
+        });
+        try {
+          await drainStarted;
+          assertEquals(requestTracker.getInFlightCount(), 1);
+          assertEquals(events, []);
+          assertEquals(response.headers.get("x-release"), "rel-1");
+          assertEquals(new TextDecoder().decode((await reader.read()).value), "<html>");
+          assertEquals(events, []);
+          if (outcome === "close") {
+            controller.enqueue(new TextEncoder().encode("done</html>"));
+            controller.close();
+            assertEquals(new TextDecoder().decode((await reader.read()).value), "done</html>");
+            assertEquals((await reader.read()).done, true);
+          } else if (outcome === "cancel") {
+            await reader.cancel("client disconnected");
+          } else {
+            const pendingRead = reader.read();
+            controller.error(new Error("HTML failed"));
+            await assertRejects(() => pendingRead, Error, "HTML failed");
+          }
+          assertEquals(await shutdown, true);
+          assertEquals(events, ["abort", "stop"]);
+        } finally {
+          await reader.cancel().catch(() => {});
+          await shutdown;
+        }
+      });
+    }
+
+    it("keeps ordinary response bodies tracked until consumed", async () => {
       const beforeCount = requestTracker.getInFlightCount();
       startRequestTracking(
         "lifecycle-response",
@@ -313,7 +385,51 @@ describe("server/runtime-handler/request-lifecycle", () => {
       );
 
       assertEquals(response.status, 200);
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+      assertEquals(await response.text(), "ok");
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
+    it("should complete bodyless responses immediately", () => {
+      const response = new Response(null, { status: 204 });
+      startRequestTracking("lifecycle-bodyless", "slug", "/", "GET", "preview", "rel-1");
+      assertEquals(
+        completeRequestTrackingOnResponseEnd("lifecycle-bodyless", response, false),
+        response,
+      );
+      assertEquals(requestTracker.getInFlightCount(), 0);
+    });
+
+    it("still forces bounded shutdown when an ordinary body does not settle", async () => {
+      startRequestTracking("lifecycle-html-drain-timeout", "slug", "/", "GET", "preview", "rel-1");
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-html-drain-timeout",
+        new Response(new ReadableStream(), { headers: { "content-type": "text/html" } }),
+        false,
+      );
+      const events: string[] = [];
+      const drained = await gracefullyShutdownProductionServerWithDependencies({
+        signal: "SIGTERM",
+        drainTimeoutMs: 0,
+        abort: () => {
+          events.push("abort");
+        },
+        stop: () => {
+          events.push("stop");
+          return Promise.resolve();
+        },
+        logger: { info: () => {}, warn: () => {} },
+      }, {
+        markServerShuttingDown: () => {},
+        setServerInitialized: () => {},
+        requestTracker,
+        shutdownTelemetry: () => Promise.resolve(),
+      });
+      assertEquals(drained, false);
+      assertEquals(events, ["abort", "stop"]);
+      await response.body!.cancel();
     });
 
     it("should keep timed-out work in flight until the handler settles", async () => {

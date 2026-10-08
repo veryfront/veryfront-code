@@ -121,8 +121,8 @@ export function completeRequestTracking(
 
 /**
  * Keep streaming responses in the shutdown drain set until their body settles.
- * Handler completion only means response headers are ready; an SSE body may
- * continue producing events for several minutes after that point.
+ * Handler completion only means response headers are ready; HTML and SSE bodies
+ * can continue producing content after that point.
  */
 export function completeRequestTrackingOnResponseEnd(
   requestId: string,
@@ -140,7 +140,7 @@ export function completeRequestTrackingOnResponseEnd(
     return response;
   }
 
-  if (!isEventStreamResponse(response) && !settleResponseBody) {
+  if (!response.body) {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
     return response;
   }
@@ -149,9 +149,10 @@ export function completeRequestTrackingOnResponseEnd(
   const settle = () => {
     completeRequestTracking(requestId, response.status, isTimeout, profile);
   };
-  return settleResponseBody
-    ? completeOnResponseBodyConsumption(response, settle)
-    : completeOnResponseBodySettlement(response, settle);
+  if (settleResponseBody) return completeOnResponseBodyConsumption(response, settle);
+  return isEventStreamResponse(response)
+    ? completeOnResponseBodySettlement(response, settle)
+    : completeOnResponseBodyConsumption(response, settle, undefined, { highWaterMark: 0 });
 }
 
 /**
