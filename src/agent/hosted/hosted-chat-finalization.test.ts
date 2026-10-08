@@ -1221,10 +1221,14 @@ describe("agent/hosted-chat-finalization", () => {
       if (isAborted) {
         assertEquals(terminalStates[0]!.terminalErrorCode, "ABORTED");
         assertEquals("output" in terminalStates[0]!, false);
-      } else {assertEquals(
+      } else {
+        assertEquals<
+          ChatUiMessage["parts"] | ReturnType<typeof projection.snapshot>["parts"]
+        >(
           projection.snapshot().parts,
           (terminalStates[0]!.output as ChatUiMessage).parts,
-        );}
+        );
+      }
       if (!isAborted) {
         assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [metadata, {
           type: "tool-web_fetch",
