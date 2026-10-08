@@ -305,6 +305,51 @@ describe("filterHostedChatRuntimeLocalTools", () => {
       "runtime tool inventory must use code-unit ordering for model-visible names",
     );
   });
+
+  it("maps a legacy form selector to the canonical platform form when no project form owns the name", () => {
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+    const result = filterHostedChatRuntimeLocalTools({
+      tools: {
+        sleep: localTool("Sleep"),
+        veryfront__form_input: canonicalForm,
+      },
+      allowedToolNames: new Set(["form_input"]),
+    });
+
+    assertEquals(Object.keys(result), ["veryfront__form_input"]);
+    assertStrictEquals(result.veryfront__form_input, canonicalForm);
+  });
+
+  it("does not map a legacy form selector over a project-owned form", () => {
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+    const projectForm = localTool("Project form input");
+    const result = filterHostedChatRuntimeLocalTools({
+      tools: {
+        form_input: projectForm,
+        veryfront__form_input: canonicalForm,
+      },
+      allowedToolNames: new Set(["form_input"]),
+    });
+
+    assertEquals(Object.keys(result), ["form_input"]);
+    assertStrictEquals(result.form_input, projectForm);
+  });
+
+  it("does not map a legacy form selector to an untrusted canonical-looking project form", () => {
+    const projectCanonicalForm = localTool("Project canonical-looking form input");
+    const result = filterHostedChatRuntimeLocalTools({
+      tools: {
+        veryfront__form_input: projectCanonicalForm,
+      },
+      allowedToolNames: new Set(["form_input"]),
+    });
+
+    assertEquals(Object.keys(result), []);
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without widening delegation", async () => {

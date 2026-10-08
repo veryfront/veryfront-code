@@ -1,6 +1,6 @@
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
@@ -575,6 +575,51 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restrictedAgent.config.skills, false);
     assertEquals(tools.load_skill, false);
     assertEquals(tools.veryfront__load_skill, false);
+  });
+
+  it("allows an explicit canonical loader grant beside a legacy denial", () => {
+    const restrictedAgent = createEphemeralAgent(
+      applyAgUiRuntimeRestrictions(
+        createConfig({ tools: { load_skill: false, veryfront__load_skill: true } }),
+        { allowedTools: ["veryfront__load_skill"] },
+      ),
+    );
+
+    const tools = restrictedAgent.config.tools;
+    assert(tools !== undefined && tools !== true);
+    assertEquals(restrictedAgent.config.skills, true);
+    assertEquals(tools.load_skill, false);
+    assertEquals(typeof tools.veryfront__load_skill, "object");
+  });
+
+  it("does not treat an inherited canonical loader grant as configured", () => {
+    const sourceTools = { load_skill: false };
+    Object.setPrototypeOf(sourceTools, { veryfront__load_skill: true });
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: sourceTools }),
+      { allowedTools: ["veryfront__load_skill"] },
+    );
+    assertEquals(restricted.skills, false);
+    const tools = restricted.tools;
+    assert(tools !== undefined && tools !== true);
+    assertEquals(tools.veryfront__load_skill, false);
+  });
+
+  it("keeps a concrete canonical loader binding beside a legacy denial", () => {
+    const canonicalLoader = toolRegistry.get("load_skill");
+    assert(canonicalLoader !== undefined);
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: { load_skill: false, veryfront__load_skill: canonicalLoader },
+      }),
+      { allowedTools: ["veryfront__load_skill"] },
+    );
+
+    const tools = restricted.tools;
+    assert(tools !== undefined && tools !== true);
+    assertEquals(restricted.skills, true);
+    assertEquals(tools.load_skill, false);
+    assertEquals(tools.veryfront__load_skill, canonicalLoader);
   });
 
   it("disables skills when only non-loader canonical skill tools are allowed", () => {

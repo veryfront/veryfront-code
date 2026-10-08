@@ -61,6 +61,7 @@ import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import type { AgentConfig } from "../types.ts";
+import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
 
 const apply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
@@ -524,10 +525,36 @@ export function filterHostedChatRuntimeLocalTools(input: {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const entries = filterValues(
     ownEntries(input.tools),
-    (entry) => allowedToolNames ? allowedToolNames.has(entry[0]) : true,
+    (entry) =>
+      isHostedLocalToolSelected({
+        toolName: entry[0],
+        tool: entry[1],
+        tools: input.tools,
+        allowedToolNames,
+      }),
   );
 
   return recordFromEntries(sortValues(entries, (left, right) => compareStrings(left[0], right[0])));
+}
+
+function isProjectOwnedLocalToolName(tools: HostToolSet, toolName: string): boolean {
+  if (!hasOwn(tools, toolName)) return false;
+  const tool = tools[toolName];
+  return tool !== undefined && !hasTrustedHostToolProvenance(tool);
+}
+
+function isHostedLocalToolSelected(input: {
+  toolName: string;
+  tool: HostToolSet[string];
+  tools: HostToolSet;
+  allowedToolNames: ReadonlySet<string> | null;
+}): boolean {
+  if (input.allowedToolNames === null) return true;
+  if (input.allowedToolNames.has(input.toolName)) return true;
+  return input.toolName === CANONICAL_FORM_INPUT_TOOL_ID &&
+    input.allowedToolNames.has(FORM_INPUT_TOOL_ID) &&
+    hasTrustedHostToolProvenance(input.tool) &&
+    !isProjectOwnedLocalToolName(input.tools, FORM_INPUT_TOOL_ID);
 }
 
 function shouldIncludeHostedWebFetchFallback(input: {

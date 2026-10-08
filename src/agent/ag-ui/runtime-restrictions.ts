@@ -160,17 +160,32 @@ function hasExplicitToolDenial(
   return tools !== undefined && tools !== true && tools[toolName] === false;
 }
 
+function hasConfiguredToolEntry(
+  tools: AgentConfig["tools"],
+  toolName: string,
+): boolean {
+  if (tools === undefined || tools === true) return false;
+  const names = ObjectKeys(tools);
+  for (let index = 0; index < names.length; index++) {
+    if (names[index] === toolName) return tools[toolName] !== undefined;
+  }
+  return false;
+}
+
 function hasExplicitSkillInfrastructureDenial(
   tools: AgentConfig["tools"],
   toolName: string,
 ): boolean {
+  if (hasExplicitToolDenial(tools, toolName)) return true;
   for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS.length; index++) {
     const pair = SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS[index];
     if (pair === undefined) continue;
     const [legacyName, canonicalName] = pair;
+    if (toolName !== legacyName && toolName !== canonicalName) continue;
+    const siblingName = toolName === legacyName ? canonicalName : legacyName;
     if (
-      (toolName === legacyName || toolName === canonicalName) &&
-      (hasExplicitToolDenial(tools, legacyName) || hasExplicitToolDenial(tools, canonicalName))
+      !hasConfiguredToolEntry(tools, toolName) &&
+      hasExplicitToolDenial(tools, siblingName)
     ) {
       return true;
     }
