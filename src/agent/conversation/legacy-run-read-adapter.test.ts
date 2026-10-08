@@ -684,6 +684,39 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
+  it("replays provider ownership first learned on a version 1 error result", () => {
+    for (const providerExecuted of [true, false]) {
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "tool-input-start", toolCallId: "fetch-1", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "fetch-1", toolName: "web_fetch", input: {} },
+        {
+          type: "tool-output-error",
+          toolCallId: "fetch-1",
+          errorText: "Provider fetch failed",
+          providerExecuted,
+        },
+      ]);
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        providerExecuted ? true : undefined,
+      );
+      const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return;
+      const providerResults = result.frames.filter((frame) =>
+        frame.event.type === "provider_tool_result"
+      );
+      assertEquals(providerResults.length, providerExecuted ? 1 : 0);
+      if (providerExecuted) {
+        assertEquals(
+          (providerResults[0]?.event as { output?: unknown }).output,
+          "Provider fetch failed",
+        );
+        assertEquals((providerResults[0]?.event as { isError?: boolean }).isError, true);
+      }
+    }
+  });
+
   it("keeps a version 1 tool output that cannot be JSON encoded verbatim", () => {
     // `JSON.stringify` throws on a bigint, so the writer falls back to
     // `String(value)`. That rendering is itself valid JSON text, so an unmarked

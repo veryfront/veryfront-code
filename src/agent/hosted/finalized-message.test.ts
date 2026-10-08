@@ -974,3 +974,41 @@ for (const current of ["Done", "Don"]) {
     );
   });
 }
+
+Deno.test("finalized text recovers the latest partial repeated block", () => {
+  const responseMessage = {
+    id: "assistant-1",
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: "Done" }, { type: "text" as const, text: "Do" }],
+  };
+  const input = {
+    responseMessage,
+    finalStep: { text: "Done" },
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const state = buildFinalizedMessageState(input);
+  assertEquals(state.sanitizedFinalizedMessage.parts, [
+    ...responseMessage.parts,
+    { type: "text", text: "ne" },
+  ]);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: state.sanitizedFinalizedMessage })
+      .sanitizedFinalizedMessage.parts,
+    state.sanitizedFinalizedMessage.parts,
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      ...state,
+      isAborted: false,
+      finalStep: input.finalStep,
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-1",
+    }),
+    [
+      { type: "text-start", id: "assistant-1" },
+      { type: "text-delta", id: "assistant-1", delta: "ne" },
+      { type: "text-end", id: "assistant-1" },
+    ],
+  );
+});

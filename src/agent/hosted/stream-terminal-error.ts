@@ -155,7 +155,7 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
         (part.type === "text" && typeof part.text === "string" && part.text.trim().length === 0) ||
         (part.type === "reasoning" && !isPersistedReasoningPart({
           id: "",
-          text: typeof part.text === "string" ? part.text : "",
+          text: typeof part.text === "string" ? part.text.trim() : "",
           signature: typeof part.signature === "string" ? part.signature : undefined,
           redactedData: typeof part.redactedData === "string" ? part.redactedData : undefined,
         })))

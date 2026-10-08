@@ -147,7 +147,12 @@ export function buildFinalizedMessageState(
             return fallbackPart.text.startsWith(prefix) ? prefix.length : 0;
           }));
           if (prefixLength === 0) break;
-          if (prefixLength > matchedLength) {
+          // Prefer the latest compatible sequence; an earlier complete repeated
+          // block must not mask a later partial block from the final step.
+          if (
+            start + count > matchingStart + matchedCount ||
+            (start + count === matchingStart + matchedCount && prefixLength > matchedLength)
+          ) {
             matchingStart = start;
             matchedCount = count;
             matchedLength = prefixLength;

@@ -280,7 +280,9 @@ Deno.test("getEmptyHostedFinalizedMessageTerminalError keeps unknown streamed er
 });
 
 Deno.test("empty streamed reasoning shells do not make an empty response successful", () => {
-  for (const extra of [{}, { signature: "" }, { redactedData: "" }]) {
+  for (
+    const extra of [{}, { signature: "" }, { redactedData: "" }, { text: " " }, { text: "\n\t" }]
+  ) {
     const message = {
       parts: [{ type: "data-veryfront.runtime_context" }, {
         type: "reasoning",
@@ -291,7 +293,12 @@ Deno.test("empty streamed reasoning shells do not make an empty response success
     assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message }), true);
     assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: true, message }), false);
   }
-  for (const extra of [{ signature: "sig" }, { redactedData: "opaque" }, { text: " " }]) {
+  for (
+    const extra of [{ signature: "sig" }, { redactedData: "opaque" }, { text: "Reasoning" }, {
+      text: " ",
+      signature: "sig",
+    }, { text: "\n", redactedData: "opaque" }]
+  ) {
     assertEquals(
       shouldFailEmptyHostedFinalizedMessage({
         isAborted: false,
