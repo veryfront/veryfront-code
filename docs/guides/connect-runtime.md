@@ -104,6 +104,10 @@ export async function POST(request: Request): Promise<Response> {
     title: "Runtime connection demo",
   });
   const prompt = "Say hello to the teammate inspecting this run.";
+  await api(`/conversations/${conversation.id}/messages`, {
+    role: "user",
+    parts: [{ type: "text", text: prompt }],
+  });
   const admissionKey = crypto.randomUUID();
   const accepted = await api<{ id: string }>("/runs", {
     project_id: projectId,
@@ -192,8 +196,11 @@ complete the run: `completeRun` performs the terminal operation using the
 claim's separate terminal credential. See the
 [`veryfront/agent` API reference](../api-reference/veryfront/agent.md).
 
+Save the prompt as a user message before you create the run. Worker admission
+requires the conversation's latest stored message to be a user message.
 The canonical request selects an agent with `target` and records its prompt as
-`input`. `config.agent_admission` selects the conversation-owned worker path.
+`input`. It does not create the trigger message. `config.agent_admission` selects
+the conversation-owned worker path.
 Use the registered worker's implementation kind and worker key. A bare
 `execution.runtime` override is not supported by this admission path.
 
