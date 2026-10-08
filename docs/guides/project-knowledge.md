@@ -80,7 +80,10 @@ metadata. An explicit `lookup_target` still returns its original content. Keep
 frontmatter a valid YAML mapping so path and metadata search both work.
 
 Use `inspectOkfDocument(path, source)` from `veryfront/knowledge` to check the
-document envelope without changing it. The result retains the exact source,
+document envelope without changing it. Pass a bundle-relative path. For a
+canonical lookup path such as `knowledge/index.md`, use
+`inspectOkfDocument(path, source, { bundleRoot: "knowledge" })`; use the actual
+bundle root for custom locations. The result retains the exact source,
 Markdown body, and unknown metadata fields. `envelopeConforms` checks the
 leading YAML mapping and required concept `type`; reserved `index.md` and
 `log.md` files are distinguished from concepts. Diagnostics explain missing or
