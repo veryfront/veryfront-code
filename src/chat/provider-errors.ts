@@ -1,3 +1,4 @@
+import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import {
   ProviderError,
@@ -528,6 +529,11 @@ function parseProviderErrorInner(
       return DEFAULT_EXTERNAL_SERVICE_ERROR;
     }
     seen.add(error);
+  }
+
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  if (providerFailure.found) {
+    return parseProviderErrorInner(providerFailure.cause, seen, depth + 1);
   }
 
   // Native provider status has authority over response text. Gateway refusals

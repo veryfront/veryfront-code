@@ -44,6 +44,9 @@ import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts"
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 
+import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
   signal?: AbortSignal;
@@ -1816,6 +1819,61 @@ describe("agent/hosted-chat-execution-runtime", () => {
       [{ status: "failed", terminalErrorCode: "STREAM_ERROR", terminalErrorMessage: "boom" }],
       "durable root run must be finalized as failed",
     );
+  });
+
+  it("fail preserves private native provider authentication classification in durable terminal state", async () => {
+    for (const status of [401, 403]) {
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      let disposed = 0;
+      let cleanupCount = 0;
+      const runtime = createHostedChatExecutionRuntime({
+        agentId: "agent-1",
+        modelId: "openai/gpt-5.4",
+        originalMessages: [],
+        runContext: { withContext: (fn) => fn() },
+        abortSignal: new AbortController().signal,
+        bootstrap: {
+          cleanup: async () => {
+            cleanupCount += 1;
+          },
+          lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+          rootStreamWatchdog: createRootStreamWatchdog({
+            disposed: () => {
+              disposed += 1;
+            },
+          }),
+          streamResult: createStreamResult({
+            finalStep: {},
+            captureOptions: () => {},
+          }),
+          streamingMessageId: "stream-message-1",
+          capturedMessageId: "stream-message-1",
+          capturedConversationId: "conversation-1",
+          mirroredToolChunkState: createMirroredToolChunkState(),
+        },
+      });
+
+      await runtime.fail(createRuntimeProviderStreamFailure(
+        new ProviderRequestError({
+          provider: "anthropic",
+          status,
+          retryable: false,
+          message: "synthetic-private-diagnostic",
+        }),
+      ));
+
+      assertEquals(disposed, 1, "watchdog must be disposed on fail");
+      assertEquals(cleanupCount, 1, "cleanup must run once on fail");
+      assertEquals(
+        terminalStates,
+        [{
+          status: "failed",
+          terminalErrorCode: "agent-provider-auth-error",
+          terminalErrorMessage: "Agent provider authentication failed",
+        }],
+        "durable root run must be finalized as failed",
+      );
+    }
   });
 
   it("fail logs and resolves when marking the durable root run failed rejects", async () => {
