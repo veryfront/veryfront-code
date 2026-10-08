@@ -42,6 +42,8 @@ export interface MirroredToolChunkState {
   toolCallNames: Map<string, string>;
   /** Actual durable reasoning content IDs, reserved during final-step recovery. */
   reasoningContentIds?: Set<string>;
+  /** Ownership corrections already appended by trusted finalization. */
+  ownershipCorrectedToolCallIds?: Set<string>;
 }
 
 /** State for create mirrored tool chunk. */
@@ -54,6 +56,7 @@ export function createMirroredToolChunkState(): MirroredToolChunkState {
     outputDeniedToolCallIds: new Set<string>(),
     toolCallNames: new Map<string, string>(),
     reasoningContentIds: new Set<string>(),
+    ownershipCorrectedToolCallIds: new Set<string>(),
   };
 }
 
@@ -69,6 +72,7 @@ export function cloneMirroredToolChunkState(
     outputDeniedToolCallIds: new Set(state.outputDeniedToolCallIds),
     toolCallNames: new Map(state.toolCallNames),
     reasoningContentIds: new Set(state.reasoningContentIds),
+    ownershipCorrectedToolCallIds: new Set(state.ownershipCorrectedToolCallIds),
   };
 }
 

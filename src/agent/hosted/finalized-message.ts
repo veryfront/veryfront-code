@@ -1,3 +1,5 @@
+import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "../conversation/tool-result-ownership.ts";
+import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
   isToolUiPart,
@@ -20,6 +22,15 @@ import {
 } from "../streaming/mirrored-tool-chunk-state.ts";
 
 type ReasoningPart = Extract<ChatUiMessage["parts"][number], { type: "reasoning" }>;
+
+function toolPartName(part: ChatUiMessage["parts"][number]): string {
+  if (!isToolUiPart(part)) return "";
+  return typeof part.toolName === "string" && part.toolName.length > 0
+    ? part.toolName
+    : part.type.startsWith("tool-")
+    ? part.type.slice(5)
+    : "";
+}
 
 function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
   return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
@@ -208,6 +219,15 @@ export function buildFinalizedMessageState(
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
   const completedParts = persistedMessage.parts.map((part) => {
     if (
+      !input.isAborted && isToolUiPart(part) && part.state === "output-available" &&
+      part.providerExecuted === undefined && finalStepFallbackParts.some((fallback) =>
+        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
+        toolPartName(fallback) === toolPartName(part) && fallback.providerExecuted === true
+      )
+    ) {
+      return { ...part, providerExecuted: true };
+    }
+    if (
       input.isAborted || !isToolUiPart(part) ||
       !["pending", "input-streaming", "input-available", "approval-requested", "approval-responded"]
         .includes(part.state)
@@ -221,7 +241,9 @@ export function buildFinalizedMessageState(
         (fallback.state === "input-available" && fallback.providerExecuted === true &&
           part.providerExecuted !== false))
     );
-    if (!completed || !isToolUiPart(completed)) return part;
+    if (!completed || !isToolUiPart(completed)) {
+      return part;
+    }
     if (completed.state === "input-available" && completed.providerExecuted === true) {
       return {
         ...part,
@@ -557,4 +579,44 @@ export function buildDetachedFallbackChunks(
       ? []
       : buildMissingFallbackTextChunks([], input.finalStep, input.capturedMessageId)),
   ];
+}
+
+/** Current hosted mirrors append V1 metadata; V2 writers must enter through lifecycle frames. */
+export function buildToolResultOwnershipCorrectionEvents(input: {
+  persistedMessage: ChatUiMessage;
+  finalizedMessage: ChatUiMessage;
+  mirroredToolChunkState: MirroredToolChunkState;
+  isAborted: boolean;
+}): ConversationRunEvent[] {
+  if (input.isAborted || !input.persistedMessage.id) return [];
+  return input.finalizedMessage.parts.flatMap((part) => {
+    if (
+      !isToolUiPart(part) || part.state !== "output-available" || part.providerExecuted !== true ||
+      !input.mirroredToolChunkState.outputAvailableToolCallIds.has(part.toolCallId) ||
+      input.mirroredToolChunkState.ownershipCorrectedToolCallIds?.has(part.toolCallId)
+    ) return [];
+    const persisted = input.persistedMessage.parts.filter((candidate) =>
+      isToolUiPart(candidate) && candidate.toolCallId === part.toolCallId
+    );
+    if (persisted.length !== 1) return [];
+    const original = persisted[0]!;
+    if (
+      !isToolUiPart(original) || original.state !== "output-available" ||
+      original.providerExecuted !== undefined || original.output !== part.output ||
+      original.input !== part.input
+    ) return [];
+    const toolName = toolPartName(part);
+    if (!toolName) return [];
+    return [{
+      type: "CUSTOM",
+      name: TOOL_RESULT_OWNERSHIP_CORRECTION,
+      value: {
+        schemaVersion: 1,
+        toolCallId: part.toolCallId,
+        toolName,
+        parentMessageId: input.persistedMessage.id,
+        providerExecuted: true,
+      },
+    }];
+  });
 }

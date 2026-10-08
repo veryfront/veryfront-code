@@ -2892,3 +2892,72 @@ describe("native pause mirror retirement", () => {
     });
   }
 });
+
+for (const kind of ["response", "detached"] as const) {
+  Deno.test(`finalization appends ownership metadata without repeating a completed output (${kind})`, async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const corrections: Record<string, unknown>[] = [];
+    const mirrored = createMirroredToolChunkState();
+    mirrored.startedToolCallIds.add("completed");
+    mirrored.inputAvailableToolCallIds.add("completed");
+    mirrored.outputAvailableToolCallIds.add("completed");
+    const mirror = createDurableRunMirror({ calls, chunks });
+    mirror.appendEvents = async (events) => {
+      corrections.push(...events);
+      calls.push("ownership");
+    };
+    const responseMessage = createResponseMessage({
+      parts: [{
+        type: "tool-web_fetch",
+        toolCallId: "completed",
+        state: "output-available",
+        input: {},
+        output: "actual output",
+      }],
+    });
+    await finalizeHostedChatRun({
+      kind,
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "tool-web_fetch",
+          toolCallId: "completed",
+          state: "output-available",
+          input: {},
+          output: "actual output",
+        }],
+      }),
+      mirroredMessage: responseMessage,
+      mirroredDurableOutput: true,
+      isAborted: false,
+      streamResult: createStreamResult({
+        toolCalls: [{
+          toolCallId: "completed",
+          toolName: "web_fetch",
+          input: {},
+          providerExecuted: true,
+        }],
+      }),
+      lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {},
+      streamError: null,
+    });
+    assertEquals(chunks, []);
+    assertEquals(corrections, [{
+      type: "CUSTOM",
+      name: "veryfront.tool_result_ownership",
+      value: {
+        schemaVersion: 1,
+        toolCallId: "completed",
+        toolName: "web_fetch",
+        parentMessageId: "assistant-message-1",
+        providerExecuted: true,
+      },
+    }]);
+    assertEquals(calls.indexOf("ownership") < calls.indexOf("flush"), true);
+  });
+}

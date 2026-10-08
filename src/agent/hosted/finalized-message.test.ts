@@ -11,6 +11,7 @@ import {
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
+  buildToolResultOwnershipCorrectionEvents,
 } from "./finalized-message.ts";
 
 Deno.test("buildFinalizedMessageState builds fallback parts for an empty finalized assistant message", () => {
@@ -1462,4 +1463,225 @@ Deno.test("review fallback text uses recovery position rather than an earlier id
     "text-delta",
     "text-end",
   ]);
+});
+
+Deno.test("completed tool output recovers final-step provider ownership without replacing bytes", () => {
+  const part = {
+    type: "tool-web_fetch" as const,
+    toolCallId: "completed",
+    state: "output-available" as const,
+    input: { url: "https://example.test" },
+    output: { actual: "streamed result" },
+  };
+  const finalStep = {
+    toolCalls: [{
+      toolCallId: "completed",
+      toolName: "web_fetch",
+      input: {},
+      providerExecuted: true,
+    }],
+  };
+  const result = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [part] },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(result.sanitizedFinalizedMessage.parts, [{ ...part, providerExecuted: true }]);
+});
+
+Deno.test("completed tool output preserves explicit local ownership", () => {
+  const part = {
+    type: "tool-web_fetch" as const,
+    toolCallId: "completed",
+    state: "output-available" as const,
+    input: {},
+    output: "actual result",
+    providerExecuted: false,
+  };
+  const result = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [part] },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [{
+        toolCallId: "completed",
+        toolName: "web_fetch",
+        input: {},
+        providerExecuted: true,
+      }],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(result.sanitizedFinalizedMessage.parts, [part]);
+});
+
+Deno.test("completed mirrored tool ownership recovery reaches durable version1 replay once", () => {
+  const chunks = [
+    { type: "tool-input-start" as const, toolCallId: "completed", toolName: "web_fetch" },
+    {
+      type: "tool-input-available" as const,
+      toolCallId: "completed",
+      toolName: "web_fetch",
+      input: {},
+    },
+    {
+      type: "tool-output-available" as const,
+      toolCallId: "completed",
+      output: { actual: "streamed result" },
+    },
+  ];
+  const mirroredToolChunkState = createMirroredToolChunkState();
+  const encoder = new ConversationRunEventEncoder();
+  encoder.encode({ type: "start", messageId: "m" });
+  const events = chunks.flatMap((chunk) => {
+    recordMirroredToolChunkState(mirroredToolChunkState, chunk);
+    return encoder.encode(chunk);
+  });
+  const finalStep = {
+    toolCalls: [{
+      toolCallId: "completed",
+      toolName: "web_fetch",
+      input: {},
+      providerExecuted: true,
+    }],
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{
+        type: "tool-web_fetch",
+        toolCallId: "completed",
+        state: "output-available",
+        input: {},
+        output: { actual: "streamed result" },
+      }],
+    },
+    isAborted: false,
+    finalStep,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  const fallback = buildFinalizedMessageFallbackChunks({
+    ...state,
+    finalStep,
+    mirroredToolChunkState,
+    isAborted: false,
+    capturedMessageId: "m",
+  });
+  assertEquals(fallback, []);
+  const corrections = buildToolResultOwnershipCorrectionEvents({
+    persistedMessage: state.persistedMessage,
+    finalizedMessage: state.sanitizedFinalizedMessage,
+    mirroredToolChunkState,
+    isAborted: false,
+  });
+  assertEquals(corrections.length, 1);
+  assertEquals(corrections[0], {
+    type: "CUSTOM",
+    name: "veryfront.tool_result_ownership",
+    value: {
+      schemaVersion: 1,
+      toolCallId: "completed",
+      toolName: "web_fetch",
+      parentMessageId: "m",
+      providerExecuted: true,
+    },
+  });
+  events.push(...corrections);
+  assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+  assertEquals(
+    buildToolResultOwnershipCorrectionEvents({
+      persistedMessage: state.persistedMessage,
+      finalizedMessage: state.sanitizedFinalizedMessage,
+      mirroredToolChunkState,
+      isAborted: true,
+    }),
+    [],
+  );
+  const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+  assertEquals(replay.status, "ok");
+  if (replay.status === "ok") {
+    const semantic = replay.frames.filter((frame) => frame.class === "semantic").map((frame) =>
+      frame.event
+    );
+    assertEquals(semantic.filter((event) => event.type === "provider_tool_result").length, 1);
+    assertEquals(
+      semantic.some((event) => event.type === "custom" && event.name === "legacy-tool-result"),
+      false,
+    );
+  }
+});
+
+Deno.test("ownership metadata requires missing ownership and a completed mirrored occurrence", () => {
+  for (const ownership of [undefined, true, false]) {
+    for (const isAborted of [false, true]) {
+      for (const mirrored of [false, true]) {
+        const part = {
+          type: "tool-web_fetch" as const,
+          toolCallId: "c",
+          state: "output-available" as const,
+          input: { private: "input" },
+          output: { private: "output" },
+          ...(ownership === undefined ? {} : { providerExecuted: ownership }),
+        };
+        const state = buildFinalizedMessageState({
+          responseMessage: { id: "m", role: "assistant", parts: [part] },
+          isAborted,
+          finalStep: {
+            toolCalls: [{
+              toolCallId: "c",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: true,
+            }],
+          },
+          incompleteToolCallsPartErrorText: "tool error",
+        });
+        const mirror = createMirroredToolChunkState();
+        if (mirrored) mirror.outputAvailableToolCallIds.add("c");
+        const corrections = buildToolResultOwnershipCorrectionEvents({
+          persistedMessage: state.persistedMessage,
+          finalizedMessage: state.sanitizedFinalizedMessage,
+          mirroredToolChunkState: mirror,
+          isAborted,
+        });
+        assertEquals(corrections.length, ownership === undefined && !isAborted && mirrored ? 1 : 0);
+        assertEquals(JSON.stringify(corrections).includes("private"), false);
+        mirror.ownershipCorrectedToolCallIds = new Set(["c"]);
+        assertEquals(
+          buildToolResultOwnershipCorrectionEvents({
+            persistedMessage: state.persistedMessage,
+            finalizedMessage: state.sanitizedFinalizedMessage,
+            mirroredToolChunkState: mirror,
+            isAborted,
+          }),
+          [],
+        );
+      }
+    }
+  }
+});
+
+Deno.test("completed ownership requires the same final-step tool name", () => {
+  const part = {
+    type: "tool-web_fetch" as const,
+    toolCallId: "c",
+    state: "output-available" as const,
+    input: {},
+    output: "actual result",
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [part] },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [{
+        toolCallId: "c",
+        toolName: "different_tool",
+        input: {},
+        providerExecuted: true,
+      }],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
 });

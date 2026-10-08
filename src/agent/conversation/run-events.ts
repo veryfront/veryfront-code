@@ -1,3 +1,4 @@
+import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "./tool-result-ownership.ts";
 import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -102,7 +103,7 @@ function encodeCustomDataEvent(
   parentMessageId: string | null,
 ): ConversationRunEvent[] {
   const name = chunk.type.slice("data-".length);
-  if (name.length === 0) {
+  if (name.length === 0 || name === TOOL_RESULT_OWNERSHIP_CORRECTION) {
     return [];
   }
 

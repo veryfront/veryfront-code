@@ -1,10 +1,11 @@
+import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   invalidateHostedAgentPauseSettlement,
   recordHostedAgentPauseFlush,
   recordHostedAgentPauseMirrorSnapshot,
 } from "./manual-pause-settlement.ts";
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
-import { isToolUiPart } from "../../chat/conversation.ts";
+import { isRecord, isToolUiPart } from "../../chat/conversation.ts";
 import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import {
@@ -26,6 +27,7 @@ import {
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
+  buildToolResultOwnershipCorrectionEvents,
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
@@ -439,6 +441,7 @@ export async function finalizeHostedChatRun(
   }
   const finalStep = await getLastStreamStep(input.streamResult);
 
+  let ownershipCorrections: ConversationRunEvent[] = [];
   let fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
   let hasIncompleteToolParts: boolean;
   let metadata: HostedLifecycleTerminalState["metadata"] | undefined;
@@ -450,6 +453,12 @@ export async function finalizeHostedChatRun(
     const state = createHostedChatFinalizeResponseBuildState(input)(finalStep);
 
     output = state.finalizedMessage;
+    ownershipCorrections = buildToolResultOwnershipCorrectionEvents({
+      persistedMessage: state.persistedMessage,
+      finalizedMessage: state.finalizedMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
+      isAborted: input.isAborted,
+    });
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
@@ -467,6 +476,14 @@ export async function finalizeHostedChatRun(
     // fallback message is not the run's result, so omit it rather than
     // persisting an empty business output over the mirrored response.
     output = state.hasContent ? state.finalizedMessage : undefined;
+    if (input.mirroredMessage) {
+      ownershipCorrections = buildToolResultOwnershipCorrectionEvents({
+        persistedMessage: input.mirroredMessage,
+        finalizedMessage: state.finalizedMessage,
+        mirroredToolChunkState: input.mirroredToolChunkState,
+        isAborted: input.isAborted,
+      });
+    }
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
@@ -491,6 +508,17 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
   });
+  if (ownershipCorrections.length > 0 && input.lifecycleAdapter.durableRunMirror) {
+    await input.lifecycleAdapter.durableRunMirror.appendEvents(ownershipCorrections);
+    const corrected = input.mirroredToolChunkState.ownershipCorrectedToolCallIds ??= new Set<
+      string
+    >();
+    for (const event of ownershipCorrections) {
+      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
+        corrected.add(event.value.toolCallId);
+      }
+    }
+  }
   const mirrorDrained = await flushMirror(input.lifecycleAdapter);
 
   if (!input.isAborted && !mirrorDrained) {
