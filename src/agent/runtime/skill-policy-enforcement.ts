@@ -26,15 +26,25 @@ import {
   type SkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
+import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  isFormInputToolName,
+  isLoadSkillToolName,
+} from "../platform-tool-names.ts";
+export {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  isFormInputToolName,
+  isLoadSkillToolName,
+  LOAD_SKILL_TOOL_ID,
+} from "../platform-tool-names.ts";
 
 const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
 
-export const LOAD_SKILL_TOOL_ID = "load_skill";
-export const CANONICAL_LOAD_SKILL_TOOL_ID = `veryfront__${LOAD_SKILL_TOOL_ID}`;
-export const FORM_INPUT_TOOL_ID = "form_input";
-export const CANONICAL_FORM_INPUT_TOOL_ID = `veryfront__${FORM_INPUT_TOOL_ID}`;
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 
@@ -50,14 +60,6 @@ const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set(
   FORM_INPUT_TOOL_ID,
   CANONICAL_FORM_INPUT_TOOL_ID,
 ]);
-
-export function isLoadSkillToolName(toolName: string): boolean {
-  return toolName === LOAD_SKILL_TOOL_ID || toolName === CANONICAL_LOAD_SKILL_TOOL_ID;
-}
-
-export function isFormInputToolName(toolName: string): boolean {
-  return toolName === FORM_INPUT_TOOL_ID || toolName === CANONICAL_FORM_INPUT_TOOL_ID;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   try {

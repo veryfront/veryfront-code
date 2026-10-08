@@ -17,7 +17,7 @@ import {
   type InputRequestOutput,
 } from "../input/request-protocol.ts";
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
-import { isFormInputToolName } from "../runtime/skill-policy-enforcement.ts";
+import { isFormInputToolName } from "../platform-tool-names.ts";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
