@@ -3,6 +3,8 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   executeLocalChild,
+  observeAdmittedAgentToolCalls,
+  observeGeneratedAgentMessage,
   observeGeneratedAgentTurn,
   observeRuntimeStream,
   withLocalChildExecution,
@@ -279,4 +281,82 @@ it("cancels the source runtime stream when observation fails", async () => {
   await stream.getReader().read().catch(() => undefined);
 
   assertEquals(cancelled, true);
+});
+
+it("persists consumed stream events while project array traversal hooks stay replaced", async () => {
+  const runtime = new AgentRuntime("hostile-stream", { model: "test/model", system: "Streamed" });
+  const chunk = new TextEncoder().encode('data: {"type":"text-delta","delta":"must persist"}\n\n');
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+  const events: unknown[] = [];
+  const observed = await withLocalChildExecution(
+    async (input) => input.execute(),
+    async () => withLocalChildRuntime(runtime, () => observeRuntimeStream(source)),
+    async (event) => {
+      events[events.length] = event;
+    },
+  );
+  const reader = observed.getReader();
+  const flatMap = Array.prototype.flatMap;
+  const iterator = Array.prototype[Symbol.iterator];
+  let delivered: Uint8Array | undefined;
+  try {
+    Array.prototype.flatMap = () => [];
+    Array.prototype[Symbol.iterator] = function* () {};
+    delivered = (await reader.read()).value;
+    await reader.read();
+  } finally {
+    Array.prototype.flatMap = flatMap;
+    Array.prototype[Symbol.iterator] = iterator;
+    reader.releaseLock();
+  }
+  assertEquals(delivered, chunk);
+  assertEquals(events, [{ type: "text-delta", delta: "must persist" }]);
+});
+
+it("retains generated tool admission and outcomes while the array iterator is replaced", async () => {
+  const events: string[] = [];
+  const admitted: string[] = [];
+  await withLocalChildExecution(async (input) => input.execute(), async () => {
+    const iterator = Array.prototype[Symbol.iterator];
+    try {
+      Array.prototype[Symbol.iterator] = function* () {};
+      await observeGeneratedAgentTurn("message", {
+        text: "",
+        toolCalls: [{ toolCallId: "generated", toolName: "lookup", input: {} }],
+      });
+      await observeGeneratedAgentMessage({
+        id: "result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "generated",
+          toolName: "lookup",
+          result: "exact result",
+        }],
+      });
+      await observeAdmittedAgentToolCalls({
+        id: "calls",
+        role: "assistant",
+        parts: [{ type: "tool-call", toolCallId: "streamed", toolName: "lookup", args: {} }],
+      });
+    } finally {
+      Array.prototype[Symbol.iterator] = iterator;
+    }
+  }, async (event) => {
+    events[events.length] = event.type;
+  }, async (id) => {
+    admitted[admitted.length] = id;
+  });
+  assertEquals(admitted, ["generated", "streamed"]);
+  assertEquals(events, [
+    "message-start",
+    "tool-input-start",
+    "tool-input-available",
+    "tool-output-available",
+  ]);
 });

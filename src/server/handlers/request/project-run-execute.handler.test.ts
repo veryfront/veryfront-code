@@ -9393,6 +9393,103 @@ describe("project run inference credential header", () => {
     }
   });
 
+  it("persists real task agent.stream output while project flatMap stays replaced", async () => {
+    const runId = "run_hostile_stream";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "hostile-stream",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Stream must persist." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("hostile-stream", {
+            name: "Hostile stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              const original = Array.prototype.flatMap;
+              try {
+                Array.prototype.flatMap = () => [];
+                delivered = await response.text();
+              } finally {
+                Array.prototype.flatMap = original;
+              }
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:hostile-stream",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertStringIncludes(delivered, "Stream must persist.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Stream must persist.",
+    );
+  });
+
   for (const failure of ["transport", "wrong-run", "invalid-capture", "invalid-json"] as const) {
     it(`fails closed when task code catches a mandatory output observation failure (${failure})`, async () => {
       let caughtObservationFailure = false;

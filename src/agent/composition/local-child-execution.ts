@@ -1,3 +1,4 @@
+import { primordialArrayValues } from "#veryfront/platform/compat/primordials/array.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
@@ -131,7 +132,7 @@ export function observeRuntimeStream(
     remainder += decoder.decode(chunk, { stream: chunk !== undefined });
     const parsed = parseDataStreamSseEvents(chunk === undefined ? `${remainder}\n\n` : remainder);
     remainder = parsed.remainder;
-    for (const event of parsed.events) await observe(event);
+    for (const event of primordialArrayValues(parsed.events)) await observe(event);
   };
 
   return createPrivateReadableStream<Uint8Array>(
@@ -190,7 +191,7 @@ export async function observeGeneratedAgentTurn(
     await observe({ type: "text-delta", id, messageId, delta: turn.text });
     await observe({ type: "text-end", id, messageId });
   }
-  for (const call of turn.toolCalls ?? []) {
+  for (const call of primordialArrayValues(turn.toolCalls ?? [])) {
     await scope.admitTool?.(call.toolCallId, call.toolName, call.input);
     await observe({
       type: "tool-input-start",
@@ -210,7 +211,7 @@ export async function observeGeneratedAgentTurn(
 export async function observeGeneratedAgentMessage(message: Message): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe || message.role !== "tool") return;
-  for (const part of message.parts) {
+  for (const part of primordialArrayValues(message.parts)) {
     if (part.type === "tool-result" && "result" in part) {
       await scope.observe({
         type: "tool-output-available",
@@ -225,7 +226,7 @@ export async function observeGeneratedAgentMessage(message: Message): Promise<vo
 export async function observeAdmittedAgentToolCalls(message: Message): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe || message.role !== "assistant") return;
-  for (const part of message.parts) {
+  for (const part of primordialArrayValues(message.parts)) {
     if ("toolCallId" in part && "toolName" in part && "args" in part) {
       await scope.admitTool?.(part.toolCallId, part.toolName, part.args);
     }
