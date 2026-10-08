@@ -7,7 +7,6 @@ import {
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
-import { FORM_INPUT_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -371,7 +370,6 @@ export async function prepareChatExecutionWithinProjectRuntime(
   const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
   // veryfront-api is the trusted caller for request-scoped project-agent config.
   const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
-  const projectTools = getDiscoveredHostTools({ agentId: agentConfig.id });
   const preparationSignal = resolveHostedRequestPreparationSignal();
   const {
     effectiveMessages,
@@ -381,8 +379,8 @@ export async function prepareChatExecutionWithinProjectRuntime(
   } = await prepareVeryfrontCloudHostedChatExecution({
     request: req,
     hostToolPolicy: context.options.hostToolPolicy,
-    legacyFormInputReplayAllowed: !Object.hasOwn(projectTools, FORM_INPUT_TOOL_ID),
-    legacyLoadSkillReplayAllowed: !Object.hasOwn(projectTools, LOAD_SKILL_TOOL_ID),
+    // Persisted canonical names identify platform history independently of the current registry.
+    // Unqualified legacy history cannot establish ownership after a project tool is removed.
     serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
