@@ -241,7 +241,7 @@ export function buildFinalizedMessageFallbackChunks(
 
   const reconciledToolChunkState = cloneMirroredToolChunkState(input.mirroredToolChunkState);
   for (const part of input.sanitizedFinalizedMessage.parts) {
-    if (!isToolUiPart(part) || part.state !== "input-available" || part.providerExecuted !== true) {
+    if (!isToolUiPart(part) || part.providerExecuted !== true) {
       continue;
     }
     const persisted = input.persistedMessage.parts.find((candidate) =>

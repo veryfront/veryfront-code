@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
+import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
 import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
@@ -1366,6 +1367,28 @@ describe("agent/hosted-chat-finalization", () => {
               output: "found",
               providerExecuted: ownership,
             }]);
+            if (kind === "response" && streamed === "input-available") {
+              const encoder = new ConversationRunEventEncoder();
+              const events = chunks.flatMap((chunk) =>
+                chunk.type === "tool-input-available" || chunk.type === "tool-output-available"
+                  ? encoder.encode(chunk)
+                  : []
+              );
+              const ownershipEnds = events.filter((event) =>
+                event.type === "TOOL_CALL_END" && event.providerExecuted === true
+              );
+              assertEquals(
+                ownershipEnds.length,
+                callOwnership === undefined && resultOwnership ? 1 : 0,
+              );
+              if (ownershipEnds.length) {
+                assertEquals(
+                  events.indexOf(ownershipEnds[0]!) <
+                    events.findIndex((event) => event.type === "TOOL_CALL_RESULT"),
+                  true,
+                );
+              }
+            }
             assertEquals(getToolOutputErrorChunks(chunks, "result-owned"), []);
           });
         }
