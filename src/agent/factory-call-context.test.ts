@@ -350,6 +350,22 @@ describe("agent/factory call context", () => {
     assertEquals(prompt.includes("create_file"), false);
   });
 
+  it("discloses the skill catalog when only the canonical loader is enabled", async () => {
+    registerSkill("canonical-triage", {
+      id: "canonical-triage",
+      metadata: { name: "canonical-triage", description: "Triage support requests" },
+      rootPath: "/test/skills/canonical-triage",
+    });
+    const prompt = await captureFactorySystemPrompt({
+      id: "canonical-catalog",
+      system: "Use matching skills.",
+      skills: ["canonical-triage"],
+      tools: { load_skill: false, veryfront__load_skill: true },
+    });
+    assertStringIncludes(prompt, "<available_skills>");
+    assertStringIncludes(prompt, '"skillId":"canonical-triage"');
+  });
+
   it("marks factory-registered shared skill tools as trusted platform policy tools", async () => {
     agent({
       id: "trusted-shared-skill-tools",

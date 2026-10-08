@@ -71,6 +71,7 @@ import {
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
 import {
   buildAgentCallContext,
+  type BuildAgentCallContextInput,
   buildAgentCallContextPreservingRuntimeMarker,
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
@@ -439,19 +440,17 @@ function resolveToolsConfiguration(input: {
   return merged;
 }
 
-/**
- * Whether the resolved tool selection actually exposes the skill loader.
- *
- * The skill catalog block instructs the model to call `load_skill`, so it must
- * only be rendered when the effective tool configuration can honour that call.
- * An explicit `load_skill: false` denial, or a selection the loader was never
- * merged into, means the catalog would advertise an unusable tool.
- */
-function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
-  if (tools === true) return true;
-  if (!tools) return false;
-  const loader = tools["load_skill"];
-  return loader !== undefined && loader !== false;
+/** Resolve the exposed loader spelling so catalogs advertise a usable call. */
+function getSkillLoaderToolName(
+  tools: AgentConfig["tools"],
+): BuildAgentCallContextInput["skillLoaderToolName"] {
+  if (tools === true) return "load_skill";
+  if (!tools) return undefined;
+  for (const name of ["load_skill", "veryfront__load_skill"] as const) {
+    const loader = tools[name];
+    if (loader !== undefined && loader !== false) return name;
+  }
+  return undefined;
 }
 
 /**
@@ -463,10 +462,10 @@ function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
  */
 function createAugmentedSystem(input: {
   config: AgentConfig;
-  skillLoaderExposed: boolean;
+  skillLoaderToolName: BuildAgentCallContextInput["skillLoaderToolName"];
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<AgentSystem> {
-  const { config, skillLoaderExposed, resolveSkillSnapshot } = input;
+  const { config, skillLoaderToolName, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
   const augmentSystem = (
@@ -488,9 +487,9 @@ function createAugmentedSystem(input: {
     const contextInput = {
       // A denied or absent loader suppresses the catalog: advertising skills
       // the agent cannot load would only steer the model into blocked calls.
-      ...(preassembledSkillContext || !skillLoaderExposed
+      ...(preassembledSkillContext || !skillLoaderToolName
         ? {}
-        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
+        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition), skillLoaderToolName }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
       ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
     };
@@ -662,7 +661,7 @@ function createAgent<TOutput = never>(
 
   const augmentedSystem = createAugmentedSystem({
     config,
-    skillLoaderExposed: isSkillLoaderExposed(mergedToolsConfig),
+    skillLoaderToolName: getSkillLoaderToolName(mergedToolsConfig),
     resolveSkillSnapshot,
   });
 
