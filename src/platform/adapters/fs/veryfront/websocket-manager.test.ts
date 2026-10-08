@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -1118,6 +1123,48 @@ describe("WebSocketManager", () => {
       await Promise.resolve();
 
       assertEquals([...keys].sort(), otherProjects.sort(), projectSlug);
+      manager.dispose();
+    }
+  });
+
+  it("keeps another project's operation keys on a broad publish for a colon slug", async () => {
+    const builders = [buildFileCacheKeyPrefix, buildStatCacheKeyPrefix, buildDirCacheKeyPrefix];
+    const operationKeys = (projectSlug: string): string[] =>
+      builders.flatMap((build) => [
+        `${build({ sourceType: "release", projectSlug, releaseId: "shop" })}:app/page.tsx`,
+        `${
+          build({
+            sourceType: "environment",
+            projectSlug,
+            environmentName: "shop",
+            releaseId: "rel-1",
+          })
+        }:app/page.tsx`,
+      ]);
+    const published = operationKeys("acme:shop");
+    const otherProject = operationKeys("acme");
+    const keys = new Set([...published, ...otherProject]);
+    const manager = createWebSocketManager({
+      projectSlug: "acme:shop",
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          let deleted = 0;
+          for (const key of keys) {
+            if (key.startsWith(prefix) && keys.delete(key)) deleted++;
+          }
+          return Promise.resolve(deleted);
+        },
+      },
+    });
+    try {
+      manager.connect("project-1");
+      const socket = MockWebSocket.instances.at(-1);
+      assertExists(socket);
+      deliverPoke(socket, { entityType: "deployment" });
+      for (const key of otherProject) assertEquals(isPrefixBeingInvalidated(key), false);
+      await flushMicrotasks();
+      assertEquals([...keys].sort(), otherProject.sort());
+    } finally {
       manager.dispose();
     }
   });
