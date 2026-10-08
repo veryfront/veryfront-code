@@ -49,7 +49,8 @@ jobs:
         timeout-minutes: 5
       - name: Check watchdog source
         run: |
-          deno fmt --check --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts scripts/ci/registry-gate-watchdog.md tests/integration/ci/registry-gate-watchdog-workflow.test.ts
+          deno fmt --check --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts scripts/ci/registry-gate-watchdog.md
+          deno fmt --check --line-width=100 --config=scripts/test.deno.json tests/integration/ci/registry-gate-watchdog-workflow.test.ts
           deno lint --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts
           deno check --frozen --config=scripts/test.deno.json scripts/ci/registry-gate-watchdog.ts scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts
           deno task test:file scripts/ci/registry-gate-watchdog.test.ts tests/integration/ci/registry-gate-watchdog-workflow.test.ts tests/integration/ci/workflow-concurrency.test.ts

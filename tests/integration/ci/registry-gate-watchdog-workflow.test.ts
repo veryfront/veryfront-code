@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
@@ -43,9 +40,7 @@ describe("registry watchdog workflow contract", () => {
         "github.event.pull_request.head.repo.full_name == github.repository",
       );
       const steps = (job.steps as unknown[]).map(record);
-      const setup = steps.find((step) =>
-        step.uses === "./.github/actions/setup-deno"
-      )!;
+      const setup = steps.find((step) => step.uses === "./.github/actions/setup-deno")!;
       assertEquals(setup["timeout-minutes"], 5);
     }
     const watchdog = record(jobs.watchdog);
@@ -66,9 +61,7 @@ describe("registry watchdog workflow contract", () => {
     const steps = (watchdog.steps as unknown[]).map(record);
     assertEquals(record(steps[0]!.with).ref, "main");
     assertEquals(record(steps[0]!.with)["persist-credentials"], false);
-    const execute = steps.find((step) =>
-      step.name === "Recover an unstarted RC gate"
-    )!;
+    const execute = steps.find((step) => step.name === "Recover an unstarted RC gate")!;
     assertStringIncludes(String(execute.run), "--allow-net=api.github.com");
     assertStringIncludes(String(execute.run), "--dry-run");
     assertStringIncludes(String(execute.run), "--run-id=$RUN_ID");
