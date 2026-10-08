@@ -220,6 +220,59 @@ describe("response body lifecycle", () => {
     assertEquals(completions, 1);
   });
 
+  it("can defer completion past source closure until fallback consumers finish", async () => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let completions = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      }),
+    );
+    const tracked = completeOnResponseBodyConsumption(
+      response,
+      () => completions++,
+      undefined,
+      { highWaterMark: 0 },
+      { completeOnSourceClose: false },
+    );
+
+    controller!.close();
+    await Promise.resolve();
+    assertEquals(completions, 0);
+
+    assertEquals(await tracked.text(), "");
+    assertEquals(completions, 1);
+  });
+
+  it("observes source errors without completing early when fallback consumers own completion", async () => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let completions = 0;
+    const failure = new Error("synthetic fallback source failure");
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      }),
+    );
+    const tracked = completeOnResponseBodyConsumption(
+      response,
+      () => completions++,
+      undefined,
+      { highWaterMark: 0 },
+      { completeOnSourceClose: false },
+    );
+
+    controller!.error(failure);
+    await Promise.resolve();
+    assertEquals(completions, 0);
+
+    await assertRejects(() => tracked.text(), Error, "synthetic fallback source failure");
+    assertEquals(completions, 1);
+  });
+
   it("observes source closure even when no consumer reads the wrapper", async () => {
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
     const completed = Promise.withResolvers<void>();

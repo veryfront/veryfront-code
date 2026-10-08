@@ -1,3 +1,4 @@
+import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
@@ -24,12 +25,25 @@ export class ProxyRequestDrainTracker {
     this.inFlight.delete(requestId);
   }
 
-  completeOnResponseEnd(requestId: string, response: Response): Response {
+  completeOnResponseEnd(requestId: string, request: Request, response: Response): Response {
+    if (!response.body) {
+      this.complete(requestId);
+      return response;
+    }
+
+    const lifetime = getRequestTransportLifetime(request);
+    if (lifetime?.completed) {
+      const complete = () => this.complete(requestId);
+      void lifetime.completed.then(complete, complete);
+      return response;
+    }
+
     return completeOnResponseBodyConsumption(
       response,
       () => this.complete(requestId),
-      undefined,
+      lifetime?.signal ?? request.signal,
       { highWaterMark: 0 },
+      { completeOnSourceClose: false, errorOnAbort: true },
     );
   }
 

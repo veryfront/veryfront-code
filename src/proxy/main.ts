@@ -879,7 +879,7 @@ async function router(req: Request): Promise<Response> {
       response = await forwardToServer(req, url);
     }
 
-    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, response);
+    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);
     if (error instanceof ProxyRequestHostError) {

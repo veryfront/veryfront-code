@@ -17,6 +17,7 @@ import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
 import { getRequestPeerProvenance, getRequestTransportLifetime } from "../shared/request-peer.ts";
 import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
+import { ProxyRequestDrainTracker } from "#veryfront/proxy/request-drain.ts";
 import { WsNodeWebSocketServerProvider } from "../../../../../extensions/ext-node-websocket-ws/src/index.ts";
 import { NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE } from "#veryfront/extensions/websocket";
 
@@ -1308,6 +1309,160 @@ describe("NodeServer lifecycle", () => {
       assertEquals(request && getRequestTransportLifetime(request), undefined);
     } finally {
       releaseBody.resolve();
+      client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("keeps proxy drain tracking until a slow Node client receives the closed source body", async () => {
+    if (!isNode) return;
+    const requestId = "slow-native-finish";
+    const tracker = new ProxyRequestDrainTracker();
+    const handlerReturned = createDeferred<void>();
+    const sourceClosed = createDeferred<void>();
+    const transportFinished = createDeferred<void>();
+    const bodyChunk = new Uint8Array(8 * 1024 * 1024).fill(97);
+    let sent = false;
+    const server = await createNodeServer((incoming) => {
+      tracker.start(requestId, incoming.method, new URL(incoming.url).pathname);
+      const lifetime = getRequestTransportLifetime(incoming);
+      void lifetime?.completed?.then(transportFinished.resolve, transportFinished.reject);
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent) return;
+            sent = true;
+            controller.enqueue(bodyChunk);
+            controller.close();
+            sourceClosed.resolve();
+          },
+        }),
+      );
+      const tracked = tracker.completeOnResponseEnd(requestId, incoming, response);
+      handlerReturned.resolve();
+      return tracked;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const client = nodeRequest({
+      host: "127.0.0.1",
+      port: server.addr.port,
+      path: "/slow-native-finish",
+    });
+    const responseReceived = new Promise<import("node:http").IncomingMessage>((resolve, reject) => {
+      client.once("response", (response) => {
+        response.pause();
+        resolve(response);
+      });
+      client.once("error", reject);
+    });
+    client.end();
+
+    try {
+      await handlerReturned.promise;
+      const response = await responseReceived;
+      await sourceClosed.promise;
+      let completedBeforeClientDrain = false;
+      void transportFinished.promise.then(() => {
+        completedBeforeClientDrain = true;
+      });
+      await Promise.resolve();
+
+      assertEquals(
+        tracker.getInFlightCount(),
+        1,
+        "source close must not release proxy tracking before native finish",
+      );
+      assertEquals(completedBeforeClientDrain, false);
+
+      const responseEnded = new Promise<{ bytes: number; contentMatches: boolean }>((
+        resolve,
+        reject,
+      ) => {
+        let bytes = 0;
+        let contentMatches = true;
+        response.on("data", (chunk: Uint8Array) => {
+          bytes += chunk.byteLength;
+          for (const byte of chunk) {
+            if (byte !== 97) contentMatches = false;
+          }
+        });
+        response.once("end", () => resolve({ bytes, contentMatches }));
+        response.once("error", reject);
+      });
+      response.resume();
+      const received = await responseEnded;
+      assertEquals(received.bytes, bodyChunk.byteLength);
+      assertEquals(received.contentMatches, true);
+      await withTimeout(transportFinished.promise, 1_000, "native response did not finish");
+      assertEquals(await tracker.waitForDrain(1_000, 5), true);
+      assertEquals(tracker.getInFlightCount(), 0);
+    } finally {
+      client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("releases proxy drain tracking when a Node client disconnects before the handler returns", async () => {
+    if (!isNode) return;
+    const requestId = "early-disconnect";
+    const tracker = new ProxyRequestDrainTracker();
+    const handlerStarted = createDeferred<void>();
+    const requestAborted = createDeferred<void>();
+    const handlerReturned = createDeferred<void>();
+    const sourceCanceled = createDeferred<void>();
+    const server = await createNodeServer(async (incoming) => {
+      tracker.start(requestId, incoming.method, new URL(incoming.url).pathname);
+      if (incoming.signal.aborted) requestAborted.resolve();
+      else {incoming.signal.addEventListener("abort", () => requestAborted.resolve(), {
+          once: true,
+        });}
+      handlerStarted.resolve();
+      await requestAborted.promise;
+      await Promise.resolve();
+      const tracked = tracker.completeOnResponseEnd(
+        requestId,
+        incoming,
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              sourceCanceled.resolve();
+            },
+          }),
+        ),
+      );
+      handlerReturned.resolve();
+      return tracked;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const client = nodeRequest({
+      host: "127.0.0.1",
+      port: server.addr.port,
+      path: "/early-disconnect",
+    });
+    client.on("error", () => {});
+    client.end();
+
+    try {
+      await handlerStarted.promise;
+      client.destroy();
+      await handlerReturned.promise;
+      await Promise.resolve();
+
+      assertEquals(
+        tracker.getInFlightCount(),
+        0,
+        "an already-aborted request must release fallback proxy tracking",
+      );
+      await withTimeout(
+        sourceCanceled.promise,
+        1_000,
+        "fallback response source was not canceled after early client disconnect",
+      );
+    } finally {
       client.destroy();
       await server.stop();
     }

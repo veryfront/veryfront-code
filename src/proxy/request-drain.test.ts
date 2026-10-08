@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { recordRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   closeProxyServerWithin,
@@ -19,6 +25,7 @@ describe("proxy request drain", () => {
     tracker.start("preview", "GET", "/?studio_embed=true");
     const response = tracker.completeOnResponseEnd(
       "preview",
+      new Request("https://preview.test/"),
       new Response(source, { headers: { "content-type": "text/html" } }),
     );
     try {
@@ -34,6 +41,144 @@ describe("proxy request drain", () => {
     }
   });
 
+  it("keeps a native body response in flight until transport finish without changing response identity", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    const request = new Request("https://preview.test/api/provider-stream");
+    const transportFinished = Promise.withResolvers<void>();
+    recordRequestTransportLifetime(request, transportFinished.promise);
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const source = new Response(
+      new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+
+    tracker.start("native-stream", "GET", "/api/provider-stream");
+    const response = tracker.completeOnResponseEnd("native-stream", request, source);
+
+    assertStrictEquals(response, source);
+    controller!.close();
+    await Promise.resolve();
+    assertEquals(tracker.getInFlightCount(), 1);
+
+    transportFinished.resolve();
+    assertEquals(await tracker.waitForDrain(50, 2), true);
+  });
+
+  it("releases native transport tracking once when completion rejects", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    const request = new Request("https://preview.test/api/provider-stream");
+    const transportFinished = Promise.withResolvers<void>();
+    recordRequestTransportLifetime(request, transportFinished.promise);
+
+    tracker.start("native-error", "GET", "/api/provider-stream");
+    const response = tracker.completeOnResponseEnd(
+      "native-error",
+      request,
+      new Response(new ReadableStream<Uint8Array>(), {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+
+    assertEquals(tracker.getInFlightCount(), 1);
+    transportFinished.reject(new Error("synthetic transport failure"));
+    assertEquals(await tracker.waitForDrain(50, 2), true);
+    await response.body!.cancel("test cleanup");
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
+  it("does not complete fallback tracking on source close before terminal body consumption", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    const request = new Request("https://preview.test/api/provider-stream");
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const source = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+      },
+    });
+
+    tracker.start("fallback-stream", "GET", "/api/provider-stream");
+    const response = tracker.completeOnResponseEnd(
+      "fallback-stream",
+      request,
+      new Response(source, { headers: { "content-type": "text/event-stream" } }),
+    );
+
+    controller!.close();
+    await Promise.resolve();
+    assertEquals(tracker.getInFlightCount(), 1);
+
+    assertEquals(await response.text(), "");
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
+  it("releases fallback tracking when settled native metadata leaves an aborted request", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    const abort = new AbortController();
+    const request = new Request("https://preview.test/api/provider-stream", {
+      signal: abort.signal,
+    });
+    recordRequestTransportLifetime(request, Promise.resolve());
+    await Promise.resolve();
+
+    const canceled = Promise.withResolvers<unknown>();
+    const source = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        canceled.resolve(reason);
+      },
+    });
+
+    tracker.start("aborted-fallback", "GET", "/api/provider-stream");
+    const reason = new DOMException("client disconnected", "AbortError");
+    abort.abort(reason);
+    const response = tracker.completeOnResponseEnd(
+      "aborted-fallback",
+      request,
+      new Response(source, { headers: { "content-type": "text/event-stream" } }),
+    );
+
+    assertStrictEquals(await canceled.promise, reason);
+    assertEquals(await tracker.waitForDrain(50, 2), true);
+    assertEquals(tracker.getInFlightCount(), 0);
+    await assertRejects(() => response.text(), DOMException, "client disconnected");
+  });
+
+  it("errors an unfinished fallback body when the original request aborts during consumption", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    const abort = new AbortController();
+    const request = new Request("https://preview.test/api/provider-stream", {
+      signal: abort.signal,
+    });
+    const canceled = Promise.withResolvers<unknown>();
+    const source = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        canceled.resolve(reason);
+      },
+    });
+
+    tracker.start("aborted-consuming-fallback", "GET", "/api/provider-stream");
+    const response = tracker.completeOnResponseEnd(
+      "aborted-consuming-fallback",
+      request,
+      new Response(source, { headers: { "content-type": "text/event-stream" } }),
+    );
+
+    const text = response.text();
+    await Promise.resolve();
+    assertEquals(tracker.getInFlightCount(), 1);
+
+    const reason = new DOMException("client disconnected", "AbortError");
+    abort.abort(reason);
+
+    await assertRejects(() => text, DOMException, "client disconnected");
+    assertStrictEquals(await canceled.promise, reason);
+    assertEquals(await tracker.waitForDrain(50, 2), true);
+    assertEquals(tracker.getInFlightCount(), 0);
+  });
+
   it("completes bodyless responses without changing their identity", () => {
     const tracker = new ProxyRequestDrainTracker();
     tracker.start("request-1", "GET", "/health");
@@ -41,6 +186,7 @@ describe("proxy request drain", () => {
     const source = new Response(null, { status: 204 });
     const response = tracker.completeOnResponseEnd(
       "request-1",
+      new Request("https://preview.test/health"),
       source,
     );
 
@@ -54,6 +200,7 @@ describe("proxy request drain", () => {
     tracker.start("html", "GET", "/");
     const response = tracker.completeOnResponseEnd(
       "html",
+      new Request("https://preview.test/"),
       new Response("<main>ready</main>", { headers: { "content-type": "text/html" } }),
     );
     await Promise.resolve();
@@ -73,6 +220,7 @@ describe("proxy request drain", () => {
     tracker.start("canceled-html", "GET", "/");
     const response = tracker.completeOnResponseEnd(
       "canceled-html",
+      new Request("https://preview.test/"),
       new Response(source, { headers: { "content-type": "text/html" } }),
     );
     assertEquals(tracker.getInFlightCount(), 1);
@@ -92,6 +240,7 @@ describe("proxy request drain", () => {
     tracker.start("failed-html", "GET", "/");
     const response = tracker.completeOnResponseEnd(
       "failed-html",
+      new Request("https://preview.test/"),
       new Response(source, { headers: { "content-type": "text/html" } }),
     );
     assertEquals(tracker.getInFlightCount(), 1);
@@ -112,6 +261,7 @@ describe("proxy request drain", () => {
     tracker.start("request-2", "POST", "/api/control-plane/runs/test/stream");
     const response = tracker.completeOnResponseEnd(
       "request-2",
+      new Request("https://preview.test/api/control-plane/runs/test/stream"),
       new Response(source, {
         status: 202,
         statusText: "Streaming",
@@ -150,6 +300,7 @@ describe("proxy request drain", () => {
     tracker.start("request-3", "POST", "/stream");
     const response = tracker.completeOnResponseEnd(
       "request-3",
+      new Request("https://preview.test/stream"),
       new Response(source, { headers: { "content-type": "text/event-stream" } }),
     );
     const reader = response.body!.getReader();
@@ -170,6 +321,7 @@ describe("proxy request drain", () => {
     tracker.start("request-4", "POST", "/stream");
     const response = tracker.completeOnResponseEnd(
       "request-4",
+      new Request("https://preview.test/stream"),
       new Response(source, { headers: { "content-type": "text/event-stream" } }),
     );
 

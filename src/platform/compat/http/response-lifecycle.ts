@@ -33,6 +33,8 @@ export function completeOnResponseBodyConsumption(
     errorOnAbort?: boolean;
     /** Optional terminal notification. It does not change ownership of pending cancellation work. */
     onOutcome?: (outcome: ResponseBodyOutcome) => void;
+    /** Complete on source close/error even if no consumer reads the returned body. */
+    completeOnSourceClose?: boolean;
   } = {},
 ): Response {
   const notifyOutcome = (outcome: ResponseBodyOutcome): void => {
@@ -48,6 +50,7 @@ export function completeOnResponseBodyConsumption(
 
   const runDeferredOperation = options.runDeferredOperation ?? ((operation) => operation());
   const errorOnAbort = options.errorOnAbort === true;
+  const completeOnSourceClose = options.completeOnSourceClose !== false;
   let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
@@ -91,16 +94,22 @@ export function completeOnResponseBodyConsumption(
     void cancelBody(signal?.reason).catch(() => undefined);
   };
 
-  // This catches source-side close/error even when a transport drops the
-  // response without explicitly consuming or cancelling the wrapper.
-  void reader.closed.then(
-    () => {
-      if (!cancellationPending) complete("completed");
-    },
-    () => {
-      if (!cancellationPending) complete("error");
-    },
-  );
+  if (completeOnSourceClose) {
+    // This catches source-side close/error even when a transport drops the
+    // response without explicitly consuming or cancelling the wrapper.
+    void reader.closed.then(
+      () => {
+        if (!cancellationPending) complete("completed");
+      },
+      () => {
+        if (!cancellationPending) complete("error");
+      },
+    );
+  } else {
+    // Source errors are still surfaced through terminal reads, but disabling
+    // source-close completion must not leave reader.closed unobserved.
+    void reader.closed.catch(() => undefined);
+  }
 
   if (signal?.aborted) {
     abortBody();
