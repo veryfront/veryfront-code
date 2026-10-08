@@ -31,6 +31,113 @@ function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boo
     left.redactedData === right.redactedData;
 }
 
+type TextMatch = { indexes: number[]; length: number };
+
+/** Assign physical text fragments jointly so repeated prefixes cannot steal an occurrence. */
+function assignFallbackTextOccurrences(
+  persisted: readonly { text: string }[],
+  fallback: readonly { text: string }[],
+): TextMatch[] {
+  if (persisted.length === 0) return fallback.map(() => ({ indexes: [], length: 0 }));
+  // Provider-controlled fragments must not cause an unbounded finalization search.
+  const failSearch = (): never => {
+    const error = new Error("Fallback text occurrence assignment exceeded its search budget");
+    error.name = "FallbackTextReconciliationLimitError";
+    throw error;
+  };
+  if (persisted.length > 128 || fallback.length > 64) failSearch();
+  let remainingSearchSteps = 10_000;
+  const consumeSearchStep = (): void => {
+    if (--remainingSearchSteps < 0) failSearch();
+  };
+  const candidates = fallback.map((part) => {
+    const matches = new Map<string, TextMatch>();
+    matches.set("", { indexes: [], length: 0 });
+    for (const separator of ["\n\n", "\n", " ", ""]) {
+      const extend = (indexes: number[], prefix: string, next: number): void => {
+        for (let index = next; index < persisted.length; index++) {
+          consumeSearchStep();
+          const value = (prefix + (indexes.length ? separator : "") + persisted[index]!.text)
+            .trim();
+          if (!part.text.startsWith(value)) continue;
+          const selected = [...indexes, index];
+          const key = selected.join(",");
+          const previous = matches.get(key);
+          if (!previous || previous.length < value.length) {
+            matches.set(key, { indexes: selected, length: value.length });
+          }
+          if (value.length < part.text.trim().length) extend(selected, value, index + 1);
+        }
+      };
+      extend([], "", 0);
+    }
+    return [...matches.values()].sort((left, right) => right.length - left.length);
+  });
+  let best: TextMatch[] = fallback.map(() => ({ indexes: [], length: 0 }));
+  let bestCharacters = -1;
+  let bestConsumed = -1;
+  let bestInversions = Infinity;
+  const used = new Set<number>();
+  const selected: TextMatch[] = [];
+  const remainingMaximum = new Array<number>(candidates.length + 1).fill(0);
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    remainingMaximum[index] = remainingMaximum[index + 1]! + candidates[index]![0]!.length;
+  }
+  const visit = (occurrence: number, characters: number): void => {
+    consumeSearchStep();
+    if (characters + (remainingMaximum[occurrence] ?? 0) < bestCharacters) return;
+    if (occurrence === candidates.length) {
+      // A recovered suffix may cross another assigned occurrence, never unrelated text.
+      if (
+        selected.some((match) => {
+          const first = match.indexes[0];
+          const last = match.indexes.at(-1);
+          if (first === undefined || last === undefined) return false;
+          for (let index = first; index <= last; index++) if (!used.has(index)) return true;
+          return false;
+        })
+      ) return;
+      let inversions = 0;
+      for (let left = 0; left < selected.length; left++) {
+        for (let right = left + 1; right < selected.length; right++) {
+          const first = selected[left]!.indexes[0];
+          const second = selected[right]!.indexes[0];
+          if (first !== undefined && second !== undefined && first > second) inversions++;
+        }
+      }
+      const earlier = selected.findIndex((match, index) =>
+        (match.indexes[0] ?? Infinity) !== (best[index]!.indexes[0] ?? Infinity)
+      );
+      const prefersEarlier = earlier >= 0 &&
+        (selected[earlier]!.indexes[0] ?? Infinity) < (best[earlier]!.indexes[0] ?? Infinity);
+      if (
+        characters > bestCharacters ||
+        (characters === bestCharacters && used.size > bestConsumed) ||
+        (characters === bestCharacters && used.size === bestConsumed &&
+          inversions < bestInversions) ||
+        (characters === bestCharacters && used.size === bestConsumed &&
+          inversions === bestInversions && prefersEarlier)
+      ) {
+        best = [...selected];
+        bestCharacters = characters;
+        bestConsumed = used.size;
+        bestInversions = inversions;
+      }
+      return;
+    }
+    for (const match of candidates[occurrence]!) {
+      if (match.indexes.some((index) => used.has(index))) continue;
+      for (const index of match.indexes) used.add(index);
+      selected.push(match);
+      visit(occurrence + 1, characters + match.length);
+      selected.pop();
+      for (const index of match.indexes) used.delete(index);
+    }
+  };
+  visit(0, 0);
+  return best;
+}
+
 /** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
   responseMessage: ChatUiMessage;
@@ -139,64 +246,29 @@ export function buildFinalizedMessageState(
   let persistedTextCursor = 0;
   const consumedTextIndexes = new Set<number>();
   const fallbackTextCount = finalStepFallbackParts.filter((part) => part.type === "text").length;
-  // Reserve completed occurrences before partial matching: append-only suffixes
-  // may physically follow a later provider block that has already completed.
-  const exactTextMatches = new Map<ChatUiMessage["parts"][number], number[]>();
-  const exactTextOwners = new Map<number, ChatUiMessage["parts"][number]>();
-  if (fallbackTextCount > 1) {
-    for (const fallbackPart of finalStepFallbackParts) {
-      if (fallbackPart.type !== "text") continue;
-      let completedIndexes: number[] = [];
-      for (
-        let start = 0;
-        start < persistedTextParts.length && completedIndexes.length === 0;
-        start++
-      ) {
-        for (const separator of ["\n\n", "\n", " ", ""]) {
-          const indexes: number[] = [];
-          let prefix = "";
-          for (let index = start; index < persistedTextParts.length; index++) {
-            if (exactTextOwners.has(index)) continue;
-            const candidate = (prefix + (indexes.length ? separator : "") +
-              persistedTextParts[index]!.text).trim();
-            if (!fallbackPart.text.startsWith(candidate)) continue;
-            indexes.push(index);
-            prefix = candidate;
-            if (prefix === fallbackPart.text.trim()) {
-              completedIndexes = indexes;
-              break;
-            }
-          }
-          if (completedIndexes.length > 0) break;
-        }
-      }
-      if (completedIndexes.length > 0) exactTextMatches.set(fallbackPart, completedIndexes);
-      for (const index of completedIndexes) exactTextOwners.set(index, fallbackPart);
-    }
-  }
+  const fallbackTextParts = finalStepFallbackParts.filter((part) => part.type === "text");
+  const assignedTextMatches = fallbackTextCount > 1
+    ? assignFallbackTextOccurrences(persistedTextParts, fallbackTextParts)
+    : [];
+  let fallbackTextIndex = 0;
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
     if (fallbackPart.type === "text") {
       hasPlacedMissingText = true;
-      let matchedIndexes = exactTextMatches.get(fallbackPart) ?? [];
+      const assignedMatch = assignedTextMatches[fallbackTextIndex++];
+      let matchedIndexes = assignedMatch?.indexes ?? [];
       let matchingStart = matchedIndexes[0] ?? -1;
       let matchedCount = matchedIndexes.length;
-      let matchedLength = matchedCount > 0 ? fallbackPart.text.trim().length : 0;
+      let matchedLength = assignedMatch?.length ?? 0;
       for (
         let start = 0;
-        start < persistedTextParts.length && !exactTextMatches.has(fallbackPart);
+        start < persistedTextParts.length && !assignedMatch;
         start++
       ) {
-        if (
-          consumedTextIndexes.has(start) ||
-          (exactTextOwners.has(start) && exactTextOwners.get(start) !== fallbackPart)
-        ) continue;
+        if (consumedTextIndexes.has(start)) continue;
         const availableIndexes = persistedTextParts.map((_, index) => index)
-          .filter((index) =>
-            index >= start && !consumedTextIndexes.has(index) &&
-            (!exactTextOwners.has(index) || exactTextOwners.get(index) === fallbackPart)
-          );
+          .filter((index) => index >= start && !consumedTextIndexes.has(index));
         for (let count = 1; count <= availableIndexes.length; count++) {
           const indexes = availableIndexes.slice(0, count);
           const texts = indexes.map((index) => persistedTextParts[index]!.text);

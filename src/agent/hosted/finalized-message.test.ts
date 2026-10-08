@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
 import {
@@ -972,6 +972,175 @@ Deno.test("partial later fallback remains idempotent around an appended earlier 
     first.parts,
   );
 });
+
+Deno.test("an earlier partial occurrence retains a later exact-looking prefix", () => {
+  const input = {
+    responseMessage: {
+      id: "m",
+      role: "assistant" as const,
+      parts: [
+        { type: "step-start" as const },
+        { type: "text" as const, text: "Do" },
+        { type: "text" as const, text: "Done" },
+      ],
+    },
+    finalStep: {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "text", text: "Done" }, { type: "text", text: "Done later" }],
+        }],
+      },
+    },
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const once = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
+  assertEquals(once.parts, [
+    ...input.responseMessage.parts,
+    { type: "text", text: "ne" },
+    { type: "text", text: "later" },
+  ]);
+  assertEquals(
+    buildFinalizedMessageState({ ...input, responseMessage: once }).sanitizedFinalizedMessage.parts,
+    once.parts,
+  );
+});
+
+Deno.test("three repeated-prefix occurrences recover only their individual missing suffixes", () => {
+  for (const expected of [["Done", "Done later", "Done later again"], ["Done", "Done", "Done"]]) {
+    const choices = expected.map((text) => [...new Set(["Do", "Done", text])]);
+    for (const first of choices[0]!) {
+      for (const second of choices[1]!) {
+        for (const third of choices[2]!) {
+          const texts = [first, second, third];
+          const input = {
+            responseMessage: {
+              id: "m",
+              role: "assistant" as const,
+              parts: [
+                { type: "step-start" as const },
+                ...texts.map((text) => ({ type: "text" as const, text })),
+              ],
+            },
+            finalStep: {
+              response: {
+                messages: [{
+                  role: "assistant",
+                  content: expected.map((text) => ({ type: "text", text })),
+                }],
+              },
+            },
+            isAborted: false,
+            incompleteToolCallsPartErrorText: "tool error",
+          };
+          const once = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
+          const missing = expected.map((text, index) => text.slice(texts[index]!.length).trim())
+            .filter(Boolean).map((text) => ({ type: "text" as const, text }));
+          assertEquals(
+            once.parts,
+            [...input.responseMessage.parts, ...missing],
+            JSON.stringify({ expected, texts }),
+          );
+          assertEquals(
+            buildFinalizedMessageState({ ...input, responseMessage: once })
+              .sanitizedFinalizedMessage.parts,
+            once.parts,
+            JSON.stringify({ expected, texts }),
+          );
+        }
+      }
+    }
+  }
+});
+
+Deno.test("adversarial repeated fragments fail within the shared reconciliation search budget", () => {
+  const responseMessage = {
+    id: "m",
+    role: "assistant" as const,
+    parts: [
+      { type: "step-start" as const },
+      ...Array.from({ length: 20 }, () => ({ type: "text" as const, text: "a" })),
+    ],
+  };
+  const before = structuredClone(responseMessage);
+  const error = assertThrows(
+    () =>
+      buildFinalizedMessageState({
+        responseMessage,
+        finalStep: {
+          response: {
+            messages: [{
+              role: "assistant",
+              content: [
+                { type: "text", text: "a".repeat(20) },
+                { type: "text", text: "a".repeat(20) },
+              ],
+            }],
+          },
+        },
+        isAborted: false,
+        incompleteToolCallsPartErrorText: "tool error",
+      }),
+    Error,
+    "exceeded its search budget",
+  );
+  assertEquals(error.name, "FallbackTextReconciliationLimitError");
+  assertEquals(responseMessage, before);
+});
+
+Deno.test("empty persisted text recovers many provider blocks without occurrence search", () => {
+  const content = Array.from(
+    { length: 100 },
+    (_, index) => ({ type: "text" as const, text: `block ${index}` }),
+  );
+  const input = {
+    responseMessage: {
+      id: "m",
+      role: "assistant" as const,
+      parts: [{ type: "step-start" as const }],
+    },
+    finalStep: { response: { messages: [{ role: "assistant", content }] } },
+    isAborted: false,
+    incompleteToolCallsPartErrorText: "tool error",
+  };
+  const result = buildFinalizedMessageState(input).sanitizedFinalizedMessage;
+  assertEquals(result.parts, [...input.responseMessage.parts, ...content]);
+});
+
+for (const [persistedCount, fallbackCount] of [[1, 3000], [5000, 2]] as const) {
+  Deno.test(`reconciliation rejects structural overload (${persistedCount}, ${fallbackCount})`, () => {
+    const error = assertThrows(
+      () =>
+        buildFinalizedMessageState({
+          responseMessage: {
+            id: "m",
+            role: "assistant",
+            parts: [
+              { type: "step-start" },
+              ...Array.from(
+                { length: persistedCount },
+                () => ({ type: "text" as const, text: "a" }),
+              ),
+            ],
+          },
+          finalStep: {
+            response: {
+              messages: [{
+                role: "assistant",
+                content: Array.from({ length: fallbackCount }, () => ({ type: "text", text: "a" })),
+              }],
+            },
+          },
+          isAborted: false,
+          incompleteToolCallsPartErrorText: "tool error",
+        }),
+      Error,
+      "exceeded its search budget",
+    );
+    assertEquals(error.name, "FallbackTextReconciliationLimitError");
+  });
+}
 
 Deno.test("fallback text occurrence assignment is idempotent across partial and exact permutations", () => {
   for (const expected of [["First", "Second"], ["Done", "Done later"]]) {

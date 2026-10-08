@@ -11,7 +11,8 @@ Durable replay must preserve finalization's tool/text order, provider ownership,
 3. RED appended reasoning ID collision with actual mirrored IDs.
 4. RED Done,Do + Done,Done later recovery (only ne later), retaining single-block latest-match regression.
 5. RED detached additional signed/redacted reasoning beside streamed reasoning.
-6. Minimal fixes in finalized-message/encoder/mirrored-state and detached call sites, then green narrow suites.
+6. RED symmetric fragmented replay, repeated-prefix occurrence assignment, and bounded adversarial/structural overload; jointly assign text occurrences before emitting missing suffixes.
+7. Minimal fixes in finalized-message/encoder/mirrored-state and detached call sites, then green narrow suites.
 
 ## Validation
 

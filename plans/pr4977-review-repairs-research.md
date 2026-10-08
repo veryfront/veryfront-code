@@ -20,18 +20,23 @@ matching and reversed physical-order tests remain unchanged.
 Focused verification passed 46 cases/200 steps; frozen checks passed for both
 changed files. No public contract or generated API-reference change is needed.
 
-## Symmetric occurrence-assignment follow-up
+## Global text occurrence assignment
 
-The symmetric `Fi`, `Second` case still duplicated `rst` after recovery because
-an earlier fragmented block encountered a later completed block before that
-later block was consumed. The repair now assigns complete occurrences first,
-including ordered fragments separated by other occurrences, and reserves their
-indices before partial matching. Partial matching cannot steal a reserved
-complete occurrence. Complete matches are used directly rather than competing
-with a shorter earlier prefix. Single-block latest-prefix behavior is unchanged.
+Greedy exact reservation steals a later partial occurrence when its prefix equals
+an earlier complete block (`Do`, `Done` against `Done`, `Done later`). Choose
+assignments jointly across provider text occurrences: maximize matched characters,
+then consumed physical occurrences, then prefer monotonic physical starts.
+Fragments can cross another assigned occurrence, never unrelated persisted text.
+Emit only the missing suffixes in provider order and preserve append-only parts.
+The single-fallback latest-prefix behavior remains unchanged.
 
-A 36-combination permutation matrix covers missing, partial, and exact blocks
-in both physical orders for `First`/`Second` and repeated-prefix
-`Done`/`Done later`. Each case asserts exact twice-applied idempotence, and the
-symmetric reported case also asserts the exact first-pass durable sequence.
-Original monotonic recovery and append-only assertions remain unchanged.
+Verification includes exact first-pass suffixes and twice-applied equality for
+both symmetric replay cases, repeated-prefix two- and three-occurrence cases,
+and the existing 36-combination matrix. Provider-controlled input is bounded:
+when physical text is present, at most 128 physical text parts, 64 fallback text occurrences, and 10,000 shared
+candidate/search steps. Exceeding any bound raises
+`FallbackTextReconciliationLimitError`; no greedy fallback or partial success is
+returned. Structural caps bound recursion and per-step copying; remaining search
+coverage is computed in one reverse pass. Tests cover repeated fragments,
+thousands of fallback blocks with persisted text, empty-text recovery beyond 64 blocks, and thousands of physical
+fragments. These explicit failures require retaining terminal failure evidence.
