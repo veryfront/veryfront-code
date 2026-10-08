@@ -247,6 +247,23 @@ it("uses explicit bundle roots for canonical lookup paths", () => {
   );
 });
 
+it("recognizes a project-root bundle while preserving source and nested-index restrictions", () => {
+  const source = "---\nokf_version: 0.2\n---\nNavigation\n";
+  for (const bundleRoot of [".", "./", ".\\", "././", ""]) {
+    for (const path of ["index.md", "./index.md", ".\\index.md"]) {
+      const inspected = inspectOkfDocument(path, source, { bundleRoot });
+      assertEquals(inspected.envelopeConforms, true);
+      assertEquals(inspected.diagnostics, []);
+      assertEquals(inspected.path, path);
+      assertEquals(inspected.source, source);
+      assertEquals(inspected.body, "Navigation\n");
+    }
+    const nested = inspectOkfDocument("./nested/index.md", source, { bundleRoot });
+    assertEquals(nested.envelopeConforms, false);
+    assertEquals(nested.diagnostics.map((value) => value.code), ["invalid_frontmatter"]);
+  }
+});
+
 it("accepts root index envelopes only when they declare the version", () => {
   for (const yaml of ["{}", "type: Topic", "okf_version: 0.2\ntitle: Index", "okf_version: null"]) {
     const source = `---\n${yaml}\n---\nNavigation\n`;

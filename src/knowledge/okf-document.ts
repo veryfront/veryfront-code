@@ -98,7 +98,7 @@ export function inspectOkfDocument(
 ): OkfDocumentInspection {
   const normalizedPath = path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "");
   const bundleRoot = options.bundleRoot?.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "")
-    .replace(/\/+$/, "");
+    .replace(/\/+$/, "").replace(/^\.$/, "");
   const rootIndexPath = bundleRoot ? `${bundleRoot}/index.md` : "index.md";
   const kind = getOkfDocumentKind(path);
   const framed = readOkfEnvelope(source);
