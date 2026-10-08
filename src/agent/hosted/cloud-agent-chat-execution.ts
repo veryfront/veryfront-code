@@ -7,7 +7,7 @@ import {
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
-import { FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
+import { FORM_INPUT_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -382,6 +382,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     request: req,
     hostToolPolicy: context.options.hostToolPolicy,
     legacyFormInputReplayAllowed: !Object.hasOwn(projectTools, FORM_INPUT_TOOL_ID),
+    legacyLoadSkillReplayAllowed: !Object.hasOwn(projectTools, LOAD_SKILL_TOOL_ID),
     serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,

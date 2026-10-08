@@ -2143,7 +2143,7 @@ Deno.test("prepareHostedChatRuntimeMessages restores canonical platform load_ski
   assertEquals(hydrated.activeSkillDelegationOverrides, undefined);
 });
 
-Deno.test("prepareHostedChatExecution leaves verified-envelope hosted load_skill replay untrusted", async () => {
+Deno.test("prepareHostedChatExecution restores verified hosted load_skill replay", async () => {
   const messages: ChatUiMessage[] = [
     {
       id: "user-load-skill",
@@ -2178,6 +2178,71 @@ Deno.test("prepareHostedChatExecution leaves verified-envelope hosted load_skill
         branchId: "branch-from-context",
       },
       serverEnvelopeVerified: true,
+    }),
+    agentConfig: { id: "agent-1", model: "anthropic/claude-sonnet-4-6" },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  const hydrated = hydrateActiveSkillStateFromMessages(result.finalMessages);
+  assertEquals(hydrated.activeSkillId, "plan");
+  assertEquals(hydrated.activeSkillToolAvailability, {
+    hasActiveSkill: true,
+    references: ["references/guide.md"],
+    scripts: [],
+  });
+});
+
+Deno.test("prepareHostedChatExecution leaves unsigned hosted load_skill replay untrusted", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "user-load-skill",
+      role: "user",
+      parts: [{ type: "text", text: "Plan the launch." }],
+    },
+    {
+      id: "assistant-load-skill",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "veryfront__load_skill",
+        toolCallId: "load-plan",
+        state: "output-available",
+        input: { skillId: "plan" },
+        output: {
+          skillId: "plan",
+          instructions: "# Plan",
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      }],
+    },
+  ];
+
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages,
+      conversationId: undefined,
+      validatedContext: {
+        projectId: "project-from-context",
+        branchId: "branch-from-context",
+      },
     }),
     agentConfig: { id: "agent-1", model: "anthropic/claude-sonnet-4-6" },
     apiUrl: "https://api.example.com",

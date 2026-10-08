@@ -400,6 +400,8 @@ export type HostedChatExecutionPreparationInput<
   hostToolPolicy?: HostedHostToolPolicy;
   /** True only when the legacy form_input spelling still maps to the platform form. */
   legacyFormInputReplayAllowed?: boolean;
+  /** True only when the legacy load_skill spelling still maps to the platform loader. */
+  legacyLoadSkillReplayAllowed?: boolean;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -761,6 +763,8 @@ export async function prepareHostedChatExecution<
       }),
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
+      trustedHostedServerHistory: input.request.serverEnvelopeVerified === true,
+      legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
