@@ -107,7 +107,8 @@ export function buildFinalizedMessageState(
   const unmatchedPersistedReasoningParts = persistedMessage.parts.filter(
     (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
   );
-  const persistedTextParts = persistedMessage.parts.filter((part) => part.type === "text");
+  const persistedTextParts = persistedMessage.parts.filter((part) => part.type === "text")
+    .filter((part) => part.text.trim().length > 0);
   let textCursor = 0;
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {

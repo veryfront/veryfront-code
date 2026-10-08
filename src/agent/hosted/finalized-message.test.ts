@@ -672,3 +672,35 @@ Deno.test("buildFinalizedMessageState reconciles a partial later text block with
     ],
   );
 });
+
+Deno.test("finalized text alignment skips empty persisted text shells", () => {
+  const responseMessage = {
+    id: "m",
+    role: "assistant" as const,
+    parts: [
+      { type: "text" as const, text: "" },
+      { type: "text" as const, text: "First answer." },
+      { type: "text" as const, text: "Sec" },
+    ],
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage,
+    isAborted: false,
+    finalStep: {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [
+            { type: "text", text: "First answer." },
+            { type: "text", text: "Second answer." },
+          ],
+        }],
+      },
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [...responseMessage.parts, {
+    type: "text",
+    text: "ond answer.",
+  }]);
+});
