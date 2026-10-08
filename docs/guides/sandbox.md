@@ -165,9 +165,11 @@ await sandbox.runCommand("mkdir -p /workspace/repository");
 await sandbox.close();
 ```
 
-Closing a persistent or always-on client keeps the workspace, including persistent
-workspaces with timed cleanup. A lazy client deletes one on close only when
-`deleteOnClose: true` is explicit. Files and user-installed tools
+Closing a persistent or always-on client keeps the workspace by default, including
+persistent workspaces with timed cleanup. A lazy client deletes a newly created
+temporary workspace on close by default. Set `deleteOnClose: false` to retain it.
+Set `deleteOnClose: true` to delete a persistent or always-on workspace on close.
+Files and user-installed tools
 under `/workspace` survive runtime replacement. Running processes and changes
 outside `/workspace` do not persist. Use `sandbox.delete()` to delete the
 sandbox and its workspace files.

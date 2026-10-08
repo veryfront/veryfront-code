@@ -1517,6 +1517,31 @@ describe("Sandbox", () => {
     });
   });
 
+  it("does not delete again when close follows successful explicit deletion", async () => {
+    mockFetch([
+      jsonResponse({ id: "deleted", endpoint: "https://sb.test", status: "running" }),
+      jsonResponse({ ok: true }),
+      textResponse("Not found", 404),
+    ]);
+    const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+    await sandbox.delete();
+    await sandbox.close();
+    await sandbox.close();
+    assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 1);
+  });
+
+  it("retains cleanup ownership when explicit deletion fails", async () => {
+    mockFetch([
+      jsonResponse({ id: "retry-delete", endpoint: "https://sb.test", status: "running" }),
+      textResponse("Unavailable", 503),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+    await assertRejects(() => sandbox.delete(), Error, "Delete sandbox failed");
+    await sandbox.close();
+    assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 2);
+  });
+
   describe("close()", () => {
     it("should send delete request", async () => {
       mockFetch([

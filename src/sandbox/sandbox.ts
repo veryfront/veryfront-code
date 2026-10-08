@@ -545,6 +545,9 @@ export class Sandbox {
         detail: `Delete sandbox failed: ${res.status} ${await res.text()}`,
       });
     }
+    const state = getSandboxPrivateState(this);
+    state.deleteOnClose = false;
+    state.createdByClient = false;
   }
 
   /** Get the sandbox ID. */
