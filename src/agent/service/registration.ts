@@ -392,7 +392,14 @@ async function readAgentPushRuntimeServiceResponse(
 
 function createHeaders(authToken: string): Headers {
   const headers = new Headers();
-  headers.set("Authorization", `Bearer ${authToken}`);
+  try {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  } catch {
+    // Header implementations may include the rejected credential in their error.
+    throw CONFIG_INVALID.create({
+      detail: "Agent service authorization token is not a valid HTTP header value",
+    });
+  }
   headers.set("Content-Type", "application/json");
   return headers;
 }
@@ -419,12 +426,15 @@ async function registerAgentPushRuntimeService(
   fetchImpl: typeof globalThis.fetch,
   abortSignal?: AbortSignal,
 ): Promise<AgentPushRuntimeServiceRest> {
+  const headers = createHeaders(input.authToken);
+  const body = JSON.stringify(buildRegistrationRequest(input));
+  const endpoint = getRegistrationEndpoint(input.apiUrl);
   let response: Response;
   try {
-    response = await fetchImpl(getRegistrationEndpoint(input.apiUrl), {
+    response = await fetchImpl(endpoint, {
       method: "POST",
-      headers: createHeaders(input.authToken),
-      body: JSON.stringify(buildRegistrationRequest(input)),
+      headers,
+      body,
       signal: abortSignal,
     });
   } catch (cause) {
@@ -446,11 +456,13 @@ async function sendHeartbeatRequest(
   fetchImpl: typeof globalThis.fetch,
   abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
+  const headers = createHeaders(input.authToken);
+  const endpoint = getHeartbeatEndpoint(input.apiUrl, input.serviceId);
   let response: Response;
   try {
-    response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
+    response = await fetchImpl(endpoint, {
       method: "POST",
-      headers: createHeaders(input.authToken),
+      headers,
       body: JSON.stringify({}),
       signal: abortSignal,
     });

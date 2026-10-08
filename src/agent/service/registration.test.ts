@@ -281,6 +281,35 @@ describe("agent/agent-service-registration", () => {
     assert(outcome.lifecycle, "registration must recover before heartbeat setup");
   });
 
+  it("rejects malformed authorization configuration without transport retries or token details", async () => {
+    using time = new FakeTime();
+    const syntheticToken = "synthetic-private-token\r\ninvalid";
+    const log = recordingLogger();
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(jsonResponse(serviceResponse));
+    };
+    const pending = createAgentServiceRegistrationLifecycle({
+      ...lifecycleOptions(fetch, { logger: log.logger }),
+      authToken: syntheticToken,
+    }).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    const error = await pending;
+    assert(error instanceof Error);
+    assertEquals(log.warnings.length, 0, "configuration failure must not enter transport retries");
+    assertEquals(attempts, 0);
+    assertEquals((error as { slug?: string }).slug, "config-invalid");
+    assertEquals(error.message.includes("synthetic-private-token"), false);
+    assertEquals(JSON.stringify(error).includes("synthetic-private-token"), false);
+  });
+
   it("preserves a classified startup transport rejection without retrying", async () => {
     let attempts = 0;
     const log = recordingLogger();
