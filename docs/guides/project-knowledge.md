@@ -51,7 +51,8 @@ store support for filtering before ranking.
 
 Create Markdown files under `knowledge/`.
 
-Knowledge documents follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md).
+Knowledge documents target [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/ad30107c31c06aec8a7d5636e0d1058118604e6f/SPEC.md),
+pinned to revision `ad30107c31c06aec8a7d5636e0d1058118604e6f`.
 Agent configuration stays in TypeScript; OKF document metadata uses the standard's
 frontmatter format. Concept documents require a non-empty `type`; `index.md` and
 `log.md` are reserved bundle files.
@@ -74,9 +75,24 @@ owner: support-platform
 Verify the issuer, audience, callback URL, and current signing key.
 ```
 
-A file whose frontmatter fails to parse is still listed in the manifest, but
-with no searchable metadata, so metadata queries cannot find it. Keep
-frontmatter a valid YAML mapping so path and frontmatter search both work.
+A file whose frontmatter fails to parse stays listed without searchable
+metadata. An explicit `lookup_target` still returns its original content. Keep
+frontmatter a valid YAML mapping so path and metadata search both work.
+
+Use `inspectOkfDocument(path, source)` from `veryfront/knowledge` to check the
+document envelope without changing it. The result retains the exact source,
+Markdown body, and unknown metadata fields. `envelopeConforms` checks the
+leading YAML mapping and required concept `type`; reserved `index.md` and
+`log.md` files are distinguished from concepts. Diagnostics explain missing or
+malformed frontmatter and invalid types. Existing files remain readable and
+are never rewritten automatically.
+
+Envelope inspection does not validate every optional provenance or computation
+contract, resolve links, or establish full bundle conformance. Preserve authored
+Markdown links during edits and exports. Relative links resolve from the source
+document; a leading `/` refers to the bundle root. External and unresolved links
+must remain distinguishable from resolved document relationships. Relationships
+are directed Markdown links, without invented typed-edge metadata.
 
 ## Search paths and frontmatter
 

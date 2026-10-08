@@ -55,6 +55,34 @@ describe("projectKnowledge", () => {
     clearEmbeddingProviders();
   });
 
+  it("keeps the original document readable when frontmatter is malformed", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      const content = "---\ntype: [unfinished\n---\n\n# Original body\n[Related](related.md)\n";
+      await writeTextFile(join(projectDir, "knowledge", "malformed.md"), content);
+      const knowledge = projectKnowledge({ projectDir, model: "test/demo" });
+      const result = await knowledge.lookup({
+        query: "malformed",
+        lookup_target: { path: "knowledge/malformed.md" },
+      });
+      assertEquals(result.data.length, 1);
+      assertEquals(result.data[0]?.content, content);
+    });
+  });
+
+  it("returns an explicitly requested empty document as empty content", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(join(projectDir, "knowledge", "empty.md"), "");
+      const result = await projectKnowledge({ projectDir, model: "test/demo" }).lookup({
+        query: "empty",
+        lookup_target: { path: "knowledge/empty.md" },
+      });
+      assertEquals(result.data.length, 1);
+      assertEquals(result.data[0]?.content, "");
+    });
+  });
+
   it("retrieves source-controlled project knowledge with default paths", async () => {
     registerTestEmbeddingProvider();
 
