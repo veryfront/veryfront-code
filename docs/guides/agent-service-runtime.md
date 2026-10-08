@@ -185,6 +185,12 @@ Use `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` when startup must fail if the
 service cannot register. Use `disabled` when the service must run without
 control-plane registration.
 
+Initial registration retries transport failures and HTTP 5xx responses up to
+three attempts, with 250 ms and 500 ms backoff. Each request carries a five-second
+abort deadline. Retries retain the same service key and source binding. Client
+errors and malformed successful responses fail immediately. Exhausted failures
+retain the configured `enabled` or `auto` startup behavior.
+
 The service name resolves from `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
 `package.json` or `deno.json` `name`, then `veryfront-agent-service`. Pass
 `serviceName` only when code should override that convention.
