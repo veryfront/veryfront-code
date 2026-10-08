@@ -152,6 +152,7 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
     input.message.parts.every((part) =>
       isRecord(part) &&
       (part.type === "data-veryfront.runtime_context" || part.type === "step-start" ||
+        (part.type === "text" && typeof part.text === "string" && part.text.trim().length === 0) ||
         (part.type === "reasoning" && !isPersistedReasoningPart({
           id: "",
           text: typeof part.text === "string" ? part.text : "",

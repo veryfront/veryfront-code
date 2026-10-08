@@ -144,6 +144,16 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage ignores stream framing beside r
   );
 });
 
+Deno.test("blank streamed text shells do not make an empty response successful", () => {
+  for (const text of ["", " \n\t"]) {
+    const message = {
+      parts: [{ type: "data-veryfront.runtime_context", data: {} }, { type: "text", text }],
+    };
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message }), true);
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: true, message }), false);
+  }
+});
+
 Deno.test("shouldFailEmptyHostedFinalizedMessage keeps aborted empty assistant responses cancellable", () => {
   assertEquals(
     shouldFailEmptyHostedFinalizedMessage({

@@ -609,6 +609,49 @@ describe("agent/hosted-chat-finalization", () => {
     assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
   });
 
+  for (const text of ["", " \n\t"]) {
+    it(`fails blank text shell ${JSON.stringify(text)} beside runtime metadata`, async () => {
+      const calls: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [
+            { type: "step-start" },
+            { type: "text", text },
+            {
+              type: "data-veryfront.runtime_context",
+              data: {
+                currentDateUtc: "2026-10-07",
+                currentTimeUtc: "09:30:41",
+                runStartedAtUtc: "2026-10-07T09:30:40.526Z",
+              },
+            },
+          ],
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({}),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+
+      assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
+      assertEquals(terminalStates.at(0)!.status, "failed");
+      assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
+    });
+  }
+
   it("completes runtime-metadata-only response output with final-step tool fallback", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
