@@ -454,9 +454,9 @@ describe("security/application-auth JWKS cache", () => {
   it("ignores additional top-level JWKS members", async () => {
     await withMockFetch(
       () =>
-        jsonResponse(
+        Promise.resolve(jsonResponse(
           JSON.stringify({ keys: [RSA_KEY], issuer: "https://issuer.example.test" }),
-        ),
+        )),
       async () => {
         const cache = createJwksCache();
         const key = await cache.getKey({

@@ -10,6 +10,11 @@ import {
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
 import { primordialPromiseAll, primordialPromiseCatch } from "./primordials/promise.ts";
+import {
+  openNativeStreamFile,
+  removeNativeStreamFile,
+  renameNativeStreamFile,
+} from "./native-stream-file.ts";
 
 export { isNotFoundError };
 
@@ -24,6 +29,38 @@ const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const reflectApply = Reflect.apply;
+const NativeUint8Array = Uint8Array;
+const TypedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype);
+const Uint8ArrayBufferGet = getOwnPropertyDescriptor(TypedArrayPrototype, "buffer")?.get as
+  | ((this: Uint8Array) => ArrayBufferLike)
+  | undefined;
+const Uint8ArrayByteLengthGet = getOwnPropertyDescriptor(TypedArrayPrototype, "byteLength")
+  ?.get as
+    | ((this: Uint8Array) => number)
+    | undefined;
+const Uint8ArrayByteOffsetGet = getOwnPropertyDescriptor(TypedArrayPrototype, "byteOffset")
+  ?.get as
+    | ((this: Uint8Array) => number)
+    | undefined;
+const ReadableStreamCancel = ReadableStream.prototype.cancel;
+const ReadableStreamPipeTo = ReadableStream.prototype.pipeTo;
+const NativeWritableStream = WritableStream;
+const NativePromise = Promise;
+const NativePromiseResolve = Promise.resolve;
+const NativePromiseThen = Promise.prototype.then;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const capturedRandomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+const capturedUsesWindowsSeparators = (() => {
+  if (isDeno) {
+    const deno = Reflect.get(globalThis, "Deno") as typeof Deno | undefined;
+    return deno?.build?.os === "windows";
+  }
+  if (!isNode && !isBun) return false;
+  const process = Reflect.get(globalThis, "process") as { platform?: string } | undefined;
+  return process?.platform === "win32";
+})();
 
 function createDataDescriptor<T>(
   value: T,
@@ -46,6 +83,144 @@ function hasOwnDataValue(
   return descriptor !== undefined &&
     reflectApply(hasOwnProperty, descriptor, ["value"]) === true &&
     descriptor.value === expected;
+}
+
+function getByteLength(value: Uint8Array): number {
+  if (!Uint8ArrayByteLengthGet) throw new TypeError("Uint8Array byteLength accessor unavailable");
+  return reflectApply(Uint8ArrayByteLengthGet, value, []) as number;
+}
+
+function createByteWriteView(value: Uint8Array, offset: number): Uint8Array {
+  if (!Uint8ArrayBufferGet || !Uint8ArrayByteOffsetGet) {
+    throw new TypeError("Uint8Array buffer accessors unavailable");
+  }
+  const buffer = reflectApply(Uint8ArrayBufferGet, value, []) as ArrayBufferLike;
+  const byteOffset = reflectApply(Uint8ArrayByteOffsetGet, value, []) as number;
+  const byteLength = getByteLength(value);
+  const view = new NativeUint8Array(buffer, byteOffset + offset, byteLength - offset);
+  // Node's native fs.write wrapper reads these properties before entering the
+  // binding. Keep mutable typed-array getters away from confidential chunks.
+  void defineProperty(view, "buffer", createDataDescriptor(buffer, false));
+  void defineProperty(view, "byteOffset", createDataDescriptor(byteOffset + offset, false));
+  void defineProperty(view, "byteLength", createDataDescriptor(byteLength - offset, false));
+  return view;
+}
+
+function stringLastIndexOf(value: string, search: string): number {
+  return reflectApply(StringPrototypeLastIndexOf, value, [search]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return reflectApply(
+    StringPrototypeSlice,
+    value,
+    end === undefined ? [start] : [start, end],
+  ) as string;
+}
+
+function stringCharCodeAt(value: string, index: number): number {
+  return reflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function isHexAt(value: string, index: number): boolean {
+  const code = stringCharCodeAt(value, index);
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 102) ||
+    (code >= 65 && code <= 70);
+}
+
+function isCapturedUuid(value: string): boolean {
+  if (value.length !== 36) return false;
+  for (let index = 0; index < value.length; index++) {
+    if (index === 8 || index === 13 || index === 18 || index === 23) {
+      if (stringCharCodeAt(value, index) !== 45) return false;
+      continue;
+    }
+    if (index === 14) {
+      if (stringCharCodeAt(value, index) !== 52) return false;
+      continue;
+    }
+    if (index === 19) {
+      const code = stringCharCodeAt(value, index);
+      if (code !== 56 && code !== 57 && code !== 97 && code !== 98 && code !== 65 && code !== 66) {
+        return false;
+      }
+      continue;
+    }
+    if (!isHexAt(value, index)) return false;
+  }
+  return true;
+}
+
+function createPrivateStreamPath(path: string): string {
+  if (!capturedRandomUUID) throw new Error("Secure random UUID capability unavailable");
+  const nonce = capturedRandomUUID();
+  if (!isCapturedUuid(nonce)) throw new Error("Invalid private stream nonce");
+  const slashIndex = stringLastIndexOf(path, "/");
+  const backslashIndex = capturedUsesWindowsSeparators ? stringLastIndexOf(path, "\\") : -1;
+  const separatorIndex = slashIndex > backslashIndex ? slashIndex : backslashIndex;
+  if (separatorIndex < 0) return `.vf-download-${nonce}`;
+  return `${stringSlice(path, 0, separatorIndex + 1)}.vf-download-${nonce}`;
+}
+
+async function writeStreamAtomic(
+  path: string,
+  source: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
+  const temporaryPath = createPrivateStreamPath(path);
+  let created = false;
+  try {
+    const bytes = await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(temporaryPath),
+      () => removeNativeStreamFile(temporaryPath),
+    );
+    created = true;
+    signal?.throwIfAborted();
+    await renameNativeStreamFile(temporaryPath, path);
+    created = false;
+    return bytes;
+  } finally {
+    if (created) {
+      try {
+        await removeNativeStreamFile(temporaryPath);
+      } catch {
+        // Preserve the promotion or cancellation failure that triggered cleanup.
+      }
+    }
+  }
+}
+
+function bindNativePromiseConstructor<T>(promise: Promise<T>): Promise<T> {
+  void defineProperty(promise, "constructor", createDataDescriptor(NativePromise, false));
+  void defineProperty(promise, "then", createDataDescriptor(NativePromiseThen, false));
+  return promise;
+}
+
+function resolveNativePromise(): Promise<void> {
+  return bindNativePromiseConstructor(
+    reflectApply(NativePromiseResolve, NativePromise, []) as Promise<void>,
+  );
+}
+
+function observeNativePromise(promise: Promise<unknown>): Promise<void> {
+  const observed = new NativePromise<void>((resolve, reject) => {
+    void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [
+      () => resolve(),
+      reject,
+    ]);
+  });
+  return bindNativePromiseConstructor(observed);
+}
+
+function observeCancellation(promise: Promise<unknown>): Promise<void> {
+  const observed = new NativePromise<void>((resolve) => {
+    const settle = () => resolve();
+    void reflectApply(NativePromiseThen, bindNativePromiseConstructor(promise), [settle, settle]);
+  });
+  return bindNativePromiseConstructor(observed);
 }
 
 /** Stable native identity for one filesystem object. */
@@ -107,6 +282,22 @@ export interface FileSystem {
   ): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
+  /** Create an exclusive file and stream bytes without buffering the complete input. */
+  writeFileStream?(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number>;
+  /** Stream to a private sibling path, then atomically promote it over the target. */
+  writeFileStreamAtomic?(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number>;
+  /** Promote a completed private stream file through captured host operations. */
+  promoteStreamFile?(from: string, to: string): Promise<void>;
+  /** Remove a private stream file through captured host operations. */
+  removeStreamFile?(path: string): Promise<void>;
   createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
   rename?(from: string, to: string): Promise<void>;
@@ -128,7 +319,8 @@ export interface FileSystem {
 }
 
 interface NodeFsPromises {
-  open(path: string, flags: "r"): Promise<{
+  open(path: string, flags: "r" | "wx", mode?: number): Promise<{
+    write(buffer: Uint8Array): Promise<{ bytesWritten: number }>;
     read(buffer: Uint8Array): Promise<{ bytesRead: number }>;
     close(): Promise<void>;
   }>;
@@ -251,6 +443,27 @@ class NodeFileSystem implements FileSystem {
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data);
+  }
+
+  async writeFileStream(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    return await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(path),
+      () => removeNativeStreamFile(path),
+    );
+  }
+
+  async promoteStreamFile(from: string, to: string): Promise<void> {
+    await renameNativeStreamFile(from, to);
+  }
+
+  async removeStreamFile(path: string): Promise<void> {
+    await removeNativeStreamFile(path);
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -391,6 +604,27 @@ class DenoFileSystem implements FileSystem {
     await denoGlobal().writeFile(path, data);
   }
 
+  async writeFileStream(
+    path: string,
+    source: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    return await writeStreamExclusive(
+      source,
+      signal,
+      () => openNativeStreamFile(path),
+      () => removeNativeStreamFile(path),
+    );
+  }
+
+  async promoteStreamFile(from: string, to: string): Promise<void> {
+    await renameNativeStreamFile(from, to);
+  }
+
+  async removeStreamFile(path: string): Promise<void> {
+    await removeNativeStreamFile(path);
+  }
+
   async rename(from: string, to: string): Promise<void> {
     await denoGlobal().rename(from, to);
   }
@@ -519,6 +753,11 @@ export function createFileSystem(): FileSystem {
       },
       true,
     ),
+  );
+  defineProperty(
+    fileSystem,
+    "writeFileStreamAtomic",
+    createDataDescriptor(writeStreamAtomic, true),
   );
   defineProperty(
     fileSystem,
@@ -685,5 +924,99 @@ export function isAlreadyExistsError(error: unknown): boolean {
     return hasOwnDataValue(error, "code", "EEXIST");
   } catch {
     return false;
+  }
+}
+
+/** @internal Stream sequencing is exported only for focused backend regressions. */
+export async function writeStreamExclusive(
+  source: ReadableStream<Uint8Array>,
+  signal: AbortSignal | undefined,
+  open: () => Promise<{ write(chunk: Uint8Array): Promise<number>; close(): void | Promise<void> }>,
+  remove: () => Promise<void>,
+): Promise<number> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let closed = false;
+  let failed = true;
+  let bytes = 0;
+
+  const closeHandle = (): Promise<void> => {
+    if (!handle || closed) return resolveNativePromise();
+    closed = true;
+    const closing = reflectApply(NativePromiseResolve, NativePromise, [handle.close()]) as Promise<
+      unknown
+    >;
+    return observeNativePromise(closing);
+  };
+
+  const cancelSource = async (): Promise<void> => {
+    try {
+      await observeCancellation(
+        reflectApply(ReadableStreamCancel, source, [signal?.reason]) as Promise<void>,
+      );
+    } catch {
+      await resolveNativePromise();
+    }
+  };
+
+  const writeChunk = (chunk: Uint8Array): Promise<void> => {
+    const writing = (async () => {
+      signal?.throwIfAborted();
+      const current = handle;
+      if (!current) throw new Error("Upload file stream handle unavailable");
+      let offset = 0;
+      const byteLength = getByteLength(chunk);
+      while (offset < byteLength) {
+        signal?.throwIfAborted();
+        const written = await bindNativePromiseConstructor(
+          current.write(createByteWriteView(chunk, offset)), // NOSONAR: partial writes must be sequenced to preserve byte order and backpressure.
+        );
+        if (written <= 0) throw new Error("Upload file write made no progress");
+        offset += written;
+      }
+      bytes += byteLength;
+    })();
+    return bindNativePromiseConstructor(writing);
+  };
+
+  let pipeStarted = false;
+  try {
+    signal?.throwIfAborted();
+    handle = await bindNativePromiseConstructor(open());
+    const sink = createObject(null) as UnderlyingSink<Uint8Array>;
+    sink.write = writeChunk;
+    sink.close = closeHandle;
+    sink.abort = closeHandle;
+    const options = createObject(null) as StreamPipeOptions;
+    if (signal) options.signal = signal;
+    const strategy = createObject(null) as QueuingStrategy<Uint8Array>;
+    strategy.highWaterMark = 1;
+    const writable = new NativeWritableStream<Uint8Array>(sink, strategy);
+    try {
+      pipeStarted = true;
+      await bindNativePromiseConstructor(
+        reflectApply(ReadableStreamPipeTo, source, [writable, options]) as Promise<void>,
+      );
+    } catch (error) {
+      if (signal?.aborted && signal.reason instanceof Error) throw signal.reason;
+      throw error;
+    }
+    failed = false;
+    return bytes;
+  } finally {
+    if (failed) {
+      if (!pipeStarted) await cancelSource();
+      if (handle) {
+        try {
+          await closeHandle();
+        } catch {
+          // Preserve the stream failure while still attempting file cleanup.
+        }
+        try {
+          await remove();
+        } catch {
+          // Cleanup failures must not replace the original stream failure.
+        }
+      }
+    }
   }
 }
