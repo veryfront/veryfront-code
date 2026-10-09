@@ -48,6 +48,7 @@ import {
 import {
   primordialArrayFilter,
   primordialArrayMap,
+  primordialArrayPush,
   primordialArraySlice,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
@@ -248,7 +249,6 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
-const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
@@ -2676,11 +2676,7 @@ function createProjectRunObservationMirror(input: {
       if (disabled || events.length === 0) return;
       const snapshots: Record<string, unknown>[] = [];
       for (const event of primordialArrayValues(events)) {
-        IntrinsicReflectApply(
-          ArrayPrototypePush,
-          snapshots,
-          [snapshotProjectRunObservationEvent(event)],
-        );
+        primordialArrayPush(snapshots, snapshotProjectRunObservationEvent(event));
       }
       for (
         const batch of primordialArrayValues(
@@ -2690,7 +2686,7 @@ function createProjectRunObservationMirror(input: {
           }),
         )
       ) {
-        IntrinsicReflectApply(ArrayPrototypePush, pendingEvents, batch);
+        for (const event of primordialArrayValues(batch)) primordialArrayPush(pendingEvents, event);
         schedulePendingBatches(false);
         if (queuedEventCount >= PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT) {
           try {
@@ -2897,10 +2893,9 @@ async function withProjectRunRuntimeObservations<T>(
               "Invalid encoded project run observation event",
             );
           }
-          IntrinsicReflectApply(
-            ArrayPrototypePush,
+          primordialArrayPush(
             events,
-            [snapshotProjectRunObservationEvent({ ...candidate, type: candidate.type })],
+            snapshotProjectRunObservationEvent({ ...candidate, type: candidate.type }),
           );
         }
         const normalized = normalizeConversationRunEvents(

@@ -9367,6 +9367,93 @@ describe("project run inference credential header", () => {
     );
   });
 
+  it("keeps queued runtime observation appends private from inherited numeric array setters", async () => {
+    const runId = "run_stream_observation_numeric_setter";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    const text = "numeric setter safe";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-numeric-setter",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const originalIndexZero = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+            const originalDefineProperty = Object.defineProperty;
+            let observationNumericSetterCalls = 0;
+            Object.defineProperty(Array.prototype, "0", {
+              configurable: true,
+              set(this: unknown[], value: unknown) {
+                if (new Error().stack?.includes("project-run-execute.handler.ts")) {
+                  observationNumericSetterCalls++;
+                }
+                originalDefineProperty(this, "0", {
+                  configurable: true,
+                  enumerable: true,
+                  writable: true,
+                  value,
+                });
+              },
+            });
+            try {
+              await control.onEvent({ type: "text-delta", id: "message", delta: text });
+              assertEquals(observationNumericSetterCalls, 0);
+            } finally {
+              if (originalIndexZero) Object.defineProperty(Array.prototype, "0", originalIndexZero);
+              else delete (Array.prototype as unknown as Record<PropertyKey, unknown>)["0"];
+            }
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations === undefined) {
+            for (let index = 0; index < events.length; index++) {
+              appended[appended.length] = events[index];
+            }
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length + events.length,
+            appended_count: events.length,
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      text,
+    );
+  });
+
   it("snapshots nested runtime observation data before project code mutates it", async () => {
     const runId = "run_stream_observation_snapshot_mutation";
     const canonicalRunId = "11111111-1111-4111-8111-111111111111";
