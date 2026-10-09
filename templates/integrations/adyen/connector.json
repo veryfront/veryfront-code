@@ -242,7 +242,7 @@
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the payment to refund",
+            "description": "PSP reference of the payment to refund. Refund all or part of a captured payment; the outcome arrives asynchronously through a REFUND webhook.",
             "required": true
           }
         },

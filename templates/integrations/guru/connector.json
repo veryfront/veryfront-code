@@ -179,7 +179,7 @@
     {
       "id": "guru__verify_card",
       "name": "Verify Card",
-      "description": "Verify card",
+      "description": "Mark card as verified",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

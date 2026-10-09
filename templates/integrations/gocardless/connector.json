@@ -246,7 +246,7 @@
     {
       "id": "gocardless__retry_payment",
       "name": "Retry Payment",
-      "description": "Retry payment",
+      "description": "Retry failed payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -255,7 +255,7 @@
           "paymentId": {
             "type": "string",
             "in": "path",
-            "description": "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state)",
+            "description": "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state). Retry only if the mandate remains active. A failed payment can be manually retried at most three times.",
             "required": true
           },
           "GoCardless-Version": {

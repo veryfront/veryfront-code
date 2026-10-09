@@ -238,7 +238,7 @@
           "attachmentId": {
             "type": "string",
             "in": "path",
-            "description": "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments",
+            "description": "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments. Returns a fresh download URL that expires after 30 minutes; fetch it again before any delayed download.",
             "required": true
           }
         }

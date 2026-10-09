@@ -89,7 +89,7 @@
           "timeout": {
             "type": "number",
             "in": "query",
-            "description": "Run timeout in seconds (overrides the actor default)"
+            "description": "Run timeout in seconds (overrides the actor default). This parameter limits actor execution separately from the HTTP wait. The endpoint waits at most 300 seconds. An HTTP timeout does not prove the actor stopped; it may keep running and consuming credits. Check the existing run before retrying to avoid creating a duplicate run."
           },
           "memory": {
             "type": "number",

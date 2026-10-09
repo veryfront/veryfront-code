@@ -360,7 +360,7 @@
           "fileId": {
             "type": "string",
             "in": "path",
-            "description": "Box file ID",
+            "description": "Box file ID. A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
             "required": true
           },
           "version": {

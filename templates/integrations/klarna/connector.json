@@ -93,7 +93,7 @@
     {
       "id": "klarna__refund_order",
       "name": "Refund Order",
-      "description": "Refund order",
+      "description": "Refund captured order amount",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -102,7 +102,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
             "required": true
           }
         },
@@ -122,7 +122,7 @@
     {
       "id": "klarna__cancel_order",
       "name": "Cancel Order",
-      "description": "Cancel order",
+      "description": "Cancel uncaptured order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -131,7 +131,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
             "required": true
           }
         }
@@ -149,7 +149,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
             "required": true
           }
         }

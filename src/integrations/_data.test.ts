@@ -56,6 +56,14 @@ describe("integration endpoint specs", () => {
   it("keeps asynchronous and conversation-window semantics in short summaries", () => {
     const expected: [string, string, string][] = [
       ["adyen", "create_refund", "Start payment refund"],
+      ["klarna", "cancel_order", "Cancel uncaptured order"],
+      ["klarna", "refund_order", "Refund captured order amount"],
+      ["wix", "query_contacts", "Query contacts (1000 maximum per request)"],
+      ["gocardless", "retry_payment", "Retry failed payment"],
+      ["unzer", "cancel_authorization", "Cancel uncaptured authorization"],
+      ["trusted-shops", "reply_to_review", "Save public review reply"],
+      ["guru", "verify_card", "Mark card as verified"],
+      ["google-analytics", "run_realtime_report", "Run realtime report (last 30 minutes)"],
       ["google-contacts", "create_contact", "Create contact (requires full Contacts scope)"],
       ["google-contacts", "update_contact", "Update contact (requires full Contacts scope)"],
       ["stackit", "list_projects", "List projects (requires parent or member)"],
@@ -153,6 +161,83 @@ describe("integration endpoint specs", () => {
   });
   it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
     const expected: [string, string, "params" | "body", string, string][] = [
+      [
+        "adyen",
+        "create_refund",
+        "params",
+        "paymentPspReference",
+        "Refund all or part of a captured payment; the outcome arrives asynchronously through a REFUND webhook.",
+      ],
+      [
+        "fal",
+        "queue_cancel",
+        "params",
+        "request_id",
+        "Only queued requests that have not started running can be canceled; this does not stop an already running request.",
+      ],
+      [
+        "qonto",
+        "get_attachment",
+        "params",
+        "attachmentId",
+        "Returns a fresh download URL that expires after 30 minutes; fetch it again before any delayed download.",
+      ],
+      [
+        "klarna",
+        "release_remaining_authorization",
+        "params",
+        "orderId",
+        "Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
+      ],
+      [
+        "apify",
+        "run_actor_sync",
+        "params",
+        "timeout",
+        "This parameter limits actor execution separately from the HTTP wait. The endpoint waits at most 300 seconds. An HTTP timeout does not prove the actor stopped; it may keep running and consuming credits. Check the existing run before retrying to avoid creating a duplicate run.",
+      ],
+      [
+        "klarna",
+        "cancel_order",
+        "params",
+        "orderId",
+        "Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
+      ],
+      [
+        "klarna",
+        "refund_order",
+        "params",
+        "orderId",
+        "Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
+      ],
+      [
+        "wix",
+        "query_contacts",
+        "body",
+        "query",
+        "query.paging.limit must not exceed 1000 contacts per request.",
+      ],
+      [
+        "gocardless",
+        "retry_payment",
+        "params",
+        "paymentId",
+        "Retry only if the mandate remains active. A failed payment can be manually retried at most three times.",
+      ],
+      [
+        "box",
+        "download_file",
+        "params",
+        "fileId",
+        "A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
+      ],
+      [
+        "unzer",
+        "cancel_authorization",
+        "params",
+        "paymentId",
+        "This reverses an uncaptured authorization fully or partially, releasing reserved funds; it does not refund captured charges.",
+      ],
       [
         "unstructured",
         "partition_document",

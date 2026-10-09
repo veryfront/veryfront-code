@@ -528,7 +528,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the payment to refund",
+            "description":
+              "PSP reference of the payment to refund. Refund all or part of a captured payment; the outcome arrives asynchronously through a REFUND webhook.",
             "required": true,
           },
         },
@@ -2052,7 +2053,8 @@ export const connectors: IntegrationConfig[] = [
           "timeout": {
             "type": "number",
             "in": "query",
-            "description": "Run timeout in seconds (overrides the actor default)",
+            "description":
+              "Run timeout in seconds (overrides the actor default). This parameter limits actor execution separately from the HTTP wait. The endpoint waits at most 300 seconds. An HTTP timeout does not prove the actor stopped; it may keep running and consuming credits. Check the existing run before retrying to avoid creating a duplicate run.",
           },
           "memory": {
             "type": "number",
@@ -7363,7 +7365,8 @@ export const connectors: IntegrationConfig[] = [
           "fileId": {
             "type": "string",
             "in": "path",
-            "description": "Box file ID",
+            "description":
+              "Box file ID. A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
             "required": true,
           },
           "version": {
@@ -17078,7 +17081,8 @@ export const connectors: IntegrationConfig[] = [
           "request_id": {
             "type": "string",
             "in": "path",
-            "description": "Request ID returned by Submit Queue Request",
+            "description":
+              "Request ID returned by Submit Queue Request. Only queued requests that have not started running can be canceled; this does not stop an already running request.",
             "required": true,
           },
         },
@@ -22412,7 +22416,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__retry_payment",
       "name": "Retry Payment",
-      "description": "Retry payment",
+      "description": "Retry failed payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22422,7 +22426,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state)",
+              "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state). Retry only if the mandate remains active. A failed payment can be manually retried at most three times.",
             "required": true,
           },
           "GoCardless-Version": {
@@ -22882,7 +22886,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-analytics__run_realtime_report",
       "name": "Run Realtime Report",
-      "description": "Run realtime report",
+      "description": "Run realtime report (last 30 minutes)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -25893,7 +25897,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "guru__verify_card",
       "name": "Verify Card",
-      "description": "Verify card",
+      "description": "Mark card as verified",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -30988,7 +30992,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__refund_order",
       "name": "Refund Order",
-      "description": "Refund order",
+      "description": "Refund captured order amount",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30997,7 +31001,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
             "required": true,
           },
         },
@@ -31017,7 +31022,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__cancel_order",
       "name": "Cancel Order",
-      "description": "Cancel order",
+      "description": "Cancel uncaptured order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31026,7 +31031,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
             "required": true,
           },
         },
@@ -31044,7 +31050,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
             "required": true,
           },
         },
@@ -44289,7 +44296,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments",
+              "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments. Returns a fresh download URL that expires after 30 minutes; fetch it again before any delayed download.",
             "required": true,
           },
         },
@@ -55322,7 +55329,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__reply_to_review",
       "name": "Reply to Review",
-      "description": "Reply to review",
+      "description": "Save public review reply",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56218,7 +56225,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__cancel_authorization",
       "name": "Cancel Authorization",
-      "description": "Cancel authorization",
+      "description": "Cancel uncaptured authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56227,7 +56234,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentId": {
             "type": "string",
             "in": "path",
-            "description": "Payment ID of the authorized payment (e.g. s-pay-1)",
+            "description":
+              "Payment ID of the authorized payment (e.g. s-pay-1). This reverses an uncaptured authorization fully or partially, releasing reserved funds; it does not refund captured charges.",
             "required": true,
           },
         },
@@ -57671,7 +57679,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__query_contacts",
       "name": "Query Contacts",
-      "description": "Query contacts",
+      "description": "Query contacts (1000 maximum per request)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57680,7 +57688,7 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "object",
             "description":
-              'Query options, e.g. {"filter":{"info.name.last":{"$eq":"Smith"}},"paging":{"limit":25,"offset":0}}',
+              'Query options, e.g. {"filter":{"info.name.last":{"$eq":"Smith"}},"paging":{"limit":25,"offset":0}}. query.paging.limit must not exceed 1000 contacts per request.',
           },
         },
         "response": { "transform": "contacts" },

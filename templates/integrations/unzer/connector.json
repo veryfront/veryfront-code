@@ -218,7 +218,7 @@
     {
       "id": "unzer__cancel_authorization",
       "name": "Cancel Authorization",
-      "description": "Cancel authorization",
+      "description": "Cancel uncaptured authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -227,7 +227,7 @@
           "paymentId": {
             "type": "string",
             "in": "path",
-            "description": "Payment ID of the authorized payment (e.g. s-pay-1)",
+            "description": "Payment ID of the authorized payment (e.g. s-pay-1). This reverses an uncaptured authorization fully or partially, releasing reserved funds; it does not refund captured charges.",
             "required": true
           }
         },

@@ -102,7 +102,7 @@
     {
       "id": "wix__query_contacts",
       "name": "Query Contacts",
-      "description": "Query contacts",
+      "description": "Query contacts (1000 maximum per request)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -110,7 +110,7 @@
         "body": {
           "query": {
             "type": "object",
-            "description": "Query options, e.g. {\"filter\":{\"info.name.last\":{\"$eq\":\"Smith\"}},\"paging\":{\"limit\":25,\"offset\":0}}"
+            "description": "Query options, e.g. {\"filter\":{\"info.name.last\":{\"$eq\":\"Smith\"}},\"paging\":{\"limit\":25,\"offset\":0}}. query.paging.limit must not exceed 1000 contacts per request."
           }
         },
         "response": {

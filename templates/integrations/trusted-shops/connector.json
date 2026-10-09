@@ -252,7 +252,7 @@
     {
       "id": "trusted-shops__reply_to_review",
       "name": "Reply to Review",
-      "description": "Reply to review",
+      "description": "Save public review reply",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

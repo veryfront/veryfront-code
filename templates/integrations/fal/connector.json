@@ -191,7 +191,7 @@
           "request_id": {
             "type": "string",
             "in": "path",
-            "description": "Request ID returned by Submit Queue Request",
+            "description": "Request ID returned by Submit Queue Request. Only queued requests that have not started running can be canceled; this does not stop an already running request.",
             "required": true
           }
         }

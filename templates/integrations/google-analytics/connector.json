@@ -129,7 +129,7 @@
     {
       "id": "google-analytics__run_realtime_report",
       "name": "Run Realtime Report",
-      "description": "Run realtime report",
+      "description": "Run realtime report (last 30 minutes)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
