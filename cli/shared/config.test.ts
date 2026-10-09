@@ -23,6 +23,7 @@ import {
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "veryfront/platform/path";
 import { withTempDir } from "#veryfront/testing/deno-compat";
 import {
@@ -1931,5 +1932,102 @@ describe("nonprompting management configuration", () => {
         "repository-configured API endpoint",
       );
     });
+  });
+});
+
+describe("authenticated binary API downloads", () => {
+  it("preserves no-content responses for JSON API actions", async () => {
+    await withMockFetch(() => Promise.resolve(new Response(null, { status: 204 })), async () => {
+      const client = createApiClient(makeConfig());
+      assertEquals(await client.delete("/projects/my-project/uploads/file"), undefined);
+    });
+  });
+
+  it("rejects successful responses that omit the binary body", async () => {
+    for (const status of [200, 204]) {
+      await withMockFetch(() =>
+        Promise.resolve(
+          new Response(null, {
+            status,
+            headers: { "content-type": "application/octet-stream" },
+          }),
+        ), async () => {
+        const getStream = createApiClient(makeConfig()).getStream;
+        if (!getStream) throw new Error("Missing binary download client");
+        await assertRejects(
+          () => getStream("/projects/my-project/uploads/file"),
+          Error,
+          "API did not return upload content",
+        );
+      });
+    }
+  });
+
+  it("cancels metadata responses instead of treating them as file bytes", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await withMockFetch(() =>
+      Promise.resolve(
+        new Response(body, {
+          headers: { "content-type": "application/json" },
+        }),
+      ), async () => {
+      const getStream = createApiClient(makeConfig()).getStream;
+      if (!getStream) throw new Error("Missing binary download client");
+      await assertRejects(
+        () => getStream("/projects/my-project/uploads/file"),
+        Error,
+        "API did not return upload content",
+      );
+      assertEquals(cancelled, true);
+    });
+  });
+
+  it("accepts case-insensitive binary media types with parameter whitespace", async () => {
+    for (
+      const contentType of ["Application/Octet-Stream", "application/octet-stream ; charset=binary"]
+    ) {
+      await withMockFetch(() =>
+        Promise.resolve(
+          new Response("binary", {
+            headers: { "content-type": contentType },
+          }),
+        ), async () => {
+        const getStream = createApiClient(makeConfig()).getStream;
+        if (!getStream) throw new Error("Missing binary download client");
+        assertEquals(
+          await new Response(await getStream("/projects/my-project/uploads/file")).text(),
+          "binary",
+        );
+      });
+    }
+  });
+
+  it("requests binary bytes with auth and rejects redirects", async () => {
+    let init: RequestInit | undefined;
+    await withMockFetch(
+      ((_input: unknown, requestInit?: RequestInit) => {
+        init = requestInit;
+        return Promise.resolve(
+          new Response("binary", { headers: { "content-type": "application/octet-stream" } }),
+        );
+      }) as typeof fetch,
+      async () => {
+        const client = createApiClient(makeConfig());
+        if (!client.getStream) throw new Error("Missing binary download client");
+        const stream = await client.getStream("/projects/my-project/uploads/file");
+        assertEquals(await new Response(stream).text(), "binary");
+        assertEquals(init?.redirect, "error");
+        assertEquals(new Headers(init?.headers).get("accept"), "application/octet-stream");
+        assertEquals(
+          new Headers(init?.headers).get("authorization"),
+          `Bearer ${makeConfig().apiToken}`,
+        );
+      },
+    );
   });
 });

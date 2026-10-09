@@ -2259,17 +2259,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input instanceof Request
             ? input.url
             : input.toString();
-          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
-            return new Response(
-              JSON.stringify({
-                signed_url: "https://signed.example.test/guide.md",
-                expires_at: "2026-09-30T23:00:00.000Z",
-              }),
-              { status: 200, headers: { "Content-Type": "application/json" } },
-            );
-          }
-          if (url === "https://signed.example.test/guide.md") {
-            return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            assertEquals(new Headers(init?.headers).get("Accept"), "application/octet-stream");
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              status: 200,
+              headers: { "Content-Type": "application/octet-stream" },
+            });
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
@@ -2314,11 +2309,72 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "test-token" },
     );
 
-    const result = await new ProjectRunExecuteHandler().handle(
-      signed.request,
-      createCtx(signed.publicKeyPem),
-    );
-
+    const originalSplit = String.prototype.split;
+    const originalTrim = String.prototype.trim;
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let interceptedMime = false;
+    let result;
+    try {
+      result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            const observed = observeFetchRequestInit(init);
+            assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+            assertEquals(new Headers(observed.headers).get("accept"), "application/octet-stream");
+            assertEquals(
+              observed.redirect,
+              "manual",
+              "the guard inspects redirects before following",
+            );
+            String.prototype.split = function (...args) {
+              if (String(this) === "Application/Octet-Stream ; charset=binary") {
+                interceptedMime = true;
+                throw new Error("tenant MIME hook");
+              }
+              return Reflect.apply(originalSplit, this, args);
+            };
+            String.prototype.trim = function () {
+              if (String(this) === "Application/Octet-Stream ") {
+                interceptedMime = true;
+                throw new Error("tenant MIME trim hook");
+              }
+              return Reflect.apply(originalTrim, this, []);
+            };
+            String.prototype.toLowerCase = function () {
+              if (String(this) === "Application/Octet-Stream") {
+                interceptedMime = true;
+                throw new Error("tenant MIME case hook");
+              }
+              return Reflect.apply(originalToLowerCase, this, []);
+            };
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              headers: { "Content-Type": "Application/Octet-Stream ; charset=binary" },
+            });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+    } finally {
+      String.prototype.split = originalSplit;
+      String.prototype.trim = originalTrim;
+      String.prototype.toLowerCase = originalToLowerCase;
+    }
+    assertEquals(interceptedMime, false);
     assertExists(result.response);
     const payload = await result.response.json();
     assertEquals(payload.success, false);
@@ -10046,15 +10102,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
           acknowledgements.push(siblingSettled);
           return Response.json({ acknowledged: true });
         }
-        for (const name of ["first", "sibling"]) {
-          if (url.endsWith(`/uploads/uploads%2F${name}.md/url`)) {
-            return Response.json({ signed_url: `https://signed.example.test/${name}.md` });
-          }
-        }
-        assertStringIncludes(url, "https://signed.example.test/");
+        assertStringIncludes(url, "/uploads/uploads%2F");
+        assertEquals(url.endsWith("/url"), false, "downloads use authenticated API content");
         downloads++;
         if (downloads === 2) started.resolve();
-        if (url.endsWith("/first.md")) return await first.promise;
+        if (url.endsWith("%2Ffirst.md")) return await first.promise;
         try {
           return await sibling.promise;
         } finally {
