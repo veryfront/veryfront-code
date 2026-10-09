@@ -11,6 +11,8 @@ import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 
 it("executes a trusted pending tool call exactly once before model continuation", async () => {
   const executions: unknown[] = [];
@@ -377,4 +379,36 @@ it("replays an authorized tool discovered by tool_search without the parked expo
   assertEquals(resumedModel.toolNames(), ["tool_search"]);
   assertEquals(resumedModel.callCount, 1);
   assertStringIncludes(JSON.stringify(resumedModel.calls[0]?.prompt), "authentication_required");
+});
+
+it("resumes a parked legacy form through materialized canonical platform definitions", async () => {
+  const executions: unknown[] = [];
+  const model = scriptedModel([{ text: "continued after platform form" }], { only: "stream" });
+  const definitions = withPlatformHostToolAliases({
+    veryfront__form_input: markTrustedHostToolProvenance({
+      id: "veryfront__form_input",
+      description: "Platform form control",
+      inputSchema: defineSchema((v) => v.object({ answer: v.string() }))(),
+      execute: (input) => {
+        executions.push(input);
+        return { submitted: true, owner: "platform" };
+      },
+    }),
+  });
+  const materialized = createToolsFromHostDefinitions(definitions);
+  for (const definition of Object.values(materialized)) markRuntimeLocalTool(definition);
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "resume-canonical-platform-legacy-form",
+    system: "Continue after the submitted platform form.",
+    skills: false,
+    tools: materialized,
+    resolveModelTransport: () => Promise.resolve({ model }),
+  }, {
+    resumeToolCall: { id: "legacy-form:resume-1", name: "form_input", input: { answer: "yes" } },
+  });
+  const body = await (await assistant.stream({ input: "continue" })).toDataStreamResponse().text();
+  assertEquals(executions, [{ answer: "yes" }]);
+  assertStringIncludes(body, "legacy-form:resume-1");
+  assertStringIncludes(body, "continued after platform form");
+  assertEquals(model.calls.length, 1);
 });
