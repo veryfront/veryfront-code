@@ -3074,6 +3074,75 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
+  it("preserves service-unavailable project access failures", async () => {
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            projectId,
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () =>
+          Promise.resolve({
+            success: false,
+            error: {
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
+              statusCode: 503,
+            },
+          }),
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      errorCode: "SERVER_ERROR",
+      message: "Project access could not be verified",
+    });
+  });
+
+  it("rejects a durable invocation with the project service failure before execution", async () => {
+    let accessChecks = 0;
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => {
+          accessChecks++;
+          return Promise.resolve({
+            success: false as const,
+            error: {
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
+              statusCode: 503,
+            },
+          });
+        },
+        runtimeSource,
+      },
+    );
+    if (!(response instanceof Response)) throw new Error("Expected access failure response");
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      errorCode: "SERVER_ERROR",
+      message: "Project access could not be verified",
+    });
+    assertEquals(accessChecks, 1);
+  });
+
   it("parses runtime agent invocations into hosted chat requests", async () => {
     const invocation = createRuntimeInvocation();
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(

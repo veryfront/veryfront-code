@@ -438,6 +438,7 @@ function getDocumentedFlagKind(
  * `cli/shared/args.test.ts` asserts that invariant.
  */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  "accept-dispatch",
   "adopt-new-deps",
   "all",
   "auto",

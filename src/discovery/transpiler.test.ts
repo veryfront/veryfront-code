@@ -284,6 +284,38 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(typeof tryResolve<{ parse?: unknown }>("ModuleLexer")?.parse, "function");
     });
 
+    for (const hosted of [false, true]) {
+      it(`resolves project-root aliases through the adapter (${hosted ? "hosted" : "absolute"})`, async () => {
+        const root = hosted ? "" : "/project/";
+        const files = {
+          [`${root}tools/alias-reader.ts`]:
+            'import { value } from "@/lib/alias-value"; export default { value };',
+          [`${root}lib/alias-value.ts`]: 'export const value = "project-root";',
+        };
+        const context: FileDiscoveryContext = {
+          platform: "node",
+          fsAdapter: createMockAdapter(files, hosted ? { projectDir: Deno.cwd() } : {}),
+          baseDir: hosted ? "" : "/project",
+        };
+        const mod = await importModule(`file://${root}tools/alias-reader.ts`, context) as {
+          default: { value: string };
+        };
+        assertEquals(mod.default.value, "project-root");
+        files[`${root}lib/alias-value.ts`] = 'export const value = "updated-root";';
+        const updated = await importModule(`file://${root}tools/alias-reader.ts`, context) as {
+          default: { value: string };
+        };
+        assertEquals(updated.default.value, "updated-root");
+        assert(updated !== mod, "alias dependency changes must invalidate the compiled module");
+        delete files[`${root}lib/alias-value.ts`];
+        await assertRejects(
+          () => importModule(`file://${root}tools/alias-reader.ts`, context),
+          VeryfrontError,
+          "Could not resolve",
+        );
+      });
+    }
+
     it("should resolve relative imports via fsAdapter plugin", async () => {
       const files: Record<string, string> = {
         "/project/agents/assistant.ts": [

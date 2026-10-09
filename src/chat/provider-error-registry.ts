@@ -1,5 +1,10 @@
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 
+export const AGENT_PROVIDER_AUTH_ERROR = {
+  code: "agent-provider-auth-error",
+  message: "Agent provider authentication failed",
+} as const;
+
 export const PROJECT_SCHEMA_ERROR = {
   code: "PROJECT_SCHEMA_ERROR",
   message:
@@ -83,6 +88,7 @@ export const INFERENCE_POLICY_DENIED_ERROR = {
 
 /** Codes transported across model boundaries; diagnostics are reconstructed locally. */
 export const CURATED_PROVIDER_FAILURE_CODES = [
+  "agent-provider-auth-error",
   "OVERLOADED_ERROR",
   "CONTEXT_LENGTH_EXCEEDED",
   "INSUFFICIENT_CREDITS",
@@ -103,6 +109,8 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
 const failures = {
+  // Hosted transport carries only the stable public code; 401 is its canonical status.
+  "agent-provider-auth-error": { ...AGENT_PROVIDER_AUTH_ERROR, status: 401 },
   OVERLOADED_ERROR: {
     code: "OVERLOADED_ERROR",
     message: "The LLM provider is currently overloaded",

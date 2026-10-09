@@ -244,6 +244,195 @@ describe("agent/agent-service-registration", () => {
     );
   });
 
+  it("recovers initial registration after a transient control-plane failure", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const log = recordingLogger();
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(
+        attempts === 1
+          ? jsonResponse({ error: "synthetic transient failure" }, 500)
+          : jsonResponse(serviceResponse),
+      );
+    };
+    const pending = createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    ).then(
+      (lifecycle) => ({ lifecycle, error: undefined }),
+      (error: unknown) => ({ lifecycle: undefined, error }),
+    );
+    await time.tickAsync(1_000);
+    const outcome = await pending;
+    outcome.lifecycle?.stop();
+    assertEquals(log.warnings.length, 1);
+    assertEquals(
+      log.warnings[0]?.message,
+      "Agent service registration retrying after transient failure",
+    );
+    assertEquals(log.warnings[0]?.metadata?.attempt, 1);
+    assertEquals(log.warnings[0]?.metadata?.retryInMs, 250);
+    assertEquals(
+      log.warnings[0]?.metadata?.error,
+      "Agent runtime registration request failed with HTTP 500",
+    );
+    assertEquals(attempts, 2, "startup must retry a transient failure before giving up");
+    assertEquals(outcome.error, undefined);
+    assert(outcome.lifecycle, "registration must recover before heartbeat setup");
+  });
+
+  it("rejects malformed authorization configuration without transport retries or token details", async () => {
+    using time = new FakeTime();
+    const syntheticToken = "synthetic-private-token\r\ninvalid";
+    const log = recordingLogger();
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(jsonResponse(serviceResponse));
+    };
+    const pending = createAgentServiceRegistrationLifecycle({
+      ...lifecycleOptions(fetch, { logger: log.logger }),
+      authToken: syntheticToken,
+    }).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    const error = await pending;
+    assert(error instanceof Error);
+    assertEquals(log.warnings.length, 0, "configuration failure must not enter transport retries");
+    assertEquals(attempts, 0);
+    assertEquals((error as { slug?: string }).slug, "config-invalid");
+    assertEquals(error.message.includes("synthetic-private-token"), false);
+    assertEquals(JSON.stringify(error).includes("synthetic-private-token"), false);
+  });
+
+  it("preserves a classified startup transport rejection without retrying", async () => {
+    let attempts = 0;
+    const log = recordingLogger();
+    const failure = NETWORK_ERROR.create({
+      detail: "synthetic registration refusal",
+      context: { httpStatus: 403 },
+    });
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.reject(failure);
+    };
+    const error = await assertRejects(() =>
+      createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch, { logger: log.logger }))
+    );
+    assertEquals(error, failure, "the original typed rejection must retain its classification");
+    assertEquals(attempts, 1);
+    assertEquals(log.warnings.length, 0);
+  });
+
+  it("leaves permanent startup failures visible without retrying", async () => {
+    for (const status of [401, 403, 404, 422, 429, 200]) {
+      let attempts = 0;
+      const fetch: typeof globalThis.fetch = () => {
+        attempts++;
+        return Promise.resolve(jsonResponse({ invalid: true }, status));
+      };
+      await assertRejects(() => createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)));
+      assertEquals(attempts, 1, `permanent status ${status} must not be retried`);
+    }
+  });
+
+  it("does not retry a successful response with malformed JSON", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(
+        new Response("{invalid-json", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    };
+    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    assert(await pending instanceof Error);
+    assertEquals(attempts, 1, "complete malformed JSON is a permanent protocol failure");
+  });
+
+  it("reports exhausted startup failures after bounded attempts", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const fetch: typeof globalThis.fetch = () => {
+      attempts++;
+      return Promise.resolve(jsonResponse({ error: "unavailable" }, 503));
+    };
+    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    const error = await pending;
+    assert(error instanceof Error);
+    assert(error.message.includes("503"));
+    assertEquals(attempts, 3);
+  });
+
+  it("recovers a startup transport failure without changing the service key", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    const bodies: string[] = [];
+    const fetch: typeof globalThis.fetch = (_input, init) => {
+      attempts++;
+      bodies.push(String(init?.body));
+      return attempts === 1
+        ? Promise.reject(new TypeError("synthetic disconnected transport"))
+        : Promise.resolve(jsonResponse(serviceResponse));
+    };
+    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch));
+    await time.tickAsync(1_000);
+    const lifecycle = await pending;
+    lifecycle.stop();
+    assertEquals(attempts, 2);
+    assertEquals(bodies[0], bodies[1], "retry must retain the keyed registration identity");
+  });
+
+  it("aborts hung startup attempts and reports a bounded terminal failure", async () => {
+    using time = new FakeTime();
+    let attempts = 0;
+    let aborts = 0;
+    const fetch: typeof globalThis.fetch = (_input, init) => {
+      attempts++;
+      const signal = init?.signal;
+      assert(signal, "startup requests must carry a deadline signal");
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborts++;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+    const pending = createAgentServiceRegistrationLifecycle(lifecycleOptions(fetch)).then(
+      (lifecycle) => {
+        lifecycle.stop();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    for (let tick = 0; tick < 20; tick++) await time.tickAsync(1_000);
+    assert(await pending instanceof Error);
+    assertEquals(attempts, 3);
+    assertEquals(aborts, 3);
+  });
+
   it("registers the push service and heartbeats with bearer auth", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetch: typeof globalThis.fetch = (input, init) => {

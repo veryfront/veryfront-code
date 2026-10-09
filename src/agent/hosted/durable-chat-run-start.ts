@@ -26,6 +26,7 @@ import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 /** Public API contract for hosted durable run setup error status code. */
 export type HostedDurableRunSetupErrorStatusCode =
   | 400
+  | 401
   | 402
   | 403
   | 404
@@ -92,7 +93,7 @@ export type ExecuteHostedDurableChatRunInput<TExecution> = {
 function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
 ): status is HostedDurableRunSetupErrorStatusCode {
-  return status === 400 || status === 402 || status === 403 || status === 404 ||
+  return status === 400 || status === 401 || status === 402 || status === 403 || status === 404 ||
     status === 408 || status === 409 || status === 413 || status === 429 || status === 499 ||
     status === 500 ||
     status === 501 || status === 502 || status === 503;

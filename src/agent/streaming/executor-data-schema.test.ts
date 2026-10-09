@@ -4,6 +4,21 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseExecutorDataEvent } from "./executor-data-schema.ts";
 
 describe("agent/streaming/executor-data-schema", () => {
+  it("reconstructs fixed authentication wording across the hosted event stream", () => {
+    assertEquals(
+      parseExecutorDataEvent({
+        type: "error",
+        code: "agent-provider-auth-error",
+        error: "Private provider diagnostic <TOKEN>",
+      }),
+      {
+        type: "error",
+        code: "agent-provider-auth-error",
+        error: "Agent provider authentication failed",
+      },
+    );
+  });
+
   it("preserves unsupported output schema codes across the hosted agent stream", () => {
     assertEquals(
       parseExecutorDataEvent({

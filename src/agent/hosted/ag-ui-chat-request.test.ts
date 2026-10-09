@@ -241,6 +241,35 @@ describe("agent/hosted-ag-ui-chat-request", () => {
     });
   });
 
+  it("preserves service-unavailable project access failures", async () => {
+    const response = await buildParsedHostedAgUiRequest({
+      agUiInput: createAgUiInput({
+        context: [{ description: "veryfront.projectId", value: '"project-1"' }],
+      }),
+      authToken: "auth-token",
+      userId: "user-1",
+      verifyProjectAccess: () =>
+        Promise.resolve({
+          success: false,
+          error: {
+            errorCode: "SERVER_ERROR",
+            message: "could not be verified",
+            statusCode: 503,
+          },
+        }),
+    });
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected project-access response");
+    }
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      errorCode: "SERVER_ERROR",
+      message: "could not be verified",
+    });
+  });
+
   it("preserves not-found status for missing projects", async () => {
     const response = await buildParsedHostedAgUiRequest({
       agUiInput: createAgUiInput({

@@ -111,6 +111,7 @@ async function ensureVeryfrontGlobals(): Promise<void> {
 function createFsAdapterPlugin(
   fsAdapter: FileSystemAdapter,
   onDependencyLoaded?: (path: string, content: string) => void,
+  projectDir = ".",
 ): Plugin {
   const existsCache = new Map<string, boolean>();
 
@@ -151,7 +152,7 @@ function createFsAdapterPlugin(
       // child-process message boundary. Without this, fsAdapter.exists()
       // and fsAdapter.readFile() cannot resolve the per-project adapter.
       build.onResolve(
-        { filter: /^\.\.?\// },
+        { filter: /^(?:\.\.?\/|@\/)/ },
         wrapWithCurrentContext(async (args) => {
           // A relative import reached from fetched CDN source addresses another
           // module of that package (esm.sh splits packages across files), not a
@@ -159,7 +160,11 @@ function createFsAdapterPlugin(
           // after this one.
           if (args.namespace === "http-url") return undefined;
           const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
-          const basePath = pathHelper.resolve(importerDir, args.path);
+          // The @/ alias addresses this project root, including hosted VFS
+          // projects whose root is represented by an empty baseDir.
+          const basePath = args.path.startsWith("@/")
+            ? pathHelper.resolve(projectDir || ".", args.path.slice(2))
+            : pathHelper.resolve(importerDir, args.path);
 
           const resolvedPath = await resolveWithExtensions(basePath);
           if (resolvedPath) return { path: resolvedPath, namespace: "fsadapter" };
@@ -2759,7 +2764,7 @@ export async function importModule(
     ? [
       createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
         bundledDeps.push({ path, content });
-      }),
+      }, context.baseDir),
     ]
     : [];
 

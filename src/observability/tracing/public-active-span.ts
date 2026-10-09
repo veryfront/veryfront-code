@@ -1,7 +1,7 @@
 import { type AttributeValue, publicTrace } from "./api-shim.ts";
 import { sanitizeTelemetryAttributes } from "../telemetry-error.ts";
 
-/** Return the application's active trace, using the platform context outside project execution. */
+/** Return the active trace context, if available. */
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   try {
     const context = publicTrace.getActiveSpan()?.spanContext();
@@ -11,7 +11,7 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
   }
 }
 
-/** Update application span attributes without changing the internal platform span. */
+/** Add sanitized attributes to the active span, if available. */
 export function setActiveSpanAttributes(attributes: Record<string, AttributeValue>): void {
   try {
     publicTrace.getActiveSpan()?.setAttributes(sanitizeTelemetryAttributes(attributes));

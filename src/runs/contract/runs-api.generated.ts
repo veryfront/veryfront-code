@@ -1361,6 +1361,7 @@ export interface components {
              */
             requested_responder_type: "human" | "agent" | "system";
             title: string;
+            /** @description Tool invocation to request input for. Defaults to the run’s current waiting invocation. */
             tool_call_id?: string;
         };
         CreateInputRequestRequestInput: {
@@ -1374,6 +1375,7 @@ export interface components {
             /** @enum {string} */
             requested_responder_type?: "human" | "agent" | "system";
             title: string;
+            /** @description Tool invocation to request input for. Defaults to the run’s current waiting invocation. */
             tool_call_id?: string;
         };
         CreateRunHeartbeatRequest: {
@@ -6995,9 +6997,13 @@ export interface operations {
     getAccountRunAnalytics: {
         parameters: {
             query?: {
+                /** @description Project label filters as key or key=value, repeated or comma-separated. */
                 label?: string[] | null;
+                /** @description Relative timeframe preset. */
                 preset?: "7d" | "30d" | "90d";
+                /** @description Optional project UUID or slug to scope analytics to a single project. */
                 project_reference?: string;
+                /** @description IANA timezone for daily bucket boundaries. */
                 timezone?: string;
             };
             header?: never;
@@ -9467,7 +9473,10 @@ export interface operations {
     createRunHeartbeat: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Atomically accept this detached dispatch before starting execution. A duplicate returns 409. */
+                "x-veryfront-run-dispatch-acceptance"?: "true";
+            };
             path: {
                 /** @example 11111111-1111-4111-8111-111111111111 */
                 run_id: string;
