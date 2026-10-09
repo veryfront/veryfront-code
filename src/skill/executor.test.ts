@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -41,6 +42,30 @@ function mockFetch(responses: MockResponseEntry[]): void {
   fetchCalls = [];
   fetchResponses = [...responses];
   installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
+}
+
+function backgroundCommandResponse(
+  status = "completed",
+  stdout = "cloud-snapshot\n",
+  exitCode: number | null = 0,
+): Response {
+  return jsonResponse({
+    command_id: "script-command",
+    command: "script",
+    status,
+    exit_code: exitCode,
+    signal: null,
+    started_at: null,
+    finished_at: null,
+    heartbeat_status: "disabled",
+    last_heartbeat_at: null,
+    last_heartbeat_error: null,
+    heartbeat_failure_count: 0,
+    stdout,
+    stderr: "",
+    stdout_truncated: false,
+    stderr_truncated: false,
+  });
 }
 
 function pendingErrorCommandResponse(error: Error): {
@@ -387,10 +412,8 @@ describe("src/skill/executor", () => {
           });
         },
         commandResponse([{ type: "exit", exitCode: 0 }]),
-        commandResponse([
-          { type: "stdout", data: "cloud-snapshot\n" },
-          { type: "exit", exitCode: 0 },
-        ]),
+        backgroundCommandResponse("running", "", null),
+        backgroundCommandResponse(),
         textResponse(""),
       ]);
 
@@ -407,8 +430,8 @@ describe("src/skill/executor", () => {
       });
 
       assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
-      assertStringIncludes(fetchCalls[3]!.url, "/commands/run");
-      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 55);
+      assertEquals(fetchCalls[3]!.url.endsWith("/commands"), true);
+      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
       const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
         files: Array<{ path: string; content: string }>;
       };
@@ -417,6 +440,105 @@ describe("src/skill/executor", () => {
       assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
       assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
     });
+
+    for (const timeoutSeconds of [50, 60, 300]) {
+      it(`preserves the cloud script timeout of ${timeoutSeconds} seconds`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          jsonResponse({
+            id: "timeout-parity",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map(
+                (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
+              ),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          ...(timeoutSeconds <= 55
+            ? [commandResponse([{ type: "stdout", data: "done" }, { type: "exit", exitCode: 0 }])]
+            : [
+              backgroundCommandResponse("running", "", null),
+              ...(timeoutSeconds === 300
+                ? [backgroundCommandResponse("running", "partial", null)]
+                : []),
+              backgroundCommandResponse("completed", "done"),
+            ]),
+          textResponse(""),
+        ]);
+        const result = await getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "echo done",
+          timeoutMs: timeoutSeconds * 1000,
+        });
+        assertEquals(result, { stdout: "done", stderr: "", exitCode: 0 });
+        assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, timeoutSeconds);
+        assertEquals(
+          fetchCalls[3]!.url.endsWith(timeoutSeconds <= 55 ? "/commands/run" : "/commands"),
+          true,
+        );
+      });
+    }
+
+    for (const timeoutSeconds of [60, 300]) {
+      it(`waits for the configured ${timeoutSeconds}-second background deadline and cancels`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        using time = new FakeTime();
+        let reportOutputRead!: () => void;
+        const outputRead = new Promise<void>((resolve) => reportOutputRead = resolve);
+        const pending = pendingErrorCommandResponse(new Error("background command canceled"));
+        mockFetch([
+          jsonResponse({
+            id: "background-timeout",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map(
+                (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
+              ),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          () => {
+            reportOutputRead();
+            return pending.response;
+          },
+          backgroundCommandResponse("canceled", "", null),
+          textResponse(""),
+        ]);
+        let settled = false;
+        const execution = getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "sleep 300",
+          timeoutMs: timeoutSeconds * 1000,
+        }).then((result) => {
+          settled = true;
+          return result;
+        });
+        await outputRead;
+        time.tick(55_000);
+        await Promise.resolve();
+        assertEquals(
+          settled,
+          false,
+          "the synchronous command limit must not end background execution",
+        );
+        time.tick(timeoutSeconds * 1000 - 55_000);
+        const result = await execution;
+        assertEquals(result.exitCode, 124);
+        assertStringIncludes(result.stderr, `${timeoutSeconds * 1000}ms`);
+        assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+        assertEquals(fetchCalls[6]!.init?.method, "DELETE");
+        pending.reject();
+        await Promise.resolve();
+      });
+    }
 
     it("handles a late sandbox command rejection after timeout", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");

@@ -395,6 +395,9 @@ subprocesses.
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
+  Cloud scripts use background sandbox commands above `55000` ms so the
+  synchronous API limit does not shorten your configured timeout. Commands are
+  canceled at the configured deadline, and the executor closes its sandbox.
 
 ## Connect to a route
 

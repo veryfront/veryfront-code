@@ -13,7 +13,7 @@ import { dirname, extname } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, REQUEST_ERROR, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type {
   SkillScriptExecutor,
@@ -222,6 +222,19 @@ function resolveTimeoutMs(timeoutMs?: number): number {
     return DEFAULT_SCRIPT_TIMEOUT_MS;
   }
   return Math.min(Math.floor(timeoutMs), MAX_SCRIPT_TIMEOUT_MS);
+}
+
+function waitForBackgroundCommandPoll(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 250);
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 async function withTimeout<T>(
@@ -433,10 +446,32 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const cmdString = sandboxRoot === undefined
         ? invocation
         : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
-      const commandPromise = sandbox.runCommand(cmdString, {
-        timeoutSeconds: Math.min(Math.ceil(timeoutMs / 1000), MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS),
-      });
-      const result = await withTimeout(commandPromise, timeoutMs);
+      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+      const polling = new AbortController();
+      let backgroundCommandId: string | undefined;
+      const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
+        ? sandbox.runCommand(cmdString, { timeoutSeconds })
+        : (async () => {
+          const command = await sandbox.startBackgroundCommand(cmdString, { timeoutSeconds });
+          backgroundCommandId = command.id;
+          while (!polling.signal.aborted) {
+            const output = await sandbox.getBackgroundCommandOutput(command.id);
+            if (
+              output.status === "completed" || output.status === "failed" ||
+              output.status === "canceled"
+            ) {
+              if (output.exitCode === null) {
+                throw REQUEST_ERROR.create({
+                  detail: "Sandbox background command did not report an exit code",
+                });
+              }
+              return { stdout: output.stdout, stderr: output.stderr, exitCode: output.exitCode };
+            }
+            await waitForBackgroundCommandPoll(polling.signal);
+          }
+          return timeoutResult(timeoutMs);
+        })();
+      const result = await withTimeout(commandPromise, timeoutMs).finally(() => polling.abort());
 
       if (result === TIMEOUT_SENTINEL) {
         commandPromise.catch(() => {
@@ -445,7 +480,11 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         // Kill any running processes before returning — withTimeout only
         // races the timer, it doesn't terminate the sandbox command.
         try {
-          await sandbox.runCommand("kill -9 -1 2>/dev/null || true");
+          if (backgroundCommandId !== undefined) {
+            await sandbox.cancelBackgroundCommand(backgroundCommandId);
+          } else {
+            await sandbox.runCommand("kill -9 -1 2>/dev/null || true");
+          }
         } catch {
           // expected: best-effort kill; sandbox.close() in finally will clean up
         }
