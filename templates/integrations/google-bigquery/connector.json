@@ -252,7 +252,7 @@
         "body": {
           "query": {
             "type": "string",
-            "description": "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10",
+            "description": "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10. The default read-only scope supports SELECT queries only. DML statements (INSERT, UPDATE, DELETE) require the optional https://www.googleapis.com/auth/bigquery OAuth scope.",
             "required": true
           },
           "useLegacySql": {

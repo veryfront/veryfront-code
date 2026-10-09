@@ -208,7 +208,7 @@
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the authorised payment to capture",
+            "description": "PSP reference of the authorised payment to capture. Capture is asynchronous; its outcome arrives through a CAPTURE webhook. The immediate response is not final capture outcome evidence.",
             "required": true
           }
         },

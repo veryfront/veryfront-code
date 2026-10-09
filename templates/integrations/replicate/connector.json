@@ -28,7 +28,7 @@
     {
       "id": "replicate__list_models",
       "name": "List Models",
-      "description": "List models",
+      "description": "List public models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

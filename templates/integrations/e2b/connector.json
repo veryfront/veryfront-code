@@ -30,7 +30,7 @@
     {
       "id": "e2b__list_sandboxes",
       "name": "List Sandboxes",
-      "description": "List sandboxes",
+      "description": "List running sandboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39,7 +39,7 @@
           "metadata": {
             "type": "string",
             "in": "query",
-            "description": "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod"
+            "description": "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod. This operation lists running sandboxes only. Paused sandboxes are excluded; the provider state filter is not exposed by this tool."
           }
         }
       }

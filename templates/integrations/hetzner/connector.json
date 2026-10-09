@@ -183,7 +183,7 @@
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server ID",
+            "description": "Server ID. Hard power-off is like pulling the power plug; unsaved data can be lost if the operating system is running.",
             "required": true
           }
         },

@@ -312,7 +312,7 @@
           "blobName": {
             "type": "string",
             "in": "path",
-            "description": "Destination blob name, including any virtual folder prefix",
+            "description": "Destination blob name, including any virtual folder prefix. Accepted copies return HTTP 202 with x-ms-copy-status success or pending. When pending, poll the destination blob until completion before using the copy.",
             "required": true
           },
           "x-ms-copy-source": {

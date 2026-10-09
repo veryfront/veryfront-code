@@ -30,7 +30,7 @@
     {
       "id": "rippling__list_employees",
       "name": "List Employees",
-      "description": "List employees",
+      "description": "List active employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

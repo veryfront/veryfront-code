@@ -314,7 +314,7 @@
     {
       "id": "sheets__clear_range",
       "name": "Clear Range",
-      "description": "Clear range",
+      "description": "Clear range values",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -329,7 +329,7 @@
           "range": {
             "type": "string",
             "in": "path",
-            "description": "A1 notation range to clear",
+            "description": "A1 notation range to clear. This clears cell values only; it does not delete cells or remove their formatting.",
             "required": true
           }
         },

@@ -120,7 +120,7 @@
     {
       "id": "new-relic__list_issues",
       "name": "List Issues",
-      "description": "List issues",
+      "description": "List issues (24 hours, maximum 100)",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -131,7 +131,7 @@
           "accountId": {
             "type": "number",
             "in": "body",
-            "description": "New Relic account ID",
+            "description": "New Relic account ID. This operation queries NrAiIssue with fixed SINCE 1 day ago and LIMIT 100 clauses. No time-window or pagination controls are exposed; older issues and results beyond the limit are not included.",
             "required": true
           }
         },

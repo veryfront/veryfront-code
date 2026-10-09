@@ -56,7 +56,7 @@
         "body": {
           "urlSource": {
             "type": "string",
-            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model."
           },
           "base64Source": {
             "type": "string",
@@ -88,7 +88,7 @@
         "body": {
           "urlSource": {
             "type": "string",
-            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model."
           },
           "base64Source": {
             "type": "string",
@@ -120,7 +120,7 @@
         "body": {
           "urlSource": {
             "type": "string",
-            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model."
           },
           "base64Source": {
             "type": "string",
@@ -147,7 +147,7 @@
           "resultId": {
             "type": "string",
             "in": "path",
-            "description": "Result ID (GUID) from the Operation-Location header returned by the analyze call",
+            "description": "Result ID (GUID) from the Operation-Location header returned by the analyze call. Use the same model ID that started the analysis. While status is running, wait and poll again; extracted fields are available in analyzeResult when status is succeeded.",
             "required": true
           }
         }
@@ -176,7 +176,7 @@
         "body": {
           "urlSource": {
             "type": "string",
-            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source"
+            "description": "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model."
           },
           "base64Source": {
             "type": "string",

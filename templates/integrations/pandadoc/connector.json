@@ -229,7 +229,7 @@
         "body": {
           "recipient": {
             "type": "string",
-            "description": "Email address of the document recipient the session is created for",
+            "description": "Email address of the document recipient the session is created for. Creates a session link for this recipient to view and sign an already-sent document. This operation does not email the link to the recipient.",
             "required": true
           },
           "lifetime": {

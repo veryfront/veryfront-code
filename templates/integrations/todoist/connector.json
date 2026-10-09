@@ -38,7 +38,7 @@
     {
       "id": "todoist__list_tasks",
       "name": "List Tasks",
-      "description": "List tasks",
+      "description": "List active tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

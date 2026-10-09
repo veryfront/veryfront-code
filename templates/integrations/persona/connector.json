@@ -69,7 +69,7 @@
     {
       "id": "persona__approve_inquiry",
       "name": "Approve Inquiry",
-      "description": "Approve inquiry",
+      "description": "Approve inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -78,7 +78,7 @@
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description": "Persona inquiry ID. Complete compliance review before approval. Approving prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true
           }
         }
@@ -87,7 +87,7 @@
     {
       "id": "persona__decline_inquiry",
       "name": "Decline Inquiry",
-      "description": "Decline inquiry",
+      "description": "Decline inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -96,7 +96,7 @@
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description": "Persona inquiry ID. Complete compliance review before declining. Declining prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true
           }
         }

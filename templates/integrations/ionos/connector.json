@@ -191,7 +191,7 @@
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server UUID",
+            "description": "Server UUID. This forcefully powers off an Enterprise server and stops compute billing. Unreserved public IPv4 addresses are released; reserved IPs are kept. CUBE servers cannot use this endpoint and use suspend/resume instead.",
             "required": true
           }
         }

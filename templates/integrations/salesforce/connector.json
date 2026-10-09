@@ -237,7 +237,7 @@
           "q": {
             "type": "string",
             "in": "query",
-            "description": "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed.",
+            "description": "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed. The default query selects published articles with PublishStatus = Online; other authorized publication states require an explicit query.",
             "default": "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 25",
             "exposeDefault": true
           }

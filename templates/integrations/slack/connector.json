@@ -161,7 +161,7 @@
         "url": "https://slack.com/api/chat.update",
         "body": {
           "channel": { "type": "string", "description": "Channel ID containing the message", "required": true },
-          "ts": { "type": "string", "description": "Timestamp (ts) of the message to update", "required": true },
+          "ts": { "type": "string", "description": "Timestamp (ts) of the message to update. Only messages previously sent by this integration can be updated.", "required": true },
           "text": { "type": "string", "description": "New message text (supports mrkdwn)", "required": true }
         }
       }
@@ -176,7 +176,7 @@
         "url": "https://slack.com/api/chat.delete",
         "body": {
           "channel": { "type": "string", "description": "Channel ID containing the message", "required": true },
-          "ts": { "type": "string", "description": "Timestamp (ts) of the message to delete", "required": true }
+          "ts": { "type": "string", "description": "Timestamp (ts) of the message to delete. Only messages previously sent by this integration can be deleted.", "required": true }
         }
       }
     },

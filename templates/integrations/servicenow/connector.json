@@ -482,7 +482,7 @@
         "body": {
           "request": {
             "type": "string",
-            "description": "Parent sc_request sys_id",
+            "description": "Parent sc_request sys_id. This inserts a sc_req_item record directly. Use it only when direct table writes are allowed; use Order Catalog Item for the normal catalog-order workflow.",
             "required": true
           },
           "cat_item": {

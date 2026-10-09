@@ -494,7 +494,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the authorised payment to capture",
+            "description":
+              "PSP reference of the authorised payment to capture. Capture is asynchronous; its outcome arrives through a CAPTURE webhook. The immediate response is not final capture outcome evidence.",
             "required": true,
           },
         },
@@ -4683,7 +4684,8 @@ export const connectors: IntegrationConfig[] = [
           "blobName": {
             "type": "string",
             "in": "path",
-            "description": "Destination blob name, including any virtual folder prefix",
+            "description":
+              "Destination blob name, including any virtual folder prefix. Accepted copies return HTTP 202 with x-ms-copy-status success or pending. When pending, poll the destination blob until completion before using the copy.",
             "required": true,
           },
           "x-ms-copy-source": {
@@ -4814,7 +4816,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4848,7 +4850,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4882,7 +4884,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4912,7 +4914,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Result ID (GUID) from the Operation-Location header returned by the analyze call",
+              "Result ID (GUID) from the Operation-Location header returned by the analyze call. Use the same model ID that started the analysis. While status is running, wait and poll again; extracted fields are available in analyzeResult when status is succeeded.",
             "required": true,
           },
         },
@@ -4942,7 +4944,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -6587,7 +6589,8 @@ export const connectors: IntegrationConfig[] = [
           "page": {
             "type": "number",
             "in": "query",
-            "description": "Page number to request (1-based)",
+            "description":
+              "Page number to request (1-based). Calls with the same page and minInvoiceDate are throttled to one request per minute.",
             "default": 1,
           },
           "pageSize": {
@@ -16049,7 +16052,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "e2b__list_sandboxes",
       "name": "List Sandboxes",
-      "description": "List sandboxes",
+      "description": "List running sandboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16058,7 +16061,8 @@ export const connectors: IntegrationConfig[] = [
           "metadata": {
             "type": "string",
             "in": "query",
-            "description": "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod",
+            "description":
+              "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod. This operation lists running sandboxes only. Paused sandboxes are excluded; the provider state filter is not exposed by this tool.",
           },
         },
       },
@@ -23221,7 +23225,7 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "string",
             "description":
-              "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10",
+              "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10. The default read-only scope supports SELECT queries only. DML statements (INSERT, UPDATE, DELETE) require the optional https://www.googleapis.com/auth/bigquery OAuth scope.",
             "required": true,
           },
           "useLegacySql": {
@@ -28450,7 +28454,8 @@ export const connectors: IntegrationConfig[] = [
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server ID",
+            "description":
+              "Server ID. Hard power-off is like pulling the power plug; unsaved data can be lost if the operating system is running.",
             "required": true,
           },
         },
@@ -30001,7 +30006,8 @@ export const connectors: IntegrationConfig[] = [
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server UUID",
+            "description":
+              "Server UUID. This forcefully powers off an Enterprise server and stops compute billing. Unreserved public IPv4 addresses are released; reserved IPs are kept. CUBE servers cannot use this endpoint and use suspend/resume instead.",
             "required": true,
           },
         },
@@ -36124,7 +36130,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "new-relic__list_issues",
       "name": "List Issues",
-      "description": "List issues",
+      "description": "List issues (24 hours, maximum 100)",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36136,7 +36142,8 @@ export const connectors: IntegrationConfig[] = [
           "accountId": {
             "type": "number",
             "in": "body",
-            "description": "New Relic account ID",
+            "description":
+              "New Relic account ID. This operation queries NrAiIssue with fixed SINCE 1 day ago and LIMIT 100 clauses. No time-window or pagination controls are exposed; older issues and results beyond the limit are not included.",
             "required": true,
           },
         },
@@ -37047,7 +37054,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Move file to recycle bin",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -37056,7 +37063,8 @@ export const connectors: IntegrationConfig[] = [
           "itemId": {
             "type": "string",
             "in": "path",
-            "description": "OneDrive item ID to delete",
+            "description":
+              "OneDrive item ID to delete. Deletion moves this file or folder to the recycle bin instead of permanently deleting it.",
             "required": true,
           },
         },
@@ -40675,7 +40683,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "recipient": {
             "type": "string",
-            "description": "Email address of the document recipient the session is created for",
+            "description":
+              "Email address of the document recipient the session is created for. Creates a session link for this recipient to view and sign an already-sent document. This operation does not email the link to the recipient.",
             "required": true,
           },
           "lifetime": {
@@ -41250,7 +41259,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "persona__approve_inquiry",
       "name": "Approve Inquiry",
-      "description": "Approve inquiry",
+      "description": "Approve inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41259,7 +41268,8 @@ export const connectors: IntegrationConfig[] = [
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description":
+              "Persona inquiry ID. Complete compliance review before approval. Approving prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true,
           },
         },
@@ -41267,7 +41277,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "persona__decline_inquiry",
       "name": "Decline Inquiry",
-      "description": "Decline inquiry",
+      "description": "Decline inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41276,7 +41286,8 @@ export const connectors: IntegrationConfig[] = [
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description":
+              "Persona inquiry ID. Complete compliance review before declining. Declining prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true,
           },
         },
@@ -45891,7 +45902,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "redis-cloud__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List subscriptions",
+      "description": "List Pro subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45916,7 +45927,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__list_databases",
       "name": "List Databases",
-      "description": "List databases",
+      "description": "List Pro databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45925,7 +45936,8 @@ export const connectors: IntegrationConfig[] = [
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID (from List Subscriptions)",
+            "description":
+              "Subscription ID (from List Subscriptions). This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true,
           },
           "offset": {
@@ -45945,7 +45957,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__get_database",
       "name": "Get Database",
-      "description": "Get database",
+      "description": "Get Pro database",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45954,7 +45966,8 @@ export const connectors: IntegrationConfig[] = [
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID",
+            "description":
+              "Subscription ID. This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true,
           },
           "databaseId": {
@@ -46275,7 +46288,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "replicate__list_models",
       "name": "List Models",
-      "description": "List models",
+      "description": "List public models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46644,7 +46657,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "rippling__list_employees",
       "name": "List Employees",
-      "description": "List employees",
+      "description": "List active employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47284,7 +47297,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed.",
+              "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed. The default query selects published articles with PublishStatus = Online; other authorized publication states require an explicit query.",
             "default":
               "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 25",
             "exposeDefault": true,
@@ -47603,7 +47616,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sap__release_supplier_invoice",
       "name": "Release Supplier Invoice",
-      "description": "Release supplier invoice",
+      "description": "Release blocked supplier invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47612,7 +47625,8 @@ export const connectors: IntegrationConfig[] = [
           "SupplierInvoice": {
             "type": "string",
             "in": "query",
-            "description": "SAP supplier invoice number",
+            "description":
+              "SAP supplier invoice number. This operation releases an invoice that is blocked.",
             "required": true,
           },
           "FiscalYear": {
@@ -49231,7 +49245,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "request": {
             "type": "string",
-            "description": "Parent sc_request sys_id",
+            "description":
+              "Parent sc_request sys_id. This inserts a sc_req_item record directly. Use it only when direct table writes are allowed; use Order Catalog Item for the normal catalog-order workflow.",
             "required": true,
           },
           "cat_item": { "type": "string", "description": "Catalog item sys_id" },
@@ -50253,7 +50268,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__clear_range",
       "name": "Clear Range",
-      "description": "Clear range",
+      "description": "Clear range values",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50268,7 +50283,8 @@ export const connectors: IntegrationConfig[] = [
           "range": {
             "type": "string",
             "in": "path",
-            "description": "A1 notation range to clear",
+            "description":
+              "A1 notation range to clear. This clears cell values only; it does not delete cells or remove their formatting.",
             "required": true,
           },
         },
@@ -51371,7 +51387,8 @@ export const connectors: IntegrationConfig[] = [
           },
           "ts": {
             "type": "string",
-            "description": "Timestamp (ts) of the message to update",
+            "description":
+              "Timestamp (ts) of the message to update. Only messages previously sent by this integration can be updated.",
             "required": true,
           },
           "text": {
@@ -51397,7 +51414,8 @@ export const connectors: IntegrationConfig[] = [
           },
           "ts": {
             "type": "string",
-            "description": "Timestamp (ts) of the message to delete",
+            "description":
+              "Timestamp (ts) of the message to delete. Only messages previously sent by this integration can be deleted.",
             "required": true,
           },
         },
@@ -52037,7 +52055,8 @@ export const connectors: IntegrationConfig[] = [
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to destroy",
+            "description":
+              "Unique name of the sprite to destroy. Destruction permanently deletes the sprite filesystem, packages and checkpoints; there is no undo.",
             "required": true,
           },
         },
@@ -52061,7 +52080,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string[]",
             "in": "query",
             "description":
-              'Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. ["ls", "-la"]',
+              'Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. ["ls", "-la"]. This HTTP operation is non-interactive and does not provide a TTY; use commands that do not require an interactive terminal.',
             "required": true,
           },
           "dir": {
@@ -52089,7 +52108,8 @@ export const connectors: IntegrationConfig[] = [
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to checkpoint",
+            "description":
+              "Unique name of the sprite to checkpoint. Creates a point-in-time checkpoint of sprite state and returns streaming NDJSON progress. Services may be interrupted during checkpoint creation; wait for the completion event before using the checkpoint.",
             "required": true,
           },
         },
@@ -52135,7 +52155,8 @@ export const connectors: IntegrationConfig[] = [
           "checkpointId": {
             "type": "string",
             "in": "path",
-            "description": "Checkpoint ID from List Checkpoints, e.g. v7",
+            "description":
+              "Checkpoint ID from List Checkpoints, e.g. v7. Restoring replaces the current filesystem with the checkpoint; changes made after that checkpoint are lost. The response contains streaming NDJSON progress; wait for completion.",
             "required": true,
           },
         },
@@ -54336,7 +54357,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__list_teams",
       "name": "List Teams",
-      "description": "List teams",
+      "description": "List joined teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54656,7 +54677,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "todoist__list_tasks",
       "name": "List Tasks",
-      "description": "List tasks",
+      "description": "List active tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57468,7 +57489,8 @@ export const connectors: IntegrationConfig[] = [
           "status": { "type": "string", "description": "Status to set", "default": "read" },
           "message_id": {
             "type": "string",
-            "description": "WhatsApp message ID (wamid...) of the inbound message to mark as read",
+            "description":
+              "WhatsApp message ID (wamid...) of the inbound message to mark as read. This marks an inbound message as read and sends a read receipt visible to the customer.",
             "required": true,
           },
         },
@@ -57699,7 +57721,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__create_fulfillment",
       "name": "Create Fulfillment",
-      "description": "Create fulfillment",
+      "description": "Mark order items as fulfilled",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57716,7 +57738,7 @@ export const connectors: IntegrationConfig[] = [
           "fulfillment": {
             "type": "object",
             "description":
-              'Fulfillment to create, e.g. {"lineItems":[{"id":"<line item id>","quantity":1}],"trackingInfo":{"trackingNumber":"...","shippingProvider":"ups"}} (lineItems required; line item IDs come from Get Order)',
+              'Fulfillment to create, e.g. {"lineItems":[{"id":"<line item id>","quantity":1}],"trackingInfo":{"trackingNumber":"...","shippingProvider":"ups"}} (lineItems required; line item IDs come from Get Order). Creating this fulfillment marks the included order line items as fulfilled.',
             "required": true,
           },
         },

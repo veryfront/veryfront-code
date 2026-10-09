@@ -99,7 +99,7 @@
     {
       "id": "sap__release_supplier_invoice",
       "name": "Release Supplier Invoice",
-      "description": "Release supplier invoice",
+      "description": "Release blocked supplier invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -108,7 +108,7 @@
           "SupplierInvoice": {
             "type": "string",
             "in": "query",
-            "description": "SAP supplier invoice number",
+            "description": "SAP supplier invoice number. This operation releases an invoice that is blocked.",
             "required": true
           },
           "FiscalYear": {

@@ -242,7 +242,7 @@
     {
       "id": "onedrive__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Move file to recycle bin",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -251,7 +251,7 @@
           "itemId": {
             "type": "string",
             "in": "path",
-            "description": "OneDrive item ID to delete",
+            "description": "OneDrive item ID to delete. Deletion moves this file or folder to the recycle bin instead of permanently deleting it.",
             "required": true
           }
         }

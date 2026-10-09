@@ -38,7 +38,7 @@
     {
       "id": "redis-cloud__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List subscriptions",
+      "description": "List Pro subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -72,7 +72,7 @@
     {
       "id": "redis-cloud__list_databases",
       "name": "List Databases",
-      "description": "List databases",
+      "description": "List Pro databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -81,7 +81,7 @@
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID (from List Subscriptions)",
+            "description": "Subscription ID (from List Subscriptions). This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true
           },
           "offset": {
@@ -102,7 +102,7 @@
     {
       "id": "redis-cloud__get_database",
       "name": "Get Database",
-      "description": "Get database",
+      "description": "Get Pro database",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -111,7 +111,7 @@
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID",
+            "description": "Subscription ID. This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true
           },
           "databaseId": {

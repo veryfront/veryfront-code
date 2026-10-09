@@ -121,7 +121,7 @@
     {
       "id": "wix__create_fulfillment",
       "name": "Create Fulfillment",
-      "description": "Create fulfillment",
+      "description": "Mark order items as fulfilled",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -137,7 +137,7 @@
         "body": {
           "fulfillment": {
             "type": "object",
-            "description": "Fulfillment to create, e.g. {\"lineItems\":[{\"id\":\"<line item id>\",\"quantity\":1}],\"trackingInfo\":{\"trackingNumber\":\"...\",\"shippingProvider\":\"ups\"}} (lineItems required; line item IDs come from Get Order)",
+            "description": "Fulfillment to create, e.g. {\"lineItems\":[{\"id\":\"<line item id>\",\"quantity\":1}],\"trackingInfo\":{\"trackingNumber\":\"...\",\"shippingProvider\":\"ups\"}} (lineItems required; line item IDs come from Get Order). Creating this fulfillment marks the included order line items as fulfilled.",
             "required": true
           }
         }

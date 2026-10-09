@@ -107,7 +107,7 @@
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to destroy",
+            "description": "Unique name of the sprite to destroy. Destruction permanently deletes the sprite filesystem, packages and checkpoints; there is no undo.",
             "required": true
           }
         }
@@ -131,7 +131,7 @@
           "cmd": {
             "type": "string[]",
             "in": "query",
-            "description": "Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. [\"ls\", \"-la\"]",
+            "description": "Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. [\"ls\", \"-la\"]. This HTTP operation is non-interactive and does not provide a TTY; use commands that do not require an interactive terminal.",
             "required": true
           },
           "dir": {
@@ -159,7 +159,7 @@
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to checkpoint",
+            "description": "Unique name of the sprite to checkpoint. Creates a point-in-time checkpoint of sprite state and returns streaming NDJSON progress. Services may be interrupted during checkpoint creation; wait for the completion event before using the checkpoint.",
             "required": true
           }
         },
@@ -207,7 +207,7 @@
           "checkpointId": {
             "type": "string",
             "in": "path",
-            "description": "Checkpoint ID from List Checkpoints, e.g. v7",
+            "description": "Checkpoint ID from List Checkpoints, e.g. v7. Restoring replaces the current filesystem with the checkpoint; changes made after that checkpoint are lost. The response contains streaming NDJSON progress; wait for completion.",
             "required": true
           }
         }

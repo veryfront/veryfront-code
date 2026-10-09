@@ -210,7 +210,7 @@
           "page": {
             "type": "number",
             "in": "query",
-            "description": "Page number to request (1-based)",
+            "description": "Page number to request (1-based). Calls with the same page and minInvoiceDate are throttled to one request per minute.",
             "default": 1
           },
           "pageSize": {

@@ -278,7 +278,7 @@
           },
           "message_id": {
             "type": "string",
-            "description": "WhatsApp message ID (wamid...) of the inbound message to mark as read",
+            "description": "WhatsApp message ID (wamid...) of the inbound message to mark as read. This marks an inbound message as read and sends a read receipt visible to the customer.",
             "required": true
           }
         }
