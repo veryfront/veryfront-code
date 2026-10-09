@@ -450,7 +450,7 @@ function getTrustedPlatformPolicyToolCallIdsFromMetadata(
   metadata: unknown,
 ): string[] {
   const trustedToolCallIds = isRecord(metadata)
-    ? metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY]
+    ? readToolResultOwnDataProperty(metadata, TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY)
     : undefined;
   if (!arrayIsArray(trustedToolCallIds)) return [];
 
@@ -483,7 +483,9 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
 ): TMessage {
   return withPolicyMetadata(
     target,
-    getTrustedPlatformPolicyToolCallIdsFromMetadata(source.metadata),
+    getTrustedPlatformPolicyToolCallIdsFromMetadata(
+      readToolResultOwnDataProperty(source, "metadata"),
+    ),
   );
 }
 

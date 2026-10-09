@@ -880,7 +880,7 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
     const sourceMessage = message.role === "assistant" ? sourceById.get(message.id) : undefined;
-    restoredMessages[restoredMessages.length] = sourceMessage?.metadata !== undefined
+    restoredMessages[restoredMessages.length] = sourceMessage
       ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
       : message;
   }
