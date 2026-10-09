@@ -85,7 +85,7 @@ export type ManagedAgentExecutorRequest = Readonly<{
   serverEnvelopeVerified: boolean;
   serverResolvedIntegrationToolNames: JsonValue;
   serverResolvedProviderReplayCheckpoints?: JsonValue;
-  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
+  serverResolvedTrustedHostedHistoryMessageIds?: string[];
   serverResolvedResumeToolCall?: ExecutorRuntimePrepareRequest["serverResolvedResumeToolCall"];
   agUi?: ManagedAgentExecutorAgUiState;
 }>;
