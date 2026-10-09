@@ -283,6 +283,35 @@ describe("Sandbox", () => {
     });
   }
 
+  for (const ttlHours of [undefined, null]) {
+    it(`preserves cleanup protection when duration metadata has ttl_hours=${ttlHours}`, async () => {
+      const details = {
+        id: "missing-duration",
+        short_id: "duration",
+        endpoint: "https://sb.test",
+        status: "running",
+        created_at: "2026-10-08T00:00:00Z",
+        project_id: null,
+        access_scope: "project",
+        workspace_storage: "ephemeral",
+      };
+      mockFetch([
+        jsonResponse({ id: details.id, endpoint: details.endpoint, status: details.status }),
+        jsonResponse({ ...details, ttl_mode: "always_on", ttl_hours: null }),
+        jsonResponse({ ...details, ttl_mode: "duration", ttl_hours: ttlHours }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      await sandbox.updateLifetime({ ttlMode: "always_on" });
+      await assertRejects(
+        () => sandbox.updateLifetime({ ttlMode: "duration", ttlHours: 4 }),
+        Error,
+      );
+      await sandbox.close();
+      assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 0);
+    });
+  }
+
   for (const closeBeforeAlwaysOn of [false, true]) {
     it(`serializes lifetime updates and protects cleanup when close starts first=${closeBeforeAlwaysOn}`, async () => {
       const details = {

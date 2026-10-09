@@ -54,7 +54,7 @@ export function parseSandboxDetails(value: unknown): SandboxDetails {
   }
   const hours = input.ttl_hours;
   if (
-    hours !== undefined && hours !== null &&
+    (lifetime === "duration" || (hours !== undefined && hours !== null)) &&
     (typeof hours !== "number" || !Number.isInteger(hours) || hours <= 0)
   ) {
     throw REQUEST_ERROR.create({ detail: "Invalid sandbox duration" });
