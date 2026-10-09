@@ -85,23 +85,35 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         [null, ProviderRequestError, false, "EXTERNAL_SERVICE_ERROR"],
       ] as const
     ) {
-      const error = await assertRejects(() =>
-        collectParts(streamFromText(data({
-          type: "error",
-          code,
-          message: "private provider text <TOKEN>",
-          param: null,
-          sequence_number: 0,
-        }))), ErrorClass);
-      assert(error instanceof ProviderError);
-      assert(!(error instanceof ProviderStreamProtocolError));
-      assertEquals(error.retryable, retryable);
-      assertEquals(error.status, 200);
-      assertEquals(error.message, "Provider declared a response stream failure");
-      assertEquals(parseProviderError(error).code, publicCode);
-      const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
-      assertEquals(JSON.stringify(causes).includes("<TOKEN>"), false);
-      assertEquals(JSON.stringify(causes).includes("private-unknown-code"), false);
+      for (
+        const fields of [
+          { code, message: "private provider text <TOKEN>", param: null },
+          {
+            error: {
+              type: "provider_error",
+              code,
+              message: "private provider text <TOKEN>",
+              param: null,
+            },
+          },
+        ]
+      ) {
+        const error = await assertRejects(() =>
+          collectParts(streamFromText(data({
+            type: "error",
+            ...fields,
+            sequence_number: 0,
+          }))), ErrorClass);
+        assert(error instanceof ProviderError);
+        assert(!(error instanceof ProviderStreamProtocolError));
+        assertEquals(error.retryable, retryable);
+        assertEquals(error.status, 200);
+        assertEquals(error.message, "Provider declared a response stream failure");
+        assertEquals(parseProviderError(error).code, publicCode);
+        const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+        assertEquals(JSON.stringify(causes).includes("<TOKEN>"), false);
+        assertEquals(JSON.stringify(causes).includes("private-unknown-code"), false);
+      }
     }
   });
 
@@ -111,6 +123,12 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         { type: "error", code: {}, message: "private text" },
         { type: "error", code: "server_error", message: {} },
         { type: "error", message: "missing code" },
+        { type: "error", error: null, code: "server_error", message: "invalid nested envelope" },
+        { type: "error", error: [] },
+        { type: "error", error: {} },
+        { type: "error", error: { code: {}, message: "private text" } },
+        { type: "error", error: { code: "server_error", message: {} } },
+        { type: "error", error: { message: "missing code" } },
       ]
     ) {
       const error = await assertRejects(

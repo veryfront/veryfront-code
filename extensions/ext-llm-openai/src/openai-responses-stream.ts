@@ -777,9 +777,13 @@ export async function* streamOpenAIResponsesParts(
     }
 
     if (type === "error") {
+      // The service also emits a nested error object after accepting HTTP 200.
+      // An explicitly malformed nested envelope must not fall back to flat fields.
+      const error = Object.hasOwn(record, "error") ? readRecord(record.error) : record;
       if (
-        (record.code !== null && typeof record.code !== "string") ||
-        typeof record.message !== "string"
+        !error ||
+        (error.code !== null && typeof error.code !== "string") ||
+        typeof error.message !== "string"
       ) {
         throw invalidOpenAIResponsesStream(context, "provider error event was malformed");
       }
@@ -791,13 +795,13 @@ export async function* streamOpenAIResponsesParts(
         message: "Provider declared a response stream failure",
         retryable: false,
       };
-      if (record.code === "server_error") {
+      if (error.code === "server_error") {
         throw new ProviderOverloadedError({ ...options, retryable: true });
       }
-      if (record.code === "rate_limit_exceeded") {
+      if (error.code === "rate_limit_exceeded") {
         throw new ProviderRateLimitError({ ...options, retryable: true });
       }
-      if (record.code === "insufficient_quota") throw new ProviderQuotaError(options);
+      if (error.code === "insufficient_quota") throw new ProviderQuotaError(options);
       throw new ProviderRequestError(options);
     }
 
