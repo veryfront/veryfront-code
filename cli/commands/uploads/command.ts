@@ -18,9 +18,7 @@ import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 
 const privateDownloadFileSystem = createFileSystem();
-const writePrivateDownload = privateDownloadFileSystem.writeFileStreamAtomic?.bind(
-  privateDownloadFileSystem,
-);
+const writePrivateDownload = privateDownloadFileSystem.writeFileStreamAtomic;
 
 export interface UploadItem {
   type: "file" | "folder";
