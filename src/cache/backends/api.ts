@@ -142,6 +142,18 @@ function toApiTtlSeconds(ttlSeconds: number): number | "expire" | "invalid" {
   return Math.min(Math.ceil(ttlSeconds), API_CACHE_MAX_TTL_SECONDS);
 }
 
+/**
+ * A key with a complete `.` or `..` slash-separated segment cannot be addressed
+ * through the cache entry API: URL parsing normalises dot segments out of the
+ * entry path, and the API refuses such keys on every route.
+ */
+function hasDotOnlySegment(key: string): boolean {
+  for (const segment of key.split("/")) {
+    if (segment === "." || segment === "..") return true;
+  }
+  return false;
+}
+
 function entryPath(prefixedKey: string): string {
   return `/entries/${encodeURIComponent(prefixedKey)}`;
 }
@@ -179,6 +191,7 @@ export class ApiCacheBackend implements CacheBackend {
   private readonly circuitBreakerName: string;
   private readonly patternDeleteRounds = new Map<string, PatternDeleteRound>();
   private readonly invalidationCircuitBreakers = new Map<string, CircuitBreaker>();
+  private warnedDotOnlySegmentKey = false;
 
   constructor(
     options: {
@@ -224,8 +237,21 @@ export class ApiCacheBackend implements CacheBackend {
     return resolveCacheRequestAuthority(this.explicitApiToken);
   }
 
-  private async prefixKey(key: string): Promise<string> {
+  /**
+   * Returns the API key for `key`, or null when the key has a dot-only segment
+   * and cannot be cached through the API: reads miss, writes and deletes do
+   * nothing, and no request is sent for it.
+   */
+  private async prefixKey(key: string): Promise<string | null> {
     const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    if (hasDotOnlySegment(key) || hasDotOnlySegment(prefixed)) {
+      if (!this.warnedDotOnlySegmentKey) {
+        this.warnedDotOnlySegmentKey = true;
+        // Do not log the key: keys can embed identifiers.
+        logger.warn("Cache key has a dot-only path segment; not cached through the API");
+      }
+      return null;
+    }
     const sanitized = await sanitizeCacheKey(prefixed, this.keyPrefix);
     if (sanitized === prefixed) return prefixed;
 
@@ -428,6 +454,7 @@ export class ApiCacheBackend implements CacheBackend {
 
   async get(key: string, options?: CacheReadOptions): Promise<string | null> {
     const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return null;
     const result = await this.request<CacheEntryResult>(
       "GET",
       entryPath(prefixedKey),
@@ -441,6 +468,7 @@ export class ApiCacheBackend implements CacheBackend {
   async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
     const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
     const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return null;
     // A miss returns found=false with a null value, which the bounded reader
     // reports as null.
     const result = await this.request<string>(
@@ -471,7 +499,9 @@ export class ApiCacheBackend implements CacheBackend {
     );
     // The API refuses a read that names a key twice; two requested keys can
     // also sanitize to the same prefixed key.
-    const prefixedKeys = [...new Set(prefixedByKey.values())];
+    const prefixedKeys = [
+      ...new Set([...prefixedByKey.values()].filter((key): key is string => key !== null)),
+    ];
     const hits = new Map<string, string>();
     for (let offset = 0; offset < prefixedKeys.length; offset += MAX_ENTRIES_PER_BATCH) {
       const batch = prefixedKeys.slice(offset, offset + MAX_ENTRIES_PER_BATCH);
@@ -495,11 +525,15 @@ export class ApiCacheBackend implements CacheBackend {
       }
     }
 
-    return buildBatchResults(keys, (key) => hits.get(prefixedByKey.get(key) as string) ?? null);
+    return buildBatchResults(keys, (key) => {
+      const prefixedKey = prefixedByKey.get(key);
+      return prefixedKey ? hits.get(prefixedKey) ?? null : null;
+    });
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return;
     const ttl = toApiTtlSeconds(ttlSeconds);
     if (ttl === "invalid") {
       logger.warn("Refusing cache write with a non-finite TTL; skipping", { keyCount: 1 });
@@ -527,10 +561,11 @@ export class ApiCacheBackend implements CacheBackend {
 
     // The API refuses a write that names a key twice. Applied in order, the
     // last entry for a key wins, so keep only that one.
-    const lastByKey = new Map<string, (typeof prefixedEntries)[number]>();
+    const lastByKey = new Map<string, { key: string; value: string; ttl?: number }>();
     for (const entry of prefixedEntries) {
+      if (entry.key === null) continue;
       lastByKey.delete(entry.key);
-      lastByKey.set(entry.key, entry);
+      lastByKey.set(entry.key, { key: entry.key, value: entry.value, ttl: entry.ttl });
     }
 
     const writes: Array<{ key: string; value: string; ttl_seconds?: number }> = [];
@@ -581,9 +616,11 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async del(key: string): Promise<void> {
+    const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return;
     await this.request(
       "DELETE",
-      entryPath(await this.prefixKey(key)),
+      entryPath(prefixedKey),
       undefined,
       { failOnError: true, operation: ENTRY_OPERATION },
     );
