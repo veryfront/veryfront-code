@@ -2,6 +2,7 @@ import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows }
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
 import { planIntegrationShard, planSuiteFiles } from "../test/run-suite.ts";
+import { inlinePublicPoolJobs } from "./public-pool-jobs.ts";
 
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
@@ -903,7 +904,8 @@ jobs:
       "the Deno download retry budget is sized against the tightest setup-deno job",
     );
 
-    const ci = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+    const cicd = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+    const ci = { ...cicd, jobs: await inlinePublicPoolJobs(cicd) };
     const ciJob = asRecord(asRecord(ci.jobs, "cicd jobs").ci, "ci job");
     const ciRunStep = asSteps(ciJob.steps, "ci steps").find((step) =>
       step.name === "Run ${{ matrix.check }}"

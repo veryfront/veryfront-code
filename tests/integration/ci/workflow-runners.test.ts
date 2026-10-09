@@ -296,3 +296,155 @@ describe("public runner pool workflow", () => {
     }
   });
 });
+
+// Required status contexts on main, copied from the repository ruleset
+// (`gh api repos/veryfront/veryfront-code/rules/branches/main`) and classic
+// branch protection (`gh api repos/veryfront/veryfront-code/branches/main/protection/required_status_checks`).
+// Update these lists whenever either changes.
+const RULESET_REQUIRED_CONTEXTS = [
+  "Automated review",
+  "SonarQube Cloud quality gate",
+  "ci (format)",
+  "ci (lint)",
+  "ci (typecheck)",
+  "quality gate (merge)",
+  "tests (binary e2e)",
+  "tests (integration)",
+];
+const BRANCH_PROTECTION_REQUIRED_CONTEXTS = [
+  "Analyze",
+  "ci (format)",
+  "ci (lint)",
+  "ci (typecheck)",
+  "coverage gate",
+  "tests (binary e2e)",
+  "tests (integration)",
+  "tests (rsc browser e2e)",
+];
+// Contexts posted as commit statuses rather than by a job.
+const REQUIRED_STATUS_CONTEXTS = ["Automated review"];
+// Every context that must keep its exact name. A job called through a reusable
+// workflow reports as `<caller> / <called job>`, so each job behind one of
+// these must stay a plain job in its workflow.
+const REQUIRED_JOB_CONTEXTS = [
+  "Analyze",
+  "SonarQube Cloud quality gate",
+  "ci (format)",
+  "ci (lint)",
+  "ci (typecheck)",
+  "coverage gate",
+  "quality gate (artifact)",
+  "quality gate (merge)",
+  "quality gate (registry)",
+  "tests (binary e2e)",
+  "tests (integration)",
+  "tests (rsc browser e2e)",
+];
+// Jobs that cicd.yml runs through the pool workflow. None is a required check.
+const POOL_CALLER_JOBS = [
+  "coverage-integration-client",
+  "coverage-node-executor",
+  "coverage-shards",
+  "tests-bun",
+  "tests-node",
+  "tests-node-sandbox",
+  "tests-npm-install-smoke",
+  "tests-runtime-critical-flow",
+  "tests-sentry-runtime-packages",
+];
+
+function checkNames(id: string, job: Record<string, unknown>): string[] {
+  const matrix = (job.strategy as { matrix?: Record<string, unknown> } | undefined)?.matrix;
+  // An unnamed matrix job reports as "<id> (<value>)" for a one-key matrix.
+  if (job.name === undefined) {
+    const keys = Object.keys(matrix ?? {});
+    if (keys.length === 0) return [id];
+    const values = matrix?.[keys[0]!];
+    return keys.length === 1 && Array.isArray(values)
+      ? values.map((value) => `${id} (${value})`)
+      : [];
+  }
+  const name = String(job.name);
+  const key = name.match(/\$\{\{ matrix\.([\w-]+) \}\}/)?.[1];
+  if (key === undefined) return [name];
+  const values = matrix?.[key];
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => name.replace(`\${{ matrix.${key} }}`, String(value)));
+}
+
+describe("required status contexts", () => {
+  it("covers every ruleset, branch protection and documented quality gate context", async () => {
+    const documented = new Set(
+      (await Deno.readTextFile(new URL("../../../.github/QUALITY_GATES.md", import.meta.url)))
+        .match(/`(?:quality gate \([a-z]+\)|SonarQube Cloud quality gate)`/g)
+        ?.map((context) => context.slice(1, -1)),
+    );
+    assert(documented.size >= 4, "QUALITY_GATES.md must name the stable gate checks");
+    for (
+      const context of [
+        ...RULESET_REQUIRED_CONTEXTS,
+        ...BRANCH_PROTECTION_REQUIRED_CONTEXTS,
+        ...documented,
+      ]
+    ) {
+      assert(
+        REQUIRED_JOB_CONTEXTS.includes(context) || REQUIRED_STATUS_CONTEXTS.includes(context),
+        `required context "${context}" is missing from the protected list`,
+      );
+    }
+  });
+
+  it("keeps every required job context on a plain job under its exact name", async () => {
+    const produced = new Map<string, string>();
+    for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
+      if (!entry.isFile || entry.name === POOL_WORKFLOW) continue;
+      const workflow = asRecord(
+        parse(await Deno.readTextFile(new URL(entry.name, WORKFLOWS_DIR))),
+        entry.name,
+      );
+      for (const [id, value] of Object.entries(asRecord(workflow.jobs, `${entry.name} jobs`))) {
+        const job = asRecord(value, id);
+        if ("uses" in job) continue;
+        for (const name of checkNames(id, job)) produced.set(name, `${entry.name} ${id}`);
+      }
+    }
+    for (const context of REQUIRED_JOB_CONTEXTS) {
+      assert(produced.has(context), `required context "${context}" must stay a plain job`);
+    }
+  });
+
+  it("keeps posting the required automated review status", async () => {
+    const gate = await Deno.readTextFile(new URL("automated-review-gate.yml", WORKFLOWS_DIR));
+    assert(gate.includes('status?.context !== "Automated review"'));
+  });
+
+  it("calls the pool workflow only for jobs behind no required context", async () => {
+    const jobs = await cicdJobs();
+    const callers = Object.entries(jobs)
+      .filter(([, job]) => "uses" in job && String(job.uses).includes(POOL_WORKFLOW))
+      .map(([name]) => name)
+      .sort();
+    assertEquals(callers, POOL_CALLER_JOBS);
+    for (const name of callers) {
+      const job = jobs[name]!;
+      assertEquals(job.uses, POOL_WORKFLOW_REF, `${name} must call the pool workflow at main`);
+      const inputs = asRecord(job.with, `${name} with`);
+      assertEquals(inputs.job, name, `${name} must run its own pool job`);
+      assertEquals(inputs.ubuntu26, "${{ inputs.ubuntu26 == true }}");
+      assert(PUBLIC_POOL_JOBS.includes(name), `${name} must exist in the pool workflow`);
+      for (const context of checkNames(name, job)) {
+        assertEquals(
+          REQUIRED_JOB_CONTEXTS.includes(context),
+          false,
+          `${name} reports "${context} / ...", which would break a required context`,
+        );
+      }
+      assert(
+        String(job.if).includes(
+          "github.event.pull_request.head.repo.full_name == github.repository",
+        ),
+        `${name} must keep the fork guard`,
+      );
+    }
+  });
+});
