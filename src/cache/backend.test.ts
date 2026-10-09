@@ -1504,12 +1504,150 @@ it("ApiCacheBackend expires an entry written with a non-positive TTL instead of 
     await cache.setBatch([
       { key: "gone", value: "v", ttl: -1 },
       { key: "bad", value: "v", ttl: Number.POSITIVE_INFINITY },
+      { key: "nan-batch", value: "v", ttl: Number.NaN },
+      { key: "kept", value: "value", ttl: 1.2 },
     ]);
 
     assertEquals(requests, [
       { method: "DELETE", path: "/projects/project-slug/cache/entries/k", body: null },
       { method: "DELETE", path: "/projects/project-slug/cache/entries/gone", body: null },
+      {
+        method: "POST",
+        path: "/projects/project-slug/cache/entries/write",
+        body: { entries: [{ key: "kept", value: "value", ttl_seconds: 2 }] },
+      },
     ]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend maps null and malformed read envelopes to misses", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const envelopes = [{ found: true, value: null }, { found: true, value: 123 }, {}, null];
+  let index = 0;
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch((() => Promise.resolve(Response.json(envelopes[index++]))) as typeof fetch);
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-malformed-envelope-test",
+    });
+
+    for (let i = 0; i < envelopes.length; i++) {
+      assertEquals(await cache.get(`key-${i}`), null);
+    }
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend chunks entry reads and writes to the canonical 100-key limit", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const readSizes: number[] = [];
+  const writeSizes: number[] = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (String(input).endsWith("/read")) {
+        readSizes.push(body.keys.length);
+        return Promise.resolve(Response.json({
+          data: body.keys.map((key: string) => ({
+            key,
+            found: true,
+            value: key,
+          })),
+        }));
+      }
+      writeSizes.push(body.entries.length);
+      return Promise.resolve(Response.json({ status: "written" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-chunked-entries-test",
+    });
+
+    const keys = Array.from({ length: 201 }, (_, i) => `key-${i}`);
+    const results = await cache.getBatch([...keys, keys[0]!]);
+    assertEquals(results.size, 201);
+    assertEquals(results.get("key-200"), "key-200");
+    await cache.setBatch(keys.map((key) => ({ key, value: key })));
+    assertEquals(readSizes, [100, 100, 1]);
+    assertEquals(writeSizes, [100, 100, 1]);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
+it("ApiCacheBackend bounds expiration concurrency for large batches", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  let active = 0;
+  let maximumActive = 0;
+  let deletes = 0;
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      assertEquals(init?.method, "DELETE");
+      deletes++;
+      active++;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active--;
+      return Response.json({ status: "deleted" });
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-expiration-concurrency-test",
+    });
+
+    await cache.setBatch(Array.from({ length: 25 }, (_, i) => ({
+      key: `expired-${i}`,
+      value: "v",
+      ttl: 0,
+    })));
+    assertEquals(deletes, 25);
+    assertEquals(maximumActive, 8);
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;

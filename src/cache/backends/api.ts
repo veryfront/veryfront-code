@@ -40,6 +40,9 @@ import {
 const logger = baseLogger.component("api-cache-backend");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_EXPIRATION_CONCURRENCY = 8;
+// Canonical cache entries API accepts at most 100 distinct keys per batch.
+const MAX_ENTRIES_PER_BATCH = 100;
 const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
@@ -432,7 +435,7 @@ export class ApiCacheBackend implements CacheBackend {
       { onAuthority: options?.onAuthority, operation: ENTRY_OPERATION },
     );
     // A miss carries found=false and a null value.
-    return result?.found === false ? null : result?.value ?? null;
+    return result?.found === false || typeof result?.value !== "string" ? null : result.value;
   }
 
   async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
@@ -469,24 +472,27 @@ export class ApiCacheBackend implements CacheBackend {
     // The API refuses a read that names a key twice; two requested keys can
     // also sanitize to the same prefixed key.
     const prefixedKeys = [...new Set(prefixedByKey.values())];
-    const response = await this.request<{ data?: CacheEntryResult[] }>(
-      "POST",
-      READ_ENTRIES_OPERATION,
-      { keys: prefixedKeys },
-      { onAuthority: options?.onAuthority, operation: READ_ENTRIES_OPERATION },
-    );
-
     const hits = new Map<string, string>();
-    if (Array.isArray(response?.data)) {
-      for (const entry of response.data) {
-        if (entry?.found !== false && typeof entry?.value === "string") {
-          hits.set(entry.key, entry.value);
+    for (let offset = 0; offset < prefixedKeys.length; offset += MAX_ENTRIES_PER_BATCH) {
+      const batch = prefixedKeys.slice(offset, offset + MAX_ENTRIES_PER_BATCH);
+      const response = await this.request<{ data?: CacheEntryResult[] }>(
+        "POST",
+        READ_ENTRIES_OPERATION,
+        { keys: batch },
+        { onAuthority: options?.onAuthority, operation: READ_ENTRIES_OPERATION },
+      );
+      if (Array.isArray(response?.data)) {
+        for (const entry of response.data) {
+          if (entry?.found !== false && typeof entry?.value === "string") {
+            hits.set(entry.key, entry.value);
+          }
         }
+      } else {
+        // Avoid multiplying an unavailable batch endpoint into per-key retries.
+        logger.warn("Batch cache read failed; treating its keys as misses", {
+          keyCount: batch.length,
+        });
       }
-    } else {
-      logger.debug("Batch cache read failed; treating every key as a miss", {
-        keyCount: keys.length,
-      });
     }
 
     return buildBatchResults(keys, (key) => hits.get(prefixedByKey.get(key) as string) ?? null);
@@ -550,9 +556,11 @@ export class ApiCacheBackend implements CacheBackend {
     }
     if (expired.length > 0) await this.expireImmediately(expired);
     if (writes.length === 0) return;
-    await this.request("POST", WRITE_ENTRIES_OPERATION, { entries: writes }, {
-      operation: WRITE_ENTRIES_OPERATION,
-    });
+    for (let offset = 0; offset < writes.length; offset += MAX_ENTRIES_PER_BATCH) {
+      await this.request("POST", WRITE_ENTRIES_OPERATION, {
+        entries: writes.slice(offset, offset + MAX_ENTRIES_PER_BATCH),
+      }, { operation: WRITE_ENTRIES_OPERATION });
+    }
   }
 
   /**
@@ -561,13 +569,15 @@ export class ApiCacheBackend implements CacheBackend {
    * write through this backend.
    */
   private async expireImmediately(prefixedKeys: string[]): Promise<void> {
-    await Promise.all(
-      prefixedKeys.map((prefixedKey) =>
-        this.request("DELETE", entryPath(prefixedKey), undefined, {
-          operation: ENTRY_OPERATION,
-        })
-      ),
-    );
+    for (let offset = 0; offset < prefixedKeys.length; offset += MAX_EXPIRATION_CONCURRENCY) {
+      await Promise.all(
+        prefixedKeys.slice(offset, offset + MAX_EXPIRATION_CONCURRENCY).map((prefixedKey) =>
+          this.request("DELETE", entryPath(prefixedKey), undefined, {
+            operation: ENTRY_OPERATION,
+          })
+        ),
+      );
+    }
   }
 
   async del(key: string): Promise<void> {
