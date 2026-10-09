@@ -1129,6 +1129,93 @@ describe("workflow agent child protocol", () => {
   });
 });
 
+describe("private workflow inherited execution response", () => {
+  const binding = {
+    projectId: "project",
+    parentRunId: parentId,
+    agentId: "coordinator",
+    apiUrl: "https://api.example.test",
+    fetch,
+  };
+  const projection = {
+    version: 1,
+    canonicalRunId: childId,
+    parentRunId: parentId,
+    projectId: "project",
+    agentId: "coordinator",
+    status: "running",
+    conversationId,
+    outputMessageId: "44444444-4444-4444-8444-444444444444",
+    dispatchNonce: "nonce",
+  };
+  const privateResponse = (body: unknown) => {
+    const headers = new Headers(admission().headers);
+    headers.set("Content-Type", "application/vnd.veryfront.inherited-run+json");
+    return new Response(JSON.stringify(body), { status: 202, headers });
+  };
+  it("binds private routing without requiring a public resource", async () => {
+    const run = await acceptWorkflowInheritedRunAdmission(privateResponse(projection), binding);
+    assertEquals("canonicalRunId" in run && run.canonicalRunId, childId);
+    assertEquals("conversationId" in run && run.conversationId, conversationId);
+  });
+  for (const status of ["completed", "failed", "cancelled"]) {
+    it(`retains private ${status} result without restoring execution`, async () => {
+      const error = { code: "CHILD_FAILED", message: "Stored failure" };
+      const result = await acceptWorkflowInheritedRunAdmission(
+        privateResponse({
+          ...projection,
+          status,
+          output: { text: "stored result" },
+          ...(status === "failed" ? { error } : {}),
+        }),
+        binding,
+      );
+      assertEquals(result, {
+        terminalReceipt: {
+          status,
+          output: { text: "stored result" },
+          ...(status === "failed" ? { error } : {}),
+        },
+      });
+    });
+  }
+  it("rejects terminal projection without its durable result", async () => {
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(
+          privateResponse({ ...projection, status: "completed" }),
+          binding,
+        ),
+      Error,
+      "binding mismatch",
+    );
+  });
+  for (
+    const change of [
+      { version: 2 },
+      { canonicalRunId: parentId },
+      { parentRunId: childId },
+      { projectId: "foreign" },
+      { agentId: "foreign" },
+      { dispatchNonce: "stale" },
+      { conversationId: "bad" },
+      { outputMessageId: "bad" },
+    ]
+  ) {
+    it(`rejects private binding ${JSON.stringify(change)}`, async () => {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(
+            privateResponse({ ...projection, ...change }),
+            binding,
+          ),
+        Error,
+        "binding mismatch",
+      );
+    });
+  }
+});
+
 describe("workflow terminal admission result validation", () => {
   const binding = {
     projectId: "project",
