@@ -24,6 +24,8 @@ import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-to
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
 const objectHasOwn = Object.hasOwn;
+const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
+  "__veryfrontTrustedPlatformPolicyToolResultIds";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
@@ -268,6 +270,36 @@ function extractSubmittedFormInputResult(
   return { values, inputRequestId };
 }
 
+function hasDuplicateToolCallId(message: ChatUiMessage, toolCallId: string): boolean {
+  let seen = false;
+  let duplicate = false;
+  forEachPrivateArray(message.parts, (part) => {
+    if (readToolResultOwnDataProperty(part, "toolCallId") !== toolCallId) return;
+    if (seen) duplicate = true;
+    seen = true;
+  });
+  return duplicate;
+}
+
+function hasTrustedFormInputReplaySidecar(
+  message: ChatUiMessage,
+  part: ChatUiMessagePart,
+): boolean {
+  const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+  if (typeof toolCallId !== "string" || hasDuplicateToolCallId(message, toolCallId)) return false;
+  const metadata = readToolResultOwnDataProperty(message, "metadata");
+  const trustedToolCallIds = isRecord(metadata)
+    ? readToolResultOwnDataProperty(metadata, TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY)
+    : undefined;
+  if (!Array.isArray(trustedToolCallIds)) return false;
+
+  let trusted = false;
+  forEachPrivateArray(trustedToolCallIds, (id) => {
+    if (id === toolCallId) trusted = true;
+  });
+  return trusted;
+}
+
 function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
     if (!objectHasOwn(messages, index)) continue;
@@ -299,10 +331,32 @@ export function findSubmittedFormInputResult(
   });
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
+  const admittedResultCounts = createPrivateMap<string, number>();
   forEachPrivateArray(messages, (message, index) => {
     if (index < startIndex || sources.get(message.id) !== message) return;
     forEachPrivateArray(message.parts, (part) => {
-      result = extractSubmittedFormInputResult(part, options) ?? result;
+      const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof toolCallId !== "string") return;
+      const legacyFormInputReplayAllowed = options.legacyFormInputReplayAllowed === true ||
+        hasTrustedFormInputReplaySidecar(message, part);
+      // Count submitted platform results across history; unrelated project reuse cannot invalidate a receipt.
+      if (extractSubmittedFormInputResult(part, { legacyFormInputReplayAllowed })) {
+        admittedResultCounts.set(toolCallId, (admittedResultCounts.get(toolCallId) ?? 0) + 1);
+      }
+    });
+  });
+  forEachPrivateArray(messages, (message, index) => {
+    if (index < startIndex || sources.get(message.id) !== message) return;
+    forEachPrivateArray(message.parts, (part) => {
+      const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+      if (
+        typeof toolCallId !== "string" || admittedResultCounts.get(toolCallId) !== 1 ||
+        hasDuplicateToolCallId(message, toolCallId)
+      ) return;
+      result = extractSubmittedFormInputResult(part, {
+        legacyFormInputReplayAllowed: options.legacyFormInputReplayAllowed === true ||
+          hasTrustedFormInputReplaySidecar(message, part),
+      }) ?? result;
     });
   });
   return result;
