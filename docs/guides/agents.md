@@ -652,6 +652,11 @@ Its lifecycle is:
 - Re-entrant `next()` calls made by Promise species or other framework-internal
   result-observation hooks are rejected; they are not middleware-body calls.
 
+Middleware can replace or edit messages, but changing a platform control result
+removes its trusted ownership. Internal clones preserve that ownership only when
+the tool call ID, tool name and data-only result still match the original result.
+Caller-supplied result shapes never grant platform control authority.
+
 ## Verify it worked
 
 Save the agent file and restart `veryfront dev`. The quickest server-side

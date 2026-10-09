@@ -1,4 +1,5 @@
-import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -60,7 +61,7 @@ const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
 const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
-const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, true>();
+const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, string>();
 const trustedHostedSourceIdentities = createPrivateWeakStore<object, object>();
 const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
   "__veryfrontTrustedPlatformPolicyToolResultIds";
@@ -95,25 +96,50 @@ export function hasTrustedPlatformPolicyToolDefinition(definition: unknown): boo
     trustedPlatformPolicyToolDefinitions.get(definition) === true;
 }
 
-/** Mark a runtime-created tool result as coming from a trusted platform control tool. */
+function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefined {
+  const type = readToolResultOwnDataProperty(part, "type");
+  const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+  const toolName = readToolResultOwnDataProperty(part, "toolName");
+  if (
+    type !== "tool-result" || typeof toolCallId !== "string" || toolCallId.length === 0 ||
+    typeof toolName !== "string" || toolName.length === 0
+  ) return undefined;
+  const result = snapshotBoundedJsonValue(readToolResultOwnDataProperty(part, "result"));
+  if (!result.success) return undefined;
+  try {
+    return privateJsonStringify({ toolCallId, toolName, result: result.value });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Bind runtime-created control provenance to its data-only identity and result. */
 export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
   part: T,
 ): T {
-  trustedPlatformPolicyToolResults.set(part, true);
+  const snapshot = snapshotPlatformPolicyToolResult(part);
+  if (snapshot !== undefined) trustedPlatformPolicyToolResults.set(part, snapshot);
   return part;
 }
 
 function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
-  return trustedPlatformPolicyToolResults.get(part) === true;
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(part);
+  return trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(part) === trustedSnapshot;
 }
 
-/** Preserve trusted runtime-created form-result provenance across internal clones. */
+/** Preserve control provenance only across clones with the original identity and result. */
 export function inheritTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
   source: ToolResultPart,
   target: T,
 ): T {
-  if (isToolResultPart(source) && hasTrustedPlatformPolicyToolResultPart(source)) {
-    markTrustedPlatformPolicyToolResultPart(target);
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(source);
+  if (
+    trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(source) === trustedSnapshot &&
+    snapshotPlatformPolicyToolResult(target) === trustedSnapshot
+  ) {
+    trustedPlatformPolicyToolResults.set(target, trustedSnapshot);
   }
   return target;
 }
