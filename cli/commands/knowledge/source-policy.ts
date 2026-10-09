@@ -67,6 +67,10 @@ const TEXT_FALLBACK_FILENAMES = new Set([
 ]);
 
 const IGNORED_DIRECTORY_NAMES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".bzr",
   "node_modules",
 ]);
 

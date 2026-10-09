@@ -1398,6 +1398,53 @@ it("excludes dependency directories from OKF bundle walks", async () => {
   }
 });
 
+it("prunes VCS metadata from local and remote OKF bundles", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-vcs-" });
+  const directories = [".git", ".hg", ".svn", ".bzr"];
+  try {
+    await Deno.writeTextFile(join(root, "index.md"), "# Bundle\n");
+    for (const directory of directories) {
+      await Deno.mkdir(join(root, directory, "objects"), { recursive: true });
+      await Deno.writeTextFile(join(root, directory, "objects", "topic.md"), "# VCS metadata\n");
+    }
+    const local = await collectKnowledgeSources(
+      { sources: [], path: root, all: true, recursive: true, okfBundle: true },
+      { client: createMockClient(), projectSlug: "my-project", downloadUploads: async () => [] },
+    );
+    assertEquals(local.sources.map((source) => source.localPath), [join(root, "index.md")]);
+    assertEquals(
+      local.skipped.map((source) => source.reason),
+      directories.map(() => "ignored_directory"),
+    );
+    const paths = [
+      "uploads/.bundle/.catalog/topic.md",
+      ...directories.map((directory) => `uploads/.bundle/${directory}/objects/topic.md`),
+    ];
+    const calls: string[][] = [];
+    const remote = await collectKnowledgeSources(
+      { sources: [], path: "uploads/.bundle", all: true, recursive: true, okfBundle: true },
+      {
+        client: createMockClient({
+          get: () =>
+            Promise.resolve({
+              data: paths.map((path) => ({ type: "file", path })),
+              page_info: { next: null },
+            }),
+        }),
+        projectSlug: "my-project",
+        downloadUploads: createDownloadUploadsStub(calls),
+      },
+    );
+    assertEquals(calls, [[paths[0]!]]);
+    assertEquals(
+      remote.skipped.map((source) => source.reason),
+      directories.map(() => "ignored_directory"),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 it("collects Markdown in hidden OKF roots and directories", async () => {
   const tempDir = await makeTempDir({ prefix: "veryfront-okf-hidden-" });
   const root = join(tempDir, ".bundle");
