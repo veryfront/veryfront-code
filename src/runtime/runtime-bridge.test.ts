@@ -855,6 +855,60 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("uses captured UUID generation for mandatory Veryfront Cloud capture IDs", async () => {
+    const cryptoPrototype = Object.getPrototypeOf(crypto) as Crypto;
+    const originalRandomUUID = cryptoPrototype.randomUUID;
+    let patchedRandomUUIDCalls = 0;
+    cryptoPrototype.randomUUID = () => {
+      patchedRandomUUIDCalls += 1;
+      throw new Error("project randomUUID hook");
+    };
+
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let recordedEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      recordedEvent = event;
+      if (!event.modelCallId) throw new Error("expected model call id");
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId,
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [{ type: "text", text: "done" }], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    try {
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+    } finally {
+      cryptoPrototype.randomUUID = originalRandomUUID;
+    }
+
+    assertEquals(patchedRandomUUIDCalls, 0);
+    assertEquals(typeof recordedEvent?.modelCallId, "string");
+    assertEquals(dispatches, 1);
+  });
+
   it("refuses Veryfront Cloud dispatch when the mandatory capture receipt mismatches", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";

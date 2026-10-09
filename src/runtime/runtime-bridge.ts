@@ -70,6 +70,8 @@ const ArrayIsArray = Array.isArray;
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
+const IntrinsicCrypto = crypto;
+const CryptoRandomUUID = IntrinsicCrypto.randomUUID;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const logger = serverLogger.component("runtime-bridge");
 
@@ -839,6 +841,10 @@ function assertExactModelCallCaptureControlsSupported(
   );
 }
 
+function randomUUID(): string {
+  return ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+}
+
 async function emitModelCallContextEvent(
   options: DirectTextOptions,
   directOptions: DirectModelOptions,
@@ -860,7 +866,7 @@ async function emitModelCallContextEvent(
     writerBinding.assertActive();
     assertExactModelCallCaptureControlsSupported(directOptions);
   }
-  const modelCallId = captureEnabled ? crypto.randomUUID() : undefined;
+  const modelCallId = captureEnabled ? randomUUID() : undefined;
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",

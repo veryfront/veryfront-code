@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { agent as createAgent } from "#veryfront/agent";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
