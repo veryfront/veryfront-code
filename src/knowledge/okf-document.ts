@@ -106,12 +106,13 @@ export function inspectOkfDocument(
     .replace(/\/+$/, "").replace(/^\.$/, "");
   const rootIndexPath = bundleRoot ? `${bundleRoot}/index.md` : "index.md";
   const kind = getOkfDocumentKind(path);
-  const framed = readOkfEnvelope(source);
+  const envelopeSource = source.startsWith("\uFEFF") ? source.slice(1) : source;
+  const framed = readOkfEnvelope(envelopeSource);
   const diagnostics: OkfDocumentDiagnostic[] = [];
   let metadata: Record<string, unknown> = {};
 
   if (!framed) {
-    if (/^---\r?\n/.test(source)) {
+    if (/^---\r?\n/.test(envelopeSource)) {
       diagnostics.push({
         code: "invalid_frontmatter",
         message: "Close the leading YAML frontmatter with a line containing ---.",

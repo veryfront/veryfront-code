@@ -49,6 +49,24 @@ describe("OKF document inspection", () => {
     assertEquals(OKF_SPEC_REVISION.length, 40);
   });
 
+  it("inspects BOM-prefixed envelopes while preserving the original source", () => {
+    for (
+      const [path, metadata] of [["topic.md", "type: Topic"], ["index.md", "okf_version: '0.2'"]]
+    ) {
+      const source = `\uFEFF---\n${metadata}\n---\n# Authored body\n`;
+      const inspected = inspectOkfDocument(path!, source);
+      assertEquals(inspected.source, source);
+      assertEquals(inspected.body, "# Authored body\n");
+      assertEquals(inspected.envelopeConforms, true);
+      assertEquals(inspected.diagnostics, []);
+    }
+    const malformed = "\uFEFF---\ntype: Topic\nMissing closing delimiter";
+    assertEquals(
+      inspectOkfDocument("topic.md", malformed).diagnostics[0]?.code,
+      "invalid_frontmatter",
+    );
+  });
+
   it("keeps legacy metadata and body while reporting the missing required type", () => {
     const source = "---\nsource: old.txt\nsource_type: txt\nadded: 2026-10-07\n---\nLegacy body\n";
     const inspected = inspectOkfDocument("legacy.md", source);
