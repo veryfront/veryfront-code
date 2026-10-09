@@ -1113,7 +1113,7 @@ describe("chat-stream-handler", () => {
           }),
         Error,
         "Provider stream failed",
-      );
+      ) as Error;
       assertEquals(error.name, "RuntimeProviderStreamFailure");
       const provenance = readRuntimeProviderStreamFailureCause(error);
       assertEquals(provenance.found, true);
