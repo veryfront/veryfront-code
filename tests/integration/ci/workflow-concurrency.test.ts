@@ -21,8 +21,12 @@ const CANCEL_IN_PROGRESS = "${{ github.event_name == 'pull_request' }}";
 
 const WORKFLOWS = [
   "cicd.yml",
+  "client-bundle-report.yml",
+  "codemod-directory-handles.yml",
   "codeql.yml",
+  "framework-performance.yml",
   "security-audit.yml",
+  "sonar-retry-contract.yml",
 ];
 
 function asRecord(value: unknown, context: string): Record<string, unknown> {

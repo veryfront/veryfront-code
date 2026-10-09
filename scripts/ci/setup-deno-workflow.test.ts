@@ -586,7 +586,7 @@ describe("setup-deno CI contract", () => {
     assert(saveStep, "setup-deno must use the pinned save-only cache action");
     assertEquals(
       String(saveStep.if),
-      "inputs.warm-cache == 'true' && inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'",
+      "inputs.warm-cache == 'true' && inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true' && github.event_name != 'merge_group'",
     );
     const saveInputs = asRecord(saveStep.with, "cache save inputs");
     assertEquals(
