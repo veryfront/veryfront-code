@@ -29,7 +29,7 @@
     {
       "id": "north-data__search_companies",
       "name": "Search Companies",
-      "description": "Search companies",
+      "description": "Search companies and people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -13625,7 +13625,8 @@ export const connectors: IntegrationConfig[] = [
           "disk": { "type": "number", "description": "Disk space allocated to the sandbox in GB" },
           "autoStopInterval": {
             "type": "number",
-            "description": "Auto-stop interval in minutes (0 disables auto-stop)",
+            "description":
+              "Auto-stop interval in minutes. The usual default is 15 minutes of inactivity; 0 disables auto-stop. Pause-capable classes may default to auto-pause instead, so check the sandbox lifecycle settings.",
           },
           "public": {
             "type": "boolean",
@@ -13707,7 +13708,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description":
+              "Sandbox ID or name. Check the sandbox lifecycle settings: the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead. Recheck the started state before executing after a delay.",
             "required": true,
           },
         },
@@ -24030,7 +24032,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Plain-text search query matched against prefix phrases (use an empty string for a cache warmup request)",
+              "Plain-text search query matched against prefix phrases. First send a warmup request with an empty query to update the cache, then send the actual search query.",
             "required": true,
           },
           "readMask": {
@@ -36224,7 +36226,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "north-data__search_companies",
       "name": "Search Companies",
-      "description": "Search companies",
+      "description": "Search companies and people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

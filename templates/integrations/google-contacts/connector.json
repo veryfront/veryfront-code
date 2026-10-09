@@ -92,7 +92,7 @@
           "query": {
             "type": "string",
             "in": "query",
-            "description": "Plain-text search query matched against prefix phrases (use an empty string for a cache warmup request)",
+            "description": "Plain-text search query matched against prefix phrases. First send a warmup request with an empty query to update the cache, then send the actual search query.",
             "required": true
           },
           "readMask": {

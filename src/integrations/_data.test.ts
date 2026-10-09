@@ -95,6 +95,7 @@ describe("integration endpoint specs", () => {
       ["rippling", "process_leave_request", "Process pending leave request"],
       ["pandadoc", "create_document_from_template", "Create draft document from template"],
       ["openai", "delete_file", "Delete file and all vector-store references"],
+      ["north-data", "search_companies", "Search companies and people"],
       ["north-data", "power_search", "Search narrowly; billed per unique company"],
       ["openai", "get_usage_completions", "Get completions usage (requires admin key)"],
       ["openai", "get_costs", "Get costs (requires organization admin key)"],
@@ -472,6 +473,20 @@ describe("integration endpoint specs", () => {
         "params",
         "orderId",
         "Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
+      ],
+      [
+        "google-contacts",
+        "search_contacts",
+        "params",
+        "query",
+        "First send a warmup request with an empty query to update the cache, then send the actual search query.",
+      ],
+      [
+        "daytona",
+        "start_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead.",
       ],
       [
         "klarna",

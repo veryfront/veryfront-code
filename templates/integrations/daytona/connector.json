@@ -126,7 +126,7 @@
           },
           "autoStopInterval": {
             "type": "number",
-            "description": "Auto-stop interval in minutes (0 disables auto-stop)"
+            "description": "Auto-stop interval in minutes. The usual default is 15 minutes of inactivity; 0 disables auto-stop. Pause-capable classes may default to auto-pause instead, so check the sandbox lifecycle settings."
           },
           "public": {
             "type": "boolean",
@@ -222,7 +222,7 @@
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description": "Sandbox ID or name. Check the sandbox lifecycle settings: the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead. Recheck the started state before executing after a delay.",
             "required": true
           }
         }
