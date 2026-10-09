@@ -1556,6 +1556,67 @@ it("ApiCacheBackend maps null and malformed read envelopes to misses", async () 
   }
 });
 
+it("ApiCacheBackend keeps dot-only keys consistent across entry paths and batches", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const requestedKeys: string[] = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/read")) {
+        const { keys } = JSON.parse(String(init?.body));
+        requestedKeys.push(...keys);
+        return Promise.resolve(Response.json({
+          data: keys.map((key: string) => ({
+            key,
+            found: true,
+            value: "hit",
+          })),
+        }));
+      }
+      if (path.endsWith("/write")) {
+        const { entries } = JSON.parse(String(init?.body));
+        requestedKeys.push(...entries.map((entry: { key: string }) => entry.key));
+      } else {
+        assertEquals(decodeURIComponent(path).includes("/cache/entries/vf-sanitized:"), true);
+        requestedKeys.push(decodeURIComponent(path.split("/").at(-1)!));
+      }
+      return Promise.resolve(Response.json({ found: true, value: "hit", status: "deleted" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-dot-only-keys-test",
+    });
+
+    for (const key of [".", ".."]) {
+      assertEquals(await cache.get(key), "hit");
+      await cache.set(key, "v");
+      assertEquals((await cache.getBatch([key])).get(key), "hit");
+      await cache.setBatch([{ key, value: "v" }]);
+      await cache.del(key);
+    }
+    assertEquals(new Set(requestedKeys.slice(0, 5)).size, 1);
+    assertEquals(new Set(requestedKeys.slice(5)).size, 1);
+    assertEquals(new Set(requestedKeys).size, 2);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
 it("ApiCacheBackend chunks entry reads and writes to the canonical 100-key limit", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
