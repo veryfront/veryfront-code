@@ -8,6 +8,7 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import type { Message } from "#veryfront/agent/types.ts";
+import { isToolResultPart } from "../runtime/tool-result-part.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
@@ -24,6 +25,8 @@ import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-m
 import { registerHostedTerminalCredential } from "./terminal-credential.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 import {
+  hasSubmittedFormInputResult,
+  hasTrustedPlatformPolicyToolResultPart,
   hydrateActiveSkillStateFromMessages,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
 } from "../runtime/skill-policy-enforcement.ts";
@@ -2551,7 +2554,7 @@ Deno.test("prepareHostedChatRuntimeMessages restores verified legacy load_skill 
         role: "assistant",
         metadata: trustedSkillMetadata,
       },
-      { role: "tool", metadata: undefined },
+      { role: "tool", metadata: trustedSkillMetadata },
     ],
   );
   const toolResult = messages.find((message) => message.role === "tool")?.parts[0];
@@ -3714,3 +3717,93 @@ it("caller tool selection cannot grant an unconfigured canonical loader through 
     assertEquals(assembly.runtimeTools.veryfront__load_skill, undefined);
   }
 });
+
+for (const toolName of ["form_input", "load_skill"] as const) {
+  it(`restores second-source legacy ${toolName} sidecars after hosted coalescing`, async () => {
+    const result = toolName === "form_input"
+      ? { submitted: true, values: { brief: "Done" } }
+      : { skillId: "second", instructions: "# Second", references: [], scripts: [] };
+    const firstMetadata: typeof trustedSkillMetadata = {
+      __veryfrontTrustedPlatformPolicyToolResultIds: ["first-call", "second-call"],
+    };
+    const secondMetadata: typeof trustedSkillMetadata = {
+      __veryfrontTrustedPlatformPolicyToolResultIds: ["second-call"],
+    };
+    const messages: ChatUiMessage[] = [
+      {
+        id: "calls",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolName: "other",
+            toolCallId: "first-call",
+            input: {},
+            state: "completed",
+          },
+          { type: "tool-call", toolName, toolCallId: "second-call", input: {}, state: "completed" },
+        ],
+      },
+      {
+        id: "first",
+        role: "tool",
+        metadata: firstMetadata,
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "other",
+            toolCallId: "first-call",
+            input: {},
+            state: "output-available",
+            output: {},
+          },
+        ],
+      },
+      {
+        id: "second",
+        role: "tool",
+        metadata: secondMetadata,
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName,
+            toolCallId: "second-call",
+            input: {},
+            state: "output-available",
+            output: result,
+          },
+        ],
+      },
+    ];
+    for (const trustMode of ["both", "first", "second"] as const) {
+      const trustSecond = trustMode !== "first";
+      if (trustMode === "second") {
+        const firstResult = messages[1]?.parts[0];
+        if (firstResult?.type !== "dynamic-tool") throw new Error("Missing first result");
+        firstResult.toolName = toolName;
+        firstResult.output = result;
+      }
+      const prepared = await prepareHostedChatRuntimeMessages(messages, {
+        trustedHostedHistoryMessageIds: trustMode === "both" ? ["first", "second"] : [trustMode],
+      });
+      if (trustMode === "second") {
+        for (const message of prepared) {
+          for (const part of message.parts) {
+            if (isToolResultPart(part)) {
+              assertEquals(
+                hasTrustedPlatformPolicyToolResultPart(part),
+                part.toolCallId === "second-call",
+              );
+            }
+          }
+        }
+      }
+      assertEquals(prepared.filter((message) => message.role === "tool").length, 1);
+      assertEquals(hasSubmittedFormInputResult(prepared), trustSecond && toolName === "form_input");
+      assertEquals(
+        hydrateActiveSkillStateFromMessages(prepared).activeSkillId,
+        trustSecond && toolName === "load_skill" ? "second" : undefined,
+      );
+    }
+  });
+}

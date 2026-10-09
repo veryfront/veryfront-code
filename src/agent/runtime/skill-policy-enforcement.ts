@@ -71,6 +71,7 @@ const arrayIsArray = Array.isArray;
 const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
 const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, string>();
 const trustedHostedSourceIdentities = createPrivateWeakStore<object, object>();
+const inheritedHostedPolicyToolResultIds = createPrivateWeakStore<object, Set<string>>();
 const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
   "__veryfrontTrustedPlatformPolicyToolResultIds";
 
@@ -559,6 +560,41 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
   );
 }
 
+/** Restore only the sidecar IDs owned by each result's authenticated original source. */
+export function inheritTrustedPlatformPolicyToolResultMetadata<TMessage extends Message>(
+  target: TMessage,
+  getTrustedSource: (sourceId: string) => { metadata?: unknown } | null | undefined,
+): TMessage {
+  const toolCallIds: string[] = [];
+  for (let index = 0; index < target.parts.length; index++) {
+    if (!objectHasOwn(target.parts, index)) continue;
+    const part = target.parts[index]!;
+    if (!isToolResultPart(part)) continue;
+    const sourceId = getToolResultSource(part);
+    if (sourceId === undefined) continue;
+    const source = getTrustedSource(sourceId);
+    if (!source) continue;
+    const sourceIds = getTrustedPlatformPolicyToolCallIdsFromMetadata(
+      readToolResultOwnDataProperty(source, "metadata"),
+    );
+    for (let sourceIndex = 0; sourceIndex < sourceIds.length; sourceIndex++) {
+      if (sourceIds[sourceIndex] === part.toolCallId) {
+        toolCallIds[toolCallIds.length] = part.toolCallId;
+        break;
+      }
+    }
+  }
+  const restoredMessage = withPolicyMetadata(target, toolCallIds);
+  if (toolCallIds.length > 0) {
+    const inheritedIds = createPrivateSet<string>();
+    for (let index = 0; index < toolCallIds.length; index++) {
+      inheritedIds.add(toolCallIds[index]!);
+    }
+    inheritedHostedPolicyToolResultIds.set(restoredMessage, inheritedIds);
+  }
+  return restoredMessage;
+}
+
 /** Reject every result sharing an ID, including malformed or differently named duplicates. */
 function ambiguousResultIds(message: Message): Set<string> {
   const seen = createPrivateSet<string>();
@@ -805,9 +841,13 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
     const isTrustedResultSource = (part: ToolResultPart): boolean =>
       resultCounts.get(part.toolCallId) === 1 && isAdmittedResultSource(message, part);
 
-    if (messageIsTrustedHistory) {
-      restoreTrustedPlatformPolicyResultsFromPersistedMessage(message, isTrustedResultSource);
-    }
+    const inheritedResultIds = inheritedHostedPolicyToolResultIds.get(message);
+    restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+      message,
+      (part) =>
+        isTrustedResultSource(part) &&
+        (messageIsTrustedHistory || inheritedResultIds?.has(part.toolCallId) === true),
+    );
     if (message.role === "assistant" && messageIsTrustedHistory) {
       pendingTrustedLoadSkillCalls = getTrustedHostedLoadSkillCallMapFromAssistant(message);
     } else if (message.role === "tool") {

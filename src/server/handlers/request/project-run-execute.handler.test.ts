@@ -8841,13 +8841,17 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     return { request: new Request(request, { signal: controller.signal }), controller };
   }
 
-  async function waitForBarrier<T>(promise: Promise<T>, message: string): Promise<T> {
+  async function waitForBarrier<T>(
+    promise: Promise<T>,
+    message: string,
+    timeoutMs = 1_000,
+  ): Promise<T> {
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         promise,
         new Promise<never>((_resolve, reject) => {
-          watchdog = setTimeout(() => reject(new Error(message)), 1_000);
+          watchdog = setTimeout(() => reject(new Error(message)), timeoutMs);
         }),
       ]);
     } finally {
@@ -9200,7 +9204,6 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         headers: result.response.headers,
       });
     }, { hostname: "127.0.0.1", port: 0 });
-    let clientResponse: Response | undefined;
 
     try {
       await withMockFetch(async (_input, init) => {
@@ -9221,39 +9224,51 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
             signal: clientController.signal,
           },
         );
-        await waitForBarrier(
-          responseBodyHeld.promise,
-          "native response stream did not reach its delivery barrier",
-        );
-        clientResponse = await waitForBarrier(
-          responsePending,
-          "native client did not receive response headers while the body was held",
-        );
-        assertEquals(clientResponse.status, 200);
-        assertEquals(taskSettled, true);
-        assertEquals(serialized, true);
-        assertExists(ingressSignal);
-        assertEquals(ingressSignal.aborted, false);
-        assertEquals(acknowledgements, []);
+        // Observe rejection before waiting for the server-side delivery barrier.
+        void responsePending.catch(() => undefined);
+        try {
+          await waitForBarrier(
+            responseBodyHeld.promise,
+            "native response stream did not reach its delivery barrier",
+            5_000,
+          );
+          const clientResponse = await waitForBarrier(
+            responsePending,
+            "native client did not receive response headers while the body was held",
+            5_000,
+          );
+          assertEquals(clientResponse.status, 200);
+          assertEquals(taskSettled, true);
+          assertEquals(serialized, true);
+          assertExists(ingressSignal);
+          assertEquals(ingressSignal.aborted, false);
+          assertEquals(acknowledgements, []);
 
-        clientController.abort(new Error("Client disconnected during response delivery"));
-        await waitForBarrier(
-          ingressAborted.promise,
-          "Deno did not abort the native ingress signal after the client disconnected",
-        );
-        await waitForBarrier(
-          acknowledged.promise,
-          "native late cancellation did not send a stop acknowledgement",
-        );
-        assertEquals(ingressSignal.aborted, true);
-        assertEquals(acknowledgements, [{
-          authorization: "Bearer native-stop-capability",
-          signalAborted: false,
-        }]);
+          clientController.abort(new Error("Client disconnected during response delivery"));
+          await waitForBarrier(
+            ingressAborted.promise,
+            "Deno did not abort the native ingress signal after the client disconnected",
+            5_000,
+          );
+          await waitForBarrier(
+            acknowledged.promise,
+            "native late cancellation did not send a stop acknowledgement",
+            5_000,
+          );
+          assertEquals(ingressSignal.aborted, true);
+          assertEquals(acknowledgements, [{
+            authorization: "Bearer native-stop-capability",
+            signalAborted: false,
+          }]);
+        } finally {
+          clientController.abort();
+          releaseResponseBody.resolve();
+          const response = await responsePending.catch(() => undefined);
+          if (response?.body) await response.body.cancel().catch(() => undefined);
+        }
       });
     } finally {
       releaseResponseBody.resolve();
-      if (clientResponse?.body) await clientResponse.body.cancel().catch(() => undefined);
       await server.stop();
     }
   });
