@@ -63,9 +63,13 @@ import {
   evaluateDeclarativeConfigWithParser,
   prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
-import { DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS } from "./declarative-evaluator-worker-runner.ts";
+import {
+  DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS,
+  type DeclarativeConfigWorkerRunnerOptions,
+} from "./declarative-evaluator-worker-runner.ts";
 import {
   createDeclarativeConfigWorkerErrorResponse,
+  createDeclarativeConfigWorkerInfrastructureError,
   createDeclarativeConfigWorkerSuccessResponse,
   type DeclarativeConfigWorkerRequest,
   decodeDeclarativeConfigWorkerRequest,
@@ -233,11 +237,20 @@ async function waitForTrustedFlightCount(expected: number): Promise<void> {
  * against one wall-clock deadline, so on a loaded host a real worker can
  * report `worker-timeout` (service-overloaded) before the source is parsed.
  * Loader tests assert parse and validation outcomes, not worker latency; the
- * worker lifecycle has its own tests in declarative-evaluator-worker*.test.ts.
+ * worker lifecycle, its deadline and the real worker thread have their own
+ * tests in declarative-evaluator-worker*.test.ts. There is no deadline here;
+ * cancellation reports `worker-aborted` like the runner does.
  */
 async function evaluateHostedConfigInProcess(
   payload: DeclarativeConfigWorkerRequest,
+  options?: DeclarativeConfigWorkerRunnerOptions,
 ): Promise<ConfigSnapshotRecord> {
+  const throwIfAborted = () => {
+    if (options?.signal?.aborted) {
+      throw createDeclarativeConfigWorkerInfrastructureError("worker-aborted");
+    }
+  };
+  throwIfAborted();
   let response: unknown;
   try {
     const request = decodeDeclarativeConfigWorkerRequest(structuredClone(payload));
@@ -250,6 +263,7 @@ async function evaluateHostedConfigInProcess(
   } catch (error) {
     response = createDeclarativeConfigWorkerErrorResponse(error);
   }
+  throwIfAborted();
   return decodeDeclarativeConfigWorkerResponse(
     structuredClone(response),
     payload.evaluationOptions.source.length,
@@ -8528,7 +8542,7 @@ export default config as const;
       });
     });
 
-    it("evaluates hosted multi-project config in the real worker with tenant env", async () => {
+    it("evaluates hosted multi-project config with tenant env", async () => {
       const adapter = setup();
       const sourceContext = {
         productionMode: false,
