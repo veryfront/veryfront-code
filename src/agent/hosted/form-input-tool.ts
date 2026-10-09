@@ -1,3 +1,5 @@
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   getActiveHostedRunEventWriterCapability,
   hostedRunCanonicalId,
@@ -251,22 +253,19 @@ function extractSubmittedFormInputResult(
   part: ChatUiMessagePart,
   options: { legacyFormInputReplayAllowed?: boolean } = {},
 ): HostedSubmittedFormInputResult | undefined {
-  if (!isFormInputToolPart(part, options) || !isRecord(part.output)) {
-    return undefined;
-  }
-  if (part.output.submitted !== true || !isRecord(part.output.values)) {
-    return undefined;
-  }
+  if (!isFormInputToolPart(part, options)) return undefined;
+  const output = readToolResultOwnDataProperty(part, "output");
+  if (!isRecord(output)) return undefined;
+  const submitted = readToolResultOwnDataProperty(output, "submitted");
+  const values = readToolResultOwnDataProperty(output, "values");
+  if (submitted !== true || !isRecord(values)) return undefined;
 
-  const inputRequestId = typeof part.output.inputRequestId === "string" &&
-      part.output.inputRequestId.length > 0
-    ? part.output.inputRequestId
+  const storedInputRequestId = readToolResultOwnDataProperty(output, "inputRequestId");
+  const inputRequestId = typeof storedInputRequestId === "string" && storedInputRequestId.length > 0
+    ? storedInputRequestId
     : part.toolCallId;
 
-  return {
-    values: part.output.values,
-    inputRequestId,
-  };
+  return { values, inputRequestId };
 }
 
 function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
@@ -290,28 +289,21 @@ export function findSubmittedFormInputResult(
 ): HostedSubmittedFormInputResult | undefined {
   const trustedIds = createPrivateMap<string, true>();
   const ids = options.trustedHostedHistoryMessageIds ?? [];
-  for (let index = 0; index < ids.length; index++) {
-    if (!objectHasOwn(ids, index)) continue;
-    const id = ids[index];
+  forEachPrivateArray(ids, (id) => {
     if (typeof id === "string") trustedIds.set(id, true);
-  }
+  });
   const sources = createPrivateMap<string, ChatUiMessage | null>();
-  for (let index = 0; index < messages.length; index++) {
-    if (!objectHasOwn(messages, index)) continue;
-    const message = messages[index]!;
-    if (message.role !== "assistant" || !trustedIds.has(message.id)) continue;
+  forEachPrivateArray(messages, (message) => {
+    if (message.role !== "assistant" || !trustedIds.has(message.id)) return;
     sources.set(message.id, sources.has(message.id) ? null : message);
-  }
+  });
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
-  for (let index = startIndex; index < messages.length; index++) {
-    if (!objectHasOwn(messages, index)) continue;
-    const message = messages[index]!;
-    if (sources.get(message.id) !== message) continue;
-    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-      if (!objectHasOwn(message.parts, partIndex)) continue;
-      result = extractSubmittedFormInputResult(message.parts[partIndex]!, options) ?? result;
-    }
-  }
+  forEachPrivateArray(messages, (message, index) => {
+    if (index < startIndex || sources.get(message.id) !== message) return;
+    forEachPrivateArray(message.parts, (part) => {
+      result = extractSubmittedFormInputResult(part, options) ?? result;
+    });
+  });
   return result;
 }
