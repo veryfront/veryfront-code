@@ -1,3 +1,14 @@
+import { type Tool, toolRegistry } from "#veryfront/tool";
+import {
+  readOwnDataProperty,
+  snapshotOwnDataPropertyArray,
+} from "#veryfront/agent/runtime/data-property-descriptor.ts";
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
+import type { ParsedHostedChatRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
+const getScopedTools = toolRegistry.getAll;
+const mapForEach = Map.prototype.forEach;
+const apply = Reflect.apply;
+
 import { resolveVeryfrontCloudModelThinking } from "#veryfront/provider";
 import {
   runWithVeryfrontCloudContext,
@@ -77,6 +88,39 @@ export function createVeryfrontCloudHostedChatExecutionRootRunOptions(input: {
   return rootRun;
 }
 
+function allowsVerifiedLegacySkillReplay(
+  request: ParsedHostedChatRequest,
+  agentId: string,
+): boolean {
+  try {
+    if (readOwnDataProperty(request, "serverEnvelopeVerified", "Hosted request", false) !== true) {
+      return false;
+    }
+    const ids = snapshotOwnDataPropertyArray(
+      readOwnDataProperty(
+        request,
+        "serverResolvedTrustedHostedHistoryMessageIds",
+        "Hosted request",
+        false,
+      ),
+      { label: "Trusted history IDs", maximumEntries: 10_000, mapValue: (id) => id },
+    );
+    if (!somePrivateArray(ids, (id) => typeof id === "string" && id.length > 0)) return false;
+    let collision = false;
+    apply(mapForEach, apply(getScopedTools, toolRegistry, []), [(definition: Tool, id: string) => {
+      const owner = readOwnDataProperty(definition, "ownerAgentId", "Project tool", false);
+      if (owner !== undefined && owner !== agentId) return;
+      const shortName = readOwnDataProperty(definition, "shortName", "Project tool", false);
+      if (id === "load_skill" || id === `${agentId}--load_skill` || shortName === "load_skill") {
+        collision = true;
+      }
+    }]);
+    return !collision;
+  } catch {
+    return false;
+  }
+}
+
 /** Prepare Veryfront Cloud hosted chat execution. */
 export async function prepareVeryfrontCloudHostedChatExecution<
   TRuntimeAgentDefinition extends {
@@ -117,6 +161,8 @@ export async function prepareVeryfrontCloudHostedChatExecution<
 
   return await prepareHostedChatExecution({
     ...preparationInput,
+    legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed !== false &&
+      allowsVerifiedLegacySkillReplay(input.request, input.agentConfig.id),
     rootRun: createVeryfrontCloudHostedChatExecutionRootRunOptions({
       rootRun,
       logger,
