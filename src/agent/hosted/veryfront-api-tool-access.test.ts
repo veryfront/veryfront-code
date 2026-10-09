@@ -1,4 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   filterVeryfrontApiToolDefinitionsByAccessProfile,
@@ -168,34 +169,36 @@ function collaborationProfile(createInviteVisibility: "visible" | "hidden") {
   };
 }
 
-Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile gates create_project_invitation and its create_invite alias by the create_invite action", () => {
-  const toolDefinitions = [
-    remoteTool("create_invite"),
-    remoteTool("create_project_invitation"),
-    remoteTool("veryfront__create_project_invitation"),
-    remoteTool("update_file"),
-  ];
+describe("filterVeryfrontApiToolDefinitionsByAccessProfile", () => {
+  it("gates create_project_invitation and its create_invite alias by the create_invite action", () => {
+    const toolDefinitions = [
+      remoteTool("create_invite"),
+      remoteTool("create_project_invitation"),
+      remoteTool("veryfront__create_project_invitation"),
+      remoteTool("update_file"),
+    ];
 
-  assertEquals(
-    filterVeryfrontApiToolDefinitionsByAccessProfile({
-      toolDefinitions,
-      profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("hidden")),
-    }).map((tool) => tool.name),
-    ["update_file"],
-    "a hidden create_invite action must hide the canonical invitation tool as well as the alias",
-  );
-  assertEquals(
-    filterVeryfrontApiToolDefinitionsByAccessProfile({
-      toolDefinitions,
-      profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("visible")),
-    }).map((tool) => tool.name),
-    [
-      "create_invite",
-      "create_project_invitation",
-      "veryfront__create_project_invitation",
-      "update_file",
-    ],
-  );
+    assertEquals(
+      filterVeryfrontApiToolDefinitionsByAccessProfile({
+        toolDefinitions,
+        profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("hidden")),
+      }).map((tool) => tool.name),
+      ["update_file"],
+      "a hidden create_invite action must hide the canonical invitation tool as well as the alias",
+    );
+    assertEquals(
+      filterVeryfrontApiToolDefinitionsByAccessProfile({
+        toolDefinitions,
+        profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("visible")),
+      }).map((tool) => tool.name),
+      [
+        "create_invite",
+        "create_project_invitation",
+        "veryfront__create_project_invitation",
+        "update_file",
+      ],
+    );
+  });
 });
 
 Deno.test("filterVeryfrontApiToolDefinitionsWithAccessProfile fails closed for mapped tools when the profile is stale", async () => {
