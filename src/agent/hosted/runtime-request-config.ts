@@ -1,3 +1,7 @@
+import {
+  readOwnDataProperty,
+  snapshotOwnDataPropertyArray,
+} from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
@@ -232,6 +236,29 @@ function addConfiguredDelegateToolNames(
 
 function isLegacyDelegationToolName(toolName: string): boolean {
   return toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID;
+}
+
+/** Check only an own concrete configured grant, never an inherited binding or accessor. */
+export function hasExplicitHostedToolName(
+  config: Pick<RuntimeAgentMarkdownDefinition, "tools">,
+  name: string,
+): boolean {
+  try {
+    const value = readOwnDataProperty(config, "tools", "Agent config", false);
+    if (!arrayIsArray(value)) return false;
+    const names = snapshotOwnDataPropertyArray(value, {
+      label: "Agent tools",
+      maximumEntries: 10_000,
+      mapValue: (entry) => entry,
+    });
+    let matched = false;
+    forEachPrivateArray(names, (entry) => {
+      if (entry === name) matched = true;
+    });
+    return matched;
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */

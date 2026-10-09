@@ -1,3 +1,5 @@
+import { forEachPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
+import { appendSourceProjection } from "./tool-result-source.ts";
 /**
  * Provider message conversion.
  *
@@ -24,10 +26,6 @@ import {
 } from "./tool-replay-reconciliation.ts";
 import type { ProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import type { ChatProviderModelInputMessage } from "./provider-input-types.ts";
-import {
-  getProviderModelMessageSourceId,
-  withProviderModelMessageSourceId,
-} from "./conversation.ts";
 import type { ChatToolResultPart, ProviderModelMessage } from "./types.ts";
 
 type ProviderToolResultContent = {
@@ -173,7 +171,7 @@ function convertAssistantMessage(
 
     messages.push({
       role: "assistant",
-      content: [...content],
+      content: slicePrivateArray(content),
     });
     content.length = 0;
   };
@@ -185,7 +183,7 @@ function convertAssistantMessage(
 
     messages.push({
       role: "tool",
-      content: [...toolResults],
+      content: slicePrivateArray(toolResults),
     });
     toolResults.length = 0;
   };
@@ -428,19 +426,10 @@ export function convertUiMessagesToProviderModelMessages(
       }
     })();
 
-    for (const rawProviderMessage of converted) {
-      const providerMessage = withProviderModelMessageSourceId(rawProviderMessage, message.id);
-      const previous = providerMessages.at(-1);
-      if (previous?.role === "tool" && providerMessage.role === "tool") {
-        providerMessages[providerMessages.length - 1] = withProviderModelMessageSourceId({
-          role: "tool",
-          content: [...previous.content, ...providerMessage.content],
-        }, getProviderModelMessageSourceId(previous) ?? message.id);
-        continue;
-      }
-
-      providerMessages.push(providerMessage);
-    }
+    forEachPrivateArray(
+      converted,
+      (projected) => appendSourceProjection(providerMessages, projected, message.id),
+    );
   }
 
   return providerMessages;

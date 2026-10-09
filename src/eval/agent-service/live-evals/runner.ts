@@ -567,9 +567,26 @@ export function hasFinished(run: ParsedRun): boolean {
 
 /** Contains skill load helper. */
 export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
-  return (run.toolStarts.includes("load_skill") ||
-    run.toolStarts.includes("veryfront__load_skill")) &&
-    run.toolArgs.join("").includes(skillId);
+  const names = new Map<string, string>();
+  const args = new Map<string, string>();
+  for (const event of run.events) {
+    const id = getStringField(event, "toolCallId");
+    if (!id) continue;
+    const type = getStringField(event, "type");
+    if (type === agUiSseEventTypes.toolCallStart) {
+      const name = getStringField(event, "toolCallName");
+      if (name) names.set(id, name);
+    } else if (type === agUiSseEventTypes.toolCallArgs) {
+      args.set(id, `${args.get(id) ?? ""}${getStringField(event, "delta") ?? ""}`);
+    }
+  }
+  for (const [id, name] of names) {
+    if (name !== "load_skill" && name !== "veryfront__load_skill") continue;
+    try {
+      if (JSON.parse(args.get(id) ?? "").skillId === skillId) return true;
+    } catch { /* An incomplete argument stream is not a completed skill load. */ }
+  }
+  return false;
 }
 
 /** Count step started events helper. */
