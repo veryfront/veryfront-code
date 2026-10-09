@@ -2,7 +2,8 @@ import { summarizeErrorCausesForLog } from "#veryfront/observability/telemetry-e
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProviderRequestError } from "veryfront/provider/shared";
+import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
+import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
 import {
   extractOpenAIResponsesUsage,
   MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS,
@@ -126,7 +127,9 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         () => collectParts(streamFromText(events.map(data).join("")), { providerLabel }),
         ProviderRequestError,
       );
-      assert(error instanceof ProviderRequestError);
+      assert(error instanceof ProviderStreamProtocolError);
+      assertEquals(error.retryable, false);
+      assertEquals(parseProviderError(error).code, "PROVIDER_STREAM_PROTOCOL_ERROR");
       assertEquals(
         error.message,
         `${providerLabel ?? "openai"} request failed: invalid successful stream (${

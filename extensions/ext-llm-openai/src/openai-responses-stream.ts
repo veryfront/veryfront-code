@@ -1,6 +1,6 @@
 import {
   mergeUsage,
-  ProviderRequestError,
+  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
@@ -101,9 +101,9 @@ const MAX_OPENAI_STREAM_MESSAGE_DELTA_BATCH_FRAGMENTS = 256;
 function invalidOpenAIResponsesStream(
   context: OpenAIResponsesStreamContext,
   issue: string,
-): ProviderRequestError {
+): ProviderStreamProtocolError {
   const providerKind = context.providerKind ?? "openai";
-  return new ProviderRequestError({
+  return new ProviderStreamProtocolError({
     provider: providerKind,
     status: 200,
     message: `${

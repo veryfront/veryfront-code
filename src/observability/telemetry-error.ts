@@ -653,6 +653,7 @@ const LOGGABLE_PROVIDER_ERROR_NAMES = new NativeSet<string>([
   "ProviderQuotaError",
   "ProviderRequestError",
   "ProviderOutputTruncatedError",
+  "ProviderStreamProtocolError",
 ]);
 
 const LOGGABLE_PROVIDER_NAMES = new NativeSet<string>([
@@ -925,7 +926,8 @@ const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
 
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
   if (
-    entry.name !== "ProviderRequestError" || entry.provider !== "openai" || entry.status !== 200
+    (entry.name !== "ProviderRequestError" && entry.name !== "ProviderStreamProtocolError") ||
+    entry.provider !== "openai" || entry.status !== 200
   ) return;
   const message = readOwnErrorDataField(error, "message");
   if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
