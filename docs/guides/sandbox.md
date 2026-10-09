@@ -229,8 +229,18 @@ new workspace explicitly when you intend to replace it.
 
 ## Migrate from the previous sandbox SDK
 
-Deploy the canonical `/sandboxes` API before upgrading SDK consumers. Update
-callers to these names. This release removes the old names without aliases.
+Deploy the canonical `/sandboxes` API before upgrading SDK consumers. This
+SDK requires that API contract, including the validated camelCase workspace
+metadata and command responses described in this guide. The API and SDK do
+not negotiate versions. A missing route or an incompatible response fails
+with a request or response-validation error.
+
+Before publishing the SDK, verify `checkReadiness()`, `getCapabilities()` and
+`runCommand("pwd")` against the deployed API in the target environment. Verify
+that `close()` preserves a persistent workspace by reconnecting with `get()`.
+Keep the release blocked until these checks pass.
+
+Update callers to these names. This release removes the old names without aliases.
 
 | Previous name                         | Current name         |
 | ------------------------------------- | -------------------- |
