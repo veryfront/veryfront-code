@@ -4879,6 +4879,7 @@ export class AgentRuntime {
           // a caller has already recorded on a span.
           callbacks?.onUsage?.({ ...totalUsage });
         },
+        streamRequiresFinish: languageModel.runtimeCapabilities?.streamRequiresFinish === true,
         requireProviderFinish:
           languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),

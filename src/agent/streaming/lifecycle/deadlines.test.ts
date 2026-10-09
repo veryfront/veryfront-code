@@ -5,6 +5,108 @@ import { runStreamLifecycle } from "./runner.ts";
 import { createControllableSignalProvider, ManualMonotonicClock } from "./testing.ts";
 
 describe("stream lifecycle deadlines", () => {
+  for (
+    const event of [
+      undefined,
+      { type: "text_content", delta: "Ready." },
+      { type: "tool_input_start", toolCallId: "t1", toolName: "lookup" },
+      { type: "tool_input_ready", toolCallId: "t1", toolName: "lookup", input: {} },
+    ] as const
+  ) {
+    it(`waits past heuristic ${event?.type ?? "first progress"} deadline within existing attempt budget`, async () => {
+      const clock = new ManualMonotonicClock();
+      const provider = createControllableSignalProvider();
+      const run = runStreamLifecycle({
+        provider,
+        policy: {
+          clock,
+          streamRequiresFinish: true,
+          firstProgressTimeoutMs: 10,
+          semanticIdleTimeoutMs: 10,
+          toolInputIdleTimeoutMs: 10,
+          toolCommitGraceMs: 10,
+          statusIntervalMs: 60_000,
+          attemptTimeoutMs: 100,
+        },
+      });
+      const iterator = run.frames[Symbol.asyncIterator]();
+      if (event) {
+        provider.resolveNext({ done: false, value: { kind: "protocol", event } });
+        while (true) {
+          const frame = (await iterator.next()).value;
+          if (frame?.class === "semantic" && frame.event.type === event.type) break;
+        }
+      }
+      const pending = iterator.next();
+      clock.advanceBy(10);
+      assertEquals(
+        await Promise.race([pending.then(() => "settled"), Promise.resolve("pending")]),
+        "pending",
+      );
+      clock.advanceBy(90);
+      for await (const _frame of { [Symbol.asyncIterator]: () => iterator }) { /* drain */ }
+      const outcome = await run.outcome;
+      assertEquals(outcome.status, "failed");
+      if (outcome.status === "failed") assertEquals(outcome.error.code, "STREAM_ATTEMPT_TIMEOUT");
+      assertEquals(provider.returnCount, 1);
+    });
+  }
+
+  it("accepts a required finish arriving after the heuristic idle window", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        streamRequiresFinish: true,
+        semanticIdleTimeoutMs: 10,
+        attemptTimeoutMs: 100,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: { type: "text_content", delta: "Ready." },
+      },
+    });
+    await iterator.next();
+    const pending = iterator.next();
+    clock.advanceBy(20);
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: { type: "step_finish", finishReason: "stop" },
+      },
+    });
+    await pending;
+    for await (const _frame of { [Symbol.asyncIterator]: () => iterator }) { /* drain */ }
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "completed");
+    assertEquals(outcome.snapshot.finishReason, "stop");
+  });
+
+  it("cancels a required finish wait within the existing attempt budget", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const controller = new AbortController();
+    const reason = new Error("Cancelled by caller");
+    const run = runStreamLifecycle({
+      provider,
+      policy: { clock, streamRequiresFinish: true },
+      cancellations: [{ source: "runtime", signal: controller.signal }],
+    });
+    const pending = run.frames[Symbol.asyncIterator]().next();
+    controller.abort(reason);
+    await pending;
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "cancelled");
+    if (outcome.status === "cancelled") assertEquals(outcome.source, "runtime");
+  });
+
   for (const requireProviderFinish of [true, false]) {
     it(`handles parseable unfinished tool input without bypassing required finish (${requireProviderFinish})`, async () => {
       const clock = new ManualMonotonicClock();

@@ -209,6 +209,8 @@ export interface ModelRuntimeCapabilities {
   readonly toolCalling?: boolean;
   /** Whether local tool continuation must wait for the provider's finish metadata. */
   readonly toolCallStreamRequiresFinish?: boolean;
+  /** Whether every successful stream must include a provider finish event. */
+  readonly streamRequiresFinish?: boolean;
   /**
    * Whether the runtime accepts structured response formats.
    *

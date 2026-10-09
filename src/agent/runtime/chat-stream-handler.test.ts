@@ -1135,6 +1135,231 @@ describe("chat-stream-handler", () => {
       });
     }
 
+    for (
+      const outputParts of [
+        [],
+        [{ type: "text-delta", text: "Ready." }],
+        [{ type: "tool-input-start", id: "local-1", toolName: "lookup" }],
+        [
+          { type: "tool-input-start", id: "local-1", toolName: "lookup" },
+          { type: "tool-input-delta", id: "local-1", delta: "{}" },
+          { type: "tool-input-end", id: "local-1" },
+        ],
+      ]
+    ) {
+      it(`waits through heuristic idle until required provider finish (${outputParts.length} parts)`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        let markPendingRead!: () => void;
+        const pendingRead = new Promise<void>((resolve) => markPendingRead = resolve);
+        let finish!: (value: IteratorResult<unknown>) => void;
+        const terminalPart = new Promise<IteratorResult<unknown>>((resolve) => finish = resolve);
+        let nextIndex = 0;
+        let returns = 0;
+        const deadlines: number[] = [];
+        const processing = processStream(
+          {
+            fullStream: {
+              [Symbol.asyncIterator]() {
+                return {
+                  next() {
+                    const part = outputParts[nextIndex++];
+                    if (part) return Promise.resolve({ done: false, value: part });
+                    if (nextIndex === outputParts.length + 1) {
+                      markPendingRead();
+                      return terminalPart;
+                    }
+                    return Promise.resolve({ done: true, value: undefined });
+                  },
+                  return() {
+                    returns++;
+                    return Promise.resolve({ done: true, value: undefined });
+                  },
+                };
+              },
+            },
+            textStream: emptyAsyncIterable(),
+          },
+          state,
+          controller,
+          encoder,
+          "t",
+          {
+            streamRequiresFinish: true,
+            setTimeoutFn: ((_callback: () => void, timeout: number) => {
+              deadlines.push(timeout);
+              return 1;
+            }) as typeof setTimeout,
+            clearTimeoutFn: (() => {}) as typeof clearTimeout,
+          },
+        );
+        await pendingRead;
+        try {
+          assertEquals(deadlines, []);
+          assertEquals(returns, 0);
+          assertEquals(state.finishReason, null);
+        } finally {
+          finish({
+            done: false,
+            value: { type: "finish", finishReason: "stop", totalUsage: { totalTokens: 5 } },
+          });
+          await processing;
+        }
+        assertEquals(state.finishReason, "stop");
+        assertEquals(state.usage?.totalTokens, 5);
+      });
+
+      it(`rejects EOF without required provider finish (${outputParts.length} parts)`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const error = await assertRejects(() =>
+          processStream(createMockResult(outputParts), state, controller, encoder, "t", {
+            streamRequiresFinish: true,
+          })
+        ) as Error;
+        assertEquals(error.name, "RuntimeProviderStreamFailure");
+        assertEquals(state.finishReason, null);
+      });
+    }
+
+    it("accepts a required provider stream finish and preserves its usage", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      await processStream(
+        createMockResult([
+          { type: "text-delta", text: "Ready." },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+          },
+        ]),
+        state,
+        controller,
+        encoder,
+        "t",
+        { streamRequiresFinish: true },
+      );
+      assertEquals(state.finishReason, "stop");
+      assertEquals(state.usage?.totalTokens, 5);
+    });
+
+    it("preserves explicit provider errors when a required stream ends without finish", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerError = new Error("Provider request failed with status 402");
+      Object.defineProperty(providerError, "responseBody", {
+        value: JSON.stringify({ slug: "insufficient-credits" }),
+      });
+      await processStream(
+        createMockResult([{ type: "error", error: providerError }]),
+        state,
+        controller,
+        encoder,
+        "t",
+        { streamRequiresFinish: true },
+      );
+      assertEquals(events[0]?.code, "INSUFFICIENT_CREDITS");
+      assertEquals(events.length, 1);
+      assertEquals(state.finishReason, null);
+    });
+
+    it("does not synthesize success after an explicit provider error idles", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "error", error: new Error("Provider unavailable") };
+            await new Promise(() => {});
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      await processStream(result, state, controller, encoder, "t", {
+        streamRequiresFinish: true,
+        streamIdleTimeoutMs: 10,
+      });
+      assertEquals(events[0]?.type, "error");
+      assertEquals(state.finishReason, null);
+    });
+
+    it("aborts a required finish wait even when the provider iterator ignores cancellation", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const abortController = new AbortController();
+      const abortReason = new Error("Cancelled by caller");
+      let markPending!: () => void;
+      const pendingRead = new Promise<void>((resolve) => markPending = resolve);
+      let release!: (part: IteratorResult<unknown>) => void;
+      const pendingPart = new Promise<IteratorResult<unknown>>((resolve) => release = resolve);
+      const processing = processStream(
+        {
+          fullStream: {
+            [Symbol.asyncIterator]() {
+              return {
+                next() {
+                  markPending();
+                  return pendingPart;
+                },
+                return() {
+                  return Promise.resolve({ done: true, value: undefined });
+                },
+              };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        state,
+        controller,
+        encoder,
+        "t",
+        { streamRequiresFinish: true },
+        abortController.signal,
+      );
+      await pendingRead;
+      abortController.abort(abortReason);
+      try {
+        const result = await Promise.race([
+          processing.then(() => undefined, (error) => error),
+          new Promise((resolve) => setTimeout(() => resolve(undefined), 20)),
+        ]);
+        assertStrictEquals(result, abortReason);
+      } finally {
+        release({ done: true, value: undefined });
+        await processing.catch(() => {});
+      }
+    });
+
+    it("preserves abort precedence over a missing required stream finish", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const abortController = new AbortController();
+      const abortReason = new Error("Cancelled by caller");
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "text-delta", text: "Ready." };
+            abortController.abort(abortReason);
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      const error = await assertRejects(() =>
+        processStream(
+          result,
+          state,
+          controller,
+          encoder,
+          "t",
+          { streamRequiresFinish: true },
+          abortController.signal,
+        )
+      );
+      assertStrictEquals(error, abortReason);
+      assertEquals(state.finishReason, null);
+    });
+
     for (const startAnotherInput of [false, true]) {
       it(`rejects a committed local tool at idle before required finish (second input: ${startAnotherInput})`, async () => {
         const { controller, encoder } = createSSECollector();
