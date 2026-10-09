@@ -917,6 +917,7 @@ export async function prepareHostedChatRuntimeMessages(
     restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
       legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
       trustedMessageIds: options.trustedHostedHistoryMessageIds,
+      sourceMessages: messages,
     });
     return trustedRuntimeMessages;
   }
@@ -954,6 +955,7 @@ export async function prepareHostedChatRuntimeMessages(
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
     legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
     trustedMessageIds: options.trustedHostedHistoryMessageIds,
+    sourceMessages: messages,
   });
   return trustedRuntimeMessages;
 }

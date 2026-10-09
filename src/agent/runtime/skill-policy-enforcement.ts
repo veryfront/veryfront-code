@@ -1,3 +1,4 @@
+import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -489,7 +490,10 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
   );
 }
 
-function restoreTrustedPlatformPolicyResultsFromPersistedMessage(message: Message): void {
+function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+  message: Message,
+  isTrustedSource: (part: ToolResultPart) => boolean = () => true,
+): void {
   const trustedToolCallIdSet = getTrustedPlatformPolicyToolCallIdSet(message);
   if (!trustedToolCallIdSet) return;
   const parts = message.parts;
@@ -497,7 +501,7 @@ function restoreTrustedPlatformPolicyResultsFromPersistedMessage(message: Messag
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
     if (
-      isToolResultPart(part) &&
+      isToolResultPart(part) && isTrustedSource(part) &&
       trustedToolCallIdSet.has(part.toolCallId) &&
       ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
         (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
@@ -554,13 +558,17 @@ function getTrustedHostedLoadSkillCallMapFromAssistant(
 function restoreAdjacentTrustedHostedLoadSkillResults(
   message: Message,
   pendingTrustedLoadSkillCalls: Map<string, string>,
+  isTrustedSource: (part: ToolResultPart) => boolean,
 ): void {
   if (message.role !== "tool") return;
   const parts = message.parts;
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
-    if (!isToolResultPart(part) || !pendingTrustedLoadSkillCalls.has(part.toolCallId)) continue;
+    if (
+      !isToolResultPart(part) || !isTrustedSource(part) ||
+      !pendingTrustedLoadSkillCalls.has(part.toolCallId)
+    ) continue;
     const expectedToolName = pendingTrustedLoadSkillCalls.get(part.toolCallId);
     pendingTrustedLoadSkillCalls.delete(part.toolCallId);
     if (
@@ -586,30 +594,57 @@ function createTrustedHostedHistoryMessageIdSet(
   return trustedMessageIds.size > 0 ? trustedMessageIds : null;
 }
 
-/** Restore platform control provenance for trusted hosted server conversation history. */
+/**
+ * Restore platform provenance only from unique admitted history sources.
+ * UI projections require an opaque per-result origin. Direct runtime callers
+ * omit sourceMessages and explicitly admit unique runtime message IDs.
+ */
 export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
   messages: readonly Message[],
   options: {
     legacyLoadSkillReplayAllowed?: boolean;
     trustedMessageIds?: readonly string[];
+    /** Original UI sources, before one source can project into assistant and tool messages. */
+    sourceMessages?: readonly { id: string }[];
   } = {},
 ): void {
   const trustedMessageIds = createTrustedHostedHistoryMessageIdSet(options.trustedMessageIds);
   if (!trustedMessageIds) return;
+  const sourceCounts = createPrivateMap<string, number>();
+  const sources = options.sourceMessages ?? messages;
+  for (let index = 0; index < sources.length; index++) {
+    if (!objectHasOwn(sources, index)) continue;
+    const id = readToolResultOwnDataProperty(sources[index], "id");
+    if (typeof id === "string") sourceCounts.set(id, (sourceCounts.get(id) ?? 0) + 1);
+  }
 
   let pendingTrustedLoadSkillCalls: Map<string, string> | null = null;
   for (let index = 0; index < messages.length; index++) {
     if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
-    const messageIsTrustedHistory = trustedMessageIds.has(message.id);
+    const messageId = readToolResultOwnDataProperty(message, "id");
+    const messageIsTrustedHistory = typeof messageId === "string" &&
+      trustedMessageIds.has(messageId) && sourceCounts.get(messageId) === 1;
+    const isTrustedResultSource = (part: ToolResultPart): boolean => {
+      const sourceId = getToolResultSource(part) ??
+        (options.sourceMessages === undefined && typeof messageId === "string"
+          ? messageId
+          : undefined);
+      return sourceId !== undefined && trustedMessageIds.has(sourceId) &&
+        sourceCounts.get(sourceId) === 1;
+    };
     if (messageIsTrustedHistory) {
-      restoreTrustedPlatformPolicyResultsFromPersistedMessage(message);
+      restoreTrustedPlatformPolicyResultsFromPersistedMessage(message, isTrustedResultSource);
     }
     if (message.role === "assistant" && messageIsTrustedHistory) {
       pendingTrustedLoadSkillCalls = getTrustedHostedLoadSkillCallMapFromAssistant(message);
     } else if (message.role === "tool") {
-      if (pendingTrustedLoadSkillCalls && messageIsTrustedHistory) {
-        restoreAdjacentTrustedHostedLoadSkillResults(message, pendingTrustedLoadSkillCalls);
+      if (pendingTrustedLoadSkillCalls) {
+        restoreAdjacentTrustedHostedLoadSkillResults(
+          message,
+          pendingTrustedLoadSkillCalls,
+          isTrustedResultSource,
+        );
         if (pendingTrustedLoadSkillCalls.size === 0) pendingTrustedLoadSkillCalls = null;
       } else {
         pendingTrustedLoadSkillCalls = null;
@@ -618,13 +653,12 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
       pendingTrustedLoadSkillCalls = null;
     }
 
-    if (!messageIsTrustedHistory) continue;
     const parts = message.parts;
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) &&
+        isToolResultPart(part) && isTrustedResultSource(part) &&
         (part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
           (options.legacyLoadSkillReplayAllowed === true &&
             part.toolName === LOAD_SKILL_TOOL_ID)) &&
