@@ -50,6 +50,20 @@ describe("input-utils", () => {
       hasSubmittedFormInputResult([{ id: "assistant", role: "assistant", parts: [forged] }]),
       false,
     );
+    let reads = 0;
+    const accessorPart: ToolResultPart = {
+      ...genuine,
+      get providerExecuted() {
+        reads++;
+        return undefined;
+      },
+    };
+    inheritTrustedPlatformPolicyToolResultPart(genuine, accessorPart);
+    assertEquals(
+      hasSubmittedFormInputResult([{ id: "assistant", role: "assistant", parts: [accessorPart] }]),
+      false,
+    );
+    assertEquals(reads, 0);
     genuine.toolCallId = "replaced-call";
     assertEquals(
       hasSubmittedFormInputResult([{ id: "assistant", role: "assistant", parts: [genuine] }]),

@@ -112,16 +112,18 @@ function trustedToolResultBinding(part: ToolResultPart): string | undefined {
     const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
     const toolName = readToolResultOwnDataProperty(part, "toolName");
     const result = readToolResultOwnDataProperty(part, "result");
+    const providerExecuted = readToolResultOwnDataProperty(part, "providerExecuted");
     if (
       type !== "tool-result" || typeof toolCallId !== "string" ||
-      typeof toolName !== "string" || result === UNREADABLE_TOOL_RESULT_PROPERTY
+      typeof toolName !== "string" || result === UNREADABLE_TOOL_RESULT_PROPERTY ||
+      providerExecuted === UNREADABLE_TOOL_RESULT_PROPERTY
     ) {
       return undefined;
     }
     return privateJsonStringify({
       toolCallId,
       toolName,
-      providerExecuted: readToolResultOwnDataProperty(part, "providerExecuted"),
+      providerExecuted,
       result: normalizeToolResultPayload(result),
     });
   } catch {
