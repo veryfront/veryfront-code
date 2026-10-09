@@ -5,18 +5,9 @@ name: Client bundle report
 # entrypoint. This is the informational half of the #3670 gate; the hard
 # fail-fast check runs in the `ci (lint)` job via `deno task lint:client-bundle`.
 on:
-  # Not a required check, so a workflow-level path filter is safe. The report
-  # reads only the browser entrypoint graph under src/, the import map in
-  # deno.json, and the audit scripts.
+  # No path filter: a filtered trigger creates no run when a later push drops
+  # the matching changes, which would leave a stale sticky comment.
   pull_request:
-    paths:
-      - "src/**"
-      - "react/**"
-      - "deno.json"
-      - "scripts/lint/audit-client-bundle.ts"
-      - "scripts/lint/client-bundle-*"
-      - ".github/workflows/client-bundle-report.yml"
-      - ".github/actions/setup-deno/**"
 
 permissions:
   contents: read
