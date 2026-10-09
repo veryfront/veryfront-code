@@ -161,7 +161,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     });
     const originalIsArray = Array.isArray;
     try {
-      Array.isArray = () => false;
+      Array.isArray = (_value: unknown): _value is unknown[] => false;
       const acknowledged = await createDurableRunEventSink({ mirror: target.result })({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         modelCallId: receipt.modelCallId,
@@ -538,6 +538,11 @@ describe("agent/hosted/durable-run-event-sink", () => {
     const stringSlice = String.prototype.slice;
     const stringCharCodeAt = String.prototype.charCodeAt;
     const regexpTest = RegExp.prototype.test;
+    const textEncoderEncode = TextEncoder.prototype.encode;
+    const byteLengthDescriptor = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(Uint8Array.prototype),
+      "byteLength",
+    )!;
     try {
       Array.prototype.map = function <T>(): T[] {
         throw new Error("patched map");
@@ -551,6 +556,15 @@ describe("agent/hosted/durable-run-event-sink", () => {
       RegExp.prototype.test = function (): boolean {
         return false;
       };
+      TextEncoder.prototype.encode = function (_input?: string): never {
+        throw new Error("patched TextEncoder encode");
+      };
+      Object.defineProperty(Object.getPrototypeOf(Uint8Array.prototype), "byteLength", {
+        configurable: true,
+        get() {
+          throw new Error("patched byteLength getter");
+        },
+      });
       await assertRejects(
         async () => await sink(event),
         DurableRunEventPersistenceError,
@@ -561,6 +575,12 @@ describe("agent/hosted/durable-run-event-sink", () => {
       String.prototype.slice = stringSlice;
       String.prototype.charCodeAt = stringCharCodeAt;
       RegExp.prototype.test = regexpTest;
+      TextEncoder.prototype.encode = textEncoderEncode;
+      Object.defineProperty(
+        Object.getPrototypeOf(Uint8Array.prototype),
+        "byteLength",
+        byteLengthDescriptor,
+      );
     }
 
     const persisted = firstAppendedEvent(target.appended);
@@ -1081,6 +1101,105 @@ describe("agent/hosted/durable-run-event-sink", () => {
       clearTimeout(guardTimer);
     }
     assertEquals(target.isDisposed(), true, "mirror must be disposed after a persistence timeout");
+  });
+  it("uses captured deadline controller and timers when project code replaces them", async () => {
+    const NativeAbortController = AbortController;
+    const abortControllerDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "AbortController",
+    )!;
+    const setTimeoutDescriptor = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
+    const clearTimeoutDescriptor = Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!;
+    const signalDescriptor = Object.getOwnPropertyDescriptor(
+      NativeAbortController.prototype,
+      "signal",
+    )!;
+    const abort = NativeAbortController.prototype.abort;
+    const guardSetTimeout = globalThis.setTimeout;
+    const guardClearTimeout = globalThis.clearTimeout;
+
+    try {
+      Object.defineProperty(globalThis, "AbortController", {
+        configurable: true,
+        writable: true,
+        value: class HostileAbortController {
+          constructor() {
+            throw new Error("patched AbortController constructor");
+          }
+        },
+      });
+      Object.defineProperty(NativeAbortController.prototype, "signal", {
+        configurable: true,
+        get() {
+          throw new Error("patched AbortController signal getter");
+        },
+      });
+      NativeAbortController.prototype.abort = function () {
+        throw new Error("patched AbortController abort");
+      };
+      Object.defineProperty(globalThis, "setTimeout", {
+        configurable: true,
+        writable: true,
+        value() {
+          throw new Error("patched setTimeout");
+        },
+      });
+      Object.defineProperty(globalThis, "clearTimeout", {
+        configurable: true,
+        writable: true,
+        value() {
+          throw new Error("patched clearTimeout");
+        },
+      });
+
+      const successful = mirror();
+      let dispatches = 0;
+      const model = createGenerateModel("test", "test/captured-deadline-intrinsics", () => {
+        dispatches += 1;
+        return Promise.resolve({ content: [], finishReason: "stop", usage: {} });
+      });
+      await runWithRunEventSink(
+        createDurableRunEventSink({ mirror: successful.result }),
+        () => generateText({ model, messages: [{ role: "user", content: "hello" }] }),
+      );
+      assertEquals(dispatches, 1, "successful persistence must allow model dispatch");
+      assertEquals(successful.appended.length, 1);
+      assertEquals(successful.isDisposed(), false);
+
+      const timedOut = mirror({
+        append: () => new Promise(() => {}),
+      });
+      let guardTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await assertRejects(
+          () =>
+            Promise.race([
+              createDurableRunEventSink({ mirror: timedOut.result, timeoutMs: 1 })({
+                type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                messages: [],
+              }),
+              new Promise<never>((_resolve, reject) => {
+                guardTimer = guardSetTimeout(
+                  () => reject(new Error("captured deadline did not settle")),
+                  1_000,
+                );
+              }),
+            ]),
+          DurableRunEventPersistenceError,
+          "Durable run event persistence timed out",
+          "the captured timeout and abort path must fail closed",
+        );
+      } finally {
+        guardClearTimeout(guardTimer);
+      }
+      assertEquals(timedOut.isDisposed(), true);
+    } finally {
+      Object.defineProperty(globalThis, "AbortController", abortControllerDescriptor);
+      Object.defineProperty(globalThis, "setTimeout", setTimeoutDescriptor);
+      Object.defineProperty(globalThis, "clearTimeout", clearTimeoutDescriptor);
+      Object.defineProperty(NativeAbortController.prototype, "signal", signalDescriptor);
+      NativeAbortController.prototype.abort = abort;
+    }
   });
 
   for (const cancelled of [false, true]) {

@@ -26,6 +26,14 @@ const mathRound = Math.round;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
 const ArrayIsArray = Array.isArray;
+const objectKeys = Object.keys;
+const intrinsicCrypto = crypto;
+const cryptoRandomUUID = intrinsicCrypto.randomUUID;
+const reflectApply = Reflect.apply;
+
+function randomUUID(): string {
+  return reflectApply(cryptoRandomUUID, intrinsicCrypto, []) as string;
+}
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -186,7 +194,7 @@ function getMessageId(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): s
   }
 
   if (!state.messageId) {
-    state.messageId = crypto.randomUUID();
+    state.messageId = randomUUID();
   }
 
   return state.messageId;
@@ -288,12 +296,12 @@ function nextStep(
 ): { stepName: string; stepId: string } {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
-  state.activeStepId = getStepIdentity(event) ?? crypto.randomUUID();
+  state.activeStepId = getStepIdentity(event) ?? randomUUID();
   return { stepName: state.activeStepName, stepId: state.activeStepId };
 }
 
 function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: string } {
-  const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
+  const stepName = state.activeStepName ?? `step-${mathMax(state.stepCount, 1)}`;
   const stepId = state.activeStepId ?? undefined;
   state.activeStepName = null;
   state.activeStepId = null;
@@ -397,71 +405,71 @@ function applyResponseMetadata(
     state.metadata.finishReason = finishReason;
   }
   const costUsd = metadata?.costUsd;
-  if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
+  if (typeof costUsd === "number" && numberIsFinite(costUsd) && costUsd >= 0) {
     state.metadata.costUsd = costUsd;
   }
   const providerCostUsd = metadata?.providerCostUsd;
   if (
-    typeof providerCostUsd === "number" && Number.isFinite(providerCostUsd) && providerCostUsd >= 0
+    typeof providerCostUsd === "number" && numberIsFinite(providerCostUsd) && providerCostUsd >= 0
   ) {
     state.metadata.providerCostUsd = providerCostUsd;
   }
   const providerInputCostUsd = metadata?.providerInputCostUsd;
   if (
-    typeof providerInputCostUsd === "number" && Number.isFinite(providerInputCostUsd) &&
+    typeof providerInputCostUsd === "number" && numberIsFinite(providerInputCostUsd) &&
     providerInputCostUsd >= 0
   ) {
     state.metadata.providerInputCostUsd = providerInputCostUsd;
   }
   const providerOutputCostUsd = metadata?.providerOutputCostUsd;
   if (
-    typeof providerOutputCostUsd === "number" && Number.isFinite(providerOutputCostUsd) &&
+    typeof providerOutputCostUsd === "number" && numberIsFinite(providerOutputCostUsd) &&
     providerOutputCostUsd >= 0
   ) {
     state.metadata.providerOutputCostUsd = providerOutputCostUsd;
   }
   const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
   if (
-    typeof veryfrontChargeUsd === "number" && Number.isFinite(veryfrontChargeUsd) &&
+    typeof veryfrontChargeUsd === "number" && numberIsFinite(veryfrontChargeUsd) &&
     veryfrontChargeUsd >= 0
   ) {
     state.metadata.veryfrontChargeUsd = veryfrontChargeUsd;
   }
   const veryfrontInputChargeUsd = metadata?.veryfrontInputChargeUsd;
   if (
-    typeof veryfrontInputChargeUsd === "number" && Number.isFinite(veryfrontInputChargeUsd) &&
+    typeof veryfrontInputChargeUsd === "number" && numberIsFinite(veryfrontInputChargeUsd) &&
     veryfrontInputChargeUsd >= 0
   ) {
     state.metadata.veryfrontInputChargeUsd = veryfrontInputChargeUsd;
   }
   const veryfrontOutputChargeUsd = metadata?.veryfrontOutputChargeUsd;
   if (
-    typeof veryfrontOutputChargeUsd === "number" && Number.isFinite(veryfrontOutputChargeUsd) &&
+    typeof veryfrontOutputChargeUsd === "number" && numberIsFinite(veryfrontOutputChargeUsd) &&
     veryfrontOutputChargeUsd >= 0
   ) {
     state.metadata.veryfrontOutputChargeUsd = veryfrontOutputChargeUsd;
   }
   const veryfrontBilledUsd = metadata?.veryfrontBilledUsd;
   if (
-    typeof veryfrontBilledUsd === "number" && Number.isFinite(veryfrontBilledUsd) &&
+    typeof veryfrontBilledUsd === "number" && numberIsFinite(veryfrontBilledUsd) &&
     veryfrontBilledUsd >= 0
   ) {
     state.metadata.veryfrontBilledUsd = veryfrontBilledUsd;
   }
   const costCredits = metadata?.costCredits;
-  if (typeof costCredits === "number" && Number.isFinite(costCredits) && costCredits >= 0) {
+  if (typeof costCredits === "number" && numberIsFinite(costCredits) && costCredits >= 0) {
     state.metadata.costCredits = costCredits;
   }
   const billableInputTokens = metadata?.billableInputTokens;
   if (
-    typeof billableInputTokens === "number" && Number.isFinite(billableInputTokens) &&
+    typeof billableInputTokens === "number" && numberIsFinite(billableInputTokens) &&
     billableInputTokens >= 0
   ) {
     state.metadata.billableInputTokens = billableInputTokens;
   }
   const billableOutputTokens = metadata?.billableOutputTokens;
   if (
-    typeof billableOutputTokens === "number" && Number.isFinite(billableOutputTokens) &&
+    typeof billableOutputTokens === "number" && numberIsFinite(billableOutputTokens) &&
     billableOutputTokens >= 0
   ) {
     state.metadata.billableOutputTokens = billableOutputTokens;
@@ -608,7 +616,7 @@ export function buildAgUiFinalizeResponse(
     }
     : undefined;
 
-  if (!usage && Object.keys(responseMetadata).length === 0) {
+  if (!usage && objectKeys(responseMetadata).length === 0) {
     return null;
   }
 
@@ -618,7 +626,7 @@ export function buildAgUiFinalizeResponse(
     toolCalls: [],
     status: "completed",
     ...(usage ? { usage } : {}),
-    ...(Object.keys(responseMetadata).length > 0 ? { metadata: responseMetadata } : {}),
+    ...(objectKeys(responseMetadata).length > 0 ? { metadata: responseMetadata } : {}),
   };
 }
 

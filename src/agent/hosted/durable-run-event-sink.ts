@@ -1,6 +1,7 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
-import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
+import { encodePrivateText, privateTextToLowerCase } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import {
   appendPrivateArray,
   mapPrivateArray,
@@ -38,6 +39,14 @@ import {
 const numberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 const ReflectApply = Reflect.apply;
+const TaskSetTimeout = globalThis.setTimeout;
+const TaskClearTimeout = globalThis.clearTimeout;
+const TaskAbortController = AbortController;
+const TaskAbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)!.get!;
+const TaskAbort = AbortController.prototype.abort;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeSlice = String.prototype.slice;
 
@@ -104,10 +113,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
 const OMITTED_MESSAGE_NOTICE = "[veryfront] Model call context truncated for audit.";
 
-const utf8Encoder = new TextEncoder();
-
 function getUtf8ByteLength(value: string): number {
-  return utf8Encoder.encode(value).byteLength;
+  return privateByteLength(encodePrivateText(value));
 }
 
 function stringCharCodeAt(value: string, index: number): number {
@@ -309,28 +316,33 @@ async function withPersistenceDeadline<T>(input: {
   if (input.abortSignal && isAbortSignalAborted(input.abortSignal)) {
     throw getAbortReason(input.abortSignal);
   }
-  const controller = new AbortController();
+  const controller = new TaskAbortController();
+  const signal = ReflectApply(TaskAbortControllerSignalGetter, controller, []) as AbortSignal;
   const timeoutError = new DurableRunEventPersistenceError(
     "Durable run event persistence timed out",
   );
-  const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
-  const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
+  const timeout = TaskSetTimeout(
+    () => ReflectApply(TaskAbort, controller, [timeoutError]),
+    input.timeoutMs,
+  );
+  const onCallerAbort = () =>
+    ReflectApply(TaskAbort, controller, [getAbortReason(input.abortSignal!)]);
   if (input.abortSignal) addAbortSignalListenerOnce(input.abortSignal, onCallerAbort);
   let rejectAbort: (reason: unknown) => void = () => {};
-  const onAbort = () => rejectAbort(getAbortReason(controller.signal));
+  const onAbort = () => rejectAbort(getAbortReason(signal));
   const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
     rejectAbort = reject;
-    addAbortSignalListenerOnce(controller.signal, onAbort);
+    addAbortSignalListenerOnce(signal, onAbort);
   });
   try {
     return await new IntrinsicPromise<T>((resolve, reject) => {
       void primordialPromiseThen(aborted, resolve, reject);
-      void primordialPromiseThen(input.operation(controller.signal), resolve, reject);
+      void primordialPromiseThen(input.operation(signal), resolve, reject);
     });
   } finally {
-    clearTimeout(timeout);
+    TaskClearTimeout(timeout);
     if (input.abortSignal) removeAbortSignalListener(input.abortSignal, onCallerAbort);
-    removeAbortSignalListener(controller.signal, onAbort);
+    removeAbortSignalListener(signal, onAbort);
   }
 }
 

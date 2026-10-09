@@ -32,6 +32,7 @@ type ModelCallRequestSource =
 const ReflectApply = Reflect.apply;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const RegExpPrototypeTest = RegExp.prototype.test;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -42,6 +43,10 @@ function regexpTest(pattern: RegExp, value: string): boolean {
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function objectKeys(value: object): string[] {
+  return ObjectKeys(value);
 }
 
 function readOwnEnumerableDataDescriptor(
@@ -291,11 +296,11 @@ function buildModelCallRequest(
     ...(options.frequencyPenalty !== undefined
       ? { frequencyPenalty: options.frequencyPenalty }
       : {}),
-    ...(projectedReasoning && Object.keys(projectedReasoning).length > 0
+    ...(projectedReasoning && objectKeys(projectedReasoning).length > 0
       ? { reasoning: projectedReasoning }
       : {}),
   };
-  return Object.keys(request).length > 0 ? request : undefined;
+  return objectKeys(request).length > 0 ? request : undefined;
 }
 
 /** Resolve the canonical provider recorded by the existing durable contract. */

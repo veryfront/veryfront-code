@@ -21,6 +21,36 @@ function requireStepId(value: unknown): string {
 }
 
 describe("agent/ag-ui-encoder", () => {
+  it("uses captured UUID generation for observed step and fallback message identities", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
+    let patchedCalls = 0;
+    const first = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const second = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    Object.defineProperty(crypto, "randomUUID", {
+      configurable: true,
+      value: () => {
+        patchedCalls += 1;
+        throw new Error("project UUID hook");
+      },
+    });
+    try {
+      mapRuntimeStreamEventToAgUiEvents(first, { type: "start-step" });
+      mapRuntimeStreamEventToAgUiEvents(second, { type: "start-step" });
+      mapRuntimeStreamEventToAgUiEvents(first, { type: "text-start" });
+      mapRuntimeStreamEventToAgUiEvents(second, { type: "text-start" });
+    } finally {
+      if (descriptor) Object.defineProperty(crypto, "randomUUID", descriptor);
+      else Reflect.deleteProperty(crypto, "randomUUID");
+    }
+    assertEquals(patchedCalls, 0);
+    requireStepId(first.activeStepId);
+    requireStepId(second.activeStepId);
+    requireStepId(first.messageId);
+    requireStepId(second.messageId);
+    assertNotEquals(first.activeStepId, second.activeStepId);
+    assertNotEquals(first.messageId, second.messageId);
+  });
+
   it("rejects unrepresentable observed tool inputs instead of recording empty arguments", () => {
     assertThrows(() =>
       mapRuntimeStreamEventToAgUiEvents(createAgUiEncoderState(), {
@@ -29,6 +59,37 @@ describe("agent/ag-ui-encoder", () => {
         toolName: "lookup",
         input: { value: 1n },
       }), TypeError);
+  });
+
+  it("keeps final observation metadata and guards on captured intrinsics", () => {
+    const originalKeys = Object.keys;
+    const originalFinite = Number.isFinite;
+    const originalMax = Math.max;
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const empty = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    let response: ReturnType<typeof buildAgUiFinalizeResponse> = null;
+    let finished: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    Object.keys = () => [];
+    Number.isFinite = () => true;
+    Math.max = () => 999;
+    try {
+      finalizeAgUiEvents(state, {
+        text: "",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        metadata: { finishReason: "stop", costUsd: NaN },
+      });
+      response = buildAgUiFinalizeResponse(state.metadata);
+      finished = mapRuntimeStreamEventToAgUiEvents(empty, { type: "finish-step" });
+    } finally {
+      Object.keys = originalKeys;
+      Number.isFinite = originalFinite;
+      Math.max = originalMax;
+    }
+    assertEquals(state.metadata.costUsd, undefined);
+    assertEquals(response?.metadata?.finishReason, "stop");
+    assertEquals(finished[0]?.payload.stepName, "step-1");
   });
 
   it("preserves size-compliant tool inputs above the default private structural budget", () => {
