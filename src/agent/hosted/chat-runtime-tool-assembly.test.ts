@@ -651,8 +651,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly selects resolved canonical deleg
 });
 
 Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly authorized project invoke_agent", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
+  const taskContext: Omit<HostedChatRuntimeToolAssemblyContext, "authToken"> = {
     agentId: "writer",
     projectId: "project-1",
     model: "anthropic/claude-sonnet-4-6",
