@@ -208,16 +208,11 @@ it("preserves runtime-generated replay boundaries while stripping caller policy 
 });
 
 it("persists trusted streamed form results with replayable ownership", async () => {
+  let executions = 0;
   const model = scriptedModel([
     {
       parts: [
         { type: "tool-call", toolCallId: "platform-form", toolName: "form_input", input: {} },
-        {
-          type: "tool-result",
-          toolCallId: "platform-form",
-          toolName: "form_input",
-          output: { submitted: true, owner: "platform" },
-        },
         { type: "finish", finishReason: "tool-calls" },
       ],
     },
@@ -232,7 +227,10 @@ it("persists trusted streamed form results with replayable ownership", async () 
         id: "form_input",
         description: "Platform form control",
         inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({ submitted: true, owner: "platform" }),
+        execute: () => {
+          executions += 1;
+          return { submitted: true, owner: "platform" };
+        },
       }))),
     },
     maxSteps: 2,
@@ -241,6 +239,7 @@ it("persists trusted streamed form results with replayable ownership", async () 
 
   await (await assistant.stream({ input: "collect the form" })).toDataStreamResponse().text();
 
+  assertEquals(executions, 1);
   assertEquals(model.toolNames(1).includes("form_input"), false);
 });
 
