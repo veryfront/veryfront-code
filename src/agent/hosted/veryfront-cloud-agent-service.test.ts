@@ -537,6 +537,7 @@ Deno.test("hosted child project agents request only materialized skill and deleg
       tools: [
         "get_file",
         "execute_skill_script",
+        "veryfront__execute_skill_script",
         "load_skill",
         "load_skill_reference",
       ],

@@ -656,6 +656,18 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves configured project legacy
   assertEquals(result.requestedAllowedTools, ["get_file", "invoke_agent"]);
 });
 
+Deno.test("implicit delegation respects either platform denial and preserves explicit project grants", () => {
+  const resolve = (tools: string[], deniedTools: string[]) =>
+    resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools: ["invoke_agent"] } },
+      agentConfig: createAgentConfig({ tools, deniedTools, skills: ["plan"] }),
+      resolveModelId: (model) => model,
+    }).requestedAllowedTools;
+  assertEquals(resolve([], ["veryfront__invoke_agent"]), []);
+  assertEquals(resolve([], ["invoke_agent"]), []);
+  assertEquals(resolve(["invoke_agent"], ["veryfront__invoke_agent"]), ["invoke_agent"]);
+});
+
 describe("resolveHostedRuntimeRequestConfig", () => {
   it("distinguishes unrestricted and omitted agent tools", () => {
     const resolve = (
