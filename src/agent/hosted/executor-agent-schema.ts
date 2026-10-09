@@ -5,6 +5,7 @@ import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/sch
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
   AGENT_PROVIDER_AUTH_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
   registeredProviderFailure,
 } from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
@@ -98,6 +99,8 @@ export class ExecutorAgentError extends VeryfrontError {
   constructor(readonly code: FailureCode) {
     const message = code === AGENT_PROVIDER_AUTH_ERROR.code
       ? AGENT_PROVIDER_AUTH_ERROR.message
+      : code === PROVIDER_STREAM_PROTOCOL_ERROR.code
+      ? PROVIDER_STREAM_PROTOCOL_ERROR.message
       : code;
     const definition = defineError({
       slug: code.toLowerCase().replaceAll("_", "-"),

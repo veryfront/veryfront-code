@@ -11,7 +11,7 @@ const PRODUCER_FILES = [
   "extensions/ext-llm-openai/src/openai-web-search.ts",
   "src/provider/runtime-loader/provider-sse.ts",
 ];
-const ROOT = new URL("../../", import.meta.url);
+const ROOT = new URL("../../../", import.meta.url);
 
 // Resolve only finite compile-time issue strings: literals, numeric constants,
 // conditional branches and helper parameters supplied by finite caller values.
