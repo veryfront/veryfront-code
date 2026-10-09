@@ -1,3 +1,4 @@
+import { getCanonicalRunStatus } from "./durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -274,14 +275,8 @@ describe("agent/conversation-root-run-lifecycle", () => {
     }
   });
 
-  it("does not bind exact capture to embedded run, canonical run or project UUIDs", async () => {
+  it("does not bind exact capture to embedded canonical run or project UUIDs", async () => {
     const cases = [
-      {
-        name: "embedded fallback run UUID",
-        runId: "prefix-11111111-1111-6111-8111-111111111111",
-        canonicalRunId: undefined,
-        projectId: "66666666-6666-6666-8666-666666666666",
-      },
       {
         name: "embedded canonical run UUID",
         runId: "11111111-1111-6111-8111-111111111111",
@@ -328,6 +323,39 @@ describe("agent/conversation-root-run-lifecycle", () => {
         context.durableRunMirror?.dispose();
       }
     }
+  });
+
+  it("validates the actual canonical status run-ID fallback before transport", async () => {
+    const runId = "11111111-1111-6111-8111-111111111111";
+    const urls: string[] = [];
+    const fetch = ((input: string | URL | Request) => {
+      urls.push(String(input));
+      return Promise.resolve(Response.json({ id: runId, status: "completed" }));
+    }) as typeof globalThis.fetch;
+    for (const malformed of [`prefix-${runId}`, `${runId}-suffix`]) {
+      await assertRejects(
+        () =>
+          getCanonicalRunStatus({
+            authToken: "token",
+            apiUrl: "https://api.example.test",
+            runId: malformed,
+            fetch,
+          }),
+        Error,
+        "Canonical run identity is required",
+      );
+    }
+    assertEquals(urls, []);
+    assertEquals(
+      await getCanonicalRunStatus({
+        authToken: "token",
+        apiUrl: "https://api.example.test",
+        runId,
+        fetch,
+      }),
+      { runId, status: "completed" },
+    );
+    assertEquals(urls, [`https://api.example.test/runs/${runId}`]);
   });
 
   it("rejects a missing API-issued root before persisting any user message", async () => {
