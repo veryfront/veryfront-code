@@ -88,6 +88,14 @@ jobs:
                     owner, repo, basehead: `main...${run.head_sha}`,
                   });
                   if (!["ahead", "diverged"].includes(landedCheck.status)) continue;
+                  // Recreation during that comparison is caught here. A queue entry created after this
+                  // lookup gets a new merge-group commit and its own run, so it cannot make this run live.
+                  try {
+                    await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                    continue;
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                  }
                   try {
                     // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
                     // These ignored gates must stop too; live groups never reach this endpoint.

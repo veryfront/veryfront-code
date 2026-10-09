@@ -163,7 +163,9 @@ describe("orphan merge-group cancellation", () => {
       f.latest.status = status;
       await execute(f);
       assertEquals(f.cancelled, [42]);
-      assertEquals(f.inspectedRefs, [`heads/${BRANCH}`, `heads/${BRANCH}`]);
+      // Ref lookups bracket every ancestry check; a ref lookup is the last call before cancelling.
+      assertEquals(f.inspectedRefs, [`heads/${BRANCH}`, `heads/${BRANCH}`, `heads/${BRANCH}`]);
+      assertEquals(f.compared, [`main...${SHA}`, `main...${SHA}`, `main...${SHA}`]);
       assert(
         f.logs.some((line) =>
           line.includes("Force-cancelled") && line.includes("42") && line.includes("999")
@@ -248,6 +250,16 @@ describe("orphan merge-group cancellation", () => {
     await execute(f);
     assertEquals(f.inspectedRefs, [`heads/${BRANCH}`, `heads/${BRANCH}`]);
     assertEquals(f.compared, [`main...${SHA}`, `main...${SHA}`, `main...${SHA}`]);
+    assertEquals(f.cancelled, []);
+  });
+
+  it("preserves a ref recreated during the final ancestry check", async () => {
+    const f = fixture();
+    f.comparison = "ahead";
+    f.recreateRefOnCompareCall = 3;
+    await execute(f);
+    assertEquals(f.compared.length, 3);
+    assertEquals(f.inspectedRefs.length, 3);
     assertEquals(f.cancelled, []);
   });
 
