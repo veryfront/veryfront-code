@@ -25,8 +25,9 @@ permissions: {}
 # Coalesce normal signals before they allocate runners or enter status-write
 # locks. Let the running workflow finish its failure propagation. Safety jobs
 # and ignored events have unique admission groups and keep their inner queues.
+# Edited bot replies retain their payload ID to validate quota-failure freshness.
 concurrency:
-  group: automated-review-events-${{ github.event_name == 'pull_request_target' && format('automated-review-wakeup-pr-{0}-eligible', github.event.pull_request.number) || github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.comment.user.id == 199175422 && github.event.comment.user.type == 'Bot' && format('automated-review-wakeup-pr-{0}-eligible', github.event.issue.number) || github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review' && endsWith(github.event.workflow_run.display_title, '-eligible') && github.event.workflow_run.display_title || format('run-{0}', github.run_id) }}
+  group: automated-review-events-${{ github.event_name == 'pull_request_target' && format('automated-review-wakeup-pr-{0}-eligible', github.event.pull_request.number) || github.event_name == 'issue_comment' && github.event.action != 'edited' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.comment.user.id == 199175422 && github.event.comment.user.type == 'Bot' && format('automated-review-wakeup-pr-{0}-eligible', github.event.issue.number) || github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review' && endsWith(github.event.workflow_run.display_title, '-eligible') && github.event.workflow_run.display_title || format('run-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:

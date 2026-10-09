@@ -2615,6 +2615,56 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "failure");
   });
 
+  it("preserves an edited quota reply after its retained safety publisher", async () => {
+    const comment = {
+      ...codexRateLimitComment(),
+      updated_at: "2026-08-25T08:02:00Z",
+    };
+    const timeline = [
+      { event: "committed", sha: HEAD },
+      { event: "commented", id: comment.id },
+    ];
+    const trigger = githubFixture({
+      pages: {
+        comments: [[comment]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [timeline],
+      },
+    });
+    const options = {
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    };
+    const failure = await publishAutomatedReviewStatus({
+      ...options,
+      github: trigger.github,
+      reviewFailureCommentId: comment.id,
+    });
+    assertEquals(failure.state, "failure");
+    const survivor = githubFixture({
+      pages: {
+        comments: [[comment]],
+        statuses: [[automatedReviewStatus({
+          ...trigger.published[0],
+          id: 105,
+          created_at: "2026-08-25T08:02:01Z",
+        })]],
+        timeline: [timeline],
+      },
+    });
+    const retained = await publishAutomatedReviewStatus({
+      ...options,
+      github: survivor.github,
+    });
+    assertEquals(retained.state, "failure");
+    assertEquals(retained.description, "PR#1 automated review rate limited");
+    assertEquals(retained.statusId, 105);
+    assertEquals(trigger.published[0]?.target_url, comment.html_url);
+  });
+
   it("drops a terminal failure proven only by a security-review quota notice", async () => {
     const limitComment = codexSecurityReviewRateLimitComment(
       "2026-08-25T08:00:01Z",
@@ -7159,6 +7209,15 @@ describe("automated review workflow", () => {
       }),
       expected,
     );
+    // Edited quota replies need their triggering comment ID to prove freshness.
+    // They must survive a later normal wakeup rather than lose their payload.
+    const editedReply = {
+      action: "edited",
+      issue: { number: 42, pull_request: {} },
+      comment: { id: 103, user: bot("chatgpt-codex-connector[bot]", CODEX_ID) },
+    };
+    assertEquals(group("issue_comment", editedReply), "run-100");
+    assertEquals(group("issue_comment", editedReply, 101), "run-101");
     assertEquals(
       group("workflow_run", {
         workflow_run: { event: "pull_request_review", display_title: expected },
