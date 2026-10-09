@@ -144,7 +144,7 @@ List all background commands in the sandbox.
 
 **Returns:** <code>Promise&lt;BackgroundCommand[]&gt;</code>
 
-### `sandbox.cancelBackgroundCommand(commandId)`
+### `sandbox.cancelBackgroundCommand(commandId, )`
 
 Cancel an async background command.
 
