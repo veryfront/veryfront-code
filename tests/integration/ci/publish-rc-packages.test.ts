@@ -188,3 +188,32 @@ describe("atomic metadata budget updates", () => {
     });
   });
 });
+
+describe("metadata budget remainder", () => {
+  for (const [amount, status, spent] of [[5, 0, 180], [10, 2, 175]] as const) {
+    it(`reserves ${amount}s only if the whole delay fits the remaining release budget`, async () => {
+      await withTempDir(async (directory) => {
+        const path = `${directory}/budget.json`;
+        await Deno.writeTextFile(path, '{"spent":175}');
+        const result = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "run",
+            "--frozen",
+            "--allow-read",
+            "--allow-write",
+            "scripts/ci/npm-metadata-budget.ts",
+            "reserve",
+            path,
+            String(amount),
+            "180",
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.code, status, new TextDecoder().decode(result.stderr));
+        assertEquals(JSON.parse(await Deno.readTextFile(path)).spent, spent);
+        assertEquals(new TextDecoder().decode(result.stdout).trim(), String(spent));
+      });
+    });
+  }
+});

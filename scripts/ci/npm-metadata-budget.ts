@@ -20,7 +20,7 @@ try {
   }
   let { spent } = JSON.parse(new TextDecoder().decode(bytes));
   if (!Number.isSafeInteger(spent) || spent < 0) throw new Error("Invalid metadata budget state");
-  if (operation === "reserve" && spent >= limit) {
+  if (operation === "reserve" && (spent >= limit || amount > limit - spent)) {
     Deno.exitCode = 2;
   } else if (operation !== "read") {
     spent += amount;
