@@ -356,7 +356,7 @@ const WRITE_TOOL_INPUT_NAMES = new Set([
   "writefile",
   "edit",
 ]);
-const CHILD_AGENT_TOOL_INPUT_NAMES = new Set(["invoke_agent"]);
+const CHILD_AGENT_TOOL_INPUT_NAMES = new Set(["invoke_agent", "veryfront__invoke_agent"]);
 const DEFAULT_WRITE_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInputRetainedField[] = [{
   outputName: "path",
   inputNames: [
