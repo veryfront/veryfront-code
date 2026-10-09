@@ -135,20 +135,13 @@ jobs:
 
   target:
     name: resolve automated review target
-    # Apply publisher eligibility before allocating a resolver runner. The
-    # resolver also gives source and merge-group publishers the same per-pull
-    # concurrency key while keeping the immutable source SHA separate.
+    # Direct PR/comment events resolve inside the publisher's per-pull lock.
+    # Wakeups and merge groups still need the API-derived target identity.
     if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name == 'merge_group' ||
-       ((github.event_name != 'issue_comment' ||
-         (github.event.issue.pull_request &&
-          github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
-          github.event.comment.user.id == 199175422 &&
-          github.event.comment.user.type == 'Bot')) &&
-        (github.event_name != 'workflow_run' ||
-         (github.event.workflow_run.event == 'pull_request_review' &&
-          endsWith(github.event.workflow_run.display_title, '-eligible')))))
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request_review' &&
+       endsWith(github.event.workflow_run.display_title, '-eligible'))
     permissions:
       contents: read
       pull-requests: read
@@ -168,7 +161,7 @@ jobs:
         with:
           retries: 3
           result-encoding: string
-          script: |
+          script: &resolve_review_target |
             const fullSha = /^[0-9a-f]{40}$/i;
             const parseMergeQueuePullNumber = (headRef) => {
               if (typeof headRef !== "string") return undefined;
@@ -577,31 +570,47 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
-    # issue_comment fires for issues too, so keep only pull request comments.
-    # Fork pull_request_review events have read-only tokens. The unprivileged
-    # wakeup workflow observes them, then workflow_run invokes this trusted
-    # default-branch reconciler with write permission. Eligibility comes from
-    # the resolver dependency above. This job never reads wakeup artifacts or
-    # executes pull request code.
+    # Keep the connector identity checks before allocating a runner. A skipped
+    # resolver is expected for direct events; a failed wakeup resolver must
+    # still reach fallback invalidation rather than normal publication.
     needs: target
-    if: github.event_name != 'merge_group'
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'pull_request_target' ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+        github.event.comment.user.id == 199175422 &&
+        github.event.comment.user.type == 'Bot') ||
+       (github.event_name == 'workflow_run' && needs.target.result == 'success'))
     outputs:
+      head_sha: ${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}
+      pull_number: ${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}
+      status_id: ${{ steps.resolve.outputs.status-id || needs.target.outputs.status_id }}
       force_invalidate: ${{ steps.publish.outputs.force-invalidate }}
       source_status_id: ${{ steps.publish.outputs.source-status-id }}
     concurrency:
       # Every event for one pull request must serialize across force-pushes so
       # an old-head failure cannot close the current merge-group gate.
-      group: automated-review-${{ needs.target.outputs.key }}
+      group: automated-review-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Resolve the current head inside the publisher lock
+        id: resolve
+        if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          result-encoding: string
+          script: *resolve_review_target
       - name: Require an automated review for the current commit
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TARGET_SHA: ${{ needs.target.outputs.head_sha }}
-          PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
+          TARGET_SHA: ${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}
+          PULL_NUMBER: ${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}
         with:
           retries: 3
           result-encoding: string
@@ -831,7 +840,7 @@ jobs:
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TARGET_SHA: ${{ needs.target.outputs.head_sha }}
+          TARGET_SHA: ${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}
         with:
           retries: 3
           script: |
@@ -906,15 +915,15 @@ jobs:
       pull-requests: read
       statuses: write
     env:
-      TARGET_SHA: ${{ needs.target.outputs.head_sha }}
-      PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
-      RECONCILIATION_STATUS_ID: ${{ needs.target.outputs.status_id }}
+      TARGET_SHA: ${{ needs.review.outputs.head_sha || needs.target.outputs.head_sha }}
+      PULL_NUMBER: ${{ needs.review.outputs.pull_number || needs.target.outputs.pull_number }}
+      RECONCILIATION_STATUS_ID: ${{ needs.review.outputs.status_id || needs.target.outputs.status_id }}
       SOURCE_STATUS_ID: ${{ needs.review.outputs.source_status_id }}
       FORCE_INVALIDATE: ${{ needs.review.outputs.force_invalidate }}
     concurrency:
       # Share the per-pull publisher lock so fallback failures cannot race
       # successful source or merge-group status writes across force-pushes.
-      group: automated-review-${{ needs.target.outputs.key }}
+      group: automated-review-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5

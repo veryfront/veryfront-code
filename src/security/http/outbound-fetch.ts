@@ -1,3 +1,5 @@
+import { primordialArraySet } from "#veryfront/platform/compat/primordials/array.ts";
+import { allPrivatePromises, chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 /**
  * Host-owned outbound HTTP boundary.
  *
@@ -11,7 +13,7 @@ import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/e
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import { createNativeRequestInit } from "#veryfront/platform/compat/http/native-request-init.ts";
-import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
@@ -85,8 +87,24 @@ const capturedHostFetch = globalThis.fetch.bind(globalThis);
 // Captured like capturedHostFetch: origin-bound provider transports read URL/Request properties on every credentialed request.
 const NativeURL = URL;
 const NativeRequest = Request;
+const NativeResponse = Response;
+const NativeHeaders = Headers;
+const NativeReadableStream = ReadableStream;
 const IntrinsicReflectApply = Reflect.apply;
 const nativeHasInstance = Function.prototype[Symbol.hasInstance];
+const HeadersGet = NativeHeaders.prototype.get;
+const ReadableStreamCancel = NativeReadableStream.prototype.cancel;
+const ReadableStreamGetReader = NativeReadableStream.prototype.getReader;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")?.get;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")
+  ?.get;
+const ResponseOkGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "ok")?.get;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")?.get;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)
+  ?.get;
 const URLProtocolGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
 const URLUsernameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")?.get;
 const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
@@ -101,21 +119,84 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const NativeSet = Set;
+const ObjectCreate = Object.create;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+
+// Prototype chains a transport-created Response or body stream resolves through,
+// captured while every link is still an ordinary object.
+function captureSettlementChain(
+  prototype: typeof NativeResponse.prototype | typeof NativeReadableStream.prototype,
+): readonly object[] {
+  const chain: object[] = [];
+  let current: object | null = prototype;
+  while (current !== null) {
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      chain,
+      chain.length,
+      createValueDescriptor(current, true),
+    ]);
+    current = IntrinsicReflectApply(ObjectGetPrototypeOf, Object, [current]) as object | null;
+  }
+  return chain;
+}
+
+const SETTLEMENT_HOOK_BLOCKED_MESSAGE = "Download blocked: response settlement is not host-owned";
+const responseSettlementChain = captureSettlementChain(NativeResponse.prototype);
+const bodySettlementChain = captureSettlementChain(NativeReadableStream.prototype);
+
+function hasSettlementHook(chain: readonly object[]): boolean {
+  for (let index = 0; index < chain.length; index++) {
+    const link = chain[index]!;
+    if (
+      IntrinsicReflectApply(ObjectGetOwnPropertyDescriptor, Object, [link, "then"]) !== undefined
+    ) {
+      return true;
+    }
+    const parent = IntrinsicReflectApply(ObjectGetPrototypeOf, Object, [link]);
+    if (parent !== (index + 1 < chain.length ? chain[index + 1] : null)) return true;
+  }
+  return false;
+}
+
+/**
+ * A transport resolves its promise with a native Response before the host can
+ * seal it, and promise resolution reads `then` through the prototype chain.
+ * Refuse authenticated downloads while that chain carries a `then` member or
+ * has been re-parented.
+ */
+function assertNoResponseSettlementHook(): void {
+  if (hasSettlementHook(responseSettlementChain) || hasSettlementHook(bodySettlementChain)) {
+    throw new OutboundRequestBlockedError(SETTLEMENT_HOOK_BLOCKED_MESSAGE);
+  }
+}
+
+function createValueDescriptor<T>(
+  value: T,
+  enumerable: boolean,
+  writable = true,
+): PropertyDescriptor {
+  const descriptor = IntrinsicReflectApply(ObjectCreate, Object, [null]) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = enumerable;
+  descriptor.value = value;
+  descriptor.writable = writable;
+  return descriptor;
+}
 
 // Indexed assignment (parts[parts.length] = ...) still isn't safe: with no own
 // property at that index yet, [[Set]] walks the prototype chain and invokes an
 // inherited accessor there instead of creating an own property. Object.defineProperty
 // uses [[DefineOwnProperty]], which never consults the prototype chain.
 function appendEntry(parts: string[], value: string): void {
-  IntrinsicReflectApply(ObjectDefineProperty, Object, [parts, parts.length, {
-    value,
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  }]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    parts,
+    parts.length,
+    createValueDescriptor(value, true),
+  ]);
 }
 
 // String.prototype.split(sep) looks up sep[Symbol.split] even for a string
@@ -147,6 +228,98 @@ function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undef
     throw new TypeError("URL/Request accessors are unavailable");
   }
   return IntrinsicReflectApply(getter, target, []) as string;
+}
+
+/** @internal Exported for boundary tests. */
+export function __bindHostResponseAccessorsForTests(response: Response): Response {
+  return bindHostResponseAccessors(response);
+}
+
+function bindHostResponseAccessors(response: Response): Response {
+  // Promise resolution reads then before returning the authenticated response.
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "then",
+    createValueDescriptor(undefined, false, false),
+  ]);
+  const bodyGet = ResponseBodyGet;
+  const headersGet = ResponseHeadersGet;
+  const okGet = ResponseOkGet;
+  const statusGet = ResponseStatusGet;
+  const statusTextGet = ResponseStatusTextGet;
+  if (!bodyGet || !headersGet || !okGet || !statusGet || !statusTextGet) {
+    throw new TypeError("Response accessors are unavailable");
+  }
+  const body = IntrinsicReflectApply(bodyGet, response, []) as
+    | ReadableStream<Uint8Array>
+    | null;
+  const headers = IntrinsicReflectApply(headersGet, response, []) as Headers;
+  const ok = IntrinsicReflectApply(okGet, response, []) as boolean;
+  const status = IntrinsicReflectApply(statusGet, response, []) as number;
+  const statusText = IntrinsicReflectApply(statusTextGet, response, []) as string;
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    headers,
+    "get",
+    createValueDescriptor(function (this: Headers, name: string): string | null {
+      return IntrinsicReflectApply(HeadersGet, this, [name]) as string | null;
+    }, false),
+  ]);
+  if (body !== null) {
+    // getStream returns this body through an async promise settlement boundary.
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "then",
+      createValueDescriptor(undefined, false, false),
+    ]);
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "cancel",
+      createValueDescriptor(
+        function (this: ReadableStream<Uint8Array>, reason?: unknown): Promise<void> {
+          return IntrinsicReflectApply(ReadableStreamCancel, this, [reason]) as Promise<void>;
+        },
+        false,
+      ),
+    ]);
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      body,
+      "getReader",
+      createValueDescriptor(function (
+        this: ReadableStream<Uint8Array>,
+        options?: ReadableStreamGetReaderOptions,
+      ): ReadableStreamReader<Uint8Array> {
+        return IntrinsicReflectApply(ReadableStreamGetReader, this, [
+          options,
+        ]) as ReadableStreamReader<Uint8Array>;
+      }, false),
+    ]);
+  }
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "body",
+    createValueDescriptor(body, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "headers",
+    createValueDescriptor(headers, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "ok",
+    createValueDescriptor(ok, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "status",
+    createValueDescriptor(status, true),
+  ]);
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    response,
+    "statusText",
+    createValueDescriptor(statusText, true),
+  ]);
+  return response;
 }
 
 // Runs the un-replaceable %Function.prototype%[Symbol.hasInstance] against the
@@ -424,6 +597,7 @@ function createOriginBoundFetchWithTransport(
   allowHostInternalEgress = false,
   allowOperatorVeryfrontApiOrigin = false,
   onRequestDispatched?: () => void,
+  retainTransportSettlement = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
   const baseProtocol = readNativeURLString(base, URLProtocolGet);
@@ -452,22 +626,91 @@ function createOriginBoundFetchWithTransport(
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
-    return await fetchWithBoundaryErrors(
-      guardedInput,
-      createNativeRequestInit(init, { redirect: "error" }),
-      {
-        onRequestDispatched,
-        authorizeUrl(url) {
-          if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
-            throw new OutboundRequestBlockedError(
-              "Provider request blocked: destination origin is not authorized",
-            );
+    const operations: Promise<void>[] = [];
+    const track = (
+      operation: Promise<Response>,
+      signal?: AbortSignal | null,
+    ): Promise<Response> => {
+      const settled = chainPrivatePromise(operation, (response) => {
+        if (hasSettlementHook(responseSettlementChain) || hasSettlementHook(bodySettlementChain)) {
+          // A hook installed while the request was in flight: withhold the content.
+          const body = ResponseBodyGet
+            ? IntrinsicReflectApply(ResponseBodyGet, response, []) as ReadableStream | null
+            : null;
+          const refuse = (): never => {
+            throw new OutboundRequestBlockedError(SETTLEMENT_HOOK_BLOCKED_MESSAGE);
+          };
+          return body === null ? refuse() : chainPrivatePromise(
+            IntrinsicReflectApply(ReadableStreamCancel, body, []) as Promise<void>,
+            refuse,
+            refuse,
+          );
+        }
+        const boundResponse = bindHostResponseAccessors(response);
+        if (signal?.aborted && boundResponse.body) {
+          return chainPrivatePromise(
+            boundResponse.body.cancel(),
+            () => boundResponse,
+            () => boundResponse,
+          );
+        }
+        return boundResponse;
+      });
+      primordialArraySet(
+        operations,
+        operations.length,
+        chainPrivatePromise(settled, () => undefined, () => undefined),
+      );
+      return settled;
+    };
+    // Authenticated downloads must seal the native Response before promise
+    // resolution. Plain fetch cannot guarantee that after a mid-flight
+    // prototype change, so retained settlement uses the sealing transport.
+    const pinnedFetch = transport.pinnedFetch ??
+      ((retainTransportSettlement || isNode || isBun) ? fetchWithPinnedAddresses : undefined);
+    const requestTransport = retainTransportSettlement
+      ? {
+        ...transport,
+        fetch: ((fetchInput: RequestInfo | URL, fetchInit?: RequestInit) => {
+          // Same turn as the dispatch: nothing runs between this check and the transport call.
+          assertNoResponseSettlementHook();
+          return track(transport.fetch(fetchInput, fetchInit), fetchInit?.signal);
+        }) as typeof transport.fetch,
+        ...(pinnedFetch
+          ? {
+            pinnedFetch: ((url, addresses, requestInit, tls, dispatched) => {
+              assertNoResponseSettlementHook();
+              return track(
+                pinnedFetch(url, addresses, requestInit, tls, dispatched),
+                requestInit.signal,
+              );
+            }) as WorkerEgressPinnedFetch,
           }
+          : {}),
+      }
+      : transport;
+    try {
+      return await fetchWithBoundaryErrors(
+        guardedInput,
+        createNativeRequestInit(init, { redirect: "error" }),
+        {
+          onRequestDispatched,
+          authorizeUrl(url) {
+            if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
+              throw new OutboundRequestBlockedError(
+                "Provider request blocked: destination origin is not authorized",
+              );
+            }
+          },
         },
-      },
-      transport,
-      allowInternalEgress,
-    );
+        requestTransport,
+        allowInternalEgress,
+      );
+    } finally {
+      // Aborting the guard does not prove a non-cooperative transport has stopped.
+      // Keep the download pending until every started host transport settles.
+      if (retainTransportSettlement) await allPrivatePromises(operations);
+    }
   };
 }
 
@@ -647,6 +890,18 @@ export function createVeryfrontApiOriginBoundOutboundFetch(
     false,
     true,
     onRequestDispatched,
+  );
+}
+
+/** Authenticated API download boundary. Retains actual transport settlement after cancellation. */
+export function createVeryfrontApiDownloadOutboundFetch(baseUrl: string): typeof fetch {
+  return createOriginBoundFetchWithTransport(
+    baseUrl,
+    getTrustedHostTransport(),
+    false,
+    true,
+    undefined,
+    true,
   );
 }
 

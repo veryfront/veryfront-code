@@ -274,6 +274,54 @@ describe("agent/conversation-root-run-lifecycle", () => {
     }
   });
 
+  it("does not bind exact capture to embedded canonical run or project UUIDs", async () => {
+    const cases = [
+      {
+        runId: "11111111-1111-6111-8111-111111111111",
+        canonicalRunId: "prefix-11111111-1111-6111-8111-111111111111",
+        projectId: "66666666-6666-6666-8666-666666666666",
+      },
+      {
+        runId: "33333333-3333-8333-a333-333333333333",
+        canonicalRunId: "33333333-3333-8333-a333-333333333333",
+        projectId: "88888888-8888-8888-a888-888888888888-suffix",
+      },
+    ];
+
+    for (const current of cases) {
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId: current.runId,
+          canonicalRunId: current.canonicalRunId,
+          runEventAppendToken: "run-event-service-token",
+        }),
+        () =>
+          prepareHostedConversationRootRunContext({
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId: current.projectId,
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId: current.runId,
+              messageId: "msg-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            persistLatestUserMessageBeforeRun: false,
+            runtimeObservationCaptureOptIn: createRuntimeObservationCaptureOptIn(),
+          }, { abortSignal: new AbortController().signal }),
+      );
+      try {
+        assertEquals(context.privateRuntimeObservationWriterCapability, undefined);
+      } finally {
+        context.durableRunMirror?.dispose();
+      }
+    }
+  });
+
   it("rejects a missing API-issued root before persisting any user message", async () => {
     const recordedUrls: string[] = [];
     installMockFetch((input) => {
