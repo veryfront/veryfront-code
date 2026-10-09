@@ -1130,22 +1130,17 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    await busB?.close();
     assert(busA);
-    const publish = busA.publish(createEvent());
-    try {
-      const result = await settleWithin(
-        publish,
-        "drained-replica acknowledgement",
-        () => time.runMicrotasks(),
-      );
+    await busB?.close();
+    const result = await settleWithin(
+      busA.publish(createEvent()),
+      "remaining replica acknowledgement after drain",
+      () => time.runMicrotasks(),
+    );
 
-      assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
-      assertEquals(replicaB, []);
-    } finally {
-      await busA.close();
-      await publish.catch(() => undefined);
-    }
+    assertEquals(result, { acknowledged: 1, converged: false, recipients: 1 });
+    assertEquals(replicaB, []);
+    await busA?.close();
   });
 
   it("stays disabled without the proxy Redis connection", async () => {

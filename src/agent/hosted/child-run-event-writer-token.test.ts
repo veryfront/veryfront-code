@@ -659,8 +659,8 @@ Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classi
           const signal = new Request(input, init).signal;
           return new Promise<Response>((_resolve, reject) => {
             signal.addEventListener("abort", () => {
-              // Make the caller cancellation follow the exchange timeout rather
-              // than racing capability setup against two wall-clock timers.
+              // Observe the exchange timeout before triggering caller cancellation.
+              // Both cancellations occur before the transport rejects.
               controller.abort("parent-writer-token-must-not-leak");
               reject(signal.reason);
             }, { once: true });
