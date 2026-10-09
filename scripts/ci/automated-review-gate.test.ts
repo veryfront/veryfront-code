@@ -7191,17 +7191,70 @@ describe("automated review workflow", () => {
       "wakeups also refresh the current head inside the lock",
     );
     const requestIf = String(record(reviewSteps[2], "request").if);
-    const requests = (eventName: string, action: string, explicitReady = "") =>
-      new Function("github", "steps", `return (${requestIf.replaceAll(".explicit-ready-request", '["explicit-ready-request"]')});`)(
-        { event_name: eventName, event: { action } },
-        { publish: { outputs: { result: "pending", "explicit-ready-request": explicitReady } } },
+    const requests = (
+      eventName: string,
+      action: string,
+      options: {
+        explicitReady?: string;
+        payloadHead?: string;
+        currentHead?: string;
+        requestKey?: string;
+      } = {},
+    ) =>
+      new Function(
+        "github",
+        "steps",
+        "startsWith",
+        `return (${
+          requestIf.replace(/\.(explicit-ready-request|review-request-key|head-sha)/g, '["$1"]')
+        });`,
+      )(
+        {
+          event_name: eventName,
+          event: { action, pull_request: { head: { sha: options.payloadHead ?? HEAD } } },
+        },
+        {
+          resolve: { outputs: { "head-sha": options.currentHead ?? HEAD } },
+          publish: {
+            outputs: {
+              result: "pending",
+              "explicit-ready-request": options.explicitReady ?? "",
+              "review-request-key": options.requestKey ??
+                (action === "ready_for_review" ? "ready-42" : ""),
+            },
+          },
+        },
+        (value: string, prefix: string) => value.startsWith(prefix),
       );
     assertEquals(requests("issue_comment", "created"), true);
     assertEquals(requests("workflow_run", "completed"), true);
     assertEquals(requests("pull_request_target", "synchronize"), true);
     assertEquals(requests("pull_request_target", "opened"), false);
     assertEquals(requests("pull_request_target", "ready_for_review"), false);
-    assertEquals(requests("pull_request_target", "ready_for_review", "true"), true);
+    assertEquals(
+      requests("pull_request_target", "ready_for_review", { explicitReady: "true" }),
+      true,
+    );
+    assertEquals(
+      requests("pull_request_target", "opened", { currentHead: NEW_HEAD }),
+      true,
+      "a stale opened event cannot leave a newer head without a review request",
+    );
+    assertEquals(
+      requests("pull_request_target", "ready_for_review", { currentHead: NEW_HEAD }),
+      true,
+      "a stale ready event cannot leave a newer head without a review request",
+    );
+    assertEquals(
+      requests("pull_request_target", "opened", { requestKey: "base-42" }),
+      true,
+      "a later lifecycle epoch is not covered by the original opened review",
+    );
+    assertEquals(
+      requests("pull_request_target", "ready_for_review", { requestKey: "reopen-43" }),
+      true,
+      "a later reopen needs replacement proof",
+    );
   });
 
   it("refreshes a delayed wakeup to the live head inside the publisher lock", async () => {
@@ -7949,7 +8002,7 @@ describe("automated review workflow", () => {
     );
 
     const request = record(steps[2], "request step");
-    for (const required of ["steps.publish.outputs.result == 'pending'", "github.event_name == 'pull_request_target'", "github.event.action == 'opened'", "github.event.action == 'ready_for_review'", "steps.publish.outputs.explicit-ready-request != 'true'"]) {
+    for (const required of ["steps.publish.outputs.result == 'pending'", "github.event_name == 'pull_request_target'", "github.event.action == 'opened'", "github.event.action == 'ready_for_review'", "steps.publish.outputs.explicit-ready-request != 'true'", "steps.resolve.outputs.head-sha == github.event.pull_request.head.sha", "steps.publish.outputs.review-request-key == ''", "startsWith(steps.publish.outputs.review-request-key, 'ready-')"]) {
       assert(String(request.if).includes(required), "pending survivors recover requests while preserving automatic open/ready reviews");
     }
     const requestScript = String(

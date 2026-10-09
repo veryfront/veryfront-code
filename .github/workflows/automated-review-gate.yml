@@ -835,8 +835,11 @@ jobs:
         if: >-
           steps.publish.outputs.result == 'pending' &&
           !(github.event_name == 'pull_request_target' &&
-            (github.event.action == 'opened' ||
+            steps.resolve.outputs.head-sha == github.event.pull_request.head.sha &&
+            ((github.event.action == 'opened' &&
+              steps.publish.outputs.review-request-key == '') ||
              (github.event.action == 'ready_for_review' &&
+              startsWith(steps.publish.outputs.review-request-key, 'ready-') &&
               steps.publish.outputs.explicit-ready-request != 'true')))
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
