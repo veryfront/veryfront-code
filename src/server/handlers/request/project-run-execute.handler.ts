@@ -34,6 +34,7 @@ import {
 } from "#veryfront/config/host-api-base.ts";
 import {
   addAbortSignalListenerOnce,
+  getAbortSignalReason,
   isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
@@ -2380,7 +2381,8 @@ function readProjectRunInferenceToken(req: Request): string | undefined {
 }
 
 function getProjectRunObservationAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+  return getAbortSignalReason(signal) ??
+    new DOMException("This operation was aborted", "AbortError");
 }
 
 async function withProjectRunObservationDeadline<T>(input: {
@@ -2388,7 +2390,9 @@ async function withProjectRunObservationDeadline<T>(input: {
   timeoutMs: number;
   operation: (signal: AbortSignal) => Promise<T>;
 }): Promise<T> {
-  if (input.abortSignal.aborted) throw getProjectRunObservationAbortReason(input.abortSignal);
+  if (isAbortSignalAborted(input.abortSignal)) {
+    throw getProjectRunObservationAbortReason(input.abortSignal);
+  }
   const controller = new TaskAbortController();
   const signal = IntrinsicReflectApply(
     TaskAbortControllerSignalGetter,
@@ -2408,7 +2412,7 @@ async function withProjectRunObservationDeadline<T>(input: {
     ]);
   addAbortSignalListenerOnce(input.abortSignal, forwardAbort);
   let rejectAbort: (reason: unknown) => void = () => {};
-  const onAbort = () => rejectAbort(signal.reason);
+  const onAbort = () => rejectAbort(getProjectRunObservationAbortReason(signal));
   const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
     rejectAbort = reject;
     addAbortSignalListenerOnce(signal, onAbort);
@@ -2507,7 +2511,7 @@ function createProjectRunObservationMirror(input: {
             );
           }
           const body = await IntrinsicReflectApply(ResponsePrototypeJson, response, []);
-          signal.throwIfAborted();
+          if (isAbortSignalAborted(signal)) throw getProjectRunObservationAbortReason(signal);
           return { response, body };
         },
       }));

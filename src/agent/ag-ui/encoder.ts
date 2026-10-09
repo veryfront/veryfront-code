@@ -11,6 +11,7 @@ import {
   privateTextStartsWith,
 } from "#veryfront/security/private-text.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
@@ -145,8 +146,8 @@ export function createAgUiEncoderState(
     activeStepName: null,
     activeStepId: null,
     stepCount: 0,
-    streamedToolInputIds: new Set<string>(),
-    openToolCallIds: new Set<string>(),
+    streamedToolInputIds: createPrivateSet<string>(),
+    openToolCallIds: createPrivateSet<string>(),
     sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
@@ -984,7 +985,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       ]);
       state.sawVisibleOutput = true;
       if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
-        (state.openToolCallIds ??= new Set<string>()).add(event.toolCallId);
+        (state.openToolCallIds ??= createPrivateSet<string>()).add(event.toolCallId);
       }
       appendEncodedEvents(events, [{
         event: "ToolCallStart",

@@ -9605,8 +9605,8 @@ describe("project run inference credential header", () => {
     });
   }
 
-  for (const patchedRace of [false, true]) {
-    it(`releases managed task inference when observation receipt stalls and request aborts (patched race: ${patchedRace})`, async () => {
+  for (const [patchedRace, patchedReason] of [[false, false], [true, false], [false, true]]) {
+    it(`releases managed task inference when observation receipt stalls and request aborts (patched race: ${patchedRace}, patched reason: ${patchedReason})`, async () => {
       const runId = "run_inline_generate_observation_abort";
       const canonicalRunId = "12121212-1212-4121-8121-121212121212";
       const projectId = "23232323-2323-4232-8232-232323232323";
@@ -9701,7 +9701,21 @@ describe("project run inference credential header", () => {
             }
             appendStarted = true;
             appendSignal = observeFetchRequestInit(init).signal as AbortSignal | undefined;
-            controller.abort(new Error("run cancelled"));
+            const reason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason");
+            try {
+              if (patchedReason) {
+                Object.defineProperty(AbortSignal.prototype, "reason", {
+                  configurable: true,
+                  get(this: AbortSignal) {
+                    if (this === appendSignal) throw new Error("project replacement reason getter");
+                    return Reflect.apply(reason!.get!, this, []);
+                  },
+                });
+              }
+              controller.abort(new Error("run cancelled"));
+            } finally {
+              if (reason) Object.defineProperty(AbortSignal.prototype, "reason", reason);
+            }
             return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
               headers: { "content-type": "application/json" },
             });

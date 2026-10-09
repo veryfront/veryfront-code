@@ -34,6 +34,71 @@ describe("observation encoder private intrinsics", () => {
     assertEquals(args?.payload.delta, '{"query":"exact input"}');
   });
 
+  it("preserves direct tool arguments and closure when project code replaces Set operations", () => {
+    const NativeSet = Set;
+    const methods = Object.getOwnPropertyDescriptors(NativeSet.prototype);
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    try {
+      NativeSet.prototype.has = () => true;
+      NativeSet.prototype.add = () => {
+        throw new Error("project add replacement");
+      };
+      NativeSet.prototype.delete = () => {
+        throw new Error("project delete replacement");
+      };
+      globalThis.Set = new Proxy(NativeSet, {
+        construct() {
+          throw new Error("project constructor replacement");
+        },
+      });
+      const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+      state.openToolCallIds = undefined;
+      events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-input-start",
+        toolCallId: "observed",
+        toolName: "lookup",
+      });
+      events.push(...mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-input-available",
+        toolCallId: "observed",
+        toolName: "lookup",
+        input: { query: "exact input" },
+      }));
+    } finally {
+      globalThis.Set = NativeSet;
+      Object.defineProperties(NativeSet.prototype, methods);
+    }
+    assertEquals(
+      events.filter((event) => event.event === "ToolCallArgs").map((event) => event.payload.delta),
+      ['{"query":"exact input"}'],
+    );
+    assertEquals(events.filter((event) => event.event === "ToolCallEnd").length, 1);
+  });
+
+  it("does not duplicate streamed tool arguments when project Set.has lies", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "tool-input-delta",
+      toolCallId: "streamed",
+      inputTextDelta: '{"query":"exact input"}',
+    });
+    const has = Set.prototype.has;
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    try {
+      Set.prototype.has = () => false;
+      events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "tool-input-available",
+        toolCallId: "streamed",
+        toolName: "lookup",
+        input: { query: "exact input" },
+      });
+    } finally {
+      Set.prototype.has = has;
+    }
+    assertEquals(events.filter((event) => event.event === "ToolCallArgs").length, 0);
+    assertEquals(events.filter((event) => event.event === "ToolCallEnd").length, 1);
+  });
+
   it("preserves custom observations when project code replaces string methods", () => {
     const startsWith = String.prototype.startsWith;
     const slice = String.prototype.slice;

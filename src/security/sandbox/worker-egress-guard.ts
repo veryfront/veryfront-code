@@ -22,6 +22,8 @@
 
 import {
   addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import {
@@ -588,8 +590,9 @@ function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promi
 
   const completion = createPrivateDeferred<T>();
   const { resolve, reject } = completion;
-  const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  if (signal.aborted) {
+  const onAbort = () =>
+    reject(getAbortSignalReason(signal) ?? new DOMException("Aborted", "AbortError"));
+  if (isAbortSignalAborted(signal)) {
     onAbort();
   } else {
     addAbortSignalListenerOnce(signal, onAbort);
