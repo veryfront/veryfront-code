@@ -9643,6 +9643,121 @@ describe("project run inference credential header", () => {
     );
   });
 
+  it("records streamed agent failure without terminating a successful parent task", async () => {
+    const runId = "run_stream_failure_observed";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "stream-failure-observed",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Stream must persist." },
+            { type: "error", error: new Error("private upstream error detail") },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("stream-failure-observed", {
+            name: "Hostile stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              delivered = await response.text();
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:stream-failure-observed",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    const wireError = delivered.split("\n\n").map((frame) => {
+      const data = frame.startsWith("data: ") ? frame.slice(6) : "null";
+      try {
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }).find((event) => event?.type === "error");
+    assertExists(wireError);
+    const errors = appended.filter((event) =>
+      event.type === "CUSTOM" && event.name === "veryfront.agent.stream_error"
+    );
+    assertEquals(errors.length, 1);
+    const value = errors[0].value as Record<string, unknown>;
+    assertEquals(value.message, wireError.error);
+    assertEquals(value.code, wireError.code);
+    assertEquals(typeof value.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("private upstream error detail"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+    assertStringIncludes(delivered, "Stream must persist.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Stream must persist.",
+    );
+  });
+
   for (
     const failure of [
       "transport",

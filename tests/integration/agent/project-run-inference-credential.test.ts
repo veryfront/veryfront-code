@@ -58,7 +58,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Answers every model call with one streamed completion and records its bearer. */
 function captureModelAuthorizations(
-  options: { projectId?: string; onCapture?: (modelCallId: string) => void } = {},
+  options: {
+    projectId?: string;
+    onCapture?: (modelCallId: string) => void;
+    onReceiptResponse?: (response: Response) => void;
+  } = {},
 ): Array<string | null> {
   const authorizations: Array<string | null> = [];
   installMockFetch(
@@ -81,12 +85,14 @@ function captureModelAuthorizations(
               : []
           );
         for (const capture of captures) options.onCapture?.(capture.model_call_id);
-        return Response.json({
+        const response = Response.json({
           run_id: runEventsPath[1],
           latest_event_id: 1,
           appended_count: events.length,
           ...(captures.length > 0 ? { model_call_captures: captures } : {}),
         });
+        options.onReceiptResponse?.(response);
+        return response;
       }
       authorizations.push(request.headers.get("Authorization"));
       return new Response(
@@ -240,13 +246,25 @@ describe("project-run inference credential", () => {
     assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
   });
 
-  for (const replacement of ["map", "case", "weak-get", "weak-set", "weak-delete"] as const) {
+  for (
+    const replacement of [
+      "map",
+      "case",
+      "weak-get",
+      "weak-set",
+      "weak-delete",
+      "response-ok",
+      "array",
+    ] as const
+  ) {
     it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
       const projectId = "22222222-2222-4222-8222-222222222222";
       const captureIds = new Set<string>();
+      const privateResponses = new WeakSet<Response>();
       const authorizations = captureModelAuthorizations({
         projectId,
         onCapture: (id) => captureIds.add(id),
+        onReceiptResponse: (response) => privateResponses.add(response),
       });
       const managed = createManagedModelAgent("project-run-task-agent");
       const observedReceipts: unknown[] = [];
@@ -255,6 +273,8 @@ describe("project-run inference credential", () => {
       const originalWeakGet = WeakMap.prototype.get;
       const originalWeakSet = WeakMap.prototype.set;
       const originalWeakDelete = WeakMap.prototype.delete;
+      const originalOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+      const originalArrayIsArray = Array.isArray;
       const deps = {
         runTask: async () => {
           if (replacement === "case") {
@@ -306,6 +326,30 @@ describe("project-run inference credential", () => {
               return originalWeakDelete.call(this, key);
             };
           }
+          if (replacement === "response-ok") {
+            Object.defineProperty(Response.prototype, "ok", {
+              configurable: true,
+              get() {
+                if (privateResponses.has(this)) {
+                  observedReceipts.push(this.clone());
+                  throw new Error("project receipt response hook");
+                }
+                return Reflect.apply(originalOk.get!, this, []);
+              },
+            });
+          }
+          if (replacement === "array") {
+            Array.isArray = ((value: unknown): value is unknown[] => {
+              if (
+                value && typeof value === "object" &&
+                ("model_call_captures" in value || "model_call_id" in value)
+              ) {
+                observedReceipts.push(value);
+                throw new Error("project receipt array hook");
+              }
+              return originalArrayIsArray(value);
+            }) as typeof Array.isArray;
+          }
           let answer;
           try {
             answer = await managed.generate({ input: "Hello" });
@@ -315,6 +359,8 @@ describe("project-run inference credential", () => {
             WeakMap.prototype.get = originalWeakGet;
             WeakMap.prototype.set = originalWeakSet;
             WeakMap.prototype.delete = originalWeakDelete;
+            Object.defineProperty(Response.prototype, "ok", originalOk);
+            Array.isArray = originalArrayIsArray;
           }
           return { success: true, result: { text: answer.text }, durationMs: 1 };
         },
