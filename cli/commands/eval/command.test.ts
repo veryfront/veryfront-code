@@ -1171,6 +1171,8 @@ describe("eval CLI command helpers", () => {
       "load_skill",
       "load_skill_reference",
       "search_docs",
+      "veryfront__load_skill",
+      "veryfront__load_skill_reference",
     ]]);
   });
 
@@ -1240,7 +1242,13 @@ describe("eval CLI command helpers", () => {
     });
 
     assertEquals(observedToolNames, [
-      ["load_skill", "load_skill_reference", "search_docs"],
+      [
+        "load_skill",
+        "load_skill_reference",
+        "search_docs",
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
+      ],
       ["search_docs"],
     ]);
   });

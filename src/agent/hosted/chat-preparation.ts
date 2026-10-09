@@ -36,6 +36,7 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import {
+  inheritTrustedPlatformPolicyMessageMetadata,
   isLoadSkillToolName,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
 } from "../runtime/skill-policy-enforcement.ts";
@@ -68,6 +69,7 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
@@ -106,7 +108,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     apiUrl?: string | URL;
     projectId?: string | null;
     providerReplayCheckpointMessageIds?: readonly string[];
-    trustedHostedServerHistory?: boolean;
+    trustedHostedHistoryMessageIds?: readonly string[];
     legacyLoadSkillReplayAllowed?: boolean;
   };
 
@@ -763,7 +765,7 @@ export async function prepareHostedChatExecution<
       }),
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
-      trustedHostedServerHistory: input.request.serverEnvelopeVerified === true,
+      trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
       legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
@@ -847,6 +849,44 @@ export async function prepareHostedChatExecution<
   };
 }
 
+export function restoreTrustedHostedPolicyMetadataFromUiMessages(
+  runtimeMessages: readonly AgentRuntimeMessage[],
+  sourceMessages: readonly ChatUiMessage[],
+  trustedSourceMessageIds: readonly string[] | undefined,
+): AgentRuntimeMessage[] {
+  if (!trustedSourceMessageIds || trustedSourceMessageIds.length === 0) {
+    return [...runtimeMessages];
+  }
+  const trustedSourceIds = createPrivateMap<string, true>();
+  for (let index = 0; index < trustedSourceMessageIds.length; index++) {
+    if (!Object.hasOwn(trustedSourceMessageIds, index)) continue;
+    const messageId = trustedSourceMessageIds[index];
+    if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
+  }
+  const sourceById = createPrivateMap<string, ChatUiMessage | null>();
+  for (let index = 0; index < sourceMessages.length; index++) {
+    if (!Object.hasOwn(sourceMessages, index)) continue;
+    const message = sourceMessages[index]!;
+    if (message.role !== "assistant" || !message.id || !trustedSourceIds.has(message.id)) continue;
+    if (sourceById.has(message.id)) {
+      sourceById.set(message.id, null);
+    } else {
+      sourceById.set(message.id, message);
+    }
+  }
+
+  const restoredMessages: AgentRuntimeMessage[] = [];
+  for (let index = 0; index < runtimeMessages.length; index++) {
+    if (!Object.hasOwn(runtimeMessages, index)) continue;
+    const message = runtimeMessages[index]!;
+    const sourceMessage = message.role === "assistant" ? sourceById.get(message.id) : undefined;
+    restoredMessages[restoredMessages.length] = sourceMessage?.metadata !== undefined
+      ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
+      : message;
+  }
+  return restoredMessages;
+}
+
 /** Prepare hosted chat runtime messages. */
 export async function prepareHostedChatRuntimeMessages(
   messages: readonly ChatUiMessage[],
@@ -868,12 +908,16 @@ export async function prepareHostedChatRuntimeMessages(
         ),
       },
     });
-    if (options.trustedHostedServerHistory === true) {
-      restoreTrustedHostedPlatformPolicyResultsFromServerHistory(runtimeMessages, {
-        legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
-      });
-    }
-    return runtimeMessages;
+    const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromUiMessages(
+      runtimeMessages,
+      messages,
+      options.trustedHostedHistoryMessageIds,
+    );
+    restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
+      legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+      trustedMessageIds: options.trustedHostedHistoryMessageIds,
+    });
+    return trustedRuntimeMessages;
   }
   const authToken = options.authToken;
   const apiUrl = options.apiUrl;
@@ -901,10 +945,14 @@ export async function prepareHostedChatRuntimeMessages(
       }),
     onUnresolvableAttachment: options.onUnresolvableAttachment,
   });
-  if (options.trustedHostedServerHistory === true) {
-    restoreTrustedHostedPlatformPolicyResultsFromServerHistory(runtimeMessages, {
-      legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
-    });
-  }
-  return runtimeMessages;
+  const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromUiMessages(
+    runtimeMessages,
+    messages,
+    options.trustedHostedHistoryMessageIds,
+  );
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
+    legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+    trustedMessageIds: options.trustedHostedHistoryMessageIds,
+  });
+  return trustedRuntimeMessages;
 }

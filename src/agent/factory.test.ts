@@ -55,6 +55,14 @@ async function resolveSystemText(system: AgentConfig["system"]): Promise<string>
   return typeof resolved === "string" ? resolved : flattenSystemInstructions(resolved);
 }
 
+function toolNamesFromModelOptions(options: ModelRuntimeCallOptions): string[] {
+  const tools = options.tools;
+  if (Array.isArray(tools)) {
+    return tools.map((entry) => entry.name).sort();
+  }
+  return Object.keys(tools ?? {}).sort();
+}
+
 function expectAgentToolMap(
   tools: AgentConfig["tools"],
 ): Exclude<AgentConfig["tools"], boolean | undefined> {
@@ -914,6 +922,72 @@ description: Excluded skill
 
     assertStringIncludes(prompt, "Call veryfront__load_skill({ inventory:");
     assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
+  });
+
+  it("retains canonical skill loaders for replacement generate calls", async () => {
+    for (let index = 0; index < 128; index++) {
+      const id = `canonical-replacement-${index.toString().padStart(2, "0")}-${"x".repeat(220)}`;
+      registerSkill(id, createSkill(id, "Triage replacement requests"));
+    }
+    const runtimeLoadSkill = tool({
+      id: "load_skill",
+      description: "Project-owned skill-like loader.",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: ({ skillId }) => Promise.resolve({ skillId, owner: "project" }),
+    });
+    const replacementLookup = tool({
+      id: "lookup",
+      description: "Replacement-only lookup.",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => Promise.resolve({ query }),
+    });
+    const observedToolNames: string[][] = [];
+    const observedPrompts: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/canonical-replacement-loader",
+      async doGenerate(options) {
+        observedToolNames.push(toolNamesFromModelOptions(options));
+        observedPrompts.push(flattenSystemInstructions(options.prompt));
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+
+    const assistant = agent({
+      id: "canonical-loader-replacement",
+      model: "hosted/canonical-replacement-loader",
+      system: "Load matching skills.",
+      tools: { load_skill: runtimeLoadSkill },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: "Load the right skill",
+      tools: { lookup: replacementLookup },
+      retainSkillLoaderTools: true,
+    });
+    await assistant.generate({
+      input: "Do not retain skill loaders",
+      tools: { lookup: replacementLookup },
+      retainSkillLoaderTools: false,
+    });
+
+    assertStringIncludes(observedPrompts[0] ?? "", "Call veryfront__load_skill({ inventory:");
+    assertEquals(observedToolNames[0], [
+      "load_skill",
+      "load_skill_reference",
+      "lookup",
+      "veryfront__load_skill",
+      "veryfront__load_skill_reference",
+    ]);
+    assertEquals(observedToolNames[1], ["lookup"]);
   });
 
   it("preserves concrete canonical skill implementations supplied by the host", () => {

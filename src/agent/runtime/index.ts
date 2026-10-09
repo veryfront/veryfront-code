@@ -432,7 +432,12 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const IntrinsicURL = URL;
 const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
-const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
+  "load_skill",
+  "load_skill_reference",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+] as const;
 
 function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = false): T {
   class UnsafeInputCopyError extends TypeError {}

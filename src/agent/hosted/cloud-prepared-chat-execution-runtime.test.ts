@@ -101,7 +101,13 @@ describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
         throw new Error("Expected a default root stream watchdog factory");
       }
 
-      for (const toolName of ["invoke_agent", `${AGENT_DELEGATE_TOOL_PREFIX}worker`]) {
+      for (
+        const toolName of [
+          "invoke_agent",
+          "veryfront__invoke_agent",
+          `${AGENT_DELEGATE_TOOL_PREFIX}worker`,
+        ]
+      ) {
         const watchdog = createRootStreamWatchdog();
         watchdog.observe({ type: "tool-input-available", toolCallId: "c1", toolName, input: {} });
         time.tick(60);

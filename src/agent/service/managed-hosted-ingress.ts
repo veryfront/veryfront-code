@@ -85,6 +85,7 @@ export type ManagedAgentExecutorRequest = Readonly<{
   serverEnvelopeVerified: boolean;
   serverResolvedIntegrationToolNames: JsonValue;
   serverResolvedProviderReplayCheckpoints?: JsonValue;
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   serverResolvedResumeToolCall?: ExecutorRuntimePrepareRequest["serverResolvedResumeToolCall"];
   agUi?: ManagedAgentExecutorAgUiState;
 }>;
@@ -234,6 +235,13 @@ function createExecutorRequest(
       ? {
         serverResolvedProviderReplayCheckpoints:
           parsedRequest.serverResolvedProviderReplayCheckpoints,
+      }
+      : {}),
+    ...(parsedRequest.serverEnvelopeVerified === true &&
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
       }
       : {}),
     ...(Object.hasOwn(parsedRequest, "serverResolvedResumeToolCall") &&

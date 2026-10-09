@@ -57,6 +57,19 @@ Deno.test("buildHostedChildForkInstructions includes sorted available skills", (
   assert(result.includes("a-skill, m-skill, z-skill"));
 });
 
+Deno.test("buildHostedChildForkInstructions uses the resolved canonical skill loader", () => {
+  const result = buildHostedChildForkInstructions({
+    projectId: "proj-123",
+    availableSkillIds: ["design"],
+    skillLoaderToolName: "veryfront__load_skill",
+  });
+
+  assert(result.includes("Use `veryfront__load_skill` to load skill instructions"));
+  assert(result.includes("Use veryfront__load_skill to load instructions. Available: design"));
+  assertEquals(result.includes("Use `load_skill`"), false);
+  assertEquals(result.includes("Use load_skill to load instructions"), false);
+});
+
 Deno.test("buildHostedChildForkInstructions omits empty available skills", () => {
   const result = buildHostedChildForkInstructions({ projectId: "proj-123", availableSkillIds: [] });
 

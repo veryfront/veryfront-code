@@ -157,6 +157,8 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
+  /** Server-produced hosted history messages whose replay provenance may be trusted. */
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
@@ -282,6 +284,7 @@ async function withVerifiedRunEventAppendToken(
     if (
       trustServerEnvelope &&
       (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds") ||
         hasLegacyReplayState)
     ) {
       return Response.json(
@@ -367,6 +370,13 @@ async function withVerifiedRunEventAppendToken(
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
+    ...(trustServerEnvelope &&
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
+      }
+      : {}),
     ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
@@ -397,6 +407,7 @@ function stripUnverifiedServerResolvedRequestState(
 ): ParsedHostedChatRequest {
   const {
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
     ...publicParsedRequest
   } = parsedRequest;
@@ -651,6 +662,7 @@ async function buildParsedHostedChatRequestInternal(
     allowDelegation,
     forwardedProps,
     serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds,
     resumeToolCall,
     runtimeOverrides,
     durableRootRun,
@@ -718,6 +730,9 @@ async function buildParsedHostedChatRequestInternal(
     forwardedProps,
     ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
       ? { serverResolvedProviderReplayCheckpoints }
+      : {}),
+    ...(Object.hasOwn(input.chatRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? { serverResolvedTrustedHostedHistoryMessageIds }
       : {}),
     ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
     runtimeOverrides,
