@@ -70,8 +70,11 @@ export function getAnswerPartsForRendering(
 
 const SKILL_TOOL_NAMES: ReadonlySet<string> = new Set([
   "load_skill",
+  "veryfront__load_skill",
   "load_skill_reference",
+  "veryfront__load_skill_reference",
   "execute_skill_script",
+  "veryfront__execute_skill_script",
 ]);
 
 /** Check if a tool part is a skill-related tool. */
