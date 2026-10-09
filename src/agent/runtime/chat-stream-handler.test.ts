@@ -14,7 +14,10 @@ import {
   resolveRelayableExecutionFailure,
   resolveRuntimeExecutionErrorEvent,
 } from "./chat-stream-handler.ts";
-import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { ProviderOutputTruncatedError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   announceStreamedToolCallInput,
@@ -1095,7 +1098,7 @@ describe("chat-stream-handler", () => {
       assertEquals(chunks, ["a", "b"]);
     });
 
-    it("times out an idle stream before any output starts", async () => {
+    it("rejects an idle stream before any output instead of completing with zero usage", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
       const result = {
@@ -1103,13 +1106,57 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", {
-        streamIdleTimeoutMs: 10,
-      });
+      const error = await assertRejects(
+        () =>
+          processStream(result, state, controller, encoder, "t", {
+            streamIdleTimeoutMs: 10,
+          }),
+        Error,
+        "Provider stream failed",
+      ) as Error;
+      assertEquals(error.name, "RuntimeProviderStreamFailure");
+      const provenance = readRuntimeProviderStreamFailureCause(error);
+      assertEquals(provenance.found, true);
+      if (provenance.found) {
+        assertEquals(
+          (provenance.cause as Error).message,
+          "Provider stream timed out before producing output",
+        );
+      }
 
-      assertEquals(state.finishReason, "stop");
+      assertEquals(state.finishReason, null);
       assertEquals(events, []);
     });
+
+    for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
+      it(`preserves ${kind}-only idle completion when provider finish is optional`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const result = {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              if (kind === "reasoning") {
+                yield { type: "reasoning-delta", id: "r1", delta: "Thinking." };
+              } else if (kind === "signature" || kind === "redactedData") {
+                yield { type: "reasoning-start", id: "r1" };
+                yield { type: "reasoning-end", id: "r1", [kind]: "opaque-provider-data" };
+              } else {
+                yield { type: "tool-input-start", id: "t1", toolName: "lookup" };
+                yield { type: "tool-input-delta", id: "t1", delta: "{}" };
+                yield { type: "tool-input-end", id: "t1" };
+              }
+              await new Promise(() => {});
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        };
+        await processStream(result, state, controller, encoder, "t", {
+          streamIdleTimeoutMs: 10,
+          requireProviderFinish: false,
+        });
+        assertEquals(state.finishReason, kind === "tool" ? "tool-calls" : "stop");
+      });
+    }
 
     for (const requireProviderFinish of [true, false]) {
       it(`preserves text-only idle behavior with required finish (${requireProviderFinish})`, async () => {

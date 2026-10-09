@@ -918,8 +918,8 @@ done
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
-    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/8");
+    assertEquals(matrix.shard, Array.from({ length: 16 }, (_, i) => i + 1));
+    assertEquals(coverageShards.name, "coverage shard ${{ matrix.shard }}/16");
     assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     const steps = (coverageShards.steps as unknown[]).map((step) =>
       asRecord(step, "coverage shard step")
@@ -928,7 +928,7 @@ done
     assert(run, "every shard must execute the coverage suite");
     assertStringIncludes(
       String(run.run),
-      "--shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "--shard=${{ matrix.shard }}/16 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     const codecov = asRecord(jobs["codecov-upload"], "codecov job");
     const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
@@ -939,10 +939,20 @@ done
       "coverage-profiles/coverage-shard-1/lcov.info",
       "coverage-profiles/coverage-shard-1/history/lcov.info",
       "coverage-profiles/coverage-shard-1/cli/lcov.info",
-      ...[2, 3, 4, 5, 6, 7, 8].map((shard) =>
+      ...Array.from({ length: 15 }, (_, i) => i + 2).map((shard) =>
         `coverage-profiles/coverage-shard-${shard}/lcov.info`
       ),
     ]);
+    const testedRun = asRecord(jobs["tested-run"], "tested-run job");
+    const decide = (testedRun.steps as unknown[])
+      .map((step) => asRecord(step, "tested-run step"))
+      .find((step) => step.id === "decide");
+    assert(decide, "reuse must verify every coverage artifact");
+    const artifacts = String(decide.run).match(/\bcoverage-shard-\d+\b/g);
+    assertEquals(
+      artifacts,
+      Array.from({ length: 16 }, (_, i) => `coverage-shard-${i + 1}`),
+    );
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
@@ -1157,6 +1167,24 @@ describe("main release gate folding", () => {
 });
 
 describe("trusted merge-group cancellation workflow", () => {
+  it("keeps self-pin updates manual without disabling weekly third-party updates", async () => {
+    const config = asRecord(
+      parse(await readRepoFile(".github/dependabot.yml")),
+      "Dependabot config",
+    );
+    assert(Array.isArray(config.updates));
+    const updates = config.updates.map((entry) => asRecord(entry, "Dependabot update"));
+    const actions = updates.filter((entry) => entry["package-ecosystem"] === "github-actions");
+    assertEquals(actions.length, 1);
+    const action = actions[0];
+    assert(action);
+    assertEquals(action.directory, "/");
+    assertEquals(asRecord(action.schedule, "Actions schedule").interval, "weekly");
+    assertEquals(action.ignore, [{
+      "dependency-name": "veryfront/veryfront-code/.github/workflows/*",
+    }]);
+  });
+
   it("observes every merge and artifact gate prerequisite independently without privileged test jobs", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "workflow jobs");
     const artifactGate = asRecord(jobs["quality-gate-artifact"], "artifact quality gate");
@@ -1286,4 +1314,89 @@ describe("trusted merge-group cancellation workflow", () => {
       await Deno.remove(directory, { recursive: true });
     }
   });
+});
+
+it("merge-group binary e2e owns its process group and preserves other event behavior", async () => {
+  const workflow = asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+  const job = asRecord(asRecord(workflow.jobs, "jobs")["tests-binary-e2e"], "binary e2e");
+  const steps = (job.steps as unknown[]).map((step) => asRecord(step, "step"));
+  const native = steps.find((step) => step.name === "Run cancellable binary e2e");
+  assert(native, "merge-group binary e2e must use a native cancellable step");
+  assertEquals(native.if, "${{ github.event_name == 'merge_group' }}");
+  assertEquals(native["timeout-minutes"], 30);
+  assertEquals(native.shell, "bash");
+  const script = String(native.run);
+  for (
+    const requirement of [
+      "start_new_session=True",
+      "signal.SIGINT",
+      "signal.SIGTERM",
+      "os.killpg",
+      "signal.SIGKILL",
+      "VERYFRONT_BINARY_FRESH",
+      "test:e2e:binary",
+    ]
+  ) {
+    assertStringIncludes(script, requirement);
+  }
+  const retry = steps.find((step) => String(step.uses).startsWith("nick-fields/retry@"));
+  assert(retry);
+  assertEquals(retry.if, "${{ github.event_name != 'merge_group' }}");
+  assertEquals(retry.with, {
+    timeout_minutes: 30,
+    max_attempts: 2,
+    retry_wait_seconds: 30,
+    command: "VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary\n",
+  });
+});
+
+it("binary e2e cancellation stops signal-ignoring descendants and preserves exit codes", async () => {
+  const workflow = asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+  const job = asRecord(asRecord(workflow.jobs, "jobs")["tests-binary-e2e"], "binary e2e");
+  const step = (job.steps as YamlRecord[]).find((step) =>
+    step.name === "Run cancellable binary e2e"
+  );
+  assert(step, "cancellation supervisor must exist");
+  const script = String(step.run);
+  assert(script.startsWith("exec python3 -u - <<'PY'\n"));
+  const harness = String.raw`
+import os, pathlib, select, signal, subprocess, sys, tempfile, time
+
+step_script = sys.argv[1]
+with tempfile.TemporaryDirectory() as directory:
+    deno = pathlib.Path(directory) / "deno"
+    env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
+    def fixture(body):
+        deno.write_text("#!" + sys.executable + "\n" + body)
+        deno.chmod(0o755)
+    for code in (0, 17):
+        fixture("import os, sys\nassert os.environ['VERYFRONT_BINARY_FRESH'] == '1'\nassert sys.argv[1:] == ['task', 'test:e2e:binary']\nsys.exit(" + str(code) + ")\n")
+        result = subprocess.run(["bash", "-c", step_script], env=env, timeout=10)
+        assert result.returncode == code, result.returncode
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        descendant = "import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(120)"
+        fixture("import signal,subprocess,sys,time\nsignal.signal(signal.SIGINT,signal.SIG_IGN)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nsubprocess.Popen([sys.executable,'-u','-c'," + repr(descendant) + "])\ntime.sleep(120)\n")
+        process = subprocess.Popen(["bash", "-c", step_script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            assert select.select([process.stdout], [], [], 10)[0], "descendant not ready"
+            assert process.stdout.readline().strip() == "ready"
+            started = time.monotonic()
+            process.send_signal(signum)
+            # EOF requires both descendants to release their inherited pipes.
+            output, errors = process.communicate(timeout=5)
+            assert process.returncode == 128 + signum, (process.returncode, errors)
+            assert time.monotonic() - started < 5
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+print("success, failure, SIGINT, SIGTERM: passed")
+`;
+  const result = await new Deno.Command("bash", {
+    args: ["-c", 'exec python3 -c "$1" "$2"', "binary-e2e-fixture", harness, script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+  assertStringIncludes(new TextDecoder().decode(result.stdout), "SIGTERM: passed");
 });

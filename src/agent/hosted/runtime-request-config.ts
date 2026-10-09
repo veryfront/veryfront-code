@@ -11,10 +11,8 @@ import {
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";
-import {
-  isSupportedToolExposureCheckpointVersion,
-  type ToolExposureCheckpoint,
-} from "../runtime/tool-exposure.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./tool-exposure-checkpoint.ts";
 import {
   assertReconstructibleProviderReplayCheckpoint,
   parseServerResolvedProviderReplayCheckpoints,
@@ -22,6 +20,8 @@ import {
 } from "../runtime/provider-replay.ts";
 
 const arrayIsArray = Array.isArray;
+
+export { getServerResolvedToolExposureCheckpoint };
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -84,26 +84,20 @@ function hasConfiguredSkillsForLegacyDelegation(
   return Object.values(skills).some((enabled) => enabled === true);
 }
 
-/** Read the latest checkpoint overwritten by the authenticated server caller. */
-export function getServerResolvedToolExposureCheckpoint(
-  forwardedProps: Record<string, unknown> | undefined,
-  serverEnvelopeVerified: boolean,
-): ToolExposureCheckpoint | undefined {
-  if (!serverEnvelopeVerified) return undefined;
-  const value = forwardedProps?.serverResolvedToolExposureCheckpoint;
-  if (
-    !isRecord(value) ||
-    !isSupportedToolExposureCheckpointVersion(value.version) ||
-    !Array.isArray(value.loadedToolNames) ||
-    !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
-    createPrivateSet(value.loadedToolNames).size !== value.loadedToolNames.length
-  ) {
-    return undefined;
-  }
-  return {
-    version: value.version,
-    loadedToolNames: [...value.loadedToolNames],
-  };
+/**
+ * Resolve the tool exposure checkpoint a hosted request restores: the one bound
+ * to the verified run-event token's digest, else the verified envelope's.
+ */
+export function resolveHostedRequestToolExposureCheckpoint(request: {
+  forwardedProps?: Record<string, unknown>;
+  serverEnvelopeVerified?: true;
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+}): ToolExposureCheckpoint | undefined {
+  return request.serverResolvedToolExposureCheckpoint ??
+    getServerResolvedToolExposureCheckpoint(
+      request.forwardedProps,
+      request.serverEnvelopeVerified === true,
+    );
 }
 
 /**

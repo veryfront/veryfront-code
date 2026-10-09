@@ -2,6 +2,7 @@ import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/ter
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
@@ -17,7 +18,6 @@ import {
 } from "#veryfront/agent/composition/local-child-execution.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { getActiveHostedRunEventWriterCapability } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 
 const parentId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
