@@ -274,14 +274,22 @@ describe("agent/conversation-root-run-lifecycle", () => {
     }
   });
 
-  it("does not bind exact capture to embedded canonical run or project UUIDs", async () => {
+  it("does not bind exact capture to embedded run, canonical run or project UUIDs", async () => {
     const cases = [
       {
+        name: "embedded fallback run UUID",
+        runId: "prefix-11111111-1111-6111-8111-111111111111",
+        canonicalRunId: undefined,
+        projectId: "66666666-6666-6666-8666-666666666666",
+      },
+      {
+        name: "embedded canonical run UUID",
         runId: "11111111-1111-6111-8111-111111111111",
         canonicalRunId: "prefix-11111111-1111-6111-8111-111111111111",
         projectId: "66666666-6666-6666-8666-666666666666",
       },
       {
+        name: "embedded project UUID",
         runId: "33333333-3333-8333-a333-333333333333",
         canonicalRunId: "33333333-3333-8333-a333-333333333333",
         projectId: "88888888-8888-8888-a888-888888888888-suffix",
@@ -315,7 +323,7 @@ describe("agent/conversation-root-run-lifecycle", () => {
           }, { abortSignal: new AbortController().signal }),
       );
       try {
-        assertEquals(context.privateRuntimeObservationWriterCapability, undefined);
+        assertEquals(context.privateRuntimeObservationWriterCapability, undefined, current.name);
       } finally {
         context.durableRunMirror?.dispose();
       }
