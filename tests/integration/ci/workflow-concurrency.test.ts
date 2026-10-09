@@ -80,3 +80,27 @@ describe("RC publication and dispatch concurrency contract", () => {
     assertEquals(dispatch.concurrency, { group: "veryfront-rc-dispatch", queue: "max" });
   });
 });
+
+describe("client bundle report publication", () => {
+  it("publishes the sticky comment only for the current PR head", async () => {
+    const workflow = asRecord(
+      parse(
+        await Deno.readTextFile(
+          new URL("../../../.github/workflows/client-bundle-report.yml", import.meta.url),
+        ),
+      ),
+      "client-bundle-report.yml",
+    );
+    const jobs = asRecord(workflow.jobs, "client-bundle-report.yml jobs");
+    const report = asRecord(jobs.report, "report");
+    const steps = report.steps as Record<string, unknown>[];
+    const post = steps.find((step) => step.name === "Post sticky PR comment");
+    const script = String(asRecord(post?.with, "post inputs").script);
+    const guard = script.indexOf("pr.head.sha !== context.payload.pull_request.head.sha");
+    // A rerun of an older commit is not cancelled, so it must not overwrite
+    // the report for the current head.
+    assertEquals(guard > 0, true, "the post step must compare the run head with the PR head");
+    assertEquals(guard < script.indexOf("updateComment"), true, "the head check must run first");
+    assertEquals(guard < script.indexOf("createComment"), true, "the head check must run first");
+  });
+});

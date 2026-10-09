@@ -45,6 +45,18 @@ jobs:
             const marker = "<!-- client-bundle-report -->";
             const body = fs.readFileSync("client-bundle-report.md", "utf8");
 
+            // A manual rerun of an older commit is not cancelled by newer runs.
+            // Publish only when this run still reports the current PR head.
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pr.head.sha !== context.payload.pull_request.head.sha) {
+              core.info(`Skipping stale report for ${context.payload.pull_request.head.sha}; PR head is ${pr.head.sha}.`);
+              return;
+            }
+
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
