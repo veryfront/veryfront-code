@@ -3,6 +3,10 @@ name: CI/CD
 on:
   workflow_dispatch:
     inputs:
+      ubuntu26:
+        description: Canary the unchanged main pipeline on Ubuntu 26.04
+        type: boolean
+        default: false
       maintenance_release_number:
         description: Older immutable RC number for a maintenance branch (no deploy dispatch)
         required: false
@@ -41,7 +45,7 @@ jobs:
   # ============================================
   tested-run:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     # On main it waits up to 30 minutes for a queue run that is still finishing
     # and up to 10 more for an earlier main run to choose its release number.
     timeout-minutes: 50
@@ -104,6 +108,8 @@ jobs:
             "npm-compatibility-${GITHUB_SHA}" \
             coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
+            coverage-shard-9 coverage-shard-10 coverage-shard-11 coverage-shard-12 \
+            coverage-shard-13 coverage-shard-14 coverage-shard-15 coverage-shard-16 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
         if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
@@ -128,7 +134,7 @@ jobs:
   ci:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
@@ -219,7 +225,7 @@ jobs:
   tests-integration:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 35
     name: "tests (integration shard ${{ matrix.shard }}/3)"
     strategy:
@@ -256,7 +262,7 @@ jobs:
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
         if: ${{ matrix.shard == 2 }}
-        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
+        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts' 'tests/integration/semantic-unit-boundary/src/platform/compat/http/pinned-fetch.test.ts'
       - name: Generate integration inputs
         run: deno task generate
       - name: Run integration shard
@@ -303,7 +309,7 @@ jobs:
     name: tests (integration)
     needs: [tested-run, tests-integration]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
       - name: Require all integration shards
@@ -323,13 +329,13 @@ jobs:
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
-    name: "tests (node shard ${{ matrix.shard }}/2)"
+    name: "tests (node shard ${{ matrix.shard }}/4)"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -345,7 +351,7 @@ jobs:
       - uses: ./.github/actions/restore-npm-workspace
       - name: Run Node runtime shard
         env:
-          VF_TEST_SHARD: ${{ matrix.shard }}/2
+          VF_TEST_SHARD: ${{ matrix.shard }}/4
         run: node ./tests/node/run-tests.mjs --suite=runtime:node
 
   # Sandbox worker generation and prepared-module encoding on the minimum
@@ -356,7 +362,7 @@ jobs:
   tests-node-sandbox:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 15
     name: tests (node sandbox, minimum Node)
     steps:
@@ -385,7 +391,7 @@ jobs:
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: tests (bun)
     steps:
@@ -410,7 +416,7 @@ jobs:
   npm-compatibility-artifact:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: npm compatibility artifact
     steps:
@@ -460,7 +466,7 @@ jobs:
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
@@ -533,13 +539,13 @@ jobs:
   coverage-shards:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
-    name: coverage shard ${{ matrix.shard }}/8
+    name: coverage shard ${{ matrix.shard }}/16
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -550,7 +556,7 @@ jobs:
         id: coverage
         run: |
           START=$(date +%s)
-          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}
+          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/16 --coverage-dir=coverage-shard-${{ matrix.shard }}
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Include CLI, dependency history, and runtime security integration coverage
         if: matrix.shard == 1
@@ -585,12 +591,12 @@ jobs:
           path: coverage-shard-${{ matrix.shard }}/**/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
-        run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "### Coverage shard ${{ matrix.shard }}/16 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
   coverage-node-executor:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: native executor coverage
     steps:
@@ -621,7 +627,7 @@ jobs:
   coverage-integration-client:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: integration client coverage
     steps:
@@ -647,7 +653,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards, tested-run]
@@ -686,7 +692,7 @@ jobs:
   # repository OIDC token. This job runs no repository code: it downloads the
   # shard artifacts, rewrites paths with sed, and calls the upload action.
   codecov-upload:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: codecov upload
     needs: [coverage-shards]
@@ -725,7 +731,7 @@ jobs:
           use_oidc: true
           # Comma separated, the form the action documents. All files go up in
           # one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info,coverage-profiles/coverage-shard-9/lcov.info,coverage-profiles/coverage-shard-10/lcov.info,coverage-profiles/coverage-shard-11/lcov.info,coverage-profiles/coverage-shard-12/lcov.info,coverage-profiles/coverage-shard-13/lcov.info,coverage-profiles/coverage-shard-14/lcov.info,coverage-profiles/coverage-shard-15/lcov.info,coverage-profiles/coverage-shard-16/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
@@ -734,7 +740,7 @@ jobs:
   # runs repository code (`deno task coverage:ci:merge`), so it happens here,
   # in a job with no secrets, and hands the scan job only the finished report.
   sonar-coverage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
     needs: [
@@ -793,7 +799,7 @@ jobs:
           retention-days: 1
 
   sonar-coverage-main:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Reused main Sonar coverage report
     needs: [tested-run, version-check]
@@ -817,7 +823,7 @@ jobs:
   # minutes today). 28 minutes keeps the coverage and Sonar path inside the
   # merge queue response budget now that `sonar-coverage` sits before it.
   sonar:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: SonarQube Cloud scan
     needs: [sonar-coverage, tested-run, version-check]
@@ -908,7 +914,7 @@ jobs:
           fi
 
   sonar-main:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: Reused main SonarQube Cloud scan
     needs: [sonar-coverage-main, tested-run, version-check]
@@ -919,7 +925,7 @@ jobs:
 
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs: [sonar, sonar-main, tested-run, version-check]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
@@ -936,7 +942,7 @@ jobs:
   tests-e2e-rsc-browser:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
@@ -962,7 +968,7 @@ jobs:
   tests-binary-e2e:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
@@ -974,7 +980,41 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # The JS retry action can hold a cancelled run until the runner's forced
+      # termination. Own the process group in a native step for the queue only.
+      - name: Run cancellable binary e2e
+        if: ${{ github.event_name == 'merge_group' }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          exec python3 -u - <<'PY'
+          import os, signal, subprocess, sys
+
+          child = None
+          cancelled = None
+          def cancel(signum, frame):
+              global cancelled
+              cancelled = signum
+              if child is not None:
+                  try:
+                      os.killpg(child.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+
+          signal.signal(signal.SIGINT, cancel)
+          signal.signal(signal.SIGTERM, cancel)
+          child = subprocess.Popen(
+              ["deno", "task", "test:e2e:binary"],
+              env=dict(os.environ, VERYFRONT_BINARY_FRESH="1"),
+              start_new_session=True,
+          )
+          if cancelled is not None:
+              cancel(cancelled, None)
+          code = child.wait()
+          sys.exit(128 + cancelled if cancelled is not None else code if code >= 0 else 128 - code)
+          PY
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        if: ${{ github.event_name != 'merge_group' }}
         with:
           timeout_minutes: 30
           max_attempts: 2
@@ -1128,7 +1168,7 @@ jobs:
 
   quality-gate-merge:
     name: quality gate (merge)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - ci
@@ -1198,7 +1238,7 @@ jobs:
   npm-smoke-node-versions:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: npm smoke Node version contract
     outputs:
@@ -1220,7 +1260,7 @@ jobs:
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-smoke-node-versions, npm-compatibility-artifact]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
@@ -1263,7 +1303,7 @@ jobs:
 
   quality-gate-artifact:
     name: quality gate (artifact)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - npm-compatibility-artifact
@@ -1301,7 +1341,7 @@ jobs:
   # run that reuses its merge-queue run inherits them from that run.
   quality-gate-release:
     name: quality gate (release)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - tested-run
@@ -1343,7 +1383,7 @@ jobs:
   tests-sentry-runtime-packages:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     # Cold-cache runs take ~12-15min; 15 was cutting it too close.
     timeout-minutes: 20
     name: tests (sentry runtime packages)
@@ -1369,7 +1409,7 @@ jobs:
   tests-split-mode:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
@@ -1430,7 +1470,7 @@ jobs:
   version-check:
     timeout-minutes: 5
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
@@ -1481,7 +1521,7 @@ jobs:
 
   tests-proxy-binary:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1527,22 +1567,22 @@ jobs:
             name: veryfront-macos-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: x86_64-unknown-linux-gnu
             name: veryfront-proxy-linux-x64
             entrypoint: cli/proxy-main.ts
             profile: proxy
-          - os: ubuntu-latest
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: aarch64-unknown-linux-gnu
             name: veryfront-proxy-linux-arm64
             entrypoint: cli/proxy-main.ts
@@ -1638,7 +1678,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -1751,7 +1791,7 @@ jobs:
     name: GitHub prerelease
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}
     needs: [prerelease, build-binaries]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     permissions:
       actions: read
@@ -1823,7 +1863,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -2000,7 +2040,7 @@ jobs:
   publish-public-release:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
     needs: [prerelease, github-prerelease, release, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     permissions:
       contents: write
@@ -2306,7 +2346,7 @@ jobs:
     name: registry validation (RC)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}
     needs: [prerelease, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 65
@@ -2329,7 +2369,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Diagnose failed RC publish
+        if: ${{ needs.prerelease.result != 'success' }}
+        env:
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT INT TERM
+          docker run --rm --init \
+            --name "$container_name" \
+            --user 1000:1000 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges=true --network=bridge \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --workdir /source --env RC_VERSION --env GITHUB_SHA \
+            node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 \
+            node --experimental-transform-types --input-type=module -e '
+          import { readFileSync } from "node:fs";
+          import { diagnoseRegistryPackages, formatRegistryReleaseFailure, REQUEST_TIMEOUT_MS } from "./scripts/ci/registry-release-integrity.ts";
+          try {
+            const version = process.env.RC_VERSION;
+            if (!version) throw new Error("Exact RC version is required for diagnostics.");
+            const names = ["veryfront"];
+            for (const member of JSON.parse(readFileSync("deno.json", "utf8")).workspace) {
+              if (!member.startsWith("./extensions/")) continue;
+              const manifest = JSON.parse(readFileSync(`${member}/deno.json`, "utf8"));
+              if (manifest.veryfront?.npm?.publish === false) continue;
+              names.push(manifest.name, ...(manifest.veryfront?.npm?.runtimePackages ?? []).map(pkg => pkg.name));
+            }
+            await diagnoseRegistryPackages(names.map(packageName => ({
+              packageName, version, expectedGitHead: process.env.GITHUB_SHA,
+              maxAttempts: 2, retryDelayMs: 120000, requestTimeoutMs: REQUEST_TIMEOUT_MS,
+            })));
+          } catch (error) {
+            console.error(formatRegistryReleaseFailure(error));
+            process.exit(1);
+          }
+          '
       - name: Build registry validation image
+        if: ${{ needs.prerelease.result == 'success' }}
         timeout-minutes: 5
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
@@ -2359,6 +2438,7 @@ jobs:
           DOCKERFILE
           docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
       - name: Validate exact registry release
+        if: ${{ needs.prerelease.result == 'success' }}
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}
@@ -2414,7 +2494,7 @@ jobs:
       publish-public-release,
       version-check,
     ]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 65
     steps:
@@ -2669,7 +2749,7 @@ jobs:
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, publish-public-release, version-check]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -12,6 +12,7 @@ import { AgentRuntime } from "./index.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 
 function userMessage(text: string): Message[] {
   return [{ id: "pause-input", role: "user", parts: [{ type: "text", text }] }];
@@ -550,11 +551,24 @@ it("emits an acknowledged pause even when local memory finalization fails", asyn
       },
     };
   };
-  const body = await new Response(
-    await runtime.stream(userMessage("Pause me"), undefined, {
-      onFinish: () => finishes++,
-    }),
-  ).text();
+  const entries: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => entries.push(entry));
+  let body: string;
+  try {
+    body = await new Response(
+      await runtime.stream(userMessage("Pause me"), undefined, {
+        onFinish: () => finishes++,
+      }),
+    ).text();
+  } finally {
+    unsubscribe();
+  }
+  assertEquals(
+    entries.filter((entry) =>
+      entry.level === "info" && entry.message === "Agent stopped at a pause boundary"
+    ).length,
+    1,
+  );
   assertEquals(saved !== null, true);
   assertEquals(commits, 1);
   assertEquals(rollbacks, 1);

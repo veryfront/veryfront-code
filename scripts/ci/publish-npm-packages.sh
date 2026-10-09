@@ -403,6 +403,43 @@ wait_for_npm_git_head() {
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
+# Stable packages propagate independently. Poll unresolved packages in rounds,
+# charging lookup time and one sleep per round to the existing shared budget.
+wait_for_stable_npm_git_heads() {
+  local pending=("$@") remaining=() package_name attempt final_read=0
+  for attempt in $(seq 1 "$((NPM_GIT_HEAD_WAIT_ATTEMPTS + 1))"); do
+    remaining=()
+    for package_name in "${pending[@]}"; do
+      if ! lookup_npm_git_head "${package_name}"; then
+        echo "::error::Published ${package_name}@${VERSION} gitHead is ${PUBLISHED_GIT_HEAD}, expected ${GITHUB_SHA}."
+        return 1
+      fi
+      if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+        continue
+      fi
+      if [[ -n "${PUBLISHED_GIT_HEAD}" || "${final_read}" == 1 || "${attempt}" -gt "${NPM_GIT_HEAD_WAIT_ATTEMPTS}" ]]; then
+        echo "::error::Published ${package_name}@${VERSION} gitHead is ${PUBLISHED_GIT_HEAD}, expected ${GITHUB_SHA}."
+        return 1
+      fi
+      remaining+=("${package_name}")
+    done
+    if [[ "${#remaining[@]}" == 0 ]]; then
+      return 0
+    fi
+    pending=("${remaining[@]}")
+    if [[ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]]; then
+      echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking unresolved packages once more." >&2
+      final_read=1
+      continue
+    fi
+    for package_name in "${pending[@]}"; do
+      echo "Waiting for npm registry metadata for ${package_name}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
+    done
+    sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$((NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS))
+  done
+}
+
 ensure_rc_version_absent_or_matches_commit() {
   local package_name="$1"
   local version_lookup_mode="${2:-recover}"
@@ -489,10 +526,6 @@ release_publish_package_dir() {
     exit "${PUBLISH_STATUS}"
   fi
 
-  if ! wait_for_npm_git_head "${PACKAGE_NAME}"; then
-    echo "::error::Published ${PACKAGE_NAME}@${VERSION} gitHead is ${PUBLISHED_GIT_HEAD}, expected ${GITHUB_SHA}."
-    exit 1
-  fi
 }
 
 # Call only while holding the workflow's shared RC publication concurrency
@@ -649,6 +682,7 @@ run_preflight() {
 }
 
 run_release_publish() {
+  local published_packages=()
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
 
@@ -660,7 +694,9 @@ run_release_publish() {
       return 1
     fi
     release_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
+    published_packages+=("${PACKAGE_NAME}")
   done
+  wait_for_stable_npm_git_heads "${published_packages[@]}"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

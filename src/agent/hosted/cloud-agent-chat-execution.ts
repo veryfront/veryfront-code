@@ -80,7 +80,7 @@ import {
 } from "./cloud-agent-child-tools.ts";
 import {
   getServerResolvedProviderReplayCheckpoints,
-  getServerResolvedToolExposureCheckpoint,
+  resolveHostedRequestToolExposureCheckpoint,
 } from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
@@ -373,10 +373,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
   } = await prepareVeryfrontCloudHostedChatExecution({
     request: req,
     hostToolPolicy: context.options.hostToolPolicy,
-    serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
-      req.forwardedProps,
-      req.serverEnvelopeVerified === true,
-    ),
+    serverResolvedToolExposureCheckpoint: resolveHostedRequestToolExposureCheckpoint(req),
     serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints({
       forwardedProps: req.forwardedProps,
       serverResolvedProviderReplayCheckpoints: req.serverResolvedProviderReplayCheckpoints,

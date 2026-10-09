@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
 import {
   createRendererRouterFromEnvironment,
@@ -285,6 +286,7 @@ Deno.test("RendererRouter", async (t) => {
   });
 
   await t.step("bounds a resolver that ignores the refresh deadline", async () => {
+    using time = new FakeTime();
     let callCount = 0;
     const router = new RendererRouter("renderer.internal", FALLBACK_URL, {
       refreshMs: LONG_REFRESH_MS,
@@ -295,9 +297,16 @@ Deno.test("RendererRouter", async (t) => {
       },
     });
     try {
-      const startedAt = performance.now();
-      await router.ready();
-      assertEquals(performance.now() - startedAt < 250, true);
+      let readySettled = false;
+      const ready = router.ready().then(() => {
+        readySettled = true;
+      });
+      await time.tickAsync(4);
+      assertEquals(readySettled, false, "readiness must wait for the configured deadline");
+      await time.tickAsync(1);
+      await time.runMicrotasks();
+      assertEquals(readySettled, true, "the deadline must bound an unresolved resolver");
+      await ready;
       await router.refresh();
       assertEquals(callCount, 1);
       assertEquals(router.resolve("project"), FALLBACK_URL);
