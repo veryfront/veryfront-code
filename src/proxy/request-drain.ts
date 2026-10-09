@@ -1,5 +1,6 @@
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { continueProxyShutdownPromise } from "./shutdown-intrinsics.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
 export interface TrackedProxyRequest {
@@ -34,7 +35,7 @@ export class ProxyRequestDrainTracker {
     const lifetime = getRequestTransportLifetime(request);
     if (lifetime?.completed) {
       const complete = () => this.complete(requestId);
-      void lifetime.completed.then(complete, complete);
+      void continueProxyShutdownPromise(lifetime.completed, complete, complete);
       return response;
     }
 

@@ -28,6 +28,56 @@ describe("chat/provider-errors", () => {
       assertEquals(Object.keys(error).includes("cause"), false);
     }
   });
+
+  it("preserves a gateway spend-check refusal through the stream failure cause", async () => {
+    const response = markVeryfrontGatewayResponse(
+      new Response(
+        JSON.stringify({
+          error: "AI provider spend check is temporarily unavailable",
+          code: "ai_provider_spend_check_unavailable",
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const failure = await buildProviderError("openai", response);
+    const expected = {
+      code: "ai_provider_spend_check_unavailable",
+      message: "Veryfront cannot verify provider spend. Contact your administrator.",
+      status: 503,
+    };
+    assertEquals(failure.retryable, true);
+    assertEquals(parseProviderError(failure), expected);
+    assertEquals(
+      parseProviderError(new Error("Provider stream failed", { cause: failure })),
+      expected,
+    );
+    assertEquals(executorModelFailure(failure), {
+      type: "failure",
+      code: "ai_provider_spend_check_unavailable",
+    });
+    assertEquals(
+      parseProviderError(createExecutorModelFailure("ai_provider_spend_check_unavailable")),
+      expected,
+    );
+  });
+
+  it("keeps unmarked provider spend-check text as a provider overload", async () => {
+    const failure = await buildProviderError(
+      "openai",
+      new Response(
+        JSON.stringify({
+          error: "Private upstream text",
+          code: "ai_provider_spend_check_unavailable",
+        }),
+        { status: 503 },
+      ),
+    );
+    assertEquals(parseProviderError(failure), {
+      code: "OVERLOADED_ERROR",
+      message: "The LLM provider is currently overloaded",
+    });
+  });
+
   it("classifies wrapped native provider authentication refusals without exposing provider text", () => {
     for (const status of [401, 403]) {
       const providerError = new ProviderRequestError({

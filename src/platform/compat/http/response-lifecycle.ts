@@ -1,7 +1,8 @@
 /**
  * Complete request lifecycle work when a response has actually finished.
- * Non-streaming responses complete when their headers are ready, while SSE
- * responses complete only after their body closes, errors, or is cancelled.
+ * Consumption tracking retains body-bearing responses until completion, errors,
+ * or cancellation. Bodyless responses complete immediately. The SSE settlement
+ * helper preserves header-time completion for non-SSE responses.
  */
 
 type ResponseBodyOutcome = "completed" | "canceled" | "error";
@@ -35,6 +36,8 @@ export function completeOnResponseBodyConsumption(
     onOutcome?: (outcome: ResponseBodyOutcome) => void;
     /** Complete on source close/error even if no consumer reads the returned body. */
     completeOnSourceClose?: boolean;
+    /** Keep ownership until the returned body is consumed, even after the source closes. */
+    waitForConsumption?: boolean;
   } = {},
 ): Response {
   const notifyOutcome = (outcome: ResponseBodyOutcome): void => {
@@ -50,7 +53,8 @@ export function completeOnResponseBodyConsumption(
 
   const runDeferredOperation = options.runDeferredOperation ?? ((operation) => operation());
   const errorOnAbort = options.errorOnAbort === true;
-  const completeOnSourceClose = options.completeOnSourceClose !== false;
+  const completeOnSourceClose = options.completeOnSourceClose !== false &&
+    options.waitForConsumption !== true;
   let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;

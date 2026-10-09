@@ -3,7 +3,10 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { AGENT_PROVIDER_AUTH_ERROR } from "#veryfront/chat/provider-error-registry.ts";
+import {
+  AGENT_PROVIDER_AUTH_ERROR,
+  registeredProviderFailure,
+} from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
@@ -35,6 +38,7 @@ const failureStatus = {
   OUTPUT_SCHEMA_NOT_CLOSED: 400,
   OUTPUT_SCHEMA_INVALID: 400,
   AI_PROVIDER_SPEND_LIMIT_EXCEEDED: 402,
+  ai_provider_spend_check_unavailable: 503,
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: 502,
   AI_PROVIDER_BILLING_ERROR: 502,
   GATEWAY_PROJECT_REQUIRED: 400,
@@ -68,6 +72,7 @@ export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
     "OUTPUT_SCHEMA_NOT_CLOSED",
     "OUTPUT_SCHEMA_INVALID",
     "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+    "ai_provider_spend_check_unavailable",
     "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
     "AI_PROVIDER_BILLING_ERROR",
     "GATEWAY_PROJECT_REQUIRED",
@@ -113,7 +118,8 @@ export function executorAgentFailureCode(error: unknown, fallback: FailureCode):
   const snapshot = snapshotVeryfrontError(error);
   const exactSlug = getExecutorAgentFailureCodeSchema().safeParse(snapshot?.slug);
   if (exactSlug.success) return exactSlug.data;
-  const code = snapshot?.slug.toUpperCase().replaceAll("-", "_") ?? parseProviderError(error).code;
+  const code = registeredProviderFailure(error)?.code ??
+    snapshot?.slug.toUpperCase().replaceAll("-", "_") ?? parseProviderError(error).code;
   const result = getExecutorAgentFailureCodeSchema().safeParse(code);
   return result.success ? result.data : fallback;
 }
