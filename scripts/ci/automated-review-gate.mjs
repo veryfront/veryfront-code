@@ -205,7 +205,7 @@ function parseCompletedSecurityReviewDisplay(lines) {
     !metadata.headSha.toLowerCase().startsWith(securityRow[3].toLowerCase())
   ) return undefined;
   lines.splice(8, 2, codeRowLine);
-  return securityRow;
+  return { row: securityRow, headSha: metadata.headSha };
 }
 
 function parseSummaryCompletionDatetime(value) {
@@ -252,10 +252,10 @@ function parseCompletedCodexSummary(comment) {
   // The connector now includes its separate security-review display in this
   // comment. It is never code-review proof: retain the exact Code Review row,
   // head resolution, pinned identity, epoch and later reaction requirements.
-  let securityRow;
+  let securityDisplay;
   if (lines[1]?.startsWith("<!-- codex-security-review:")) {
-    securityRow = parseCompletedSecurityReviewDisplay(lines);
-    if (!securityRow) return undefined;
+    securityDisplay = parseCompletedSecurityReviewDisplay(lines);
+    if (!securityDisplay) return undefined;
   }
   const expectedPrefix = [
     CODEX_REVIEW_SUMMARY_MARKER,
@@ -282,16 +282,19 @@ function parseCompletedCodexSummary(comment) {
   const updatedAt = Date.parse(updatedAtText);
   const updatedAtIsWholeSecond =
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(updatedAtText);
+  const securityRow = securityDisplay?.row;
   const securityCompletedAt = securityRow ? parseSummaryCompletionDatetime(securityRow[1]) : undefined;
   if (
     securityCompletedAt !== undefined &&
-    hasInvalidSummaryCompletionTime(securityCompletedAt, updatedAt, updatedAtIsWholeSecond)
+    (securityCompletedAt < createdAt ||
+      securityRow[3] !== row[3] ||
+      hasInvalidSummaryCompletionTime(securityCompletedAt, updatedAt, updatedAtIsWholeSecond))
   ) return undefined;
   if (
     !Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || createdAt > updatedAt ||
     hasInvalidSummaryCompletionTime(completedAt, updatedAt, updatedAtIsWholeSecond)
   ) return undefined;
-  return { shortRef: row[3], completedAt, updatedAt };
+  return { shortRef: row[3], completedAt, updatedAt, securityHead: securityDisplay?.headSha };
 }
 
 async function resolvedCompletedCodexSummary(
@@ -303,6 +306,8 @@ async function resolvedCompletedCodexSummary(
   const summary = parseCompletedCodexSummary(comment);
   if (
     !summary ||
+    (summary.securityHead !== undefined &&
+      summary.securityHead.toLowerCase() !== headSha.toLowerCase()) ||
     (boundary !== undefined &&
       (summary.completedAt <= boundary.time ||
         summary.updatedAt <= boundary.time)) ||
