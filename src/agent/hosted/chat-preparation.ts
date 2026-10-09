@@ -36,6 +36,7 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import {
+  inheritTrustedHostedHistorySourceIdentity,
   inheritTrustedPlatformPolicyMessageMetadata,
   isLoadSkillToolName,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
@@ -868,8 +869,8 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
   for (let index = 0; index < sourceMessages.length; index++) {
     if (!Object.hasOwn(sourceMessages, index)) continue;
     const message = sourceMessages[index]!;
-    if (message.role !== "assistant" || !message.id || !trustedSourceIds.has(message.id)) continue;
-    if (sourceById.has(message.id)) {
+    if (!message.id || !trustedSourceIds.has(message.id)) continue;
+    if (sourceById.has(message.id) || message.role !== "assistant") {
       sourceById.set(message.id, null);
     } else {
       sourceById.set(message.id, message);
@@ -880,10 +881,13 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
   for (let index = 0; index < runtimeMessages.length; index++) {
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
-    const sourceMessage = message.role === "assistant" ? sourceById.get(message.id) : undefined;
-    restoredMessages[restoredMessages.length] = sourceMessage
+    const sourceMessage = sourceById.get(message.id);
+    const restoredMessage = sourceMessage && message.role === "assistant"
       ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
       : message;
+    restoredMessages[restoredMessages.length] = sourceMessage
+      ? inheritTrustedHostedHistorySourceIdentity(sourceMessage, restoredMessage)
+      : restoredMessage;
   }
   return restoredMessages;
 }

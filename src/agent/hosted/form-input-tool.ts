@@ -23,6 +23,8 @@ import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-to
 
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
+const objectHasOwn = Object.hasOwn;
+
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
 
@@ -268,6 +270,7 @@ function extractSubmittedFormInputResult(
 
 function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
+    if (!objectHasOwn(messages, index)) continue;
     if (messages[index]?.role === "user") {
       return index;
     }
