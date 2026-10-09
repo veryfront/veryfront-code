@@ -1,4 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const REPOSITORY_ROOT = new URL("../../../../../../../", import.meta.url);
 const PINNED_FETCH_MODULE = new URL(
@@ -148,12 +149,11 @@ try {
 }
 
 Deno.test("Deno pinned HTTPS transport honors the same ambient DENO_CERT root as native fetch", async () => {
-  const tempDirectory = await Deno.makeTempDir();
-  const rootPath = `${tempDirectory}/root.pem`;
-  const scriptPath = `${tempDirectory}/pinned-fetch-deno-cert.ts`;
-  await Deno.writeTextFile(rootPath, ROOT_CERTIFICATE);
-  await Deno.writeTextFile(scriptPath, childScript());
-  try {
+  await withTempDir(async (tempDirectory) => {
+    const rootPath = `${tempDirectory}/root.pem`;
+    const scriptPath = `${tempDirectory}/pinned-fetch-deno-cert.ts`;
+    await Deno.writeTextFile(rootPath, ROOT_CERTIFICATE);
+    await Deno.writeTextFile(scriptPath, childScript());
     const child = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -190,7 +190,5 @@ Deno.test("Deno pinned HTTPS transport honors the same ambient DENO_CERT root as
         `stderr: ${stderr}`,
       ].join("\n"),
     );
-  } finally {
-    await Deno.remove(tempDirectory, { recursive: true }).catch(() => undefined);
-  }
+  });
 });
