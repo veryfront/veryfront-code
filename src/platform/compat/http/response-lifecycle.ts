@@ -5,7 +5,10 @@
  * helper preserves header-time completion for non-SSE responses.
  */
 
-import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
+import {
+  primordialPromiseCatch,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 
 type ResponseBodyOutcome = "completed" | "canceled" | "error";
 
@@ -86,7 +89,8 @@ export function completeOnResponseBodyConsumption(
     if (options.cancellationTimeoutMs !== undefined) {
       cancellationTimer = setTimeout(() => complete("canceled"), options.cancellationTimeoutMs);
     }
-    cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
+    cancellationPromise = primordialPromiseThen(
+      runDeferredOperation(() => reader.cancel(reason)),
       () => complete("canceled"),
       (error) => {
         complete("canceled");
@@ -97,7 +101,7 @@ export function completeOnResponseBodyConsumption(
   };
   abortBody = (): void => {
     if (errorOnAbort) bodyController?.error(signal?.reason);
-    void cancelBody(signal?.reason).catch(() => undefined);
+    void primordialPromiseCatch(cancelBody(signal?.reason), () => undefined);
   };
 
   if (completeOnSourceClose) {
@@ -155,7 +159,7 @@ export function completeOnResponseBodyConsumption(
       headers: response.headers,
     });
   } catch (error) {
-    void cancelBody(error).catch(() => undefined);
+    void primordialPromiseCatch(cancelBody(error), () => undefined);
     complete("error");
     throw error;
   }
