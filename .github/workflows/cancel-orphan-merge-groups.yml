@@ -1,0 +1,72 @@
+name: Cancel orphan merge-group runs
+
+on:
+  delete: {}
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_run:
+    workflows: [CI/CD]
+    types: [requested]
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: cancel-orphan-merge-groups
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: ${{ (github.event_name == 'schedule') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'delete' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'gh-readonly-queue/main/')) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      # Default-branch events execute trusted workflow logic, never queued code.
+      # No checkout or repository scripts with the cancellation token.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = `${owner}/${repo}`;
+            const { data: workflow } = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: "cicd.yml" });
+            if (workflow.path !== ".github/workflows/cicd.yml") return;
+            const { data: refs } = await github.rest.git.listMatchingRefs({ owner, repo, ref: "heads/gh-readonly-queue/main/" });
+            const live = new Set(refs.map((ref) => ref.ref));
+            const active = (run) => Number.isSafeInteger(run.id) && run.id > 0 &&
+              run.event === "merge_group" && ["queued", "in_progress"].includes(run.status) &&
+              run.workflow_id === workflow.id && run.repository?.full_name === repository &&
+              run.head_repository?.full_name === repository && /^[0-9a-f]{40}$/.test(run.head_sha ?? "") &&
+              /^gh-readonly-queue\/main\/pr-[1-9][0-9]*-[0-9a-f]{40}$/.test(run.head_branch ?? "");
+            const seen = new Set();
+            for (const status of ["queued", "in_progress"]) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner, repo, workflow_id: "cicd.yml", event: "merge_group", status, per_page: 100,
+              });
+              for (const run of runs) {
+                if (!active(run) || live.has(`refs/heads/${run.head_branch}`) || seen.has(run.id)) continue;
+                seen.add(run.id);
+                const { data: latest } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+                if (!active(latest) || latest.id !== run.id || latest.head_sha !== run.head_sha ||
+                    latest.head_branch !== run.head_branch || latest.run_attempt !== run.run_attempt) continue;
+                // A stale snapshot is never sufficient: only an authoritative 404 permits cancellation.
+                try {
+                  await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                  continue;
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+                try {
+                  await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+                } catch (error) {
+                  if (error.status !== 409) throw error;
+                  const { data: final } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+                  if (final.status !== "completed") throw error;
+                  continue;
+                }
+                core.info(`Cancelled orphan merge-group run ${run.id} (${run.head_branch}); sweeper ${context.runId}: ${context.serverUrl}/${repository}/actions/runs/${context.runId}`);
+              }
+            }
