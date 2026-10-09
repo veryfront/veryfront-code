@@ -548,6 +548,19 @@ Deno.test("hosted child project agents request only materialized skill and deleg
   );
 });
 
+Deno.test("hosted child project agents drop parent-only canonical control tools from configured child selectors", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      tools: ["get_file", "veryfront__invoke_agent", "veryfront__form_input"],
+    }, { allowedSkillIds: [] }),
+    ["get_file"],
+  );
+});
+
 Deno.test("hosted child project agents omit skill tools for an empty skill selector snapshot", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
