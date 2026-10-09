@@ -567,7 +567,9 @@ export function hasFinished(run: ParsedRun): boolean {
 
 /** Contains skill load helper. */
 export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
-  return run.toolStarts.includes("load_skill") && run.toolArgs.join("").includes(skillId);
+  return (run.toolStarts.includes("load_skill") ||
+    run.toolStarts.includes("veryfront__load_skill")) &&
+    run.toolArgs.join("").includes(skillId);
 }
 
 /** Count step started events helper. */
