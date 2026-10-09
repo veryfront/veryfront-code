@@ -1094,13 +1094,17 @@ it("child denials apply to both platform spellings without denying a colliding p
 
 it("child denials preserve an explicitly selected platform loader alias", () => {
   const platform = markTrustedHostToolProvenance({ description: "Platform" });
-  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools({
-    ok: true,
-    forkTools: {
-      load_skill: platform,
-      veryfront__load_skill: platform,
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        load_skill: platform,
+        veryfront__load_skill: platform,
+      },
     },
-  }, ["load_skill"], ["veryfront__load_skill"]);
+    ["load_skill"],
+    ["veryfront__load_skill"],
+  );
 
   assert(filtered.ok);
   assertEquals(Object.keys(filtered.forkTools), ["veryfront__load_skill"]);
