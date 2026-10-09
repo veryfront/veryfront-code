@@ -2260,7 +2260,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             ? input.url
             : input.toString();
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
-            assertEquals(new Headers(init?.headers).get("Accept"), "application/octet-stream");
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("Accept"),
+              "application/octet-stream",
+            );
             return new Response("# Guide\n\nCancellation-safe knowledge.", {
               status: 200,
               headers: { "Content-Type": "application/octet-stream" },
@@ -2313,6 +2316,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const originalTrim = String.prototype.trim;
     const originalToLowerCase = String.prototype.toLowerCase;
     let interceptedMime = false;
+    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
     let result;
     try {
       result = await withMockFetch(
