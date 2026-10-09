@@ -65,6 +65,18 @@ jobs:
                 } catch (error) {
                   if (error.status !== 404) throw error;
                 }
+                // Landing can occur during the first ref lookup; confirm main again after the 404.
+                const { data: finalComparison } = await github.rest.repos.compareCommitsWithBasehead({
+                  owner, repo, basehead: `main...${run.head_sha}`,
+                });
+                if (!["ahead", "diverged"].includes(finalComparison.status)) continue;
+                // The comparison awaited an API call: recheck the ref immediately before cancelling.
+                try {
+                  await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                  continue;
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
                 try {
                   // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
                   // These ignored gates must stop too; live groups never reach this endpoint.

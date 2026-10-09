@@ -46,6 +46,10 @@ function fixture() {
     comparison: "diverged" as string,
     compareError: 0,
     recreateRefOnCompare: false,
+    recreateRefOnCompareCall: 0,
+    landOnRefCheck: false,
+    compareErrorOnCall: 0,
+    refErrorOnCall: 0,
     compared: [] as string[],
     cancelError: 0,
     finishedOnCancel: false,
@@ -81,10 +85,14 @@ async function execute(f: ReturnType<typeof fixture>) {
       repos: {
         compareCommitsWithBasehead: ({ basehead }: { basehead: string }) => {
           f.compared.push(basehead);
-          if (f.compareError) {
+          if (
+            f.compareError && (!f.compareErrorOnCall || f.compared.length === f.compareErrorOnCall)
+          ) {
             throw Object.assign(new Error("compare API failure"), { status: f.compareError });
           }
-          if (f.recreateRefOnCompare) f.refExists = true;
+          if (f.recreateRefOnCompare || f.compared.length === f.recreateRefOnCompareCall) {
+            f.refExists = true;
+          }
           return { data: { status: f.comparison } };
         },
       },
@@ -95,8 +103,14 @@ async function execute(f: ReturnType<typeof fixture>) {
         },
         getRef: ({ ref }: { ref: string }) => {
           f.inspectedRefs.push(ref);
-          if (!f.refExists) {
+          if (f.landOnRefCheck) f.comparison = "identical";
+          if (f.refErrorOnCall && f.inspectedRefs.length === f.refErrorOnCall) {
             throw Object.assign(new Error("ref API failure"), { status: f.refError });
+          }
+          if (!f.refExists) {
+            throw Object.assign(new Error("ref API failure"), {
+              status: f.refErrorOnCall ? 404 : f.refError,
+            });
           }
           return { data: { ref: `refs/heads/${BRANCH}`, object: { sha: SHA } } };
         },
@@ -122,7 +136,7 @@ async function execute(f: ReturnType<typeof fixture>) {
     serverUrl: "https://github.com",
   };
   const core = { info: (value: string) => f.logs.push(value) };
-  const script = (await workflow()).jobs.sweep.steps[0]!.with.script;
+  const script = (await workflow()).jobs.sweep!.steps[0]!.with.script;
   await new Function("github", "context", "core", `return (async () => {${script}\n})();`)(
     github,
     context,
@@ -138,7 +152,7 @@ describe("orphan merge-group cancellation", () => {
       f.latest.status = status;
       await execute(f);
       assertEquals(f.cancelled, [42]);
-      assertEquals(f.inspectedRefs, [`heads/${BRANCH}`]);
+      assertEquals(f.inspectedRefs, [`heads/${BRANCH}`, `heads/${BRANCH}`]);
       assert(
         f.logs.some((line) =>
           line.includes("Force-cancelled") && line.includes("42") && line.includes("999")
@@ -205,6 +219,39 @@ describe("orphan merge-group cancellation", () => {
     await execute(f);
     assertEquals(f.compared, [`main...${SHA}`]);
     assertEquals(f.inspectedRefs, [`heads/${BRANCH}`]);
+    assertEquals(f.cancelled, []);
+  });
+
+  it("preserves a group landing after the first comparison before its ref disappears", async () => {
+    const f = fixture();
+    f.comparison = "ahead";
+    f.landOnRefCheck = true;
+    await execute(f);
+    assertEquals(f.cancelled, []);
+  });
+
+  it("preserves a ref recreated during the post-404 ancestry check", async () => {
+    const f = fixture();
+    f.recreateRefOnCompareCall = 2;
+    await execute(f);
+    assertEquals(f.cancelled, []);
+  });
+
+  it("fails closed if the post-404 ancestry check fails", async () => {
+    const f = fixture();
+    f.compareError = 500;
+    f.compareErrorOnCall = 2;
+    await assertRejects(() => execute(f), Error, "compare API failure");
+    assertEquals(f.cancelled, []);
+  });
+
+  it("fails closed if the final ref verification fails", async () => {
+    const f = fixture();
+    f.refError = 403;
+    f.refErrorOnCall = 2;
+    // The initial missing-ref observation remains an authoritative 404.
+    f.refExists = false;
+    await assertRejects(() => execute(f), Error, "ref API failure");
     assertEquals(f.cancelled, []);
   });
 
