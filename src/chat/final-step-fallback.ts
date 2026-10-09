@@ -742,6 +742,12 @@ function buildToolFallbackChunks(
   const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
 
   for (const descriptor of descriptors) {
+    // Durable terminal results are append-only, even if a late snapshot differs.
+    if (
+      normalizedState.outputAvailableToolCallIds.has(descriptor.toolCallId) ||
+      normalizedState.outputErrorToolCallIds?.has(descriptor.toolCallId) ||
+      normalizedState.outputDeniedToolCallIds?.has(descriptor.toolCallId)
+    ) continue;
     const providerExecution = providerExecutionFields(descriptor);
     if (!normalizedState.startedToolCallIds.has(descriptor.toolCallId)) {
       chunks.push({

@@ -660,6 +660,7 @@ export function createHostedChatFinalizeDetachedBuildState(input: {
       fallbackChunks: fallbackParts.length > 0 && input.lifecycleAdapter.durableRunMirror &&
           input.capturedMessageId
         ? buildDetachedFallbackChunks({
+          isAborted: input.isAborted,
           fallbackParts,
           finalStep,
           mirroredToolChunkState: input.mirroredToolChunkState,

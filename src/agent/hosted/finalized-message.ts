@@ -36,7 +36,9 @@ function toolPartName(part: ChatUiMessage["parts"][number]): string {
 }
 
 /** Match legacy terminal aliases to the output state already used by mirrored chunks. */
-function terminalToolOutputState(state: string): "available" | "error" | "denied" | undefined {
+export function terminalToolOutputState(
+  state: string,
+): "available" | "error" | "denied" | undefined {
   switch (state) {
     case "output-available":
     case "completed":
@@ -236,6 +238,7 @@ export interface BuildFinalizedMessageFallbackChunksInput {
 
 /** Input payload for build detached fallback chunks. */
 export interface BuildDetachedFallbackChunksInput {
+  isAborted?: boolean;
   fallbackParts: ChatUiMessage["parts"];
   mirroredParts?: readonly ChatUiMessage["parts"][number][];
   finalStep: unknown;
@@ -593,12 +596,16 @@ export function buildDetachedFallbackChunks(
   input: BuildDetachedFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {
   const orderedParts = input.fallbackParts.filter((part) => {
-    if (part.type === "reasoning") {
+    if (
+      input.isAborted && isToolUiPart(part) &&
+      !input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId)
+    ) return false;
+    if (part.type === "reasoning" || part.type === "text") {
       return input.mirroredParts !== undefined
         ? !input.mirroredParts.includes(part)
         : !input.mirroredDurableOutput;
     }
-    return part.type !== "text" || !input.mirroredDurableOutput;
+    return true;
   });
   const primaryChunks = buildOrderedFallbackChunks(
     orderedParts,
@@ -610,10 +617,12 @@ export function buildDetachedFallbackChunks(
 
   return [
     ...primaryChunks,
-    ...(input.hasIncompleteFallbackToolParts ? [] : buildMissingFallbackToolChunks(
-      input.finalStep,
-      reconciledToolState,
-    )),
+    ...(input.isAborted || input.hasIncompleteFallbackToolParts
+      ? []
+      : buildMissingFallbackToolChunks(
+        input.finalStep,
+        reconciledToolState,
+      )),
     ...(input.mirroredDurableOutput || orderedParts.some((part) => part.type === "text")
       ? []
       : buildMissingFallbackTextChunks([], input.finalStep, input.capturedMessageId)),

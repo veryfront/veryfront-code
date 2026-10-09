@@ -29,6 +29,7 @@ import {
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
   persistToolResultOwnershipCorrections,
+  terminalToolOutputState,
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
@@ -154,10 +155,7 @@ function createHostedChatFinalizeDetachedBuildState(
         if (!isToolUiPart(part)) return part;
         const fallback = fallbackTools.get(part.toolCallId);
         fallbackTools.delete(part.toolCallId);
-        if (
-          part.state === "output-available" || part.state === "output-error" ||
-          part.state === "output-denied"
-        ) return part;
+        if (input.isAborted || terminalToolOutputState(part.state) !== undefined) return part;
         if (
           !fallback ||
           (fallback.state !== "output-available" && fallback.state !== "output-error" &&
@@ -201,6 +199,7 @@ function createHostedChatFinalizeDetachedBuildState(
         input.capturedMessageId
       ? (() => {
         const primaryChunks = buildDetachedFallbackChunks({
+          isAborted: input.isAborted,
           fallbackParts,
           mirroredParts: input.mirroredMessage?.parts,
           finalStep,
