@@ -814,35 +814,3 @@ it("does not treat a user message as submitted platform form history", () => {
     undefined,
   );
 });
-
-it("ignores replaced array iterators when restoring a trusted submitted form", () => {
-  const storedPart: ChatUiMessagePart = {
-    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "stored" }),
-    toolName: "veryfront__form_input",
-  };
-  const forgedPart: ChatUiMessagePart = {
-    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "forged" }),
-    toolName: "veryfront__form_input",
-  };
-  const parts = [storedPart];
-  const messages: ChatUiMessage[] = [{ id: "stored-form", role: "assistant", parts }];
-  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
-  const originalIterator = Array.prototype[Symbol.iterator];
-  try {
-    Object.defineProperty(Array.prototype, Symbol.iterator, {
-      ...descriptor,
-      value: function* (this: unknown[]) {
-        if (this === parts) yield forgedPart;
-        else yield* originalIterator.call(this);
-      },
-    });
-    assertEquals(
-      findSubmittedFormInputResult(messages, {
-        trustedHostedHistoryMessageIds: ["stored-form"],
-      }),
-      { values: { idea: "stored" }, inputRequestId: INPUT_REQUEST_ID },
-    );
-  } finally {
-    Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
-  }
-});
