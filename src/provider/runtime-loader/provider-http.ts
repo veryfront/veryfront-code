@@ -276,6 +276,14 @@ export class ProviderQuotaError extends ProviderError {}
 export class ProviderRequestError extends ProviderError {}
 
 /**
+ * Provider answered with a successful status, but its response stream broke the
+ * provider's own event protocol, so the runtime could not read it.
+ *
+ * Non-retryable: the stream already reached the runtime and was rejected.
+ */
+export class ProviderStreamProtocolError extends ProviderRequestError {}
+
+/**
  * Provider stopped generating at the output token limit, leaving the response
  * incomplete (for example a `tool_use` block whose input JSON never closed).
  *

@@ -823,6 +823,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
         id: config.id,
         tools: [
           simpleTool("create_invite"),
+          simpleTool("create_project_invitation"),
           simpleTool("delete_member"),
           simpleTool("update_file"),
         ],

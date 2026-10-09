@@ -9,6 +9,10 @@ import {
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  DEPENDENCY_PINNING_PROJECTS_ENV,
+  DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV,
+} from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { refreshLoggerConfig } from "#veryfront/utils/logger/logger.ts";
@@ -555,6 +559,73 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         assertEquals(metadataOperations, 0);
       } finally {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+    });
+
+    it("requires a pin only when the project is in the dependency pinning cohort", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const originalPercent = getHostEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
+      const originalProjects = getHostEnv(DEPENDENCY_PINNING_PROJECTS_ENV);
+      const builtCacheKeys: Array<string | undefined> = [];
+      setBrowserModuleBuilderForTesting((_path, options) => {
+        builtCacheKeys.push(options.dependencyPinningCacheKey);
+        return Promise.resolve({
+          source: "export default 1;",
+          contentHash: `content-${builtCacheKeys.length}`,
+          importMapHash: "import-map",
+          dependencyPinningCacheKey: "off",
+          dependencies: Object.freeze([]),
+          resolutionProbes: Object.freeze([]),
+        });
+      });
+      const requestModule = (projectId: string) =>
+        handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            dependencyPinningSource: {
+              projectDir: "/tmp/test-project",
+              projectId,
+              cacheNamespace: `rsc-module-cohort-${projectId}`,
+            },
+            req: new Request(
+              "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts",
+            ),
+          }),
+        );
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "0");
+        setEnv(DEPENDENCY_PINNING_PROJECTS_ENV, "in-cohort-project");
+
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+        assertEquals((await requestModule("flag-off-project"))?.status, 200);
+
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        assertEquals((await requestModule("out-of-cohort-project"))?.status, 200);
+
+        const inCohort = await requestModule("in-cohort-project");
+        assertEquals(inCohort?.status, 409);
+        assertEquals(inCohort?.headers.get("cache-control"), "no-store");
+
+        // A bare directory source carries no project id, which a partial
+        // rollout buckets out of the cohort, matching its flag-off snapshot.
+        const directorySource = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            dependencyPinningSource: "/tmp/test-project",
+            req: new Request(
+              "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts",
+            ),
+          }),
+        );
+        assertEquals(directorySource?.status, 200);
+
+        assertEquals(builtCacheKeys, ["off", "off", "off"]);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, originalPercent ?? "100");
+        setEnv(DEPENDENCY_PINNING_PROJECTS_ENV, originalProjects ?? "");
         clearReactVersionCache();
       }
     });
