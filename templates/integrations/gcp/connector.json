@@ -207,7 +207,7 @@
     {
       "id": "gcp__start_compute_instance",
       "name": "Start Compute Instance",
-      "description": "Start compute instance",
+      "description": "Request compute instance start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -237,7 +237,7 @@
     {
       "id": "gcp__stop_compute_instance",
       "name": "Stop Compute Instance",
-      "description": "Stop compute instance",
+      "description": "Request compute instance stop",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -264,7 +264,7 @@
     {
       "id": "google-cloud-storage__delete_object",
       "name": "Delete Object",
-      "description": "Delete object",
+      "description": "Permanently delete object",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

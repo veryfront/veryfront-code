@@ -82,7 +82,7 @@
     {
       "id": "apollo__search_organizations",
       "name": "Search Organizations",
-      "description": "Search organizations",
+      "description": "Search organizations (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -116,7 +116,7 @@
     {
       "id": "apollo__enrich_person",
       "name": "Enrich Person",
-      "description": "Enrich person",
+      "description": "Enrich person (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -163,7 +163,7 @@
     {
       "id": "apollo__enrich_organization",
       "name": "Enrich Organization",
-      "description": "Enrich organization",
+      "description": "Enrich organization (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "GET",

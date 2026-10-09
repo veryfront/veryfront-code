@@ -736,7 +736,7 @@
     {
       "id": "hubspot__remove_association",
       "name": "Remove Association",
-      "description": "Remove association",
+      "description": "Remove all associations between records",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

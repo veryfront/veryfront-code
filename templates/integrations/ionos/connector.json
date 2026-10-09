@@ -152,7 +152,7 @@
     {
       "id": "ionos__start_server",
       "name": "Start Server",
-      "description": "Start server",
+      "description": "Start Enterprise server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -176,7 +176,7 @@
     {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Hard power off server",
+      "description": "Hard poweroff server releases unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -224,7 +224,7 @@
     {
       "id": "ionos__get_request_status",
       "name": "Get Request Status",
-      "description": "Get request status",
+      "description": "Poll asynchronous request status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

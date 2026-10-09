@@ -117,7 +117,7 @@
     {
       "id": "assemblyai__delete_transcript",
       "name": "Delete Transcript",
-      "description": "Delete transcript",
+      "description": "Permanently delete transcript and data",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

@@ -236,7 +236,7 @@
     {
       "id": "google-bigquery__run_query",
       "name": "Run SQL Query",
-      "description": "Run SQL query",
+      "description": "Run SQL query (SELECT by default)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

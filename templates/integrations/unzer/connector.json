@@ -151,7 +151,7 @@
     {
       "id": "unzer__authorize_payment",
       "name": "Authorize Payment",
-      "description": "Authorize payment",
+      "description": "Authorize payment (approximately seven-day hold)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -205,7 +205,7 @@
     {
       "id": "sendcloud__cancel_shipment",
       "name": "Cancel Shipment",
-      "description": "Cancel shipment",
+      "description": "Cancel shipment before carrier collection",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

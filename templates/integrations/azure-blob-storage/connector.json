@@ -51,7 +51,7 @@
     {
       "id": "azure-blob-storage__list_containers",
       "name": "List Containers",
-      "description": "List containers",
+      "description": "List containers as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -86,7 +86,7 @@
     {
       "id": "azure-blob-storage__list_blobs",
       "name": "List Blobs",
-      "description": "List blobs",
+      "description": "List blobs as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

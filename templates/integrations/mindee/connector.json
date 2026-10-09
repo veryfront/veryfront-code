@@ -30,7 +30,7 @@
     {
       "id": "mindee__parse_invoice",
       "name": "Parse Invoice",
-      "description": "Parse invoice",
+      "description": "Parse invoice (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52,7 +52,7 @@
     {
       "id": "mindee__parse_receipt",
       "name": "Parse Receipt",
-      "description": "Parse receipt",
+      "description": "Parse receipt (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -74,7 +74,7 @@
     {
       "id": "mindee__parse_financial_document",
       "name": "Parse Financial Document",
-      "description": "Parse financial document",
+      "description": "Parse financial document (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -110,7 +110,7 @@
     {
       "id": "browserbase__release_session",
       "name": "Release Session",
-      "description": "Release session",
+      "description": "Request session release",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

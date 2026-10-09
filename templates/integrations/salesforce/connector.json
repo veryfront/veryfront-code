@@ -478,7 +478,7 @@
     {
       "id": "salesforce__run_soql_query",
       "name": "Run SOQL Query",
-      "description": "Run soql query",
+      "description": "Run read-only SOQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

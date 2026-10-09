@@ -170,7 +170,7 @@
     {
       "id": "fal__queue_cancel",
       "name": "Cancel Queue Request",
-      "description": "Cancel queue request",
+      "description": "Cancel pending queue request",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

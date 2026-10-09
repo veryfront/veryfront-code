@@ -132,7 +132,7 @@
     {
       "id": "azure-document-intelligence__get_analyze_result",
       "name": "Get Analyze Result",
-      "description": "Get analyze result",
+      "description": "Poll document analysis result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

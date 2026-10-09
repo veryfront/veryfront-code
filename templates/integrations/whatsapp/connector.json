@@ -180,7 +180,7 @@
     {
       "id": "whatsapp__get_media_url",
       "name": "Get Media URL",
-      "description": "Get media URL",
+      "description": "Get temporary media download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

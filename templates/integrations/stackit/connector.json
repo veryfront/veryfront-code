@@ -209,7 +209,7 @@
     {
       "id": "stackit__start_server",
       "name": "Start Server",
-      "description": "Start server",
+      "description": "Request server start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -239,7 +239,7 @@
     {
       "id": "stackit__stop_server",
       "name": "Stop Server",
-      "description": "Stop server without reducing charges",
+      "description": "Request server stop without reducing charges",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -269,7 +269,7 @@
     {
       "id": "stackit__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Request server reboot",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

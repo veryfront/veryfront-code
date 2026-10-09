@@ -293,7 +293,7 @@
     {
       "id": "drive__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Permanently delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -311,7 +311,7 @@
     {
       "id": "drive__download_file",
       "name": "Download File",
-      "description": "Download file",
+      "description": "Download non-Workspace file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

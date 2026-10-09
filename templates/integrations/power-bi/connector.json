@@ -147,7 +147,7 @@
     {
       "id": "power-bi__execute_dax_query",
       "name": "Execute DAX Query",
-      "description": "Execute dax query",
+      "description": "Run read-only DAX query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

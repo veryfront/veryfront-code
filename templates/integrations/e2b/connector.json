@@ -178,7 +178,7 @@
     {
       "id": "e2b__set_sandbox_timeout",
       "name": "Set Sandbox Timeout",
-      "description": "Set sandbox timeout",
+      "description": "Reset sandbox timeout",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

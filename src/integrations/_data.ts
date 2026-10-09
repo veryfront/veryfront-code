@@ -2286,7 +2286,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__search_organizations",
       "name": "Search Organizations",
-      "description": "Search organizations",
+      "description": "Search organizations (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2312,7 +2312,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__enrich_person",
       "name": "Enrich Person",
-      "description": "Enrich person",
+      "description": "Enrich person (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2338,7 +2338,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__enrich_organization",
       "name": "Enrich Organization",
-      "description": "Enrich organization",
+      "description": "Enrich organization (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "GET",
@@ -3409,7 +3409,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "assemblyai__delete_transcript",
       "name": "Delete Transcript",
-      "description": "Delete transcript",
+      "description": "Permanently delete transcript and data",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -4414,7 +4414,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "azure-blob-storage__list_containers",
       "name": "List Containers",
-      "description": "List containers",
+      "description": "List containers as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4449,7 +4449,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__list_blobs",
       "name": "List Blobs",
-      "description": "List blobs",
+      "description": "List blobs as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4892,7 +4892,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__get_analyze_result",
       "name": "Get Analyze Result",
-      "description": "Get analyze result",
+      "description": "Poll document analysis result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5187,7 +5187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__create_time_off_request",
       "name": "Create Time-Off Request",
-      "description": "Create time off request",
+      "description": "Request time off approval",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -8112,7 +8112,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__release_session",
       "name": "Release Session",
-      "description": "Release session",
+      "description": "Request session release",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12941,7 +12941,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__cancel_job_run",
       "name": "Cancel Job Run",
-      "description": "Cancel job run",
+      "description": "Request job run cancellation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13016,7 +13016,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__get_sql_statement",
       "name": "Get SQL Statement",
-      "description": "Get SQL statement",
+      "description": "Poll SQL statement status and result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14595,7 +14595,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__delete_droplet",
       "name": "Delete Droplet",
-      "description": "Delete droplet",
+      "description": "Permanently destroy droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -15893,7 +15893,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Permanently delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -15910,7 +15910,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__download_file",
       "name": "Download File",
-      "description": "Download file",
+      "description": "Download non-Workspace file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16187,7 +16187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__set_sandbox_timeout",
       "name": "Set Sandbox Timeout",
-      "description": "Set sandbox timeout",
+      "description": "Reset sandbox timeout",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16357,7 +16357,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "elevenlabs__text_to_speech",
       "name": "Text to Speech",
-      "description": "Generate speech",
+      "description": "Generate binary speech audio",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17054,7 +17054,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_cancel",
       "name": "Cancel Queue Request",
-      "description": "Cancel queue request",
+      "description": "Cancel pending queue request",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -19588,7 +19588,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__start_compute_instance",
       "name": "Start Compute Instance",
-      "description": "Start compute instance",
+      "description": "Request compute instance start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19618,7 +19618,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__stop_compute_instance",
       "name": "Stop Compute Instance",
-      "description": "Stop compute instance",
+      "description": "Request compute instance stop",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21719,7 +21719,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_email",
       "name": "Delete Email",
-      "description": "Delete email",
+      "description": "Permanently delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -21750,7 +21750,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__batch_delete_emails",
       "name": "Batch Delete Emails",
-      "description": "Batch delete emails",
+      "description": "Permanently delete multiple emails",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21880,7 +21880,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_thread",
       "name": "Delete Thread",
-      "description": "Delete thread",
+      "description": "Permanently delete thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -21969,7 +21969,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__update_draft",
       "name": "Update Draft",
-      "description": "Update draft",
+      "description": "Replace draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -22003,7 +22003,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_draft",
       "name": "Delete Draft",
-      "description": "Delete draft",
+      "description": "Permanently delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -23192,7 +23192,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__run_query",
       "name": "Run SQL Query",
-      "description": "Run SQL query",
+      "description": "Run SQL query (SELECT by default)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -23853,7 +23853,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__delete_object",
       "name": "Delete Object",
-      "description": "Delete object",
+      "description": "Permanently delete object",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -29274,7 +29274,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__remove_association",
       "name": "Remove Association",
-      "description": "Remove association",
+      "description": "Remove all associations between records",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -29946,7 +29946,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__start_server",
       "name": "Start Server",
-      "description": "Start server",
+      "description": "Start Enterprise server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29970,7 +29970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Hard power off server",
+      "description": "Hard poweroff server releases unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30018,7 +30018,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__get_request_status",
       "name": "Get Request Status",
-      "description": "Get request status",
+      "description": "Poll asynchronous request status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33657,7 +33657,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mindee__parse_invoice",
       "name": "Parse Invoice",
-      "description": "Parse invoice",
+      "description": "Parse invoice (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -33677,7 +33677,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mindee__parse_receipt",
       "name": "Parse Receipt",
-      "description": "Parse receipt",
+      "description": "Parse receipt (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -33697,7 +33697,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mindee__parse_financial_document",
       "name": "Parse Financial Document",
-      "description": "Parse financial document",
+      "description": "Parse financial document (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -43401,7 +43401,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__execute_dax_query",
       "name": "Execute DAX Query",
-      "description": "Execute dax query",
+      "description": "Run read-only DAX query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -47400,7 +47400,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__run_soql_query",
       "name": "Run SOQL Query",
-      "description": "Run soql query",
+      "description": "Run read-only SOQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48102,7 +48102,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__cancel_shipment",
       "name": "Cancel Shipment",
-      "description": "Cancel shipment",
+      "description": "Cancel shipment before carrier collection",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52008,7 +52008,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__delete_sprite",
       "name": "Destroy Sprite",
-      "description": "Destroy sprite",
+      "description": "Permanently destroy sprite and filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -52100,7 +52100,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__restore_checkpoint",
       "name": "Restore Checkpoint",
-      "description": "Restore checkpoint",
+      "description": "Replace sprite state with checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52841,7 +52841,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__start_server",
       "name": "Start Server",
-      "description": "Start server",
+      "description": "Request server start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52871,7 +52871,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__stop_server",
       "name": "Stop Server",
-      "description": "Stop server without reducing charges",
+      "description": "Request server stop without reducing charges",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52901,7 +52901,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__reboot_server",
       "name": "Reboot Server",
-      "description": "Reboot server",
+      "description": "Request server reboot",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56140,7 +56140,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__authorize_payment",
       "name": "Authorize Payment",
-      "description": "Authorize payment",
+      "description": "Authorize payment (approximately seven-day hold)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57359,7 +57359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__get_media_url",
       "name": "Get Media URL",
-      "description": "Get media URL",
+      "description": "Get temporary media download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

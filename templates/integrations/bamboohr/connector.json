@@ -166,7 +166,7 @@
     {
       "id": "bamboohr__create_time_off_request",
       "name": "Create Time-Off Request",
-      "description": "Create time off request",
+      "description": "Request time off approval",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

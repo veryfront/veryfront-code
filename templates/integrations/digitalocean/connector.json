@@ -182,7 +182,7 @@
     {
       "id": "digitalocean__delete_droplet",
       "name": "Delete Droplet",
-      "description": "Delete droplet",
+      "description": "Permanently destroy droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

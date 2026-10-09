@@ -534,7 +534,7 @@
     {
       "id": "gmail__delete_email",
       "name": "Delete Email",
-      "description": "Delete email",
+      "description": "Permanently delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -577,7 +577,7 @@
     {
       "id": "gmail__batch_delete_emails",
       "name": "Batch Delete Emails",
-      "description": "Batch delete emails",
+      "description": "Permanently delete multiple emails",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -746,7 +746,7 @@
     {
       "id": "gmail__delete_thread",
       "name": "Delete Thread",
-      "description": "Delete thread",
+      "description": "Permanently delete thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -861,7 +861,7 @@
     {
       "id": "gmail__update_draft",
       "name": "Update Draft",
-      "description": "Update draft",
+      "description": "Replace draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -903,7 +903,7 @@
     {
       "id": "gmail__delete_draft",
       "name": "Delete Draft",
-      "description": "Delete draft",
+      "description": "Permanently delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

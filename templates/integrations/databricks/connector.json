@@ -247,7 +247,7 @@
     {
       "id": "databricks__cancel_job_run",
       "name": "Cancel Job Run",
-      "description": "Cancel job run",
+      "description": "Request job run cancellation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -321,7 +321,7 @@
     {
       "id": "databricks__get_sql_statement",
       "name": "Get SQL Statement",
-      "description": "Get SQL statement",
+      "description": "Poll SQL statement status and result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

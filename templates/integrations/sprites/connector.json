@@ -98,7 +98,7 @@
     {
       "id": "sprites__delete_sprite",
       "name": "Destroy Sprite",
-      "description": "Destroy sprite",
+      "description": "Permanently destroy sprite and filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -192,7 +192,7 @@
     {
       "id": "sprites__restore_checkpoint",
       "name": "Restore Checkpoint",
-      "description": "Restore checkpoint",
+      "description": "Replace sprite state with checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
