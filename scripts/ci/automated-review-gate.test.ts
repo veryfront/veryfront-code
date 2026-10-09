@@ -271,7 +271,13 @@ describe("automated review evidence", () => {
     const evidence = (value: string) => ({ reviews: [], comments: [codexReviewSummary({ body: value })], reactions: [codexCompletionReaction()] });
     const resolveHead = () => Promise.resolve(HEAD);
     assertEquals((await findAutomatedReview(evidence(body), HEAD, resolveHead))?.source, "codex-summary");
+    assertEquals((await findAutomatedReview(
+      evidence(body.replace(`"headSha":"${HEAD}"`, `"headSha":"${HEAD.toUpperCase()}"`)),
+      HEAD, resolveHead,
+    ))?.source, "codex-summary");
     for (const invalid of [
+      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:11:43Z")),
+      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:32:44Z")),
       body.replace(metadata, "<!-- codex-security-review:v1 malformed -->"),
       body.replace(`"headSha":"${HEAD}"`, `"headSha":"${"f".repeat(40)}"`),
       body.replace('"status":"completed"', '"status":"pending"'),

@@ -11,6 +11,8 @@ const CODEX_REVIEW_SUMMARY_MARKER =
   "<!-- codex-pull-request-review-summary -->";
 const CODEX_REVIEW_SUMMARY_ROW =
   /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
+const CODEX_SECURITY_SUMMARY_ROW =
+  /^\| 🔒 \*\*Security Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 // The review bot bills the code review and the optional security review against
@@ -205,9 +207,7 @@ function parseCompletedCodexSummary(comment) {
   let endOfRows = 9;
   let securityCompletedAt;
   if (securityMetadata) {
-    const securityRow = CODEX_REVIEW_SUMMARY_ROW.exec(
-      (lines[9] ?? "").replace("🔒 **Security Review**", "📝 **Code Review**"),
-    );
+    const securityRow = CODEX_SECURITY_SUMMARY_ROW.exec(lines[9] ?? "");
     if (
       !lines[9]?.startsWith("| 🔒 **Security Review** |") ||
       !securityRow || securityRow[1] !== securityRow[2] ||
