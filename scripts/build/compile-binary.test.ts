@@ -548,6 +548,7 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
       'memory_limit="${PROXY_MEMORY_LIMIT:-1536m}"',
       'attempts="${PROXY_MEMORY_ATTEMPTS:-3}"',
       'container_platform="${PROXY_MEMORY_PLATFORM:-}"',
+      'container_image="${PROXY_MEMORY_IMAGE:-mirror.gcr.io/library/debian:trixie-slim}"',
       '--memory "$memory_limit"',
       "{{.State.OOMKilled}}",
       '"/_proxy/health"',
