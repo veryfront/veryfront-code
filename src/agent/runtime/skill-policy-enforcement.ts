@@ -1,6 +1,7 @@
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { slicePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   JSON_VALUE_MAX_SERIALIZED_BYTES,
   JSON_VALUE_MAX_STRING_BYTES,
@@ -208,7 +209,7 @@ function withPolicyMetadata<TMessage extends Message>(
   };
   delete metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
   if (toolCallIds.length > 0) {
-    metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY] = [...toolCallIds];
+    metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY] = slicePrivateArray(toolCallIds);
   }
   let nextMessage = {
     ...message,

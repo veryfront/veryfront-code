@@ -324,10 +324,18 @@ export function findSubmittedFormInputResult(
   forEachPrivateArray(ids, (id) => {
     if (typeof id === "string") trustedIds.set(id, true);
   });
-  const sources = createPrivateMap<string, ChatUiMessage | null>();
+  const sourceCounts = createPrivateMap<string, number>();
   forEachPrivateArray(messages, (message) => {
-    if (message.role !== "assistant" || !trustedIds.has(message.id)) return;
-    sources.set(message.id, sources.has(message.id) ? null : message);
+    if (!trustedIds.has(message.id)) return;
+    sourceCounts.set(message.id, (sourceCounts.get(message.id) ?? 0) + 1);
+  });
+  const sources = createPrivateMap<string, ChatUiMessage>();
+  forEachPrivateArray(messages, (message) => {
+    if (
+      message.role !== "assistant" || !trustedIds.has(message.id) ||
+      sourceCounts.get(message.id) !== 1
+    ) return;
+    sources.set(message.id, message);
   });
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
