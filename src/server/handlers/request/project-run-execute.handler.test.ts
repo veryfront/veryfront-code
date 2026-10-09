@@ -62,6 +62,16 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
+function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (
+    headers === undefined || typeof headers !== "object" || Array.isArray(headers) ||
+    headers instanceof Headers || !Object.hasOwn(headers, name)
+  ) {
+    return undefined;
+  }
+  return headers[name];
+}
+
 async function expectedReportArtifact(report: EvalReport, sourcePath: string, path = sourcePath) {
   const content = `${JSON.stringify({ ...report, reportPath: sourcePath }, null, 2)}\n`;
   return {
@@ -9739,7 +9749,9 @@ describe("project run inference credential header", () => {
       event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
     );
     assertEquals(errors.length, 1);
-    const value = errors[0].value as Record<string, unknown>;
+    const error = errors[0];
+    assertExists(error);
+    const value = error.value as Record<string, unknown>;
     assertEquals(value.message, wireError.error);
     assertEquals(value.code, wireError.code);
     assertEquals(typeof value.messageId, "string");
@@ -13267,9 +13279,8 @@ describe("project run control-plane Authorization", () => {
 
     const result = await withMockFetch(
       ((input: string | URL | Request, init?: RequestInit) => {
-        const headers = init?.headers as Record<string, string> | undefined;
         authorizations.push(
-          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+          ownHeaderValue(observeFetchRequestInit(init).headers, "authorization"),
         );
         return recorder.fetch(input, init);
       }) as typeof fetch,
