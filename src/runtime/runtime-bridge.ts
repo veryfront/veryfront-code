@@ -1,9 +1,15 @@
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  joinPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import { throwIfAbortSignalAborted } from "#veryfront/platform/compat/abort-signal.ts";
 /**
  * Runtime Bridge
  *
@@ -64,6 +70,7 @@ const ArrayIsArray = Array.isArray;
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const logger = serverLogger.component("runtime-bridge");
 
 type GenerateTextOptions = {
@@ -788,7 +795,7 @@ function matchesPersistedProviderOptions(input: unknown, persisted: unknown): bo
 function hasUnsupportedExactCapturePromptProviderOptions(
   directOptions: DirectModelOptions,
 ): boolean {
-  return directOptions.prompt.some((message) => {
+  return somePrivateArray(directOptions.prompt, (message) => {
     if (message.role !== "system" || message.providerOptions === undefined) return false;
     const persisted = sanitizePersistedProviderOptions(message.providerOptions);
     return !matchesPersistedProviderOptions(message.providerOptions, persisted);
@@ -798,7 +805,7 @@ function hasUnsupportedExactCapturePromptProviderOptions(
 function hasUnsupportedExactCaptureAssistantProviderMetadata(
   directOptions: DirectModelOptions,
 ): boolean {
-  return directOptions.prompt.some((message) => {
+  return somePrivateArray(directOptions.prompt, (message) => {
     return message.role === "assistant" && message.providerMetadata !== undefined;
   });
 }
@@ -806,23 +813,28 @@ function hasUnsupportedExactCaptureAssistantProviderMetadata(
 function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
-  const unsupportedControls = [
-    "toolChoice",
-    "headers",
-    "providerOptions",
-    "responseFormat",
-    "includeRawChunks",
-  ].filter((field) => directOptions[field] !== undefined);
+  const unsupportedControls: string[] = [];
+  for (
+    const field of [
+      "toolChoice",
+      "headers",
+      "providerOptions",
+      "responseFormat",
+      "includeRawChunks",
+    ] as const
+  ) {
+    if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
+  }
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
-    unsupportedControls.push("system.providerOptions");
+    pushPrivateArray(unsupportedControls, "system.providerOptions");
   }
   if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
-    unsupportedControls.push("assistant.providerMetadata");
+    pushPrivateArray(unsupportedControls, "assistant.providerMetadata");
   }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(
     `Exact model call capture does not support these provider controls: ${
-      unsupportedControls.join(", ")
+      joinPrivateArray(unsupportedControls, ", ")
     }`,
   );
 }
@@ -869,7 +881,7 @@ async function emitModelCallContextEvent(
   };
 
   const assertActive = () => {
-    options.abortSignal?.throwIfAborted();
+    if (options.abortSignal) throwIfAbortSignalAborted(options.abortSignal);
     writerBinding?.assertActive();
   };
 
@@ -1266,7 +1278,7 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
   const type = read("type", true);
   if (typeof type !== "string") return { type };
 
-  if (type.startsWith("data-")) {
+  if (ReflectApply(StringPrototypeStartsWith, type, ["data-"]) === true) {
     return { type, data: materializeProviderJsonField(read("data")) };
   }
 

@@ -2,8 +2,16 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import {
+  appendPrivateArray,
+  mapPrivateArray,
+  slicePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import {
   addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
   removeAbortSignalListener,
+  throwIfAbortSignalAborted,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import {
   IntrinsicPromise,
@@ -28,6 +36,10 @@ import {
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
 const numberIsFinite = Number.isFinite;
+const ArrayIsArray = Array.isArray;
+const ReflectApply = Reflect.apply;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeSlice = String.prototype.slice;
 
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
 const persistenceTails = createPrivateWeakStore<
@@ -86,7 +98,7 @@ async function serializePersistence<T>(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
@@ -98,6 +110,14 @@ function getUtf8ByteLength(value: string): number {
   return utf8Encoder.encode(value).byteLength;
 }
 
+function stringCharCodeAt(value: string, index: number): number {
+  return ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
 /** Clamp to a UTF-8 byte budget without splitting a surrogate pair. */
 function truncateTextToBytes(value: string, maxBytes: number): string {
   if (getUtf8ByteLength(value) <= maxBytes) return value;
@@ -106,22 +126,25 @@ function truncateTextToBytes(value: string, maxBytes: number): string {
   let high = value.length;
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (getUtf8ByteLength(value.slice(0, mid)) <= budget) low = mid;
+    if (getUtf8ByteLength(stringSlice(value, 0, mid)) <= budget) low = mid;
     else high = mid - 1;
   }
   // Never cut between a surrogate pair; step back onto a whole code point.
-  const end = low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1] ?? "") ? low - 1 : low;
-  return `${value.slice(0, end)}${TRUNCATED_TEXT_SUFFIX}`;
+  const previous = low > 0 ? stringCharCodeAt(value, low - 1) : -1;
+  const end = previous >= 0xd800 && previous <= 0xdbff ? low - 1 : low;
+  return `${stringSlice(value, 0, end)}${TRUNCATED_TEXT_SUFFIX}`;
 }
 
 function truncateMessageTextParts(message: unknown, maxTextBytes: number): unknown {
-  if (!isRecord(message) || !Array.isArray(message.content)) return message;
+  if (!isRecord(message) || !ArrayIsArray(message.content)) return message;
   return {
     ...message,
-    content: message.content.map((part) =>
-      isRecord(part) && typeof part.text === "string"
-        ? { ...part, text: truncateTextToBytes(part.text, maxTextBytes) }
-        : part
+    content: mapPrivateArray(
+      message.content,
+      (part) =>
+        isRecord(part) && typeof part.text === "string"
+          ? { ...part, text: truncateTextToBytes(part.text, maxTextBytes) }
+          : part,
     ),
   };
 }
@@ -162,24 +185,28 @@ function truncatePrivateRunEventToLimit(
   event: Record<string, unknown>,
   originalByteLength: number,
 ): { event: Record<string, unknown>; omittedMessageCount: number } {
-  const messages = Array.isArray(event.messages) ? event.messages : [];
-  const tools = Array.isArray(event.tools) ? event.tools : undefined;
+  const messages = ArrayIsArray(event.messages) ? event.messages : [];
+  const tools = ArrayIsArray(event.tools) ? event.tools : undefined;
 
   const build = (
     kept: unknown[],
     omittedMessageCount: number,
     keepTools: boolean,
-  ): Record<string, unknown> => ({
-    type: event.type,
-    // Clamped legacy audit records cannot acknowledge complete prepared input.
-    // Deliberately exclude modelCallId so they cannot issue a capture receipt.
-    ...(event.model === undefined ? {} : { model: event.model }),
-    ...(event.request === undefined ? {} : { request: event.request }),
-    messages: [buildTruncationNotice({ originalByteLength, omittedMessageCount }), ...kept],
-    ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
-    ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
-    ...(event.emittedAt === undefined ? {} : { emittedAt: event.emittedAt }),
-  });
+  ): Record<string, unknown> => {
+    const builtMessages = [buildTruncationNotice({ originalByteLength, omittedMessageCount })];
+    appendPrivateArray(builtMessages, kept);
+    return {
+      type: event.type,
+      // Clamped legacy audit records cannot acknowledge complete prepared input.
+      // Deliberately exclude modelCallId so they cannot issue a capture receipt.
+      ...(event.model === undefined ? {} : { model: event.model }),
+      ...(event.request === undefined ? {} : { request: event.request }),
+      messages: builtMessages,
+      ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
+      ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
+      ...(event.emittedAt === undefined ? {} : { emittedAt: event.emittedAt }),
+    };
+  };
 
   const fits = (candidate: Record<string, unknown>): boolean =>
     getPrivateRunEventAppendRequestByteLength(candidate) <=
@@ -192,7 +219,7 @@ function truncatePrivateRunEventToLimit(
     maxTextBytes = Math.floor(maxTextBytes / 4)
   ) {
     const candidate = build(
-      messages.map((message) => truncateMessageTextParts(message, maxTextBytes)),
+      mapPrivateArray(messages, (message) => truncateMessageTextParts(message, maxTextBytes)),
       0,
       true,
     );
@@ -200,9 +227,9 @@ function truncatePrivateRunEventToLimit(
   }
 
   // Still over: drop the oldest messages, keeping the most recent ones.
-  const clamped = messages.map((message) => truncateMessageTextParts(message, 256));
+  const clamped = mapPrivateArray(messages, (message) => truncateMessageTextParts(message, 256));
   for (let keep = Math.min(clamped.length, 8); keep >= 1; keep--) {
-    const candidate = build(clamped.slice(-keep), clamped.length - keep, true);
+    const candidate = build(slicePrivateArray(clamped, -keep), clamped.length - keep, true);
     if (fits(candidate)) return { event: candidate, omittedMessageCount: clamped.length - keep };
   }
 
@@ -270,7 +297,8 @@ function buildOversizeError(
 }
 
 function getAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+  return getAbortSignalReason(signal) ??
+    new DOMException("This operation was aborted", "AbortError");
 }
 
 async function withPersistenceDeadline<T>(input: {
@@ -278,7 +306,9 @@ async function withPersistenceDeadline<T>(input: {
   abortSignal?: AbortSignal;
   timeoutMs: number;
 }): Promise<T> {
-  if (input.abortSignal?.aborted) throw getAbortReason(input.abortSignal);
+  if (input.abortSignal && isAbortSignalAborted(input.abortSignal)) {
+    throw getAbortReason(input.abortSignal);
+  }
   const controller = new AbortController();
   const timeoutError = new DurableRunEventPersistenceError(
     "Durable run event persistence timed out",
@@ -287,7 +317,7 @@ async function withPersistenceDeadline<T>(input: {
   const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
   if (input.abortSignal) addAbortSignalListenerOnce(input.abortSignal, onCallerAbort);
   let rejectAbort: (reason: unknown) => void = () => {};
-  const onAbort = () => rejectAbort(controller.signal.reason);
+  const onAbort = () => rejectAbort(getAbortReason(controller.signal));
   const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
     rejectAbort = reject;
     addAbortSignalListenerOnce(controller.signal, onAbort);
@@ -335,7 +365,7 @@ export function createDurableRunEventSink(input: {
               );
             }
             await input.mirror.appendEvents([{ ...persistableEvent }]);
-            abortSignal.throwIfAborted();
+            throwIfAbortSignalAborted(abortSignal);
             assertDrained(
               await input.mirror.flush({
                 abortSignal,

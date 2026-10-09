@@ -53,7 +53,7 @@ function mirror(input: {
       appended.push(events);
       await input.append?.(events);
     },
-    flush: input.flush ?? (async () => snapshot()),
+    flush: input.flush ?? (() => Promise.resolve(snapshot())),
     takeModelCallCaptureReceipt: input.capture,
     getSnapshot: () => snapshot(),
     dispose: () => {
@@ -146,6 +146,45 @@ describe("agent/hosted/durable-run-event-sink", () => {
     }]);
   });
 
+  it("preserves required context arrays when project code replaces Array.isArray", async () => {
+    const receipt = {
+      eventId: "9007199254740993",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "22222222-2222-4222-8222-222222222222",
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+    };
+    const target = mirror({
+      capture(id) {
+        assertEquals(id, receipt.modelCallId);
+        return receipt;
+      },
+    });
+    const originalIsArray = Array.isArray;
+    try {
+      Array.isArray = () => false;
+      const acknowledged = await createDurableRunEventSink({ mirror: target.result })({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: receipt.modelCallId,
+        messages: [{ role: "system", content: "record this context" }],
+        tools: [{ type: "function", name: "search", inputSchema: { type: "object" } }],
+      });
+      assertEquals(acknowledged, receipt);
+    } finally {
+      Array.isArray = originalIsArray;
+    }
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.messages, [{
+      role: "system",
+      content: "record this context",
+    }]);
+    assertEquals(persisted.tools, [{
+      type: "function",
+      name: "search",
+      inputSchema: { type: "object" },
+    }]);
+  });
+
   it("returns the exact capture receipt after flushing and never derives it from the cursor", async () => {
     const receipt = {
       eventId: "9007199254740993",
@@ -155,9 +194,9 @@ describe("agent/hosted/durable-run-event-sink", () => {
     };
     const order: string[] = [];
     const target = mirror({
-      flush: async () => {
+      flush: () => {
         order.push("flush");
-        return snapshot({ latestEventId: 9 });
+        return Promise.resolve(snapshot({ latestEventId: 9 }));
       },
       capture(id) {
         order.push("receipt");
@@ -273,9 +312,9 @@ describe("agent/hosted/durable-run-event-sink", () => {
           order.push("append");
           await target.result.appendEvents(events);
         },
-        flush: async () => {
+        flush: () => {
           order.push("flush");
-          return snapshot();
+          return Promise.resolve(snapshot());
         },
       },
     });
@@ -482,6 +521,66 @@ describe("agent/hosted/durable-run-event-sink", () => {
     );
   });
 
+  it("truncates oversized context with captured array and text intrinsics", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "text",
+          text: `${"x".repeat(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)}😀`,
+        }],
+      }],
+    } as unknown as Parameters<ReturnType<typeof createDurableRunEventSink>>[0];
+    const arrayMap = Array.prototype.map;
+    const stringSlice = String.prototype.slice;
+    const stringCharCodeAt = String.prototype.charCodeAt;
+    const regexpTest = RegExp.prototype.test;
+    try {
+      Array.prototype.map = function <T>(): T[] {
+        throw new Error("patched map");
+      };
+      String.prototype.slice = function (): string {
+        throw new Error("patched slice");
+      };
+      String.prototype.charCodeAt = function (): number {
+        throw new Error("patched charCodeAt");
+      };
+      RegExp.prototype.test = function (): boolean {
+        return false;
+      };
+      await assertRejects(
+        async () => await sink(event),
+        DurableRunEventPersistenceError,
+        "truncated",
+      );
+    } finally {
+      Array.prototype.map = arrayMap;
+      String.prototype.slice = stringSlice;
+      String.prototype.charCodeAt = stringCharCodeAt;
+      RegExp.prototype.test = regexpTest;
+    }
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(isPrivateConversationRunEvent(persisted), true);
+    const messages = persisted.messages as Array<Record<string, unknown>>;
+    const content = messages[1]?.content as Array<Record<string, unknown>> | undefined;
+    const text = content?.[0]?.text;
+    if (typeof text !== "string") throw new Error("expected truncated text");
+    const suffix = "… [truncated]";
+    assertEquals(text.endsWith(suffix), true);
+    const prefix = text.slice(0, -suffix.length);
+    const lastCodeUnit = prefix.charCodeAt(prefix.length - 1);
+    assertEquals(
+      lastCodeUnit < 0xd800 || lastCodeUnit > 0xdbff,
+      true,
+      "truncation must not leave a dangling high surrogate before the suffix",
+    );
+    assertEquals(target.isDisposed(), false);
+  });
+
   it("explains the refusal in terms an operator can act on", async () => {
     const target = mirror();
     const error = await assertRejects(
@@ -561,10 +660,10 @@ describe("agent/hosted/durable-run-event-sink", () => {
         }
         pendingEventCount += events.length;
       },
-      flush: async () => {
+      flush: () => {
         order.push("flush");
         pendingEventCount = 0;
-        return getSnapshot();
+        return Promise.resolve(getSnapshot());
       },
       getSnapshot,
       dispose: () => {},
@@ -664,7 +763,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     // sink must wind down as a cancellation instead of raising
     // "Required durable run event mirror is disabled: run_terminal".
     const target = mirror({
-      flush: async () => snapshot({ disabled: true, disableReason: "run_terminal" }),
+      flush: () => Promise.resolve(snapshot({ disabled: true, disableReason: "run_terminal" })),
     });
     const error = await assertRejects(
       async () =>
@@ -708,7 +807,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
         secondAppendCount += 1;
         throw new Error("second append failed");
       },
-      flush: async () => snapshot(),
+      flush: () => Promise.resolve(snapshot()),
       getSnapshot: () => snapshot(),
       dispose: () => {},
     };
@@ -747,9 +846,9 @@ describe("agent/hosted/durable-run-event-sink", () => {
 
     const oversized = mirror();
     let dispatches = 0;
-    const model = createGenerateModel("test", "test/oversized-context", async () => {
+    const model = createGenerateModel("test", "test/oversized-context", () => {
       dispatches += 1;
-      return { content: [], finishReason: "stop", usage: {} };
+      return Promise.resolve({ content: [], finishReason: "stop", usage: {} });
     });
     await assertRejects(
       async () =>
@@ -803,8 +902,88 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(target.isDisposed(), true);
   });
 
+  it("preserves abort state and reasons when AbortSignal methods are replaced", async () => {
+    const abortedBeforeAppend = new AbortController();
+    const beforeReason = new Error("caller cancelled before append");
+    abortedBeforeAppend.abort(beforeReason);
+    const abortedDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!;
+    const reasonDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason")!;
+    const throwIfAborted = AbortSignal.prototype.throwIfAborted;
+    try {
+      Object.defineProperty(AbortSignal.prototype, "aborted", {
+        configurable: true,
+        get() {
+          throw new Error("patched aborted getter");
+        },
+      });
+      Object.defineProperty(AbortSignal.prototype, "reason", {
+        configurable: true,
+        get() {
+          throw new Error("patched reason getter");
+        },
+      });
+      AbortSignal.prototype.throwIfAborted = function () {
+        throw new Error("patched throwIfAborted");
+      };
+
+      await assertRejects(
+        async () =>
+          await createDurableRunEventSink({
+            mirror: mirror().result,
+            abortSignal: abortedBeforeAppend.signal,
+          })({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            messages: [],
+          }),
+        Error,
+        "caller cancelled before append",
+      );
+    } finally {
+      Object.defineProperty(AbortSignal.prototype, "aborted", abortedDescriptor);
+      Object.defineProperty(AbortSignal.prototype, "reason", reasonDescriptor);
+      AbortSignal.prototype.throwIfAborted = throwIfAborted;
+    }
+
+    const abortedDuringAppend = new AbortController();
+    const duringReason = new Error("caller cancelled during append");
+    const target = mirror({
+      append: () => {
+        abortedDuringAppend.abort(duringReason);
+        return Promise.resolve();
+      },
+    });
+    try {
+      Object.defineProperty(AbortSignal.prototype, "reason", {
+        configurable: true,
+        get() {
+          throw new Error("patched reason getter");
+        },
+      });
+      AbortSignal.prototype.throwIfAborted = function () {
+        throw new Error("patched throwIfAborted");
+      };
+
+      await assertRejects(
+        async () =>
+          await createDurableRunEventSink({
+            mirror: target.result,
+            abortSignal: abortedDuringAppend.signal,
+          })({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            messages: [],
+          }),
+        Error,
+        "caller cancelled during append",
+      );
+    } finally {
+      Object.defineProperty(AbortSignal.prototype, "reason", reasonDescriptor);
+      AbortSignal.prototype.throwIfAborted = throwIfAborted;
+    }
+    assertEquals(target.isDisposed(), true);
+  });
+
   it("fails closed when the post-append flush leaves events pending", async () => {
-    const target = mirror({ flush: async () => snapshot({ pendingEventCount: 1 }) });
+    const target = mirror({ flush: () => Promise.resolve(snapshot({ pendingEventCount: 1 })) });
 
     await assertRejects(
       async () =>
@@ -825,7 +1004,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
   });
 
   it("fails closed when the post-append flush leaves a retry timer armed", async () => {
-    const target = mirror({ flush: async () => snapshot({ hasRetryTimer: true }) });
+    const target = mirror({ flush: () => Promise.resolve(snapshot({ hasRetryTimer: true })) });
 
     await assertRejects(
       async () =>
@@ -854,9 +1033,9 @@ describe("agent/hosted/durable-run-event-sink", () => {
         await createDurableRunEventSink({
           mirror: {
             ...target.result,
-            flush: async () => {
+            flush: () => {
               flushCount += 1;
-              return snapshot();
+              return Promise.resolve(snapshot());
             },
             getSnapshot: () => snapshot({ inFlight: flushCount > 0 }),
             dispose: () => {

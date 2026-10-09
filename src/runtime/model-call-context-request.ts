@@ -15,6 +15,11 @@ import {
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudProviderRouting,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  everyPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import type { ModelCallRequest } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">;
@@ -27,6 +32,17 @@ type ModelCallRequestSource =
 const ReflectApply = Reflect.apply;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpPrototypeTest, pattern, [value]) as boolean;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
 
 function readOwnEnumerableDataDescriptor(
   value: unknown,
@@ -57,7 +73,7 @@ function readProviderControl(
   for (const name of [resolveModelCallProtocol(model), provider, model.provider ?? provider]) {
     if (!name) continue;
     const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
-    if (Array.isArray(bucket)) continue;
+    if (ArrayIsArray(bucket)) continue;
     selected = readOwnEnumerableDataDescriptor(bucket, key) ?? selected;
   }
   return selected;
@@ -68,8 +84,8 @@ function numberControl(value: unknown): number | undefined {
 }
 
 function stopControl(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? [...value]
+  return ArrayIsArray(value) && everyPrivateArray(value, (item) => typeof item === "string")
+    ? slicePrivateArray(value)
     : undefined;
 }
 
@@ -94,9 +110,11 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  const usesHostedTool =
-    options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai.")) ===
-      true;
+  const usesHostedTool = ArrayIsArray(options.tools) &&
+    somePrivateArray(
+      options.tools,
+      (tool) => tool.type === "provider" && stringStartsWith(tool.id, "openai."),
+    );
   const built = readVeryfrontCloudModelFacts(model);
   if (built) {
     if (built.transportPlan.pinned) return built.transportPlan.transport;
@@ -142,7 +160,7 @@ function resolvePersistedControls(
   // Native reasoning is merged after neutral sampling is filtered.
   const dropSampling = resolveOpenAINeutralReasoning(model, options)?.enabled === true ||
     (typeof model.modelId === "string" && (rejectsOpenAISamplingParams(model.modelId) ||
-      (transport !== "responses" && /^kimi-k2\.5/.test(model.modelId))));
+      (transport !== "responses" && regexpTest(/^kimi-k2\.5/, model.modelId))));
   const effective = {
     ...options,
     topK: numberControl(providerOptions.top_k),
@@ -211,7 +229,7 @@ function resolveAnthropicControls(
   effective.stopSequences = stops
     ? stopControl(stops.value)
     : options.stopSequences?.length
-    ? options.stopSequences.slice(0, 4)
+    ? slicePrivateArray(options.stopSequences, 0, 4)
     : undefined;
   // maxOutputTokens remains the neutral output budget, independent of the
   // provider's combined output/thinking max_tokens allowance.
@@ -265,7 +283,9 @@ function buildModelCallRequest(
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.topP !== undefined ? { topP: options.topP } : {}),
     ...(options.topK !== undefined ? { topK: options.topK } : {}),
-    ...(options.stopSequences !== undefined ? { stopSequences: [...options.stopSequences] } : {}),
+    ...(options.stopSequences !== undefined
+      ? { stopSequences: slicePrivateArray(options.stopSequences) }
+      : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
     ...(options.frequencyPenalty !== undefined
@@ -349,9 +369,11 @@ function suppressOpenAIFunctionToolReasoning(
     const providerOptions = openAIProviderOptions(model, options);
     const tools = ObjectHasOwn(providerOptions, "tools") ? providerOptions.tools : options.tools;
     if (
-      Array.isArray(tools) &&
-      tools.some((tool) =>
-        tool !== null && typeof tool === "object" && "type" in tool && tool.type === "function"
+      ArrayIsArray(tools) &&
+      somePrivateArray(
+        tools,
+        (tool) =>
+          tool !== null && typeof tool === "object" && "type" in tool && tool.type === "function",
       )
     ) {
       return true;
@@ -385,7 +407,7 @@ function resolveNonOpenAIReasoning(
   }
 
   const thinking = readProviderControl(model, options, "thinking")?.value;
-  if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
+  if (!thinking || typeof thinking !== "object" || ArrayIsArray(thinking)) {
     return options.reasoning;
   }
   const thinkingType = readOwnEnumerableDataDescriptor(thinking, "type")?.value;
@@ -410,7 +432,7 @@ function resolveNonOpenAIReasoning(
   const outputConfig = options.responseFormat?.type === "json_schema"
     ? undefined
     : readProviderControl(model, options, "output_config")?.value;
-  const effort = outputConfig && typeof outputConfig === "object" && !Array.isArray(outputConfig)
+  const effort = outputConfig && typeof outputConfig === "object" && !ArrayIsArray(outputConfig)
     ? readOwnEnumerableDataDescriptor(outputConfig, "effort")?.value
     : undefined;
   return {

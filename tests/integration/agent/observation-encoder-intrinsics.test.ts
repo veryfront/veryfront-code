@@ -6,10 +6,25 @@ import {
   createConversationRunEventQueueController,
 } from "#veryfront/agent/conversation/durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
+import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import {
+  registerVeryfrontCloudModelFacts,
+  type VeryfrontCloudModelFacts,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
+import { createGenerateModel } from "#veryfront/runtime/runtime-bridge.test-helpers.ts";
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   createAgUiEncoderState,
+  finalizeAgUiEvents,
   mapRuntimeStreamEventToAgUiEvents,
   stampAgUiEventTiming,
 } from "#veryfront/agent/ag-ui/encoder.ts";
@@ -20,6 +35,7 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "#veryfront/agent/conversation/run-event-normalization.ts";
+import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 
 const projectRunParentRunId = "run_parent";
 const projectRunParentProjectId = "project_parent";
@@ -27,6 +43,16 @@ const projectRunParentAttempt = {
   canonicalRunId: "11111111-1111-4111-8111-111111111111",
   attemptId: "attempt",
   workerId: "worker",
+};
+const modelRequestPrompt: ModelRuntimeCallOptions["prompt"] = [{
+  role: "user",
+  content: [{ type: "text", text: "Synthetic request" }],
+}];
+const modelRequestSampling = {
+  temperature: 0.4,
+  topP: 0.8,
+  presencePenalty: 0.3,
+  frequencyPenalty: 0.1,
 };
 
 function projectRunParentToken(override: Record<string, unknown> = {}): string {
@@ -43,6 +69,37 @@ function projectRunParentToken(override: Record<string, unknown> = {}): string {
 function requestBodyFrom(init: unknown): string {
   if (typeof init === "object" && init !== null && "body" in init) return String(init.body);
   return "";
+}
+
+function registerVeryfrontCloudTestModel(
+  model: ReturnType<typeof createGenerateModel>,
+): ReturnType<typeof createGenerateModel> {
+  const facts = {
+    provider: "openai",
+    surface: "openai",
+    native: true,
+    transportPlan: { transport: "chat-completions", pinned: true },
+  } satisfies VeryfrontCloudModelFacts;
+  registerVeryfrontCloudModelFacts(model, () => facts);
+  return model;
+}
+
+function bindTestRuntimeObservationWriter(input: {
+  sink: AgentRunEventSink;
+  runId: string;
+  canonicalRunId: string;
+  projectId: string;
+}) {
+  bindRuntimeObservationWriterCapability(
+    input.sink,
+    createRuntimeObservationWriterCapability({
+      scope: {
+        runId: input.runId,
+        canonicalRunId: input.canonicalRunId,
+        projectId: input.projectId,
+      },
+    }),
+  );
 }
 
 describe("project run parent private intrinsics", () => {
@@ -244,15 +301,22 @@ describe("observation encoder private intrinsics", () => {
     });
   }
 
-  it("preserves custom observations when project code replaces string methods", () => {
+  it("preserves custom observations when project code replaces string and array methods", () => {
     const startsWith = String.prototype.startsWith;
     const slice = String.prototype.slice;
+    const isArray = Array.isArray;
     let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     try {
       String.prototype.startsWith = () => false;
       String.prototype.slice = () => "";
+      Array.isArray = () => true;
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "data",
+        data: { model: "hosted/exact-model" },
+      });
       events = mapRuntimeStreamEventToAgUiEvents(
-        createAgUiEncoderState({ nowMs: null, epochMs: null }),
+        state,
         {
           type: "data-message-metadata",
           data: { status: "running" },
@@ -261,11 +325,26 @@ describe("observation encoder private intrinsics", () => {
     } finally {
       String.prototype.startsWith = startsWith;
       String.prototype.slice = slice;
+      Array.isArray = isArray;
     }
-    assertEquals(events, [{
+    events.push(...mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "text-delta",
+      delta: "visible",
+    }));
+    events.push(...finalizeAgUiEvents(state, null));
+    assertEquals(events[0], {
       event: "Custom",
       payload: { name: "message-metadata", value: { status: "running" } },
-    }]);
+    });
+    assertEquals(events.at(-1), {
+      event: "RunFinished",
+      payload: {
+        metadata: {
+          model: "hosted/exact-model",
+          provider: "hosted",
+        },
+      },
+    });
   });
 });
 
@@ -675,5 +754,174 @@ describe("private observation authority and sizing", () => {
     }
     assertEquals(Number.isFinite(expected), true);
     assertEquals(actual, expected);
+  });
+});
+
+describe("runtime model-call private intrinsics", () => {
+  it("refuses exact capture controls after project code replaces array helpers", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => ({
+      eventId: "9007199254740993",
+      projectId,
+      runId: canonicalRunId,
+      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+    });
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(createGenerateModel(
+      "veryfront-cloud",
+      "veryfront-cloud/openai/gpt-test",
+      () => {
+        dispatches += 1;
+        return Promise.resolve({ content: [], finishReason: "stop", usage: {} });
+      },
+    ));
+
+    const arrayFilter = Array.prototype.filter;
+    const arrayJoin = Array.prototype.join;
+    const arraySome = Array.prototype.some;
+    try {
+      Array.prototype.filter = function <T>(): T[] {
+        return [];
+      };
+      Array.prototype.join = function (): string {
+        throw new Error("patched join");
+      };
+      Array.prototype.some = function (): boolean {
+        return false;
+      };
+
+      await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(
+            sink,
+            async () =>
+              await generateText({
+                model,
+                messages: [{ role: "user", content: "Hello" }],
+                providerOptions: { "veryfront-cloud": { extra: true } },
+              }),
+          ),
+        DurableRunEventPersistenceError,
+        "providerOptions",
+      );
+      await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(
+            sink,
+            async () =>
+              await generateText({
+                model,
+                system: [{
+                  role: "system",
+                  content: "Shared prompt",
+                  providerOptions: { openai: { store: false } },
+                }],
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+          ),
+        DurableRunEventPersistenceError,
+        "system.providerOptions",
+      );
+      await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(
+            sink,
+            async () =>
+              await generateText({
+                model,
+                messages: [{
+                  role: "assistant",
+                  content: [{ type: "text", text: "Prior answer" }],
+                  providerMetadata: {
+                    google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+                  },
+                }, { role: "user", content: "Continue" }],
+              }),
+          ),
+        DurableRunEventPersistenceError,
+        "assistant.providerMetadata",
+      );
+    } finally {
+      Array.prototype.filter = arrayFilter;
+      Array.prototype.join = arrayJoin;
+      Array.prototype.some = arraySome;
+    }
+    assertEquals(dispatches, 0);
+  });
+
+  it("projects request controls after project code replaces array and string helpers", () => {
+    const arrayEvery = Array.prototype.every;
+    const arraySlice = Array.prototype.slice;
+    const arraySome = Array.prototype.some;
+    const regexpTest = RegExp.prototype.test;
+    const stringStartsWith = String.prototype.startsWith;
+    let anthropic;
+    let kimi;
+    let openai;
+    try {
+      Array.prototype.every = function (): boolean {
+        return false;
+      };
+      Array.prototype.slice = function <T>(): T[] {
+        throw new Error("patched slice");
+      };
+      Array.prototype.some = function (): boolean {
+        return false;
+      };
+      RegExp.prototype.test = function (): boolean {
+        return false;
+      };
+      String.prototype.startsWith = function (): boolean {
+        return false;
+      };
+
+      anthropic = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, {
+        prompt: modelRequestPrompt,
+        ...modelRequestSampling,
+        stopSequences: ["A", "B", "C", "D", "E"],
+        providerOptions: { anthropic: { stop_sequences: ["native"] } },
+      });
+
+      kimi = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "moonshotai",
+        modelId: "kimi-k2.5",
+      }, { prompt: modelRequestPrompt, ...modelRequestSampling });
+
+      openai = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      }, {
+        prompt: modelRequestPrompt,
+        seed: 7,
+        stopSequences: ["STOP"],
+        tools: [{ type: "provider", id: "openai.web_search", name: "web_search", args: {} }],
+        reasoning: { enabled: true, effort: "low" },
+      });
+    } finally {
+      Array.prototype.every = arrayEvery;
+      Array.prototype.slice = arraySlice;
+      Array.prototype.some = arraySome;
+      RegExp.prototype.test = regexpTest;
+      String.prototype.startsWith = stringStartsWith;
+    }
+    assertEquals(anthropic?.stopSequences, ["native"]);
+    assertEquals(kimi?.temperature, undefined);
+    assertEquals(kimi?.topP, undefined);
+    assertEquals(openai?.seed, undefined);
+    assertEquals(openai?.stopSequences, undefined);
+    assertEquals(openai?.reasoning, { enabled: true, effort: "low" });
   });
 });

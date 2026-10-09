@@ -25,6 +25,7 @@ const mathMax = Math.max;
 const mathRound = Math.round;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
+const ArrayIsArray = Array.isArray;
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -303,7 +304,7 @@ function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: strin
 }
 
 function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
-  const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
+  const data = event.data && typeof event.data === "object" && !ArrayIsArray(event.data)
     ? event.data as Record<string, unknown>
     : event;
 

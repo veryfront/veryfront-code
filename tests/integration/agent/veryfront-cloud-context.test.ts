@@ -5,7 +5,7 @@ import {
   getCurrentVeryfrontCloudModelCallCapture,
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudModelCallCapture,
-} from "./context.ts";
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 
 const receipt = {
   eventId: "9007199254740993",
