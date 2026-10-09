@@ -2740,6 +2740,7 @@ describe("agent/hosted-chat-request", () => {
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
