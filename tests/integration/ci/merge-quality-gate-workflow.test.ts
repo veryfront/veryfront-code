@@ -62,8 +62,13 @@ const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
 const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
 // tested-run waits for a queue run only on main. In a merge-queue run every
-// step skips and the job finishes within seconds of starting.
-const MERGE_QUEUE_JOB_MINUTES: Record<string, number> = { "tested-run": 0 };
+// step skips and the job finishes within seconds of starting. runner-trust
+// starts with tested-run, makes a few API reads under a one-minute step
+// timeout, and never fails, so it adds no time to the merge-gate path.
+const MERGE_QUEUE_JOB_MINUTES: Record<string, number> = {
+  "tested-run": 0,
+  "runner-trust": 0,
+};
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -265,7 +270,7 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
     const aggregate = asRecord(jobs.tests, "integration aggregate");
     assertEquals(aggregate.name, "tests (integration)");
-    assertEquals(aggregate.needs, ["tested-run", "tests-integration"]);
+    assertEquals(aggregate.needs, ["tested-run", "tests-integration", "runner-trust"]);
   });
 
   it("scans queue commits as PRs and rejects invalid queue refs", async () => {
@@ -358,7 +363,7 @@ describe("merge quality gate workflow", () => {
     const gate = await readMergeGate();
     const step = gateStep(gate);
 
-    assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
+    assertEquals(gate.needs, [...REQUIRED_DEPENDENCIES, "runner-trust"]);
     assertEquals(gate.if, "${{ always() && github.event_name != 'push' }}");
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
@@ -409,7 +414,13 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(sonar.name, SONAR_SCAN_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
-    assertEquals(sonarGate.needs, ["sonar", "sonar-main", "tested-run", "version-check"]);
+    assertEquals(sonarGate.needs, [
+      "sonar",
+      "sonar-main",
+      "tested-run",
+      "version-check",
+      "runner-trust",
+    ]);
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),
@@ -481,6 +492,7 @@ describe("merge quality gate workflow", () => {
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
+      "runner-trust",
     ]);
     assert(
       downloadIndex >= 0,
@@ -799,7 +811,7 @@ done
       jobs["coverage-node-executor"],
       "native executor coverage job",
     );
-    assertEquals(native.needs, ["tested-run"]);
+    assertEquals(native.needs, ["tested-run", "runner-trust"]);
     assert(Number(native["timeout-minutes"]) <= 10);
     assert(Array.isArray(native.steps));
     const steps = native.steps.map((step) => asRecord(step, "native coverage step"));
@@ -945,7 +957,7 @@ done
     ]);
     assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
-    assertEquals(coverage.needs, ["coverage-shards", "tested-run"]);
+    assertEquals(coverage.needs, ["coverage-shards", "tested-run", "runner-trust"]);
     assertStringIncludes(
       await readRepoFile("scripts/test/coverage-ci.ts"),
       'readOption(args, "--threshold") ?? "80"',

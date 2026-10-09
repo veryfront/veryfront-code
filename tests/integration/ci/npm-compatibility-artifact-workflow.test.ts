@@ -178,8 +178,9 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(smoke.needs, [
       "npm-smoke-node-versions",
       "npm-compatibility-artifact",
+      "runner-trust",
     ]);
-    assertEquals(runtime.needs, ["npm-compatibility-artifact"]);
+    assertEquals(runtime.needs, ["npm-compatibility-artifact", "runner-trust"]);
     for (
       const [job, label] of [
         [smoke, "npm smoke"],
@@ -288,7 +289,7 @@ describe("canonical npm artifact workflow", () => {
       ] as const
     ) {
       const job = asRecord(jobs[jobName], `${jobName} job`);
-      assertEquals(job.needs, ["npm-compatibility-artifact"]);
+      assertEquals(job.needs, ["npm-compatibility-artifact", "runner-trust"]);
       const steps = jobSteps(job, `${jobName} job`);
       const restoreUse = steps.find((step) => step.uses === RESTORE_ACTION);
       assert(
@@ -320,7 +321,7 @@ describe("canonical npm artifact workflow", () => {
 
     assertEquals(jobs["tests-node-sharded-shadow"], undefined);
     assertEquals(node["continue-on-error"], undefined);
-    assertEquals(node.needs, ["npm-compatibility-artifact"]);
+    assertEquals(node.needs, ["npm-compatibility-artifact", "runner-trust"]);
     assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/2)");
     assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
     assertEquals(matrix.shard, [1, 2]);
@@ -421,6 +422,7 @@ describe("canonical npm artifact workflow", () => {
       "tests-npm-install-smoke",
       "tests-runtime-critical-flow",
       "tested-run",
+      "runner-trust",
     ]);
     assertEquals(gate.if, "${{ always() }}");
 

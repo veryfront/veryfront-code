@@ -2173,7 +2173,11 @@ describe("RC publication alongside the reused main Sonar scan", () => {
   it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
     const graph = await parallelJobs();
     assert(graph["sonar-main"], "reuse must have its own parallel scan");
-    assertEquals(graph["sonar-coverage-main"].needs, ["tested-run", "version-check"]);
+    assertEquals(graph["sonar-coverage-main"].needs, [
+      "tested-run",
+      "version-check",
+      "runner-trust",
+    ]);
     assertStringIncludes(graph["sonar-coverage"].if, "needs.tested-run.outputs.reuse != 'true'");
     assertStringIncludes(graph["sonar-main"].if, "needs.tested-run.outputs.reuse == 'true'");
     const visit = (name: string): string[] => [name, ...(graph[name].needs ?? []).flatMap(visit)];
