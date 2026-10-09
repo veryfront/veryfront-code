@@ -3,7 +3,14 @@ import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
-import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
+import {
+  ProviderError,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+  ProviderStreamProtocolError,
+} from "veryfront/provider/shared";
 import {
   extractOpenAIResponsesUsage,
   MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS,
@@ -67,6 +74,54 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  it("classifies declared error events without exposing provider text or inventing HTTP status", async () => {
+    for (
+      const [code, ErrorClass, retryable, publicCode] of [
+        ["server_error", ProviderOverloadedError, true, "OVERLOADED_ERROR"],
+        ["rate_limit_exceeded", ProviderRateLimitError, true, "RATE_LIMITED"],
+        ["insufficient_quota", ProviderQuotaError, false, "AI_PROVIDER_BILLING_ERROR"],
+        ["invalid_request_error", ProviderRequestError, false, "EXTERNAL_SERVICE_ERROR"],
+        ["private-unknown-code", ProviderRequestError, false, "EXTERNAL_SERVICE_ERROR"],
+        [null, ProviderRequestError, false, "EXTERNAL_SERVICE_ERROR"],
+      ] as const
+    ) {
+      const error = await assertRejects(() =>
+        collectParts(streamFromText(data({
+          type: "error",
+          code,
+          message: "private provider text <TOKEN>",
+          param: null,
+          sequence_number: 0,
+        }))), ErrorClass);
+      assert(error instanceof ProviderError);
+      assert(!(error instanceof ProviderStreamProtocolError));
+      assertEquals(error.retryable, retryable);
+      assertEquals(error.status, 200);
+      assertEquals(error.message, "Provider declared a response stream failure");
+      assertEquals(parseProviderError(error).code, publicCode);
+      const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+      assertEquals(JSON.stringify(causes).includes("<TOKEN>"), false);
+      assertEquals(JSON.stringify(causes).includes("private-unknown-code"), false);
+    }
+  });
+
+  it("rejects malformed provider error envelopes as protocol failures", async () => {
+    for (
+      const event of [
+        { type: "error", code: {}, message: "private text" },
+        { type: "error", code: "server_error", message: {} },
+        { type: "error", message: "missing code" },
+      ]
+    ) {
+      const error = await assertRejects(
+        () => collectParts(streamFromText(data(event))),
+        ProviderStreamProtocolError,
+      );
+      assert(error instanceof ProviderStreamProtocolError);
+      assertEquals(error.retryable, false);
+    }
+  });
+
   it("logs fixed contextual parser issues and withholds provider-controlled classifications", async () => {
     const cases = [
       {

@@ -833,7 +833,7 @@ const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
   "output-text annotation index was malformed",
   "output-text annotation index was reused",
   "output-text delta was malformed",
-  "provider emitted an error event",
+  "provider error event was malformed",
   "provider emitted web search without a configured web-search tool",
   "raw response metadata exceeded 8388608 UTF-8 bytes",
   "raw response metadata omitted a completed output item",
