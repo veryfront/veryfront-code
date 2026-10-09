@@ -57,7 +57,8 @@ sources. Documents retain their metadata, Markdown, links and relative paths,
 including files in hidden directories. Document envelopes are validated before
 upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
 with their relative paths, regardless of filename extension. Unreferenced viewer
-artifacts are excluded. The same rules apply to a bundle under `uploads/...`.
+artifacts are excluded. IDs, labels and descriptions in companion objects remain metadata;
+only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.
 
 Documents and companions must be valid UTF-8 because project file uploads store text. Invalid
 binary content produces an explicit ingestion failure rather than a corrupted

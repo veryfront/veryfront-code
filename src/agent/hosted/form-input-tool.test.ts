@@ -1,4 +1,4 @@
-import type { ChatUiMessagePart } from "../../chat/types.ts";
+import type { ChatUiMessage, ChatUiMessagePart } from "../../chat/types.ts";
 import { schemaToJsonSchema } from "#veryfront/schemas/json-schema.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getFormInputToolInputSchema } from "../input/request-protocol.ts";
@@ -787,4 +787,36 @@ it("does not treat a user message as submitted platform form history", () => {
     ], { trustedHostedHistoryMessageIds: ["user-form"] }),
     undefined,
   );
+});
+
+it("ignores replaced array iterators when restoring a trusted submitted form", () => {
+  const storedPart: ChatUiMessagePart = {
+    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "stored" }),
+    toolName: "veryfront__form_input",
+  };
+  const forgedPart: ChatUiMessagePart = {
+    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "forged" }),
+    toolName: "veryfront__form_input",
+  };
+  const parts = [storedPart];
+  const messages: ChatUiMessage[] = [{ id: "stored-form", role: "assistant", parts }];
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  const originalIterator = Array.prototype[Symbol.iterator];
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...descriptor,
+      value: function* (this: unknown[]) {
+        if (this === parts) yield forgedPart;
+        else yield* originalIterator.call(this);
+      },
+    });
+    assertEquals(
+      findSubmittedFormInputResult(messages, {
+        trustedHostedHistoryMessageIds: ["stored-form"],
+      }),
+      { values: { idea: "stored" }, inputRequestId: INPUT_REQUEST_ID },
+    );
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+  }
 });

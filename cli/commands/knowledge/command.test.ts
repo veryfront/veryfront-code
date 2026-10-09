@@ -1964,7 +1964,7 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
   const files = new Map([
     [
       "topic.md",
-      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\nattester:\n  resource: references/check.json\n---\nRevenue\n",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: references/raw.json\n    id: scripts/orphan.js\n    label: viz.html\n    description: viz.html\nattester:\n  resource: references/check.json\n  id: scripts/orphan.js\n  description: viz.html\n---\nRevenue\n",
     ],
     ["scripts/revenue.js", "export const revenue = 42;\r\n"],
     ["bin/run", "#!/bin/sh\necho run\n"],
