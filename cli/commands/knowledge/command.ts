@@ -384,10 +384,11 @@ async function collectReferencedOkfCompanionPaths(
     let markdown: string;
     try {
       markdown = await Deno.readTextFile(source.localPath);
-    } catch {
-      continue;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
     }
-    const inspected = inspectOkfDocument(relativePath, markdown);
+    const inspected = inspectOkfDocument(relativePath, markdown.replace(/^\uFEFF/, ""));
     collectCompanionReferencesFromValue({
       documentPath: relativePath,
       value: inspected.metadata,

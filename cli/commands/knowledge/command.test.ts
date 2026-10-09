@@ -2085,3 +2085,44 @@ it("rejects invalid UTF-8 Markdown instead of replacing authored bytes", async (
     await Deno.remove(root, { recursive: true });
   }
 });
+
+it("preserves a UTF-8 BOM-prefixed OKF document byte-for-byte", async () => {
+  const tempDir = await makeTempDir({ prefix: "veryfront-okf-bom-" });
+  const bundleDir = join(tempDir, "bundle");
+  const outputDir = join(tempDir, "out");
+  const source = "﻿---\ntype: Topic\ntitle: BOM document\n---\nBody\n";
+  try {
+    await Deno.mkdir(bundleDir, { recursive: true });
+    await Deno.writeTextFile(join(bundleDir, "concept.md"), source);
+    const collection = await collectKnowledgeSources(
+      createKnowledgeCommandArgs({ path: bundleDir, all: true, recursive: true, okfBundle: true }),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        downloadUploads: async () => [],
+      },
+    );
+    const uploads: Array<{ remotePath: string; bytes: Uint8Array }> = [];
+    const results = await ingestResolvedSources(
+      collection.sources,
+      createKnowledgeCommandArgs({ path: bundleDir, all: true, outputDir, okfBundle: true }),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir,
+        runParser: runKnowledgeParser,
+        uploadKnowledgeFile: async (remotePath, localPath) => {
+          uploads.push({ remotePath, bytes: await Deno.readFile(localPath) });
+          return { path: remotePath };
+        },
+      },
+    );
+
+    assertEquals(results.failed, []);
+    assertEquals(results.ingested[0]?.documentKind, "okf_concept");
+    assertEquals(uploads.map((upload) => upload.remotePath), ["knowledge/concept.md"]);
+    assertEquals(uploads[0]?.bytes, new TextEncoder().encode(source));
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+  }
+});

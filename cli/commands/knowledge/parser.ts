@@ -300,7 +300,8 @@ async function preserveOkfDocument(input: {
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfDocumentRelativePath(input.relativePath);
   const source = decodeOkfUtf8(relativePath, await Deno.readFile(input.filePath));
-  const inspected = inspectOkfDocument(relativePath, source);
+  // The BOM stays in the preserved bytes; only envelope inspection ignores it.
+  const inspected = inspectOkfDocument(relativePath, source.replace(/^\uFEFF/, ""));
   if (!inspected.envelopeConforms) {
     const details = inspected.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
     throw new Error(`OKF document failed diagnostics for ${relativePath}: ${details}`);
