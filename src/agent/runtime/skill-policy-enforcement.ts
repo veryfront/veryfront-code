@@ -61,6 +61,7 @@ const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
 const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
 const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, true>();
+const trustedHostedSourceIdentities = createPrivateWeakStore<object, object>();
 const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
   "__veryfrontTrustedPlatformPolicyToolResultIds";
 
@@ -586,6 +587,15 @@ function createTrustedHostedHistoryMessageIdSet(
   return trustedMessageIds.size > 0 ? trustedMessageIds : null;
 }
 
+/** @internal Bind a converted runtime message to its unique server-loaded UI source. */
+export function inheritTrustedHostedHistorySourceIdentity<TMessage extends Message>(
+  source: object,
+  message: TMessage,
+): TMessage {
+  trustedHostedSourceIdentities.set(message, source);
+  return message;
+}
+
 /** Restore platform control provenance for trusted hosted server conversation history. */
 export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
   messages: readonly Message[],
@@ -597,11 +607,31 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
   const trustedMessageIds = createTrustedHostedHistoryMessageIdSet(options.trustedMessageIds);
   if (!trustedMessageIds) return;
 
+  const observedMessages = createPrivateMap<string, Message>();
+  const duplicateIds = createPrivateSet<string>();
+  for (let index = 0; index < messages.length; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    if (!trustedMessageIds.has(message.id)) continue;
+    const previous = observedMessages.get(message.id);
+    if (!previous) {
+      observedMessages.set(message.id, message);
+      continue;
+    }
+    // One UI tool result becomes an assistant call and a tool response with the same source ID.
+    // Permit that host-produced split only when both messages have the same private source identity.
+    const source = trustedHostedSourceIdentities.get(previous);
+    if (!source || source !== trustedHostedSourceIdentities.get(message)) {
+      duplicateIds.add(message.id);
+    }
+  }
+
   let pendingTrustedLoadSkillCalls: Map<string, string> | null = null;
   for (let index = 0; index < messages.length; index++) {
     if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
-    const messageIsTrustedHistory = trustedMessageIds.has(message.id);
+    const messageIsTrustedHistory = trustedMessageIds.has(message.id) &&
+      !duplicateIds.has(message.id);
     if (messageIsTrustedHistory) {
       restoreTrustedPlatformPolicyResultsFromPersistedMessage(message);
     }

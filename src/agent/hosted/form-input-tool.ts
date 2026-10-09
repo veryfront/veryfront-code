@@ -21,6 +21,8 @@ import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-to
 
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
+const objectHasOwn = Object.hasOwn;
+
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
 
@@ -269,6 +271,7 @@ function extractSubmittedFormInputResult(
 
 function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
+    if (!objectHasOwn(messages, index)) continue;
     if (messages[index]?.role === "user") {
       return index;
     }
@@ -288,13 +291,13 @@ export function findSubmittedFormInputResult(
   const trustedIds = createPrivateMap<string, true>();
   const ids = options.trustedHostedHistoryMessageIds ?? [];
   for (let index = 0; index < ids.length; index++) {
-    if (!Object.hasOwn(ids, index)) continue;
+    if (!objectHasOwn(ids, index)) continue;
     const id = ids[index];
     if (typeof id === "string") trustedIds.set(id, true);
   }
   const sources = createPrivateMap<string, ChatUiMessage | null>();
   for (let index = 0; index < messages.length; index++) {
-    if (!Object.hasOwn(messages, index)) continue;
+    if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
     if (message.role !== "assistant" || !trustedIds.has(message.id)) continue;
     sources.set(message.id, sources.has(message.id) ? null : message);
@@ -302,11 +305,12 @@ export function findSubmittedFormInputResult(
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
   for (let index = startIndex; index < messages.length; index++) {
-    if (!Object.hasOwn(messages, index)) continue;
+    if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
     if (sources.get(message.id) !== message) continue;
-    for (const part of message.parts) {
-      result = extractSubmittedFormInputResult(part, options) ?? result;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      result = extractSubmittedFormInputResult(message.parts[partIndex]!, options) ?? result;
     }
   }
   return result;
