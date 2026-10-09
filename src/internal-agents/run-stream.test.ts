@@ -5408,7 +5408,7 @@ describe("internal-agents/run-stream", () => {
     ): Parameters<typeof createRuntimeAgentStreamResponse>[0] {
       const loadSkillResult = JSON.stringify({
         skillId: "review",
-        instructions: "# Review\nUse the checklist.",
+        instructions: `# Review\n${"Use the checklist. ".repeat(80)}`,
         references: ["references/checklist.md"],
         scripts: ["scripts/check.ts"],
       });

@@ -2134,7 +2134,7 @@ Deno.test("prepareHostedChatRuntimeMessages restores canonical platform load_ski
           input: { skillId: "plan" },
           output: {
             skillId: "plan",
-            instructions: "# Plan",
+            instructions: `# Plan\n${"Use the launch checklist. ".repeat(80)}`,
             references: ["references/guide.md"],
             scripts: [],
           },

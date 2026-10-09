@@ -370,11 +370,13 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 function withoutDeniedForkTools(
   toolSources: DefaultHostedChildForkToolAssemblySourceResult,
   deniedToolNames: readonly string[] | undefined,
+  selectedToolNames?: readonly string[],
 ): DefaultHostedChildForkToolAssemblySourceResult {
   if (!toolSources.ok || !deniedToolNames?.length) {
     return toolSources;
   }
   const denied = new Set(deniedToolNames);
+  const selected = new Set(selectedToolNames ?? []);
   const entries = Object.entries(toolSources.forkTools);
   const projectToolNames = new Set<string>();
   for (const [name, tool] of entries) {
@@ -390,6 +392,7 @@ function withoutDeniedForkTools(
           return false;
         }
         if (!hasTrustedHostToolProvenance(tool)) return true;
+        if (selected.has(toolName)) return true;
         const legacyName = platformMcpLegacyName(toolName);
         const hasProjectCollision = projectToolNames.has(legacyName);
         return !denied.has(`veryfront__${legacyName}`) &&
@@ -485,6 +488,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
       input.durableChildRun,
     ),
     input.childConfig?.deniedToolNames,
+    input.childConfig?.toolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
     requestedTools: input.requestedTools,

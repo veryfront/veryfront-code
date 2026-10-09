@@ -1084,6 +1084,7 @@ function compactRuntimeMessagesForStream(
   messages: Message[],
   systemPrompt: AgentSystem,
   toolCount: number,
+  preserveSourceMessageIds: readonly string[] | undefined,
 ): Message[] {
   const systemText = typeof systemPrompt === "string"
     ? systemPrompt
@@ -1092,6 +1093,9 @@ function compactRuntimeMessagesForStream(
     compactForStep(
       convertRuntimeMessagesToProviderMessagesWithSource(messages),
       estimateOverhead(systemText, toolCount),
+      {
+        historicalToolInputRetention: { preserveSourceMessageIds },
+      },
     ),
   ) as Message[];
 }
@@ -1597,6 +1601,7 @@ export async function createRuntimeAgentStreamResponse(
         normalizeAgUiRuntimeMessages(input.messages),
         systemPrompt,
         runtimeToolNames.length,
+        input.serverResolvedTrustedHostedHistoryMessageIds,
       ),
       input.messages,
       input.serverResolvedTrustedHostedHistoryMessageIds,
