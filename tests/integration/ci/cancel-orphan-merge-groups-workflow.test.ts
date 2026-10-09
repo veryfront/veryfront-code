@@ -4,6 +4,7 @@ import { parse } from "#std/yaml/parse";
 
 const SHA = "a".repeat(40);
 const BRANCH = `gh-readonly-queue/main/pr-42-${SHA}`;
+const STATUSES = ["requested", "waiting", "pending", "queued", "in_progress"];
 const RUN = {
   id: 42,
   event: "merge_group",
@@ -49,6 +50,7 @@ function fixture() {
     recreateRefOnCompareCall: 0,
     landOnRefCheck: false,
     compareErrorOnCall: 0,
+    compareErrorSha: "",
     refErrorOnCall: 0,
     compared: [] as string[],
     cancelError: 0,
@@ -71,8 +73,10 @@ async function execute(f: ReturnType<typeof fixture>) {
         getWorkflow: () => ({ data: f.workflow }),
         listWorkflowRuns: runsMethod,
         getWorkflowRun: ({ run_id }: { run_id: number }) => {
-          assertEquals(run_id, 42);
-          return { data: f.latest };
+          if (run_id === 42) return { data: f.latest };
+          const run = f.runs.find((candidate) => candidate.id === run_id);
+          assert(run);
+          return { data: structuredClone(run) };
         },
         forceCancelWorkflowRun: ({ run_id }: { run_id: number }) => {
           if (f.finishedOnCancel) f.latest.status = "completed";
@@ -85,6 +89,9 @@ async function execute(f: ReturnType<typeof fixture>) {
       repos: {
         compareCommitsWithBasehead: ({ basehead }: { basehead: string }) => {
           f.compared.push(basehead);
+          if (f.compareErrorSha && basehead.endsWith(f.compareErrorSha)) {
+            throw Object.assign(new Error("compare API failure"), { status: 404 });
+          }
           if (
             f.compareError && (!f.compareErrorOnCall || f.compared.length === f.compareErrorOnCall)
           ) {
@@ -145,7 +152,7 @@ async function execute(f: ReturnType<typeof fixture>) {
 }
 
 describe("orphan merge-group cancellation", () => {
-  for (const status of ["queued", "in_progress"]) {
+  for (const status of STATUSES) {
     it(`cancels a confirmed ${status} orphan with its sweeper receipt`, async () => {
       const f = fixture();
       f.runs[0]!.status = status;
@@ -158,7 +165,7 @@ describe("orphan merge-group cancellation", () => {
           line.includes("Force-cancelled") && line.includes("42") && line.includes("999")
         ),
       );
-      assertEquals(f.statuses, ["queued", "in_progress"]);
+      assertEquals(f.statuses, STATUSES);
     });
   }
 
@@ -277,6 +284,25 @@ describe("orphan merge-group cancellation", () => {
       assertEquals(f.cancelled, []);
     });
   }
+
+  it("keeps sweeping after one run's check fails, without cancelling that run", async () => {
+    const f = fixture();
+    const otherSha = "b".repeat(40);
+    // The failing run is listed first, so it must not stop the sweep of later runs.
+    f.runs.unshift({
+      ...structuredClone(RUN),
+      id: 41,
+      head_sha: otherSha,
+      head_branch: `gh-readonly-queue/main/pr-41-${otherSha}`,
+    });
+    f.compareErrorSha = otherSha;
+    await assertRejects(
+      () => execute(f),
+      Error,
+      "Orphan sweep failed for 1 run(s): run 41: compare API failure",
+    );
+    assertEquals(f.cancelled, [42]);
+  });
 
   it("deduplicates paginated candidate run ids", async () => {
     const f = fixture();
