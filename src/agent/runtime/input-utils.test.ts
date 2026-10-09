@@ -238,24 +238,50 @@ describe("input-utils", () => {
       });
     });
 
-    it("preserves trusted multilingual skill instructions at the accepted character limit", () => {
-      const instructions = "界".repeat(1_048_576);
-      const skill = markTrustedPlatformPolicyToolResultPart({
+    for (const [label, character] of [["multilingual", "界"], ["escaped", "\u0000"]]) {
+      for (const encoded of [false, true]) {
+        it(`preserves ${encoded ? "encoded" : "object"} trusted ${label} skills at the character limit`, () => {
+          const payload = {
+            skillId: "trusted",
+            instructions: character!.repeat(1_048_576),
+            references: ["references/guide.md"],
+            scripts: ["scripts/check.ts"],
+          };
+          const skill = markTrustedPlatformPolicyToolResultPart({
+            type: "tool-result",
+            toolCallId: "large-skill-call",
+            toolName: "veryfront__load_skill",
+            result: encoded ? JSON.stringify(payload) : payload,
+          });
+          const [normalized] = normalizeInput([{
+            id: "large-skill",
+            role: "tool",
+            parts: [skill],
+          }]);
+          assertExists(normalized);
+          const state = hydrateActiveSkillStateFromMessages([normalized]);
+          assertEquals(state.activeSkillId, "trusted");
+          assertEquals(state.activeSkillToolAvailability.references, payload.references);
+          assertEquals(state.activeSkillToolAvailability.scripts, payload.scripts);
+          assertEquals(prepareTrustedPlatformPolicyMessageForPersistence(normalized).metadata, {
+            __veryfrontTrustedPlatformPolicyToolResultIds: ["large-skill-call"],
+          });
+        });
+      }
+    }
+
+    it("preserves encoded trusted form values at the accepted string boundary", () => {
+      const form = markTrustedPlatformPolicyToolResultPart({
         type: "tool-result",
-        toolCallId: "multilingual-skill",
-        toolName: "veryfront__load_skill",
-        result: {
-          skillId: "trusted",
-          instructions,
-          references: ["guide.md"],
-          scripts: ["check.ts"],
-        },
+        toolCallId: "encoded-large-form",
+        toolName: "veryfront__form_input",
+        result: JSON.stringify({ submitted: true, values: { answer: "x".repeat(1_048_576) } }),
       });
-      const [normalized] = normalizeInput([{ id: "large-skill", role: "tool", parts: [skill] }]);
+      const [normalized] = normalizeInput([{ id: "large-form", role: "tool", parts: [form] }]);
       assertExists(normalized);
-      assertEquals(hydrateActiveSkillStateFromMessages([normalized]).activeSkillId, "trusted");
+      assertEquals(hasSubmittedFormInputResult([normalized]), true);
       assertEquals(prepareTrustedPlatformPolicyMessageForPersistence(normalized).metadata, {
-        __veryfrontTrustedPlatformPolicyToolResultIds: ["multilingual-skill"],
+        __veryfrontTrustedPlatformPolicyToolResultIds: ["encoded-large-form"],
       });
     });
 

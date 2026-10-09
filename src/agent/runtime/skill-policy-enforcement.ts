@@ -1,5 +1,9 @@
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -106,18 +110,28 @@ function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefi
     typeof toolName !== "string" || toolName.length === 0
   ) return undefined;
   const isSkillLoad = toolName === "load_skill" || toolName === "veryfront__load_skill";
+  const resultValue = readToolResultOwnDataProperty(part, "result");
+  // Match admitted payload sizes, including the small platform-result envelope.
   // A valid UTF-16 skill character uses at most three UTF-8 bytes, or six JSON
   // escape bytes. Include the existing bounded reference/script path inventory.
-  const result = isSkillLoad
-    ? snapshotBoundedJsonValue(
-      readToolResultOwnDataProperty(part, "result"),
-      3 * SKILL_DOCUMENT_MAX_CHARACTERS,
-      6 * SKILL_DOCUMENT_MAX_CHARACTERS +
-        6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
-          (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
-        65_536,
-    )
-    : snapshotBoundedJsonValue(readToolResultOwnDataProperty(part, "result"));
+  const maxJsonBytes = isSkillLoad
+    ? 6 * SKILL_DOCUMENT_MAX_CHARACTERS +
+      6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
+        (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
+      65_536
+    : JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+  const encoded = typeof resultValue === "string";
+  // Stored results may already be JSON strings. Snapshotting their literal text
+  // can double JSON escape bytes; it must retain the same accepted payload.
+  const result = snapshotBoundedJsonValue(
+    resultValue,
+    encoded
+      ? maxJsonBytes
+      : isSkillLoad
+      ? 3 * SKILL_DOCUMENT_MAX_CHARACTERS
+      : JSON_VALUE_MAX_STRING_BYTES,
+    encoded ? 2 * maxJsonBytes + 2 : maxJsonBytes,
+  );
   if (!result.success) return undefined;
   try {
     return privateJsonStringify({ toolCallId, toolName, result: result.value });
