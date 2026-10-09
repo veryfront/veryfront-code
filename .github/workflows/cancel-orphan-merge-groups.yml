@@ -60,13 +60,15 @@ jobs:
                   if (error.status !== 404) throw error;
                 }
                 try {
-                  await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+                  // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
+                  // These ignored gates must stop too; live groups never reach this endpoint.
+                  await github.rest.actions.forceCancelWorkflowRun({ owner, repo, run_id: run.id });
                 } catch (error) {
                   if (error.status !== 409) throw error;
                   const { data: final } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
                   if (final.status !== "completed") throw error;
                   continue;
                 }
-                core.info(`Cancelled orphan merge-group run ${run.id} (${run.head_branch}); sweeper ${context.runId}: ${context.serverUrl}/${repository}/actions/runs/${context.runId}`);
+                core.info(`Force-cancelled orphan merge-group run ${run.id} (${run.head_branch}); sweeper ${context.runId}: ${context.serverUrl}/${repository}/actions/runs/${context.runId}`);
               }
             }

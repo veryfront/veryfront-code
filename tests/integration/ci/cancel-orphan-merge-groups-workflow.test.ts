@@ -57,13 +57,16 @@ async function execute(f: ReturnType<typeof fixture>) {
   const github = {
     rest: {
       actions: {
+        cancelWorkflowRun: () => {
+          throw new Error("Graceful cancellation leaves orphan always() aggregators queued");
+        },
         getWorkflow: () => ({ data: f.workflow }),
         listWorkflowRuns: runsMethod,
         getWorkflowRun: ({ run_id }: { run_id: number }) => {
           assertEquals(run_id, 42);
           return { data: f.latest };
         },
-        cancelWorkflowRun: ({ run_id }: { run_id: number }) => {
+        forceCancelWorkflowRun: ({ run_id }: { run_id: number }) => {
           if (f.finishedOnCancel) f.latest.status = "completed";
           if (f.cancelError) {
             throw Object.assign(new Error("cancel API failure"), { status: f.cancelError });
@@ -122,7 +125,11 @@ describe("orphan merge-group cancellation", () => {
       await execute(f);
       assertEquals(f.cancelled, [42]);
       assertEquals(f.inspectedRefs, [`heads/${BRANCH}`]);
-      assert(f.logs.some((line) => line.includes("42") && line.includes("999")));
+      assert(
+        f.logs.some((line) =>
+          line.includes("Force-cancelled") && line.includes("42") && line.includes("999")
+        ),
+      );
       assertEquals(f.statuses, ["queued", "in_progress"]);
     });
   }
