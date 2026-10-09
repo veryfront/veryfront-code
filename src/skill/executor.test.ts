@@ -1,5 +1,4 @@
 import { FakeTime } from "#std/testing/time";
-import { stub } from "#std/testing/mock";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -546,45 +545,54 @@ describe("src/skill/executor", () => {
         setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
         setEnv("VERYFRONT_API_URL", "https://api.test.com");
         let elapsed = 0;
-        using _clock = stub(Performance.prototype, "now", () => elapsed);
-        mockFetch([
-          jsonResponse({
-            id: "deadline-race",
-            endpoint: "https://sandbox.example.com",
-            status: "running",
-            workspace_storage: "ephemeral",
-          }),
-          (_input, init) =>
+        const originalClock = Object.getOwnPropertyDescriptor(Performance.prototype, "now");
+        Object.defineProperty(Performance.prototype, "now", {
+          configurable: true,
+          value: () => elapsed,
+        });
+        try {
+          mockFetch([
             jsonResponse({
-              results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
-                path: file.path,
-                status: "written",
-                error: null,
-              })),
+              id: "deadline-race",
+              endpoint: "https://sandbox.example.com",
+              status: "running",
+              workspace_storage: "ephemeral",
             }),
-          commandResponse([{ type: "exit", exitCode: 0 }]),
-          backgroundCommandResponse("running", "", null),
-          () => {
-            // The response arrives at the deadline before the timer callback runs.
-            elapsed = elapsedMs;
-            return backgroundCommandResponse(status, "partial", null);
-          },
-          textResponse(""),
-        ]);
-        const execute = () =>
-          getSkillScriptExecutor().execute({
-            scriptPath: "scripts/run.sh",
-            scriptContent: "sleep 60",
-            timeoutMs: 60_000,
-          });
-        if (timedOut) {
-          const result = await execute();
-          assertEquals(result.exitCode, 124);
-          assertStringIncludes(result.stderr, "60000ms");
-        } else {
-          await assertRejects(execute, Error, "did not report an exit code");
+            (_input, init) =>
+              jsonResponse({
+                results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+                  path: file.path,
+                  status: "written",
+                  error: null,
+                })),
+              }),
+            commandResponse([{ type: "exit", exitCode: 0 }]),
+            backgroundCommandResponse("running", "", null),
+            () => {
+              // The response arrives at the deadline before the timer callback runs.
+              elapsed = elapsedMs;
+              return backgroundCommandResponse(status, "partial", null);
+            },
+            textResponse(""),
+          ]);
+          const execute = () =>
+            getSkillScriptExecutor().execute({
+              scriptPath: "scripts/run.sh",
+              scriptContent: "sleep 60",
+              timeoutMs: 60_000,
+            });
+          if (timedOut) {
+            const result = await execute();
+            assertEquals(result.exitCode, 124);
+            assertStringIncludes(result.stderr, "60000ms");
+          } else {
+            await assertRejects(execute, Error, "did not report an exit code");
+          }
+          assertEquals(fetchCalls.at(-1)!.init?.method, "DELETE");
+        } finally {
+          if (originalClock) Object.defineProperty(Performance.prototype, "now", originalClock);
+          else Reflect.deleteProperty(Performance.prototype, "now");
         }
-        assertEquals(fetchCalls.at(-1)!.init?.method, "DELETE");
       });
     }
 
