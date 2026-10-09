@@ -225,12 +225,12 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       // Stands in for the native send: it reads the null-prototype record.
       requestFetch: (_input, init) => {
-        const headers = init?.headers as Record<string, string> | undefined;
+        const headers = observeFetchRequestInit(init).headers as Record<string, string> | undefined;
         authorizations.push(
           headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
         );
         writerTokens.push(headers?.["x-veryfront-run-event-writer-token"]);
-        const body = JSON.parse(String(init?.body)) as { id: string };
+        const body = JSON.parse(String(observeFetchRequestInit(init).body)) as { id: string };
         return Promise.resolve(
           Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
         );

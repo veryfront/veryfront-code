@@ -5,6 +5,8 @@ name: Client bundle report
 # entrypoint. This is the informational half of the #3670 gate; the hard
 # fail-fast check runs in the `ci (lint)` job via `deno task lint:client-bundle`.
 on:
+  # No path filter: a filtered trigger creates no run when a later push drops
+  # the matching changes, which would leave a stale sticky comment.
   pull_request:
 
 permissions:
@@ -12,8 +14,12 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: client-bundle-report-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded first-attempt PR runs. Non-PR runs and manual reruns get
+  # run-unique groups so a pending or newer run is never cancelled or replaced.
+  # Pinned by tests/integration/ci/workflow-concurrency.test.ts; see cicd.yml and
+  # veryfront-studio#5544.
+  group: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   report:
@@ -38,6 +44,18 @@ jobs:
             const fs = require("fs");
             const marker = "<!-- client-bundle-report -->";
             const body = fs.readFileSync("client-bundle-report.md", "utf8");
+
+            // A manual rerun of an older commit is not cancelled by newer runs.
+            // Publish only when this run still reports the current PR head.
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pr.head.sha !== context.payload.pull_request.head.sha) {
+              core.info(`Skipping stale report for ${context.payload.pull_request.head.sha}; PR head is ${pr.head.sha}.`);
+              return;
+            }
 
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
