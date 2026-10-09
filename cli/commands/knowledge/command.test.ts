@@ -1301,6 +1301,35 @@ describe("ensureUniqueSlugs", () => {
   });
 });
 
+it("prunes ignored remote dependency files while retaining hidden OKF documents", async () => {
+  const paths = [
+    "uploads/.bundle/.catalog/topic.md",
+    "uploads/.bundle/node_modules/package/topic.md",
+    "uploads/.bundle/node_modules/package/companion.py",
+  ];
+  const calls: string[][] = [];
+  const collection = await collectKnowledgeSources(
+    { sources: [], path: "uploads/.bundle", all: true, recursive: true, okfBundle: true },
+    {
+      client: createMockClient({
+        get: () =>
+          Promise.resolve({
+            data: paths.map((path) => ({ type: "file", path })),
+            page_info: { next: null },
+          }),
+      }),
+      projectSlug: "my-project",
+      downloadUploads: createDownloadUploadsStub(calls),
+    },
+  );
+  assertEquals(calls, [[paths[0]!]]);
+  assertEquals(collection.sources.map((source) => source.localPath), [`/workspace/${paths[0]}`]);
+  assertEquals(collection.skipped.map((source) => source.reason), [
+    "ignored_directory",
+    "ignored_directory",
+  ]);
+});
+
 it("collects hidden OKF upload Markdown without downloading viewer artifacts", async () => {
   const paths = ["uploads/.bundle/index.md", "uploads/.bundle/.catalog/topic.md"];
   const calls: string[][] = [];
