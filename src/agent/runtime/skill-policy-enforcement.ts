@@ -1,6 +1,11 @@
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -25,6 +30,7 @@ import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
@@ -97,57 +103,84 @@ export function hasTrustedPlatformPolicyToolDefinition(definition: unknown): boo
     trustedPlatformPolicyToolDefinitions.get(definition) === true;
 }
 
-/** Mark a runtime-created tool result as coming from a trusted platform control tool. */
-export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
-  part: T,
-): T {
-  const binding = trustedToolResultBinding(part);
-  if (binding !== undefined && trustedPlatformPolicyToolResults.get(part) === undefined) {
-    trustedPlatformPolicyToolResults.set(part, binding);
-  }
-  return part;
-}
-
-function trustedToolResultBinding(part: ToolResultPart): string | undefined {
+function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefined {
+  const type = readToolResultOwnDataProperty(part, "type");
+  const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+  const toolName = readToolResultOwnDataProperty(part, "toolName");
+  if (
+    type !== "tool-result" || typeof toolCallId !== "string" || toolCallId.length === 0 ||
+    typeof toolName !== "string" || toolName.length === 0
+  ) return undefined;
+  const isSkillLoad = toolName === "load_skill" || toolName === "veryfront__load_skill";
+  const resultValue = readToolResultOwnDataProperty(part, "result");
+  const providerExecuted = readToolResultOwnDataProperty(part, "providerExecuted");
+  if (
+    resultValue === UNREADABLE_TOOL_RESULT_PROPERTY ||
+    providerExecuted === UNREADABLE_TOOL_RESULT_PROPERTY
+  ) return undefined;
+  // Match admitted payload sizes, including the small platform-result envelope.
+  // A valid UTF-16 skill character uses at most three UTF-8 bytes, or six JSON
+  // escape bytes. Include the existing bounded reference/script path inventory.
+  const maxJsonBytes = isSkillLoad
+    ? 6 * SKILL_DOCUMENT_MAX_CHARACTERS +
+      6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
+        (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
+      65_536
+    : JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+  const encoded = typeof resultValue === "string";
+  // Stored results may already be JSON strings. Snapshotting their literal text
+  // can double JSON escape bytes; it must retain the same accepted payload.
+  const result = snapshotBoundedJsonValue(
+    resultValue,
+    encoded
+      ? maxJsonBytes
+      : isSkillLoad
+      ? 3 * SKILL_DOCUMENT_MAX_CHARACTERS
+      : JSON_VALUE_MAX_STRING_BYTES,
+    encoded ? 2 * maxJsonBytes + 2 : maxJsonBytes,
+  );
+  if (!result.success) return undefined;
   try {
-    const type = readToolResultOwnDataProperty(part, "type");
-    const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
-    const toolName = readToolResultOwnDataProperty(part, "toolName");
-    const result = readToolResultOwnDataProperty(part, "result");
-    const providerExecuted = readToolResultOwnDataProperty(part, "providerExecuted");
-    if (
-      type !== "tool-result" || typeof toolCallId !== "string" ||
-      typeof toolName !== "string" || result === UNREADABLE_TOOL_RESULT_PROPERTY ||
-      providerExecuted === UNREADABLE_TOOL_RESULT_PROPERTY
-    ) {
-      return undefined;
-    }
     return privateJsonStringify({
       toolCallId,
       toolName,
       providerExecuted,
-      result: normalizeToolResultPayload(result),
+      result: normalizeToolResultPayload(result.value),
     });
   } catch {
     return undefined;
   }
 }
 
-function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
-  const binding = trustedPlatformPolicyToolResults.get(part);
-  return binding !== undefined && binding === trustedToolResultBinding(part);
+/** Bind runtime-created control provenance to its data-only identity and result. */
+export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
+  part: T,
+): T {
+  const snapshot = snapshotPlatformPolicyToolResult(part);
+  if (snapshot !== undefined && trustedPlatformPolicyToolResults.get(part) === undefined) {
+    trustedPlatformPolicyToolResults.set(part, snapshot);
+  }
+  return part;
 }
 
-/** Preserve trusted runtime-created form-result provenance across internal clones. */
+function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(part);
+  return trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(part) === trustedSnapshot;
+}
+
+/** Preserve control provenance only across clones with the original identity and result. */
 export function inheritTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
   source: ToolResultPart,
   target: T,
 ): T {
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(source);
   if (
-    isToolResultPart(source) && hasTrustedPlatformPolicyToolResultPart(source) &&
-    trustedPlatformPolicyToolResults.get(source) === trustedToolResultBinding(target)
+    trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(source) === trustedSnapshot &&
+    snapshotPlatformPolicyToolResult(target) === trustedSnapshot
   ) {
-    markTrustedPlatformPolicyToolResultPart(target);
+    trustedPlatformPolicyToolResults.set(target, trustedSnapshot);
   }
   return target;
 }
@@ -524,6 +557,23 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
   );
 }
 
+/** Reject every result sharing an ID, including malformed or differently named duplicates. */
+function ambiguousResultIds(message: Message): Set<string> {
+  const seen = createPrivateSet<string>();
+  const duplicates = createPrivateSet<string>();
+  const parts = message.parts;
+  for (let index = 0; index < parts.length; index++) {
+    if (!objectHasOwn(parts, index)) continue;
+    const part = parts[index];
+    if (readToolResultOwnDataProperty(part, "type") !== "tool-result") continue;
+    const id = readToolResultOwnDataProperty(part, "toolCallId");
+    if (typeof id !== "string") continue;
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  return duplicates;
+}
+
 function isOwnHistoryToolResult(part: unknown): part is ToolResultPart {
   return readToolResultOwnDataProperty(part, "type") === "tool-result" &&
     typeof readToolResultOwnDataProperty(part, "toolCallId") === "string" &&
@@ -563,12 +613,13 @@ function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
 ): void {
   const trustedToolCallIdSet = getTrustedPlatformPolicyToolCallIdSet(message);
   if (!trustedToolCallIdSet) return;
+  const duplicates = ambiguousResultIds(message);
   const parts = message.parts;
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
     if (
-      isToolResultPart(part) && isTrustedSource(part) &&
+      isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedSource(part) &&
       trustedToolCallIdSet.has(part.toolCallId) &&
       ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
         (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
@@ -637,12 +688,13 @@ function restoreAdjacentTrustedHostedLoadSkillResults(
   isTrustedSource: (part: ToolResultPart) => boolean,
 ): void {
   if (message.role !== "tool") return;
+  const duplicates = ambiguousResultIds(message);
   const parts = message.parts;
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
     if (
-      !isToolResultPart(part) || !isTrustedSource(part) ||
+      !isToolResultPart(part) || duplicates.has(part.toolCallId) || !isTrustedSource(part) ||
       !pendingTrustedLoadSkillCalls.has(part.toolCallId)
     ) continue;
     const expectedToolName = pendingTrustedLoadSkillCalls.get(part.toolCallId);
@@ -771,12 +823,13 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
       pendingTrustedLoadSkillCalls = null;
     }
 
+    const duplicates = ambiguousResultIds(message);
     const parts = message.parts;
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) && isTrustedResultSource(part) &&
+        isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedResultSource(part) &&
         (part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
           (options.legacyLoadSkillReplayAllowed === true &&
             part.toolName === LOAD_SKILL_TOOL_ID)) &&

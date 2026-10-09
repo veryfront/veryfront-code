@@ -2228,60 +2228,101 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
-  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+  for (const runtimeTargetKind of [undefined, "main_branch", "preview_branch"] as const) {
+    it(`uploads knowledge to the admitted writable runtime destination (${runtimeTargetKind ?? "omitted"})`, async () => {
+      const body = {
+        runId: "run_knowledge_default",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
+        ...(runtimeTargetKind === "preview_branch"
+          ? { runtimeTargetBranchId: "branch-proof" }
+          : {}),
+        config: {
+          paths: ["uploads/guide.md"],
+          slug: "guide",
+          branch_id: "untrusted-config-branch",
+        },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_default/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+      const result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
+            return new Response(
+              JSON.stringify({
+                signed_url: "https://signed.example.test/guide.md",
+                expires_at: "2026-09-30T23:00:00.000Z",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          if (url === "https://signed.example.test/guide.md") {
+            return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true, JSON.stringify(payload));
+      assertEquals(payload.result.summary.ingested_count, 1);
+      assertEquals(uploads.length, 1);
+      assertEquals(
+        new URL(uploads[0]!.url).searchParams.get("branch_id"),
+        runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
+      );
+      assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    });
+  }
+
+  it("rejects knowledge ingest environment targets without an explicit writable branch", async () => {
     const body = {
-      runId: "run_knowledge_default",
+      runId: "run_knowledge_environment",
       kind: "task",
       target: "task:knowledge-ingest",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "environment-proof",
       config: { paths: ["uploads/guide.md"], slug: "guide" },
     };
     const signed = await signedRequest(
-      "/api/control-plane/runs/run_knowledge_default/execute",
+      "/api/control-plane/runs/run_knowledge_environment/execute",
       body,
       { "x-token": "test-token" },
     );
-    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
 
-    const result = await withMockFetch(
-      (async (input, init) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof Request
-          ? input.url
-          : input.toString();
-        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
-          return new Response(
-            JSON.stringify({
-              signed_url: "https://signed.example.test/guide.md",
-              expires_at: "2026-09-30T23:00:00.000Z",
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
-        }
-        if (url === "https://signed.example.test/guide.md") {
-          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
-        }
-        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
-        uploads.push({ url, body: requestJsonBody(init) ?? {} });
-        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch,
-      async () =>
-        await new ProjectRunExecuteHandler().handle(
-          signed.request,
-          createCtx(signed.publicKeyPem),
-        ),
+    const result = await new ProjectRunExecuteHandler().handle(
+      signed.request,
+      createCtx(signed.publicKeyPem),
     );
 
     assertExists(result.response);
     const payload = await result.response.json();
-    assertEquals(payload.success, true, JSON.stringify(payload));
-    assertEquals(payload.result.summary.ingested_count, 1);
-    assertEquals(uploads.length, 1);
-    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "explicit writable main_branch or preview_branch target");
   });
 
   it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
@@ -2296,6 +2337,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { path_prefix: "uploads", recursive: true },
       },
       { "x-token": "test-token" },
@@ -9992,6 +10034,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { paths: ["uploads/first.md", "uploads/sibling.md"] },
       }, {
         "x-token": "test-token",

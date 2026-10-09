@@ -1,10 +1,12 @@
-import { basename, extname, join } from "veryfront/platform/path";
+import { basename, dirname, extname, join } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
   DocumentExtractionOptions,
   DocumentExtractionProgress,
   DocumentExtractionProgressEvent,
 } from "veryfront/extensions/compat";
+import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
+import { VERSION } from "#cli/utils";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -19,6 +21,13 @@ export interface KnowledgeParserResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  document_kind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
+  okf?: {
+    path: string;
+    envelope_conforms: boolean;
+    diagnostics: OkfDocumentDiagnostic[];
+    metadata: Record<string, unknown>;
+  };
 }
 
 export interface KnowledgeParserInput {
@@ -26,6 +35,7 @@ export interface KnowledgeParserInput {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  okfRelativePath?: string;
 }
 
 export type ExtractDocumentText = (
@@ -160,15 +170,174 @@ function yamlQuote(value: unknown): string {
   return JSON.stringify(value == null ? "" : String(value));
 }
 
+function isAbsoluteProvenanceUrl(source: string): boolean {
+  try {
+    const url = new URL(source);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function buildFrontmatter(source: string, sourceType: string, description: string): string {
-  return [
+  const lines = [
     "---",
+    `type: ${yamlQuote("Generated Document")}`,
     `source: ${yamlQuote(source)}`,
     `source_type: ${yamlQuote(sourceType)}`,
-    `added: ${yamlQuote(new Date().toISOString().slice(0, 10))}`,
     `description: ${yamlQuote(description)}`,
-    "---",
-  ].join("\n");
+    "generated:",
+    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+  ];
+  if (isAbsoluteProvenanceUrl(source)) {
+    lines.push(
+      "sources:",
+      "  - id: source",
+      `    resource: ${yamlQuote(source)}`,
+    );
+  }
+  lines.push("---");
+  return lines.join("\n");
+}
+
+function validateOkfBundleRelativePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").split("/").filter((segment) => segment.length > 0)
+    .join("/");
+  if (
+    !normalized || normalized.startsWith("/") || normalized.startsWith("../") ||
+    normalized === ".." || normalized.split("/").includes("..")
+  ) {
+    throw new Error(`Invalid OKF bundle path: ${path}`);
+  }
+  return normalized;
+}
+
+function validateOkfDocumentRelativePath(path: string): string {
+  const normalized = validateOkfBundleRelativePath(path);
+  if (!normalized.toLowerCase().endsWith(".md")) {
+    throw new Error(`OKF bundle mode only inspects Markdown documents: ${path}`);
+  }
+  return normalized;
+}
+
+function validateOkfCompanionRelativePath(path: string): string {
+  return validateOkfBundleRelativePath(path);
+}
+
+function decodeOkfUtf8(relativePath: string, bytes: Uint8Array): string {
+  let decoded: string;
+  try {
+    decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error(
+      `OKF bundle file is not valid UTF-8 and cannot be uploaded through text knowledge storage: ${relativePath}`,
+    );
+  }
+
+  const reencoded = new TextEncoder().encode(decoded);
+  if (reencoded.byteLength !== bytes.byteLength) {
+    throw new Error(
+      `OKF bundle file is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
+    );
+  }
+  for (let index = 0; index < bytes.byteLength; index += 1) {
+    if (bytes[index] !== reencoded[index]) {
+      throw new Error(
+        `OKF bundle file is not stable UTF-8 text and cannot be uploaded through text knowledge storage: ${relativePath}`,
+      );
+    }
+  }
+  return decoded;
+}
+
+function okfDocumentKind(kind: "concept" | "index" | "log"):
+  | "okf_concept"
+  | "okf_index"
+  | "okf_log" {
+  if (kind === "index") return "okf_index";
+  if (kind === "log") return "okf_log";
+  return "okf_concept";
+}
+
+function okfDocumentSummary(kind: "concept" | "index" | "log"): string {
+  if (kind === "index") return "Preserved OKF reserved index document.";
+  if (kind === "log") return "Preserved OKF reserved log document.";
+  return "Preserved OKF concept document.";
+}
+
+async function preserveOkfCompanion(input: {
+  filePath: string;
+  outputDir: string;
+  relativePath: string;
+}): Promise<KnowledgeParserResult> {
+  const relativePath = validateOkfCompanionRelativePath(input.relativePath);
+  const bytes = await Deno.readFile(input.filePath);
+  decodeOkfUtf8(relativePath, bytes);
+  const outputPath = join(input.outputDir, ...relativePath.split("/"));
+  await Deno.mkdir(dirname(outputPath), { recursive: true });
+  await Deno.writeFile(outputPath, bytes);
+  return {
+    success: true,
+    source_path: input.filePath,
+    source_filename: basename(input.filePath),
+    source_type: "okf_companion",
+    slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
+    sandbox_output_path: outputPath,
+    suggested_project_path: `knowledge/${relativePath}`,
+    description: "OKF companion asset",
+    title: titleizeFilename(relativePath),
+    summary: "Preserved referenced OKF companion asset.",
+    stats: { bytes: bytes.byteLength },
+    warnings: [],
+  };
+}
+
+async function preserveOkfDocument(input: {
+  filePath: string;
+  outputDir: string;
+  relativePath: string;
+  sourceReference?: string;
+}): Promise<KnowledgeParserResult> {
+  const relativePath = validateOkfDocumentRelativePath(input.relativePath);
+  const source = decodeOkfUtf8(relativePath, await Deno.readFile(input.filePath));
+  const inspected = inspectOkfDocument(relativePath, source);
+  if (!inspected.envelopeConforms) {
+    const details = inspected.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
+    throw new Error(`OKF document failed diagnostics for ${relativePath}: ${details}`);
+  }
+  const outputPath = join(input.outputDir, ...relativePath.split("/"));
+  await Deno.mkdir(dirname(outputPath), { recursive: true });
+  await Deno.writeTextFile(outputPath, source);
+  const title = typeof inspected.metadata.title === "string" && inspected.metadata.title.trim()
+    ? inspected.metadata.title
+    : titleizeFilename(relativePath);
+  return {
+    success: true,
+    source_path: input.filePath,
+    source_filename: basename(input.filePath),
+    source_type: "okf_markdown",
+    slug: slugifyKnowledgeValue(relativePath.replace(/\.md$/i, "")),
+    sandbox_output_path: outputPath,
+    suggested_project_path: `knowledge/${relativePath}`,
+    description: inspected.kind === "concept"
+      ? "OKF concept document"
+      : `OKF ${inspected.kind} document`,
+    title,
+    summary: okfDocumentSummary(inspected.kind),
+    stats: {
+      characters: source.length,
+      metadata_keys: Object.keys(inspected.metadata).length,
+      okf_kind: inspected.kind,
+    },
+    warnings: [],
+    document_kind: okfDocumentKind(inspected.kind),
+    okf: {
+      path: relativePath,
+      envelope_conforms: inspected.envelopeConforms,
+      diagnostics: inspected.diagnostics,
+      metadata: inspected.metadata,
+    },
+  };
 }
 
 function tableToMarkdown(rows: string[][]): string {
@@ -402,6 +571,7 @@ export async function runKnowledgeParser(input: {
   description?: string;
   slug?: string;
   sourceReference?: string;
+  okfRelativePath?: string;
 }, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult> {
   const [result] = await runKnowledgeParsers({
     files: [{
@@ -409,6 +579,7 @@ export async function runKnowledgeParser(input: {
       description: input.description,
       slug: input.slug,
       sourceReference: input.sourceReference,
+      okfRelativePath: input.okfRelativePath,
     }],
     outputDir: input.outputDir,
   }, deps);
@@ -441,6 +612,23 @@ export async function runKnowledgeParsers(input: {
       const stat = await Deno.stat(file.filePath);
       if (!stat.isFile) {
         throw new Error(`File not found: ${file.filePath}`);
+      }
+
+      if (file.okfRelativePath !== undefined) {
+        const preserve = file.okfRelativePath.toLowerCase().endsWith(".md")
+          ? preserveOkfDocument({
+            filePath: file.filePath,
+            outputDir: input.outputDir,
+            relativePath: file.okfRelativePath,
+            sourceReference: file.sourceReference,
+          })
+          : preserveOkfCompanion({
+            filePath: file.filePath,
+            outputDir: input.outputDir,
+            relativePath: file.okfRelativePath,
+          });
+        results.push(await preserve);
+        continue;
       }
 
       const definition = selectParserDefinition(file.filePath);
@@ -480,6 +668,7 @@ export async function runKnowledgeParsers(input: {
         summary: buildSummary(definition.sourceType, parsed.stats),
         stats: parsed.stats,
         warnings: parsed.warnings,
+        document_kind: "generated",
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
