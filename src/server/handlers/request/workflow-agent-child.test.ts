@@ -147,6 +147,7 @@ describe("workflow agent child protocol", () => {
       }
       if (url.endsWith("/runs")) {
         order.push("admit");
+        assertEquals(headers.get("Accept"), "application/vnd.veryfront.inherited-run+json");
         assertEquals(headers.get("X-Veryfront-Run-Event-Token"), eventToken);
         assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
         assertEquals(body.parent_run_id, parentId);

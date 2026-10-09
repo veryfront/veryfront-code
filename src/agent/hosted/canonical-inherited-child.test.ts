@@ -72,6 +72,7 @@ it("admits one inherited child with the parent's capability and binds exact-chil
     agentId: "agent",
     projectId: parentId,
   });
+  assertEquals(calls[0].headers.get("Accept"), "application/vnd.veryfront.inherited-run+json");
   const resolverFactory = hostedInheritedInferenceModelResolver;
   assertEquals(typeof resolverFactory, "function");
   const resolver = resolverFactory(run)!;

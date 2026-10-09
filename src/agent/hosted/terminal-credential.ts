@@ -246,6 +246,7 @@ export function hostedInheritedRunAdmitter(
         "Content-Type": "application/json",
         "Idempotency-Key": `inherited:${await computeHash(`${parentId}:${toolCallId}`)}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
+        Accept: "application/vnd.veryfront.inherited-run+json",
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
       },
       body: JSON.stringify({
@@ -275,7 +276,7 @@ async function normalizeInheritedExecutionResponse(
   binding: { projectId: string; parentRunId?: string; agentId?: string; conversationId?: string },
 ): Promise<Response> {
   if (
-    response.headers.get("Content-Type")?.split(";")[0].trim() !==
+    response.headers.get("Content-Type")?.split(";")[0]?.trim() !==
       "application/vnd.veryfront.inherited-run+json"
   ) return response;
   const value = await response.clone().json();
