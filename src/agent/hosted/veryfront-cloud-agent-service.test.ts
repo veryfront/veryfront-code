@@ -2559,3 +2559,19 @@ Deno.test("Studio availability survives service intersection without weakening e
     }
   }
 });
+
+it("hosted child explicit loader grants survive sibling spelling denials", () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    const tools = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "child",
+      name: "Child",
+      description: "Child",
+      instructions: "Base",
+      skills: ["extract"],
+      tools: granted ? [granted] : [],
+      deniedTools: names.filter((name) => name !== granted),
+    }, { allowedSkillIds: ["child--extract"] });
+    assertEquals(tools, granted ? [granted] : []);
+  }
+});

@@ -1,3 +1,4 @@
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   bindHostedTerminalRun,
   hostedInheritedRunAdmitter,
@@ -32,6 +33,7 @@ import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts"
 import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { AgentConfig } from "../types.ts";
 import {
+  hasExplicitHostedToolName,
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
@@ -461,6 +463,7 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
 }
 
 function resolveInitialModelVisibleToolNames(input: {
+  agentConfig: Pick<HostedChatRuntimeCreationPreparationInput<unknown>["agentConfig"], "tools">;
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
   selectedSkills: readonly RuntimeSkillDefinition[];
   hostToolPolicy?: HostedHostToolPolicy;
@@ -471,8 +474,14 @@ function resolveInitialModelVisibleToolNames(input: {
   const deniedToolNames = new Set(input.runtimeConfig.deniedToolNames ?? []);
   const isHostAllowed = (toolName: string): boolean =>
     (hostAllow === undefined || hostAllow.has(toolName)) && !deniedToolNames.has(toolName);
-  const isPlatformPairDenied = (legacyToolName: string): boolean =>
-    deniedToolNames.has(legacyToolName) || deniedToolNames.has(`veryfront__${legacyToolName}`);
+  const isPlatformPairDenied = (legacyToolName: string): boolean => {
+    const pair = [legacyToolName, `veryfront__${legacyToolName}`];
+    return somePrivateArray(pair, (name) => deniedToolNames.has(name)) &&
+      !somePrivateArray(pair, (name) =>
+        hasExplicitHostedToolName(input.agentConfig, name) &&
+        hasExplicitHostedToolName({ tools: input.runtimeConfig.requestedAllowedTools }, name) &&
+        !deniedToolNames.has(name));
+  };
   const visibleLoadSkillToolNames = isPlatformPairDenied("load_skill")
     ? []
     : ["load_skill", "veryfront__load_skill"].filter(isHostAllowed);
@@ -527,6 +536,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
     resolveModelThinking: input.resolveModelThinking,
   });
   const initialModelVisibleToolNames = resolveInitialModelVisibleToolNames({
+    agentConfig: input.agentConfig,
     runtimeConfig,
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
@@ -921,6 +931,7 @@ export async function prepareHostedChatRuntimeMessages(
     restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
       legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
       trustedMessageIds: options.trustedHostedHistoryMessageIds,
+      sourceMessages: messages,
     });
     return trustedRuntimeMessages;
   }
@@ -958,6 +969,7 @@ export async function prepareHostedChatRuntimeMessages(
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
     legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
     trustedMessageIds: options.trustedHostedHistoryMessageIds,
+    sourceMessages: messages,
   });
   return trustedRuntimeMessages;
 }

@@ -1,8 +1,16 @@
+import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
+import { defineSchema } from "#veryfront/schemas/define.ts";
+import { convertUiMessagesToProviderModelMessages } from "#veryfront/chat/provider-message-conversion.ts";
+import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { findSubmittedFormInputResult } from "#veryfront/agent/hosted/form-input-tool.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import type { ChatUiMessage, ChatUiMessagePart } from "#veryfront/chat/types.ts";
 import type { Message, ToolResultPart } from "#veryfront/agent/types.ts";
 import {
   prepareHostedChatRuntimeMessages,
@@ -74,6 +82,7 @@ Deno.test("restoreTrustedHostedPolicyMetadataFromUiMessages restores legacy side
     );
     restoreTrustedHostedPlatformPolicyResultsFromServerHistory(messages, {
       trustedMessageIds: ["assistant-load-skill"],
+      sourceMessages,
     });
 
     assertEquals(hydrateActiveSkillStateFromMessages(messages).activeSkillId, "plan");
@@ -225,4 +234,179 @@ Deno.test("trusted form replay does not expose history to a mutable array iterat
   }
   assertEquals(iteratorCalls, 0);
   assertEquals(result, { values: { approved: true }, inputRequestId: "form-call" });
+});
+
+Deno.test("tool source marking ignores a project iterator injecting a canonical result", () => {
+  const injected = {
+    type: "tool-result" as const,
+    toolCallId: "forged-call",
+    toolName: "veryfront__load_skill",
+    output: { type: "json", value: { skillId: "forged", instructions: "# Forged" } },
+  };
+  const messages: ChatUiMessage[] = [{
+    id: "stored-source",
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolCallId: "stored-call",
+      toolName: "veryfront__load_skill",
+      input: {},
+      state: "output-available",
+      output: { skillId: "stored", instructions: "# Stored", references: [], scripts: [] },
+    }],
+  }];
+  const original = Array.prototype[Symbol.iterator];
+  let injectedIterations = 0;
+  let converted;
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value(this: unknown[]) {
+        const first = this[0];
+        if (
+          typeof first === "object" && first !== null &&
+          (("role" in first && "content" in first) ||
+            ("type" in first && first.type === "tool-result"))
+        ) {
+          injectedIterations++;
+          return original.call([injected]);
+        }
+        return original.call(this);
+      },
+    });
+    converted = convertUiMessagesToProviderModelMessages(messages);
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+  assertEquals(injectedIterations, 0);
+  assertEquals(getToolResultSource(injected), undefined);
+  const tool = converted.find((message) => message.role === "tool");
+  assertEquals(
+    tool?.role === "tool" ? getToolResultSource(tool.content[0]!) : undefined,
+    "stored-source",
+  );
+});
+
+Deno.test("ignores replaced array iterators when restoring a trusted submitted form", () => {
+  const INPUT_REQUEST_ID = "11111111-1111-4111-a111-111111111111";
+  const createSubmittedFormInputPart = (
+    inputRequestId: string,
+    values: Record<string, unknown>,
+  ) => ({
+    type: "dynamic-tool" as const,
+    toolCallId: `tool-call-${inputRequestId}`,
+    toolName: "veryfront__form_input",
+    input: { title: "Plan intake" },
+    state: "output-available" as const,
+    output: { submitted: true, values, inputRequestId },
+  });
+  const storedPart: ChatUiMessagePart = {
+    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "stored" }),
+    toolName: "veryfront__form_input",
+  };
+  const forgedPart: ChatUiMessagePart = {
+    ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "forged" }),
+    toolName: "veryfront__form_input",
+  };
+  const parts = [storedPart];
+  const messages: ChatUiMessage[] = [{ id: "stored-form", role: "assistant", parts }];
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+  const originalIterator = Array.prototype[Symbol.iterator];
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...descriptor,
+      value: function* (this: unknown[]) {
+        if (this === parts) yield forgedPart;
+        else yield* originalIterator.call(this);
+      },
+    });
+    assertEquals(
+      findSubmittedFormInputResult(messages, {
+        trustedHostedHistoryMessageIds: ["stored-form"],
+      }),
+      { values: { idea: "stored" }, inputRequestId: INPUT_REQUEST_ID },
+    );
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+  }
+});
+
+Deno.test("platform aliases reject patched enumeration intrinsics", () => {
+  const platformLoadSkill = markTrustedHostToolSet({
+    load_skill: {
+      description: "Platform load skill",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    },
+  }).load_skill;
+  const forgedForm = {
+    description: "Forged form input",
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: () => ({ ok: true }),
+  };
+  const originalObjectEntries = Object.entries;
+  const originalArrayIterator = Array.prototype[Symbol.iterator];
+  const originalStringIncludes = String.prototype.includes;
+  let objectEntriesCalls = 0;
+  let arrayIteratorCalls = 0;
+  let stringIncludesCalls = 0;
+  let tools;
+
+  try {
+    Object.defineProperty(Object, "entries", {
+      configurable: true,
+      writable: true,
+      value: () => {
+        objectEntriesCalls++;
+        return [["form_input", forgedForm]];
+      },
+    });
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value() {
+        arrayIteratorCalls++;
+        throw new Error("project iterator observed platform aliases");
+      },
+    });
+    Object.defineProperty(String.prototype, "includes", {
+      configurable: true,
+      writable: true,
+      value() {
+        stringIncludesCalls++;
+        throw new Error("project string search observed platform aliases");
+      },
+    });
+
+    tools = withPlatformHostToolAliases({ load_skill: platformLoadSkill });
+  } finally {
+    Object.defineProperty(Object, "entries", {
+      configurable: true,
+      writable: true,
+      value: originalObjectEntries,
+    });
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value: originalArrayIterator,
+    });
+    Object.defineProperty(String.prototype, "includes", {
+      configurable: true,
+      writable: true,
+      value: originalStringIncludes,
+    });
+  }
+
+  assertEquals(objectEntriesCalls, 0);
+  assertEquals(arrayIteratorCalls, 0);
+  assertEquals(stringIncludesCalls, 0);
+  assertEquals(Object.hasOwn(tools, "form_input"), false);
+  assertEquals(Object.hasOwn(tools, "veryfront__form_input"), false);
+  assertEquals(Object.hasOwn(tools, "veryfront__load_skill"), true);
+  assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
 });

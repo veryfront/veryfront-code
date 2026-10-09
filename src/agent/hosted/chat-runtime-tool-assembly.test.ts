@@ -1,5 +1,8 @@
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
-import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -276,6 +279,58 @@ describe("structured system messages", () => {
   });
 });
 
+describe("withPlatformHostToolAliases", () => {
+  it("keeps a trusted legacy form alias for canonical parked-run resume", () => {
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+
+    const tools = withPlatformHostToolAliases({ veryfront__form_input: canonicalForm });
+
+    assertEquals(Object.hasOwn(tools, "form_input"), true);
+    assertEquals(Object.hasOwn(tools, "veryfront__form_input"), true);
+    assertEquals(hasTrustedHostToolProvenance(tools.form_input), true);
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__form_input), true);
+    assertEquals(tools.form_input?.id, "form_input");
+    assertEquals(tools.veryfront__form_input, canonicalForm);
+  });
+
+  it("restores the trusted canonical platform form over canonical project collisions", () => {
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+    const projectCanonicalForm = localTool("Project canonical-looking form input");
+
+    const tools = withPlatformHostToolAliases(
+      { veryfront__form_input: canonicalForm },
+      { veryfront__form_input: projectCanonicalForm },
+    );
+
+    assertStrictEquals(tools.veryfront__form_input, canonicalForm);
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__form_input), true);
+    assertEquals(hasTrustedHostToolProvenance(projectCanonicalForm), false);
+    assertEquals(Object.hasOwn(tools, "form_input"), true);
+    assertEquals(hasTrustedHostToolProvenance(tools.form_input), true);
+  });
+
+  it("keeps project form collisions while preserving the canonical platform form", () => {
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+    const projectForm = localTool("Project form input");
+
+    const tools = withPlatformHostToolAliases(
+      { veryfront__form_input: canonicalForm },
+      { form_input: projectForm },
+    );
+
+    assertStrictEquals(tools.form_input, projectForm);
+    assertStrictEquals(tools.veryfront__form_input, canonicalForm);
+    assertEquals(hasTrustedHostToolProvenance(tools.form_input), false);
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__form_input), true);
+  });
+});
+
 describe("filterHostedChatRuntimeLocalTools", () => {
   it("filters and sorts local tools", () => {
     const result = filterHostedChatRuntimeLocalTools({
@@ -375,6 +430,34 @@ describe("filterHostedChatRuntimeLocalTools", () => {
     });
 
     assertEquals(toolAssembly.localToolNames, ["veryfront__form_input"]);
+    assertEquals(await toolAssembly.runtimeTools.veryfront__form_input?.execute({}), { ok: true });
+  });
+
+  it("keeps a trusted legacy form executable for parked canonical-only resume", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+    const localTools = withPlatformHostToolAliases(markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }));
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      hostToolPolicy: { allow: ["form_input"] },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["form_input"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.localToolNames, ["form_input", "veryfront__form_input"]);
+    assertEquals(await toolAssembly.runtimeTools.form_input?.execute({}), { ok: true });
     assertEquals(await toolAssembly.runtimeTools.veryfront__form_input?.execute({}), { ok: true });
   });
 
@@ -568,7 +651,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly selects resolved canonical deleg
 });
 
 Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly authorized project invoke_agent", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+  const taskContext: Omit<HostedChatRuntimeToolAssemblyContext, "authToken"> = {
     agentId: "writer",
     projectId: "project-1",
     model: "anthropic/claude-sonnet-4-6",
@@ -595,7 +678,6 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly auth
     hostToolPolicy: { allow: ["invoke_agent"] },
     allowedToolNames: ["invoke_agent"],
     remoteToolSources: [],
-    preloadLatestConversationUserText: false,
   });
 
   assertEquals(toolAssembly.localToolNames, ["invoke_agent"]);
@@ -2695,4 +2777,61 @@ Deno.test("forwards authenticated platform server identity to the runtime source
   });
   assertEquals(receivedKind, "veryfront-api");
   assertEquals(receivedId, "custom-platform");
+});
+
+it("assembled trusted loader remains executable with an explicit grant and sibling denial", async () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: {
+        authToken: "token",
+        projectId: "project-1",
+        model: "anthropic/claude-sonnet-4-6",
+        availableSkillIds: ["plan"],
+      },
+      instructions: "Base",
+      localTools: markTrustedHostToolSet({
+        load_skill: localTool("Load"),
+        veryfront__load_skill: localTool("Load"),
+      }),
+      allowedToolNames: granted ? [granted] : [],
+      deniedToolNames: names.filter((name) => name !== granted),
+      apiUrl: "https://api.example.test",
+      apiMcpUrl: "https://api.example.test/mcp",
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+    assertEquals(assembly.localToolNames, granted ? [granted] : []);
+    if (granted) {
+      assertEquals(
+        await assembly.runtimeTools[granted]!.execute!({}),
+        { ok: true },
+      );
+    }
+  }
+});
+
+it("explicit canonical platform grant survives legacy denial through remote execution", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base",
+    localTools: {},
+    allowedToolNames: ["veryfront__create_file"],
+    deniedToolNames: ["create_file"],
+    apiUrl: "https://api.example.test",
+    apiMcpUrl: "https://api.example.test/mcp",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.remoteToolNames, ["veryfront__create_file"]);
+  await assembly.remoteToolSources[0]!.executeTool("veryfront__create_file", {});
+  await assertRejects(async () =>
+    await assembly.remoteToolSources[0]!.executeTool("create_file", {})
+  );
 });

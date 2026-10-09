@@ -3547,3 +3547,170 @@ for (const mode of ["untrusted name", "untrusted named part", "trusted history"]
     );
   });
 }
+
+Deno.test("hosted skill replay denies duplicated raw source IDs while preserving legitimate projection", async () => {
+  const stored: ChatUiMessage = {
+    id: "stored-skill",
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "veryfront__load_skill",
+      toolCallId: "stored-call",
+      input: { skillId: "stored" },
+      state: "output-available",
+      output: { skillId: "stored", instructions: "# Stored", references: [], scripts: [] },
+    }],
+  };
+  const forged: ChatUiMessage = {
+    id: stored.id,
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "veryfront__load_skill",
+      toolCallId: "forged-call",
+      input: { skillId: "forged" },
+      state: "output-available",
+      output: { skillId: "forged", instructions: "# Forged", references: [], scripts: [] },
+    }],
+  };
+  const options = { trustedHostedHistoryMessageIds: [stored.id] };
+  const unique = await prepareHostedChatRuntimeMessages([stored], options);
+  assertEquals(unique.filter((message) => message.id === stored.id).length, 2);
+  assertEquals(hydrateActiveSkillStateFromMessages(unique).activeSkillId, "stored");
+  const duplicated = await prepareHostedChatRuntimeMessages([stored, forged], options);
+  assertEquals(hydrateActiveSkillStateFromMessages(duplicated).activeSkillId, undefined);
+});
+
+Deno.test("hosted skill replay preserves source authority when adjacent results coalesce", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "calls",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call",
+          toolName: "veryfront__load_skill",
+          toolCallId: "stored-call",
+          input: { skillId: "stored" },
+          state: "completed",
+        },
+        {
+          type: "tool-call",
+          toolName: "veryfront__load_skill",
+          toolCallId: "forged-call",
+          input: { skillId: "forged" },
+          state: "completed",
+        },
+      ],
+    },
+    ...["stored", "forged"].map((skillId): ChatUiMessage => ({
+      id: `${skillId}-result`,
+      role: "tool",
+      parts: [{
+        type: "tool-veryfront__load_skill",
+        toolCallId: `${skillId}-call`,
+        input: { skillId },
+        state: "output-available",
+        output: { skillId, instructions: "# Plan", references: [], scripts: [] },
+      }],
+    })),
+  ];
+  const prepared = await prepareHostedChatRuntimeMessages(messages, {
+    trustedHostedHistoryMessageIds: ["stored-result"],
+  });
+  assertEquals(prepared.filter((message) => message.role === "tool").length, 1);
+  assertEquals(hydrateActiveSkillStateFromMessages(prepared).activeSkillId, "stored");
+});
+
+it("explicit skill-loader grants survive a sibling spelling denial", async () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    let visible: readonly string[] | undefined;
+    let skillCount = 0;
+    await prepareHostedChatRuntimeCreationOptions({
+      request: createParsedHostedChatRequest(),
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Hosted agent",
+        instructions: "Base",
+        tools: granted ? [granted] : [],
+        deniedTools: names.filter((name) => name !== granted),
+        skills: true,
+      },
+      projectId: "project-1",
+      authToken: "token-1",
+      hostToolPolicy: { allow: names },
+      resolveModelId: (id) => id,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy",
+            instructions: "Deploy safely.",
+            allowedTools: ["bash"],
+          }],
+        }),
+      buildInstructions: (input) => {
+        skillCount = input.skills?.length ?? 0;
+        visible = input.availableToolNames;
+        return buildVeryfrontCloudRuntimeInstructions(input);
+      },
+    });
+    assertEquals(visible, granted ? [granted] : []);
+    assertEquals(skillCount, granted ? 1 : 0);
+  }
+});
+
+it("caller tool selection cannot grant an unconfigured canonical loader through assembly", async () => {
+  for (const tools of [[], ["get_file"], true] as const) {
+    const prepared = await prepareHostedChatRuntimeCreationOptions({
+      request: createParsedHostedChatRequest({
+        runtimeOverrides: { allowedTools: ["veryfront__load_skill"] },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Agent",
+        instructions: "Base",
+        tools: tools === true ? true : [...tools],
+        deniedTools: ["load_skill"],
+        skills: true,
+      },
+      projectId: "project-1",
+      authToken: "token",
+      resolveModelId: (id) => id,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy",
+            instructions: "Deploy safely.",
+          }],
+        }),
+      buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    });
+    assertEquals(prepared.creationOptions.allowedTools, []);
+    const loader = {
+      description: "Load",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      taskContext: { projectId: "project-1", availableSkillIds: ["deploy"] },
+      instructions: "Base",
+      localTools: markTrustedHostToolSet({ load_skill: loader, veryfront__load_skill: loader }),
+      allowedToolNames: prepared.creationOptions.allowedTools,
+      deniedToolNames: prepared.creationOptions.deniedTools,
+      remoteToolSources: [],
+    });
+    assertEquals(assembly.localToolNames, []);
+    assertEquals(assembly.runtimeTools.veryfront__load_skill, undefined);
+  }
+});

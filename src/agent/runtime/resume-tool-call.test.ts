@@ -389,7 +389,7 @@ it("resumes a parked legacy form through materialized canonical platform definit
       id: "veryfront__form_input",
       description: "Platform form control",
       inputSchema: defineSchema((v) => v.object({ answer: v.string() }))(),
-      execute: (input) => {
+      execute: (input: unknown) => {
         executions.push(input);
         return { submitted: true, owner: "platform" };
       },
