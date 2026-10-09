@@ -179,6 +179,20 @@ describe("integration endpoint specs", () => {
   it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
     const expected: [string, string, "params" | "body", string, string][] = [
       [
+        "outlook",
+        "add_attachment_to_message",
+        "body",
+        "contentBytes",
+        "The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
+      ],
+      [
+        "outlook",
+        "add_event_attachment",
+        "body",
+        "contentBytes",
+        "The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
+      ],
+      [
         "new-relic",
         "list_issues",
         "params",
@@ -2765,7 +2779,8 @@ describe("integration endpoint specs", () => {
       },
       contentBytes: {
         type: "string",
-        description: "Base64-encoded attachment content",
+        description:
+          "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
         required: true,
       },
       contentType: {

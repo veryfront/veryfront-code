@@ -38704,7 +38704,8 @@ export const connectors: IntegrationConfig[] = [
           "name": { "type": "string", "description": "Attachment filename", "required": true },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description":
+              "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true,
           },
           "contentType": { "type": "string", "description": "Attachment MIME type" },
@@ -39566,7 +39567,8 @@ export const connectors: IntegrationConfig[] = [
           "name": { "type": "string", "description": "Attachment filename", "required": true },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description":
+              "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true,
           },
           "contentType": { "type": "string", "description": "Attachment MIME type" },
