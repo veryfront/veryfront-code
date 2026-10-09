@@ -26,7 +26,10 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
@@ -82,6 +85,7 @@ import {
 } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicToolRegistryGet = toolRegistry.get;
 const IntrinsicStringTrim = String.prototype.trim;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
@@ -444,11 +448,19 @@ function resolveToolsConfiguration(input: {
 function getSkillLoaderToolName(
   tools: AgentConfig["tools"],
 ): BuildAgentCallContextInput["skillLoaderToolName"] {
-  if (tools === true) return "load_skill";
+  if (tools === true) {
+    return hasTrustedHostToolProvenance(
+        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["load_skill"]),
+      )
+      ? "load_skill"
+      : undefined;
+  }
   if (!tools) return undefined;
-  for (const name of ["veryfront__load_skill", "load_skill"] as const) {
+  const names = ["veryfront__load_skill", "load_skill"] as const;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
     const loader = tools[name];
-    if (loader !== undefined && loader !== false) return name;
+    if (hasTrustedHostToolProvenance(loader)) return name;
   }
   return undefined;
 }
