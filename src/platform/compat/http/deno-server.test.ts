@@ -50,7 +50,11 @@ async function readUntilHeaders(
   let bytesRead = 0;
 
   while (true) {
-    const read = await conn.read(buffer);
+    const read = await withTimeout(
+      conn.read(buffer),
+      1_000,
+      "Deno response did not reach EOF",
+    );
     if (read === null) throw new Error("connection closed before response headers");
     const chunk = buffer.slice(0, read);
     chunks.push(chunk);
@@ -206,7 +210,11 @@ describe("DenoHttpServer", () => {
         let bytes = headerRead.bodyPayloadBytesRead;
         const buffer = new Uint8Array(64 * 1024);
         while (true) {
-          const read = await conn.read(buffer);
+          const read = await withTimeout(
+            conn.read(buffer),
+            1_000,
+            "Deno response did not reach EOF",
+          );
           if (read === null) break;
           bytes += countPayloadBytes(buffer.slice(0, read));
         }
@@ -256,7 +264,11 @@ describe("DenoHttpServer", () => {
           () => transportFinished.resolve("rejected"),
         );
         handlerStarted.resolve();
-        await requestAborted.promise;
+        await withTimeout(
+          requestAborted.promise,
+          1_000,
+          "Deno request did not abort before handler deadline",
+        );
         const tracked = tracker.completeOnResponseEnd(
           requestId,
           incoming,
