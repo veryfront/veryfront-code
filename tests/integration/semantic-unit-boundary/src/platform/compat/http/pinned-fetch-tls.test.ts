@@ -89,26 +89,118 @@ function childScript(): string {
 import { assertEquals, assertRejects } from ${JSON.stringify(ASSERT_MODULE.href)};
 import { fetchWithPinnedAddresses } from ${JSON.stringify(PINNED_FETCH_MODULE.href)};
 
-const { createServer, globalAgent } = await import("node:https");
-let requestsReceived = 0;
-const server = createServer(
-  { cert: ${JSON.stringify(LEAF_CERTIFICATE)}, key: ${JSON.stringify(LEAF_KEY)} },
-  (request, response) => {
-    requestsReceived += 1;
-    response.writeHead(200, { "content-type": "text/plain" });
-    response.end(request.headers.authorization ?? "native");
-  },
-);
-await new Promise<void>((resolve, reject) => {
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", resolve);
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const listener = Deno.listenTls({
+  hostname: "127.0.0.1",
+  port: 0,
+  cert: ${JSON.stringify(LEAF_CERTIFICATE)},
+  key: ${JSON.stringify(LEAF_KEY)},
 });
+const connections = [];
+let requestsReceived = 0;
+
+function responseText(status, body, connection = "keep-alive") {
+  return [
+    \`HTTP/1.1 \${status} OK\`,
+    "content-type: text/plain",
+    \`content-length: \${encoder.encode(body).byteLength}\`,
+    \`connection: \${connection}\`,
+    "",
+    body,
+  ].join("\\r\\n");
+}
+
+async function writeString(connection, value) {
+  await connection.write(encoder.encode(value));
+}
+
+async function readHeaders(connection) {
+  const chunks = [];
+  const buffer = new Uint8Array(1024);
+  while (true) {
+    const read = await connection.read(buffer);
+    if (read === null) throw new Error("connection closed before HTTP headers");
+    chunks.push(buffer.slice(0, read));
+    const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (let index = 0; index < chunks.length; index++) {
+      bytes.set(chunks[index], offset);
+      offset += chunks[index].byteLength;
+    }
+    const text = decoder.decode(bytes);
+    if (text.includes("\\r\\n\\r\\n")) return text;
+  }
+}
+
+async function readUntilEof(connection) {
+  const buffer = new Uint8Array(1024);
+  while (await connection.read(buffer) !== null) {}
+  return true;
+}
+
+async function withDeadline(promise, label, timeoutMs = 1000) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(label)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function acceptRequest(respond) {
+  const connection = await listener.accept();
+  connections.push(connection);
+  const headers = await readHeaders(connection);
+  requestsReceived += 1;
+  await respond(connection, headers);
+  const eof = readUntilEof(connection).finally(() => {
+    try {
+      connection.close();
+    } catch {
+      // already closed
+    }
+  });
+  return { headers, eof };
+}
+
+async function observeTlsConnectionForHttpDispatch() {
+  let connection;
+  try {
+    connection = await listener.accept();
+    connections.push(connection);
+    const headers = await readHeaders(connection);
+    requestsReceived += 1;
+    return { dispatched: true, headers };
+  } catch (error) {
+    return { dispatched: false, error: String(error?.message ?? error) };
+  } finally {
+    try {
+      connection?.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
 try {
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Missing HTTPS fixture address");
+  const address = listener.addr;
+  if (typeof address.port !== "number") throw new Error("Missing TLS fixture address");
+  const nativeRequest = acceptRequest(async (connection) => {
+    await writeString(connection, responseText(200, "native", "close"));
+    connection.closeWrite();
+  });
   const nativeResponse = await fetch(\`https://127.0.0.1:\${address.port}/native\`);
   assertEquals(nativeResponse.status, 200);
   assertEquals(await nativeResponse.text(), "native");
+  await nativeRequest;
+
   const httpsBuiltin = globalThis.process.getBuiltinModule("node:https");
   const OriginalAgent = httpsBuiltin.Agent;
   let interceptedAgentConstructor = false;
@@ -124,6 +216,11 @@ try {
       super(options);
     }
   };
+
+  const completedRequest = acceptRequest(async (connection, headers) => {
+    assertEquals(headers.includes("authorization: Bearer synthetic-token"), true);
+    await writeString(connection, responseText(200, "Bearer synthetic-token"));
+  });
   const pinnedResponse = await fetchWithPinnedAddresses(
     new URL(\`https://pinned-cert-env.test:\${address.port}/pinned\`),
     ["127.0.0.1"],
@@ -131,19 +228,64 @@ try {
   );
   assertEquals(pinnedResponse.status, 200);
   assertEquals(await pinnedResponse.text(), "Bearer synthetic-token");
+  const completed = await completedRequest;
+  await withDeadline(
+    completed.eof,
+    "Completed authenticated downloads must release their owned HTTPS socket",
+  );
   assertEquals(interceptedAgentConstructor, false, "Authenticated transport must use the bootstrap agent constructor");
   assertEquals(interceptedPrivateAgent, false, "Private agent options must not cross tenant reflection hooks");
-  globalAgent.options.rejectUnauthorized = false;
+
+  const pendingRequest = acceptRequest(async (connection, headers) => {
+    assertEquals(headers.includes("authorization: Bearer synthetic-token"), true);
+    await writeString(connection, [
+      "HTTP/1.1 200 OK",
+      "content-type: text/plain",
+      "content-length: 12",
+      "connection: keep-alive",
+      "",
+      "hello",
+    ].join("\\r\\n"));
+  });
+  const pendingResponse = await fetchWithPinnedAddresses(
+    new URL(\`https://pinned-cert-env.test:\${address.port}/pending\`),
+    ["127.0.0.1"],
+    { headers: { authorization: "Bearer synthetic-token" } },
+  );
+  assertEquals(pendingResponse.status, 200);
+  const pending = await pendingRequest;
+  await pendingResponse.body?.cancel("cancel pinned response");
+  await withDeadline(
+    pending.eof,
+    "Cancelled authenticated response bodies must release their owned HTTPS socket",
+  );
+
+  globalThis.process.getBuiltinModule("node:https").globalAgent.options.rejectUnauthorized = false;
+  const wrongHostProbe = observeTlsConnectionForHttpDispatch();
   await assertRejects(() => fetchWithPinnedAddresses(
     new URL(\`https://wrong-host.test:\${address.port}/rejected\`),
     ["127.0.0.1"],
     { headers: { authorization: "Bearer synthetic-token" } },
   ), Error);
-  assertEquals(requestsReceived, 2, "TLS hostname mismatch must not dispatch credential headers");
-} finally {
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => error ? reject(error) : resolve())
+  const wrongHost = await withDeadline(
+    wrongHostProbe,
+    "TLS hostname mismatch probe did not settle",
   );
+  assertEquals(wrongHost.dispatched, false, "TLS hostname mismatch must not dispatch credential headers");
+  assertEquals(requestsReceived, 3);
+} finally {
+  try {
+    listener.close();
+  } catch {
+    // already closed
+  }
+  for (let index = 0; index < connections.length; index++) {
+    try {
+      connections[index].close();
+    } catch {
+      // already closed
+    }
+  }
 }
 `;
 }

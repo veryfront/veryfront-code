@@ -612,9 +612,11 @@ function createPinnedDenoHttpsAgent(
   intrinsics: NodeTransportIntrinsics,
   address: string,
 ): Agent {
-  const agent = new intrinsics.capturedHttpsAgentConstructor(
-    copyAgentOptions(intrinsics.privateHttpsAgent),
-  );
+  // This address-bound agent serves one request, so it must not retain idle sockets.
+  const options = ObjectAssign(ObjectCreate(null), copyAgentOptions(intrinsics.privateHttpsAgent), {
+    keepAlive: false,
+  });
+  const agent = new intrinsics.capturedHttpsAgentConstructor(options);
   IntrinsicReflectApply(ObjectDefineProperty, Object, [
     agent,
     "createConnection",
