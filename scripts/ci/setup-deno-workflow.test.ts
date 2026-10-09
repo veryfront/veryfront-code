@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
 import { planIntegrationShard, planSuiteFiles } from "../test/run-suite.ts";
@@ -7,8 +13,10 @@ import { inlinePublicPoolJobs } from "./public-pool-jobs.ts";
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
 const LOCAL_ACTION = "./.github/actions/setup-deno";
-const CACHE_RESTORE_ACTION = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
-const CACHE_SAVE_ACTION = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_RESTORE_ACTION =
+  "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_SAVE_ACTION =
+  "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const MAX_SETUP_MINUTES = 5;
 const MAX_CACHE_SETUP_MINUTES = 10;
 const CACHE_PRODUCER_JOB = "tests-integration";
@@ -481,13 +489,19 @@ async function runChromiumInstall(
 
 describe("install-chromium failure diagnosis", () => {
   it("names the install deadline when timeout reports exit 124", async () => {
-    const result = await runChromiumInstall({ status: 124, elapsedSeconds: 240 });
+    const result = await runChromiumInstall({
+      status: 124,
+      elapsedSeconds: 240,
+    });
     assertEquals(result.code, 124);
     assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
   });
 
   it("names the install deadline when the deadline kill escalates to exit 137", async () => {
-    const result = await runChromiumInstall({ status: 137, elapsedSeconds: 255 });
+    const result = await runChromiumInstall({
+      status: 137,
+      elapsedSeconds: 255,
+    });
     assertEquals(result.code, 137);
     assertStringIncludes(result.stdout, "exceeded 4m (stalled download");
   });
@@ -595,7 +609,9 @@ describe("setup-deno CI contract", () => {
       "${{ steps.deno-cache.outputs.cache-primary-key }}",
     );
 
-    const installStep = steps.find((step) => step.name === "Install pinned Deno");
+    const installStep = steps.find((step) =>
+      step.name === "Install pinned Deno"
+    );
     assert(installStep, "setup-deno must install Deno explicitly");
     const install = String(installStep.run);
     assertStringIncludes(install, 'version="2.7.7"');
@@ -688,8 +704,12 @@ describe("setup-deno CI contract", () => {
       "the installer must not fall back to npm",
     );
 
-    const redisWarm = steps.find((step) => step.name === "Warm Redis module cache");
-    const dependencyWarm = steps.find((step) => step.name === "Warm esm.sh cache");
+    const redisWarm = steps.find((step) =>
+      step.name === "Warm Redis module cache"
+    );
+    const dependencyWarm = steps.find((step) =>
+      step.name === "Warm esm.sh cache"
+    );
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
     const templateManifestGenerator = steps.find((step) => {
@@ -862,13 +882,18 @@ jobs:
 
           assertEquals(
             step["timeout-minutes"],
-            isCompleteCacheProducer ? MAX_CACHE_SETUP_MINUTES : MAX_SETUP_MINUTES,
+            isCompleteCacheProducer
+              ? MAX_CACHE_SETUP_MINUTES
+              : MAX_SETUP_MINUTES,
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
           if (isCompleteCacheProducer) {
-            const runners = String(job["runs-on"]).match(/\b(ubuntu|windows|macos)-[\w.-]+/g) ?? [];
+            const runners = String(job["runs-on"]).match(
+              /\b(ubuntu|windows|macos)-[\w.-]+/g,
+            ) ?? [];
             assert(
-              runners.length > 0 && runners.every((runner) => runner.startsWith("ubuntu-")),
+              runners.length > 0 &&
+                runners.every((runner) => runner.startsWith("ubuntu-")),
               `${path} ${jobName} uses the Linux timeout command while warming`,
             );
           }
@@ -1009,6 +1034,26 @@ jobs:
     ).find((step) => step.uses === LOCAL_ACTION);
     assert(coverageSetup, "coverage shards must use setup-deno");
     assertEquals(coverageSetup["timeout-minutes"], MAX_SETUP_MINUTES);
+    const coverageSteps = asSteps(
+      coverageShards.steps,
+      "coverage-shards steps",
+    );
+    const nodeSetupIndex = coverageSteps.findIndex((step) =>
+      String(step.uses).startsWith("actions/setup-node@")
+    );
+    const coverageRunIndex = coverageSteps.findIndex((step) =>
+      step.name === "Run unit coverage shard"
+    );
+    assert(
+      nodeSetupIndex >= 0 && nodeSetupIndex < coverageRunIndex,
+      "coverage shards must install Node and npm before tests that create and install projects",
+    );
+    const nodeSetup = coverageSteps[nodeSetupIndex];
+    assert(nodeSetup);
+    assertEquals(nodeSetup.if, undefined, "every coverage shard requires npm");
+    const nodeOptions = asRecord(nodeSetup.with, "coverage Node setup options");
+    assertEquals(nodeOptions["node-version"], "24");
+    assertEquals(nodeOptions["package-manager-cache"], false);
 
     const chromiumAction = await parseYamlFile(
       ".github/actions/install-chromium/action.yml",
@@ -1026,7 +1071,9 @@ jobs:
     const chromiumAptSetup = asSteps(
       chromiumRuns.steps,
       "install-chromium steps",
-    ).find((step) => step.name === "Configure apt sources, retries, and mirrors");
+    ).find((step) =>
+      step.name === "Configure apt sources, retries, and mirrors"
+    );
     assert(chromiumAptSetup, "the shared action must configure apt sources");
     const aptSetup = String(chromiumAptSetup.run);
     assertStringIncludes(
@@ -1128,7 +1175,9 @@ it("public release upload uses an isolated token after publisher artifacts are r
   const download = steps.findIndex((step) =>
     String(step.uses).startsWith("actions/download-artifact@")
   );
-  const upload = steps.findIndex((step) => step.name === "Create GitHub releases");
+  const upload = steps.findIndex((step) =>
+    step.name === "Create GitHub releases"
+  );
   assert(download >= 0 && upload > download);
   const uploadEnv = asRecord(steps[upload].env, "release upload env");
   const tokenReference = String(uploadEnv.GH_TOKEN);
@@ -1152,13 +1201,24 @@ it("public release upload uses an isolated token after publisher artifacts are r
 
 describe("parallel integration workflow contract", () => {
   it("keeps the three-shard root and CLI inventories complete and disjoint", async () => {
-    const suites = ["integration:legacy-tests-root", "integration:cli"] as const;
-    const full = await Promise.all(suites.map((suite) => planSuiteFiles({ suite })));
+    const suites = [
+      "integration:legacy-tests-root",
+      "integration:cli",
+    ] as const;
+    const full = await Promise.all(
+      suites.map((suite) => planSuiteFiles({ suite })),
+    );
     const shards = await Promise.all(
       [1, 2, 3].map((index) => planIntegrationShard({ index, total: 3 })),
     );
-    const files = shards.flatMap((plans) => plans.flatMap((plan) => plan.files));
-    assertEquals(files.length, new Set(files).size, "shards must never overlap");
+    const files = shards.flatMap((plans) =>
+      plans.flatMap((plan) => plan.files)
+    );
+    assertEquals(
+      files.length,
+      new Set(files).size,
+      "shards must never overlap",
+    );
     assertEquals(
       files.toSorted(),
       full.flatMap((plan) => plan.files).toSorted(),
@@ -1167,13 +1227,17 @@ describe("parallel integration workflow contract", () => {
     for (const suite of suites) {
       assertEquals(
         shards.flatMap((plans) =>
-          plans.filter((plan) => plan.suite === suite).flatMap((plan) => plan.files)
+          plans.filter((plan) => plan.suite === suite).flatMap((plan) =>
+            plan.files
+          )
         ).toSorted(),
         full.find((plan) => plan.suite === suite)!.files.toSorted(),
         `${suite} must retain its original execution profile`,
       );
     }
-    assert(shards.every((plans) => plans.some((plan) => plan.files.length > 0)));
+    assert(
+      shards.every((plans) => plans.some((plan) => plan.files.length > 0)),
+    );
   });
 
   it("runs three complete shards through the existing suite profiles without retries", async () => {
@@ -1185,7 +1249,11 @@ describe("parallel integration workflow contract", () => {
       strategy["fail-fast"],
       "${{ github.event_name == 'merge_group' }}",
     );
-    assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2, 3]);
+    assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [
+      1,
+      2,
+      3,
+    ]);
     assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/3)");
     assertEquals(job.needs, ["tested-run"]);
     const steps = asSteps(job.steps, "integration steps");
