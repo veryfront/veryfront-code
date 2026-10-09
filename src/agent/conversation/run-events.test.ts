@@ -1094,3 +1094,38 @@ describe("agent/conversation-run-events", () => {
     );
   });
 });
+
+Deno.test("review denied fallback provider ownership survives version1 replay", async () => {
+  const { readConversationRunLifecycleFrames } = await import("./legacy-run-read-adapter.ts");
+  for (const ownership of [true, false]) {
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "tool-input-start", toolCallId: "denied", toolName: "web_fetch" }),
+      ...encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "denied",
+        toolName: "web_fetch",
+        input: {},
+      }),
+      ...encoder.encode({
+        type: "tool-output-denied",
+        toolCallId: "denied",
+        providerExecuted: ownership,
+      }),
+    ];
+    assertEquals(
+      events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+      ownership ? true : undefined,
+    );
+    const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      assertEquals(
+        replay.frames.some((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ),
+        ownership,
+      );
+    }
+  }
+});

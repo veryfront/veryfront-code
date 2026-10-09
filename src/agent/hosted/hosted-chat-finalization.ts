@@ -1,10 +1,11 @@
+import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   invalidateHostedAgentPauseSettlement,
   recordHostedAgentPauseFlush,
   recordHostedAgentPauseMirrorSnapshot,
 } from "./manual-pause-settlement.ts";
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
-import { isToolUiPart } from "../../chat/conversation.ts";
+import { isRecord, isToolUiPart } from "../../chat/conversation.ts";
 import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import {
@@ -26,6 +27,7 @@ import {
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
+  buildToolResultOwnershipCorrectionEvents,
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
@@ -82,13 +84,17 @@ function createHostedChatFinalizeResponseBuildState(
   input: Extract<FinalizeHostedChatRunInput, { kind: "response" }>,
 ): (finalStep: unknown) => HostedResponseFinalizationState {
   return (finalStep) => {
-    const { persistedMessage, sanitizedFinalizedMessage, hasIncompleteFinalizedToolParts } =
-      buildFinalizedMessageState({
-        responseMessage: input.responseMessage,
-        isAborted: input.isAborted,
-        finalStep,
-        incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-      });
+    const {
+      persistedMessage,
+      sanitizedFinalizedMessage,
+      hasIncompleteFinalizedToolParts,
+      recoveredFallbackParts,
+    } = buildFinalizedMessageState({
+      responseMessage: input.responseMessage,
+      isAborted: input.isAborted,
+      finalStep,
+      incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+    });
 
     const fallbackChunks =
       sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
@@ -101,6 +107,7 @@ function createHostedChatFinalizeResponseBuildState(
             mirroredToolChunkState: input.mirroredToolChunkState,
             capturedMessageId: input.capturedMessageId,
             hasIncompleteFinalizedToolParts,
+            recoveredFallbackParts,
           });
 
           return [
@@ -194,6 +201,7 @@ function createHostedChatFinalizeDetachedBuildState(
       ? (() => {
         const primaryChunks = buildDetachedFallbackChunks({
           fallbackParts,
+          mirroredParts: input.mirroredMessage?.parts,
           finalStep,
           mirroredToolChunkState: input.mirroredToolChunkState,
           mirroredDurableOutput: input.mirroredDurableOutput,
@@ -433,6 +441,7 @@ export async function finalizeHostedChatRun(
   }
   const finalStep = await getLastStreamStep(input.streamResult);
 
+  let ownershipCorrections: ConversationRunEvent[] = [];
   let fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
   let hasIncompleteToolParts: boolean;
   let metadata: HostedLifecycleTerminalState["metadata"] | undefined;
@@ -444,6 +453,12 @@ export async function finalizeHostedChatRun(
     const state = createHostedChatFinalizeResponseBuildState(input)(finalStep);
 
     output = state.finalizedMessage;
+    ownershipCorrections = buildToolResultOwnershipCorrectionEvents({
+      persistedMessage: state.persistedMessage,
+      finalizedMessage: state.finalizedMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
+      isAborted: input.isAborted,
+    });
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
@@ -454,18 +469,34 @@ export async function finalizeHostedChatRun(
       });
     hasOutput = true;
   } else {
-    const state = createHostedChatFinalizeDetachedBuildState(input)(finalStep);
+    // Framing events can mark the mirror as having output without assistant content.
+    // When present, the captured projection is authoritative about that content.
+    const hasMirroredContent = input.mirroredMessage
+      ? !shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message: input.mirroredMessage })
+      : input.mirroredDurableOutput;
+    const state = createHostedChatFinalizeDetachedBuildState({
+      ...input,
+      mirroredDurableOutput: hasMirroredContent,
+    })(finalStep);
 
     // A detached run can complete on mirrored output alone (for example a late
     // provider body-read failure leaves the final step empty). The empty
     // fallback message is not the run's result, so omit it rather than
     // persisting an empty business output over the mirrored response.
     output = state.hasContent ? state.finalizedMessage : undefined;
+    if (input.mirroredMessage) {
+      ownershipCorrections = buildToolResultOwnershipCorrectionEvents({
+        persistedMessage: input.mirroredMessage,
+        finalizedMessage: state.finalizedMessage,
+        mirroredToolChunkState: input.mirroredToolChunkState,
+        isAborted: input.isAborted,
+      });
+    }
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
-    emptyFailure = !input.isAborted && !input.mirroredDurableOutput && !state.hasContent;
-    hasOutput = input.mirroredDurableOutput || state.hasContent;
+    emptyFailure = !input.isAborted && !hasMirroredContent && !state.hasContent;
+    hasOutput = hasMirroredContent || state.hasContent;
   }
 
   if (emptyFailure) {
@@ -485,6 +516,17 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
   });
+  if (ownershipCorrections.length > 0 && input.lifecycleAdapter.durableRunMirror) {
+    await input.lifecycleAdapter.durableRunMirror.appendEvents(ownershipCorrections);
+    const corrected = input.mirroredToolChunkState.ownershipCorrectedToolCallIds ??= new Set<
+      string
+    >();
+    for (const event of ownershipCorrections) {
+      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
+        corrected.add(event.value.toolCallId);
+      }
+    }
+  }
   const mirrorDrained = await flushMirror(input.lifecycleAdapter);
 
   if (!input.isAborted && !mirrorDrained) {
