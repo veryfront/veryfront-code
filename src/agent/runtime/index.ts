@@ -181,6 +181,7 @@ import {
 import {
   enforceSkillPolicy,
   hasTrustedPlatformPolicyToolDefinition,
+  hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
   isFormInputToolName,
   isLoadSkillToolName,
@@ -5417,6 +5418,10 @@ export class AgentRuntime {
 
         if (matchingResult) {
           await persistToolResult(matchingResult);
+          const trustedPlatformPolicyResult = (() => {
+            const part = currentStepToolResults.get(tc.id);
+            return part !== undefined && hasTrustedPlatformPolicyToolResultPart(part);
+          })();
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
           toolCall.result = matchingResult.output;
           toolCall.error = matchingResult.error === undefined
@@ -5430,15 +5435,17 @@ export class AgentRuntime {
             }
             if (
               isLoadSkillToolName(tc.name) &&
-              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition) &&
+              trustedPlatformPolicyResult
             ) {
               skillState.applySuccessfulResult(matchingResult.output);
             }
-            const submittedFormInput = isSubmittedFormInputExecutionResult(
-              tc.name,
-              matchingResult.output,
-              executionAuthority?.toolDefinition,
-            );
+            const submittedFormInput = trustedPlatformPolicyResult &&
+              isSubmittedFormInputExecutionResult(
+                tc.name,
+                matchingResult.output,
+                executionAuthority?.toolDefinition,
+              );
             skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
@@ -5448,6 +5455,9 @@ export class AgentRuntime {
         }
 
         if (persistedResult) {
+          const trustedPlatformPolicyResult = hasTrustedPlatformPolicyToolResultPart(
+            persistedResult,
+          );
           const persistedError = getToolResultError(persistedResult.result);
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
@@ -5459,15 +5469,17 @@ export class AgentRuntime {
             }
             if (
               isLoadSkillToolName(tc.name) &&
-              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+              hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition) &&
+              trustedPlatformPolicyResult
             ) {
               skillState.applySuccessfulResult(persistedResult.result);
             }
-            const submittedFormInput = isSubmittedFormInputExecutionResult(
-              tc.name,
-              persistedResult.result,
-              executionAuthority?.toolDefinition,
-            );
+            const submittedFormInput = trustedPlatformPolicyResult &&
+              isSubmittedFormInputExecutionResult(
+                tc.name,
+                persistedResult.result,
+                executionAuthority?.toolDefinition,
+              );
             skillState.markFormInputSubmitted(submittedFormInput);
             if (submittedFormInput) {
               currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);

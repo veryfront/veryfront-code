@@ -164,7 +164,7 @@ export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart
   return part;
 }
 
-function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
+export function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
   const trustedSnapshot = trustedPlatformPolicyToolResults.get(part);
   return trustedSnapshot !== undefined &&
     snapshotPlatformPolicyToolResult(part) === trustedSnapshot;
