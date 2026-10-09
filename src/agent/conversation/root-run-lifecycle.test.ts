@@ -1,4 +1,4 @@
-import { getCanonicalRunStatus } from "./durable.ts";
+import { getCanonicalRunStatus } from "#veryfront/agent/conversation/durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
