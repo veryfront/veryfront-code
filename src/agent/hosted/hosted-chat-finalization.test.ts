@@ -560,6 +560,126 @@ describe("agent/hosted-chat-finalization", () => {
     }
   });
 
+  it("requires unique consistent raw final-step ownership evidence before durable promotion", async () => {
+    for (const source of ["content", "parts", "extracted"] as const) {
+      for (const kind of ["response", "detached"] as const) {
+        for (
+          const scenario of [
+            "pair",
+            "result-only-marker",
+            "duplicate-calls",
+            "duplicate-identical-calls",
+            "duplicate-results",
+            "conflicting-pair",
+            "wrong-name",
+          ] as const
+        ) {
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const output = { stored: "private-original-payload" };
+          const original = createResponseMessage({
+            parts: [{
+              type: "tool-web_fetch",
+              toolCallId: "owned",
+              state: "output-available",
+              input: {},
+              output,
+            }],
+          });
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+            { type: "tool-input-start", toolCallId: "owned", toolName: "web_fetch" },
+            { type: "tool-input-available", toolCallId: "owned", toolName: "web_fetch", input: {} },
+            { type: "tool-output-available", toolCallId: "owned", output },
+          ];
+          const events: ConversationRunEvent[] = prior.flatMap((chunk) => {
+            recordMirroredToolChunkState(state, chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            return encoder.encode(chunk);
+          });
+          const toolCall = {
+            type: "tool-call",
+            toolCallId: "owned",
+            toolName: "web_fetch",
+            input: {},
+            ...(scenario === "result-only-marker" || scenario === "duplicate-results"
+              ? {}
+              : { providerExecuted: true }),
+          };
+          const toolResult = {
+            type: "tool-result",
+            toolCallId: "owned",
+            toolName: scenario === "wrong-name" ? "other_tool" : "web_fetch",
+            output: "fallback",
+            providerExecuted: scenario !== "conflicting-pair",
+          };
+          const toolCalls = scenario === "duplicate-calls"
+            ? [{ ...toolCall, providerExecuted: false }, toolCall]
+            : scenario === "duplicate-identical-calls"
+            ? [toolCall, { ...toolCall }]
+            : [toolCall];
+          const toolResults = scenario === "duplicate-results"
+            ? [{ ...toolResult, providerExecuted: false }, toolResult]
+            : [toolResult];
+          const finalStep = source === "extracted" ? { toolCalls, toolResults } : {
+            response: {
+              messages: source === "content"
+                ? [
+                  { role: "assistant", content: toolCalls },
+                  { role: "tool", content: toolResults },
+                ]
+                : [{ role: "assistant", parts: toolCalls }, {
+                  role: "tool",
+                  parts: toolResults.map((result) => ({ ...result, result: result.output })),
+                }],
+            },
+          };
+          const mirror = createDurableRunMirror({ calls, chunks });
+          mirror.appendEvents = async (corrections) => {
+            assertEquals(JSON.stringify(corrections).includes("private-original-payload"), false);
+            events.push(...corrections);
+          };
+          const common = {
+            isAborted: false,
+            streamResult: createStreamResult(finalStep),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          };
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: original }
+              : { ...common, kind, mirroredMessage: original, mirroredDurableOutput: true },
+          );
+          const promoted = scenario === "pair" || scenario === "result-only-marker";
+          assertEquals((terminalStates[0]!.output as ChatUiMessage).parts, [{
+            ...original.parts[0]!,
+            ...(promoted ? { providerExecuted: true } : {}),
+          }], `${source}/${kind}/${scenario}`);
+          assertEquals(chunks, []);
+          assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+          const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+          assertEquals(replay.status, "ok");
+          if (replay.status === "ok") {
+            assertEquals(
+              replay.frames.filter((frame) =>
+                frame.class === "semantic" &&
+                frame.event.type === "provider_tool_result"
+              ).length,
+              promoted ? 1 : 0,
+            );
+          }
+        }
+      }
+    }
+  });
+
   it("fails streamed empty reasoning shells with the canonical empty response error", async () => {
     for (const extra of [{}, { signature: "" }, { redactedData: "" }]) {
       const calls: string[] = [];
@@ -1701,7 +1821,13 @@ describe("agent/hosted-chat-finalization", () => {
             const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
             const finalInput = { query: "final" };
             const streamedInput = { query: "streamed" };
-            const ownership = callOwnership === undefined ? resultOwnership : callOwnership;
+            // Unknown streamed ownership cannot be promoted from contradictory final records.
+            const ownership =
+              streamed === "absent" && callOwnership === true && resultOwnership === false
+                ? undefined
+                : callOwnership === undefined
+                ? resultOwnership
+                : callOwnership;
             const mirrored = createMirroredToolChunkState();
             const projection = createChatStreamMessageProjection("assistant-message-1");
             const parts: ChatUiMessage["parts"] = [metadata];
@@ -1813,7 +1939,7 @@ describe("agent/hosted-chat-finalization", () => {
               type: "tool-output-available",
               toolCallId: "result-owned",
               output: "found",
-              providerExecuted: ownership,
+              ...(ownership === undefined ? {} : { providerExecuted: ownership }),
             }]);
             if (kind === "response" && streamed === "input-available") {
               const encoder = new ConversationRunEventEncoder();

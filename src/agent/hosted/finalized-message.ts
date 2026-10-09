@@ -257,13 +257,17 @@ export function buildFinalizedMessageState(
     : input.responseMessage;
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
   const completedParts = persistedMessage.parts.map((part) => {
+    const ownershipMatches = isToolUiPart(part)
+      ? finalStepFallbackParts.filter((fallback) =>
+        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
+        toolPartName(fallback) === toolPartName(part)
+      )
+      : [];
     if (
       !input.isAborted && isToolUiPart(part) &&
       terminalToolOutputState(part.state) !== undefined &&
-      part.providerExecuted === undefined && finalStepFallbackParts.some((fallback) =>
-        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-        toolPartName(fallback) === toolPartName(part) && fallback.providerExecuted === true
-      )
+      part.providerExecuted === undefined && ownershipMatches.length === 1 &&
+      isToolUiPart(ownershipMatches[0]!) && ownershipMatches[0]!.providerExecuted === true
     ) {
       return { ...part, providerExecuted: true };
     }
