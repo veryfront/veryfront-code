@@ -167,12 +167,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      # Project creation coverage exercises real npm installs, including on
-      # public runners that do not provide Node or npm in their base image.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
       - name: Run unit coverage shard
         id: coverage
         run: |

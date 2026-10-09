@@ -1038,19 +1038,43 @@ jobs:
       coverageShards.steps,
       "coverage-shards steps",
     );
-    const nodeSetupIndex = coverageSteps.findIndex((step) =>
-      String(step.uses).startsWith("actions/setup-node@")
+    const setupIndex = coverageSteps.findIndex((step) =>
+      step.uses === LOCAL_ACTION
     );
     const coverageRunIndex = coverageSteps.findIndex((step) =>
       step.name === "Run unit coverage shard"
     );
     assert(
-      nodeSetupIndex >= 0 && nodeSetupIndex < coverageRunIndex,
-      "coverage shards must install Node and npm before tests that create and install projects",
+      setupIndex >= 0 && setupIndex < coverageRunIndex,
+      "checked-out setup-deno must provide coverage runtime prerequisites before tests",
     );
-    const nodeSetup = coverageSteps[nodeSetupIndex];
-    assert(nodeSetup);
-    assertEquals(nodeSetup.if, undefined, "every coverage shard requires npm");
+    assert(
+      !coverageSteps.some((step) =>
+        String(step.uses).startsWith("actions/setup-node@")
+      ),
+      "coverage npm bootstrap belongs in the checked-out composite, not the main-pinned workflow",
+    );
+    const setupAction = await parseYamlFile(ACTION_PATH);
+    const setupActionSteps = asSteps(
+      asRecord(setupAction.runs, "setup-deno runs").steps,
+      "setup-deno steps",
+    );
+    const nodeSetup = setupActionSteps.find((step) =>
+      String(step.uses).startsWith("actions/setup-node@")
+    );
+    assert(
+      nodeSetup,
+      "checked-out setup-deno must provide Node and npm for coverage shards",
+    );
+    assertEquals(
+      nodeSetup.if,
+      "${{ github.job == 'coverage-shards' }}",
+      "only coverage jobs receive the extra runtime; main-pinned runner routing stays unchanged",
+    );
+    assertEquals(
+      nodeSetup.uses,
+      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    );
     const nodeOptions = asRecord(nodeSetup.with, "coverage Node setup options");
     assertEquals(nodeOptions["node-version"], "24");
     assertEquals(nodeOptions["package-manager-cache"], false);
