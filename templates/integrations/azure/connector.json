@@ -133,7 +133,7 @@
     {
       "id": "azure__start_virtual_machine",
       "name": "Start Virtual Machine",
-      "description": "Start virtual machine",
+      "description": "Request virtual machine start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -169,7 +169,7 @@
     {
       "id": "azure__deallocate_virtual_machine",
       "name": "Deallocate Virtual Machine",
-      "description": "Deallocate virtual machine",
+      "description": "Request virtual machine deallocation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -264,7 +264,7 @@
     {
       "id": "azure__restart_virtual_machine",
       "name": "Restart Virtual Machine",
-      "description": "Restart virtual machine",
+      "description": "Request virtual machine restart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

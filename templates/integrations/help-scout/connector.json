@@ -229,7 +229,7 @@
     {
       "id": "help-scout__add_note",
       "name": "Add Note",
-      "description": "Add note",
+      "description": "Add internal conversation note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

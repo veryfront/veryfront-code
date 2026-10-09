@@ -27,7 +27,7 @@
     {
       "id": "assemblyai__submit_transcript",
       "name": "Submit Transcript",
-      "description": "Submit transcript",
+      "description": "Start audio transcription",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

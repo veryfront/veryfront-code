@@ -134,7 +134,7 @@
     {
       "id": "onedrive__upload_file",
       "name": "Upload File",
-      "description": "Upload file",
+      "description": "Create or overwrite file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",

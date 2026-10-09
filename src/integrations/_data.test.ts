@@ -56,6 +56,16 @@ describe("integration endpoint specs", () => {
   it("keeps asynchronous and conversation-window semantics in short summaries", () => {
     const expected: [string, string, string][] = [
       ["adyen", "create_refund", "Start payment refund"],
+      ["onedrive", "upload_file", "Create or overwrite file"],
+      ["gemini", "upload_file", "Upload temporary file (48-hour retention)"],
+      ["qonto", "upload_transaction_attachment", "Start transaction attachment upload"],
+      ["qonto", "get_attachment", "Get attachment with expiring download URL"],
+      ["azure", "start_virtual_machine", "Request virtual machine start"],
+      ["azure", "deallocate_virtual_machine", "Request virtual machine deallocation"],
+      ["azure", "restart_virtual_machine", "Request virtual machine restart"],
+      ["assemblyai", "submit_transcript", "Start audio transcription"],
+      ["help-scout", "add_note", "Add internal conversation note"],
+      ["amplitude", "list_events", "List event types"],
       ["azure-blob-storage", "copy_blob", "Start blob copy"],
       ["power-bi", "refresh_dataset", "Start dataset refresh"],
       ["power-bi", "refresh_workspace_dataset", "Start workspace dataset refresh"],

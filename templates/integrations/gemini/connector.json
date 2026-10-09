@@ -263,7 +263,7 @@
     {
       "id": "gemini__upload_file",
       "name": "Upload File",
-      "description": "Upload file",
+      "description": "Upload temporary file (48-hour retention)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -195,7 +195,7 @@
     {
       "id": "qonto__upload_transaction_attachment",
       "name": "Upload Transaction Attachment",
-      "description": "Upload transaction attachment",
+      "description": "Start transaction attachment upload",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -229,7 +229,7 @@
     {
       "id": "qonto__get_attachment",
       "name": "Get Attachment",
-      "description": "Get attachment",
+      "description": "Get attachment with expiring download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

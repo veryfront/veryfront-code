@@ -1490,7 +1490,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "amplitude__list_events",
       "name": "List Events",
-      "description": "List events",
+      "description": "List event types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3327,7 +3327,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "assemblyai__submit_transcript",
       "name": "Submit Transcript",
-      "description": "Submit transcript",
+      "description": "Start audio transcription",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4065,7 +4065,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__start_virtual_machine",
       "name": "Start Virtual Machine",
-      "description": "Start virtual machine",
+      "description": "Request virtual machine start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4101,7 +4101,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__deallocate_virtual_machine",
       "name": "Deallocate Virtual Machine",
-      "description": "Deallocate virtual machine",
+      "description": "Request virtual machine deallocation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4194,7 +4194,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__restart_virtual_machine",
       "name": "Restart Virtual Machine",
-      "description": "Restart virtual machine",
+      "description": "Request virtual machine restart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20086,7 +20086,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__upload_file",
       "name": "Upload File",
-      "description": "Upload file",
+      "description": "Upload temporary file (48-hour retention)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -27786,7 +27786,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__add_note",
       "name": "Add Note",
-      "description": "Add note",
+      "description": "Add internal conversation note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -36927,7 +36927,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__upload_file",
       "name": "Upload File",
-      "description": "Upload file",
+      "description": "Create or overwrite file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -44236,7 +44236,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__upload_transaction_attachment",
       "name": "Upload Transaction Attachment",
-      "description": "Upload transaction attachment",
+      "description": "Start transaction attachment upload",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44270,7 +44270,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__get_attachment",
       "name": "Get Attachment",
-      "description": "Get attachment",
+      "description": "Get attachment with expiring download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
