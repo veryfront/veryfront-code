@@ -43,6 +43,9 @@ function fixture() {
     refExists: false,
     refError: 404,
     workflow: { id: 100, path: ".github/workflows/cicd.yml" },
+    comparison: "diverged" as string,
+    compareError: 0,
+    compared: [] as string[],
     cancelError: 0,
     finishedOnCancel: false,
     cancelled: [] as number[],
@@ -72,6 +75,15 @@ async function execute(f: ReturnType<typeof fixture>) {
             throw Object.assign(new Error("cancel API failure"), { status: f.cancelError });
           }
           f.cancelled.push(run_id);
+        },
+      },
+      repos: {
+        compareCommitsWithBasehead: ({ basehead }: { basehead: string }) => {
+          f.compared.push(basehead);
+          if (f.compareError) {
+            throw Object.assign(new Error("compare API failure"), { status: f.compareError });
+          }
+          return { data: { status: f.comparison } };
         },
       },
       git: {
@@ -170,6 +182,39 @@ describe("orphan merge-group cancellation", () => {
       const f = fixture();
       f.refError = status;
       await assertRejects(() => execute(f), Error, "ref API failure");
+      assertEquals(f.cancelled, []);
+    });
+  }
+
+  for (const comparison of ["identical", "behind"]) {
+    it(`preserves landed queue commits (${comparison})`, async () => {
+      const f = fixture();
+      f.comparison = comparison;
+      await execute(f);
+      assertEquals(f.compared, [`main...${SHA}`]);
+      assertEquals(f.cancelled, []);
+    });
+  }
+
+  it("cancels unmerged ahead queue commits", async () => {
+    const f = fixture();
+    f.comparison = "ahead";
+    await execute(f);
+    assertEquals(f.cancelled, [42]);
+  });
+
+  it("preserves unknown comparison statuses", async () => {
+    const f = fixture();
+    f.comparison = "unexpected";
+    await execute(f);
+    assertEquals(f.cancelled, []);
+  });
+
+  for (const status of [403, 404, 500]) {
+    it(`fails closed on compare API ${status}`, async () => {
+      const f = fixture();
+      f.compareError = status;
+      await assertRejects(() => execute(f), Error, "compare API failure");
       assertEquals(f.cancelled, []);
     });
   }
