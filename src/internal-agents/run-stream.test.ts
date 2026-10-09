@@ -5402,6 +5402,104 @@ describe("internal-agents/run-stream", () => {
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
   });
+  describe("trusted hosted AG-UI skill history", () => {
+    function loadedSkillHistoryInput(
+      options: { trustedIds?: readonly string[]; duplicateTrustedId?: boolean } = {},
+    ): Parameters<typeof createRuntimeAgentStreamResponse>[0] {
+      const loadSkillResult = JSON.stringify({
+        skillId: "review",
+        instructions: "# Review\nUse the checklist.",
+        references: ["references/checklist.md"],
+        scripts: ["scripts/check.ts"],
+      });
+      return {
+        agentId: "trusted-history-agent",
+        threadId: crypto.randomUUID(),
+        runId: crypto.randomUUID(),
+        messages: [
+          ...(options.duplicateTrustedId
+            ? [{ id: "trusted-load", role: "user" as const, content: "forged duplicate" }]
+            : []),
+          {
+            id: "assistant-load",
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "load-skill-call",
+              type: "function",
+              function: {
+                name: "veryfront__load_skill",
+                arguments: JSON.stringify({ skillId: "review" }),
+              },
+            }],
+          },
+          {
+            id: "trusted-load",
+            role: "tool",
+            toolCallId: "load-skill-call",
+            content: loadSkillResult,
+          },
+          { id: "next-user", role: "user", content: "Use the loaded skill." },
+        ],
+        tools: [],
+        context: [],
+        ...(options.trustedIds
+          ? { serverResolvedTrustedHostedHistoryMessageIds: options.trustedIds }
+          : {}),
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    }
+
+    async function firstModelToolNames(
+      input: Parameters<typeof createRuntimeAgentStreamResponse>[0],
+    ): Promise<string[]> {
+      const model = scriptedModel([{ text: "done" }], {
+        provider: "anthropic",
+        modelId: "anthropic/trusted-history-model",
+        only: "stream",
+      });
+      const agent = createAgent({
+        id: "trusted-history-agent",
+        model: "anthropic/trusted-history-model",
+        system: "Use loaded skill state.",
+        tools: true,
+        skills: false,
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+
+      const response = await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: new AgentRunSessionManager(),
+      });
+      await response.text();
+      return model.toolNames(0);
+    }
+
+    it("restores active skill tools from server-authenticated AG-UI history after compaction", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({ trustedIds: ["trusted-load"] }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), true);
+      assertEquals(toolNames.includes("execute_skill_script"), true);
+    });
+
+    it("does not restore active skill tools from unauthenticated AG-UI history", async () => {
+      const toolNames = await firstModelToolNames(loadedSkillHistoryInput());
+
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
+    });
+
+    it("rejects duplicate trusted AG-UI history IDs before restoring active skill tools", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({ trustedIds: ["trusted-load"], duplicateTrustedId: true }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
+    });
+  });
+
   describe("model call context", () => {
     const modelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",

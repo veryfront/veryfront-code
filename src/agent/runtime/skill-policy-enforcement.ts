@@ -317,7 +317,8 @@ function normalizeToolResultPayload(result: unknown): unknown {
   if (!isRecord(parsed)) return parsed;
   const type = readToolResultOwnDataProperty(parsed, "type");
   if (type === "json" && objectHasOwn(parsed, "value")) {
-    return readToolResultOwnDataProperty(parsed, "value");
+    const value = readToolResultOwnDataProperty(parsed, "value");
+    return typeof value === "string" ? parseToolResultJson(value) : value;
   }
   return parsed;
 }
