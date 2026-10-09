@@ -331,11 +331,26 @@ export function findSubmittedFormInputResult(
   });
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
+  const admittedResultCounts = createPrivateMap<string, number>();
   forEachPrivateArray(messages, (message, index) => {
     if (index < startIndex || sources.get(message.id) !== message) return;
     forEachPrivateArray(message.parts, (part) => {
       const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
-      if (typeof toolCallId === "string" && hasDuplicateToolCallId(message, toolCallId)) return;
+      if (typeof toolCallId !== "string" || !objectHasOwn(part, "output")) return;
+      // Count admitted results across history; unrelated project reuse cannot invalidate a receipt.
+      if (hasTrustedFormInputReplaySidecar(message, part) || isFormInputToolPart(part, options)) {
+        admittedResultCounts.set(toolCallId, (admittedResultCounts.get(toolCallId) ?? 0) + 1);
+      }
+    });
+  });
+  forEachPrivateArray(messages, (message, index) => {
+    if (index < startIndex || sources.get(message.id) !== message) return;
+    forEachPrivateArray(message.parts, (part) => {
+      const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+      if (
+        typeof toolCallId !== "string" || admittedResultCounts.get(toolCallId) !== 1 ||
+        hasDuplicateToolCallId(message, toolCallId)
+      ) return;
       result = extractSubmittedFormInputResult(part, {
         legacyFormInputReplayAllowed: options.legacyFormInputReplayAllowed === true ||
           hasTrustedFormInputReplaySidecar(message, part),
