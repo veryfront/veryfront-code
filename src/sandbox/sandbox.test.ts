@@ -4414,6 +4414,56 @@ describe("Sandbox", () => {
     assertEquals(command.command, "true");
   });
 
+  for (const flag of ["stdout_truncated", "stderr_truncated"] as const) {
+    it(`rejects missing ${flag} in eager and lazy background output`, async () => {
+      const receipt: Record<string, unknown> = {
+        command_id: "command-1",
+        command: "echo partial",
+        status: "completed",
+        exit_code: 0,
+        signal: null,
+        started_at: null,
+        finished_at: null,
+        heartbeat_status: "disabled",
+        last_heartbeat_at: null,
+        last_heartbeat_error: null,
+        heartbeat_failure_count: 0,
+        stdout: "partial",
+        stderr: "",
+        stdout_truncated: false,
+        stderr_truncated: false,
+      };
+      delete receipt[flag];
+      mockFetch([jsonResponse(receipt), jsonResponse({ ok: true }), jsonResponse(receipt)]);
+      const eager = Sandbox.attach({
+        id: "existing",
+        endpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const lazy = Sandbox.createLazy({
+        sandboxId: "existing",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        await assertRejects(
+          () => eager.getBackgroundCommandOutput("command-1"),
+          Error,
+          "truncation flag",
+        );
+        await assertRejects(
+          () => lazy.getBackgroundCommandOutput("command-1"),
+          Error,
+          "truncation flag",
+        );
+      } finally {
+        await lazy.close();
+      }
+    });
+  }
+
   it("preserves reported truncation in canonical eager and lazy output", async () => {
     const receipt = {
       command_id: "command-1",

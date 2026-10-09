@@ -255,6 +255,21 @@ async function withTimeout<T>(
   }
 }
 
+const SANDBOX_CLEANUP_TIMEOUT_MS = 1000;
+
+async function boundedSandboxCleanup<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  try {
+    const result = await withTimeout(action(controller.signal), SANDBOX_CLEANUP_TIMEOUT_MS);
+    if (result === TIMEOUT_SENTINEL) {
+      throw new Error(`Sandbox cleanup timed out after ${SANDBOX_CLEANUP_TIMEOUT_MS}ms`);
+    }
+    return result;
+  } finally {
+    controller.abort();
+  }
+}
+
 function timeoutResult(timeoutMs: number): SkillScriptResult {
   return {
     stdout: "",
@@ -461,7 +476,9 @@ class CloudScriptExecutor implements SkillScriptExecutor {
             const output = await sandbox.getBackgroundCommandOutput(command.id);
             if (output.stdoutTruncated || output.stderrTruncated) {
               if (output.status === "pending" || output.status === "running") {
-                await sandbox.cancelBackgroundCommand(command.id);
+                await boundedSandboxCleanup((signal) =>
+                  sandbox.cancelBackgroundCommand(command.id, { signal })
+                );
               }
               return {
                 stdout: output.stdout,
@@ -499,12 +516,14 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         // races the timer, it doesn't terminate the sandbox command.
         try {
           if (backgroundCommandId !== undefined) {
-            await sandbox.cancelBackgroundCommand(backgroundCommandId);
+            await boundedSandboxCleanup((signal) =>
+              sandbox.cancelBackgroundCommand(backgroundCommandId!, { signal })
+            );
           } else {
-            await sandbox.runCommand("kill -9 -1 2>/dev/null || true");
+            await boundedSandboxCleanup(() => sandbox.runCommand("kill -9 -1 2>/dev/null || true"));
           }
-        } catch {
-          // expected: best-effort kill; sandbox.close() in finally will clean up
+        } catch (error) {
+          logger.warn("[skill/executor] Failed to cancel sandbox command after timeout", error);
         }
         return timeoutResult(timeoutMs);
       }
@@ -516,7 +535,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       };
     } finally {
       try {
-        await sandbox.close();
+        await boundedSandboxCleanup((signal) => sandbox.close({ signal }));
       } catch (error) {
         // Best-effort cleanup; log at warn so persistent failures (e.g. auth
         // revoked) leave a trace rather than silently leaking sandbox pods.

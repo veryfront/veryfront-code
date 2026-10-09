@@ -654,6 +654,92 @@ describe("src/skill/executor", () => {
       });
     }
 
+    for (const stalled of ["cancel", "close"] as const) {
+      it(`bounds stalled ${stalled} cleanup after the background script deadline`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        const nativeSetTimeout = globalThis.setTimeout;
+        const nativeClearTimeout = globalThis.clearTimeout;
+        let guardTimer: ReturnType<typeof setTimeout> | undefined;
+        using time = new FakeTime();
+        const pending = pendingErrorCommandResponse(new Error("output request canceled"));
+        let reportRead!: () => void;
+        const read = new Promise<void>((resolve) => reportRead = resolve);
+        let reportCleanup!: () => void;
+        const cleanupStarted = new Promise<void>((resolve) => reportCleanup = resolve);
+        let release!: (response: Response) => void;
+        const delayed = new Promise<Response>((resolve) => release = resolve);
+        let cleanupSignal: AbortSignal | null | undefined;
+        mockFetch([
+          jsonResponse({
+            id: "bounded-cleanup",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          () => {
+            reportRead();
+            return pending.response;
+          },
+          (_input, init) => {
+            if (stalled !== "cancel") return backgroundCommandResponse("canceled", "", null);
+            cleanupSignal = init?.signal;
+            reportCleanup();
+            return delayed;
+          },
+          (_input, init) => {
+            if (stalled !== "close") return textResponse("");
+            cleanupSignal = init?.signal;
+            reportCleanup();
+            return delayed;
+          },
+        ]);
+        let settled = false;
+        const execution = getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "sleep 60",
+          timeoutMs: 60_000,
+        }).then((result) => {
+          settled = true;
+          return result;
+        });
+        try {
+          await read;
+          time.tick(60_000);
+          await cleanupStarted;
+          await time.tickAsync(2_000);
+          const result = await Promise.race([
+            execution,
+            new Promise<null>((resolve) => {
+              guardTimer = nativeSetTimeout(() => resolve(null), 1000);
+            }),
+          ]);
+          assertEquals(settled, true, "cleanup must not extend the timeout indefinitely");
+          assertEquals(result?.exitCode, 124);
+          assertEquals(cleanupSignal?.aborted, true);
+        } finally {
+          if (guardTimer !== undefined) nativeClearTimeout(guardTimer);
+          release(
+            stalled === "cancel"
+              ? backgroundCommandResponse("canceled", "", null)
+              : textResponse(""),
+          );
+          pending.reject();
+          await execution;
+        }
+      });
+    }
+
     it("handles a late sandbox command rejection after timeout", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");

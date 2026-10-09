@@ -297,7 +297,7 @@ export function parseSandboxCommandResult(value: unknown): CommandResult {
 export function parseSandboxBackgroundCommandOutput(value: unknown): BackgroundCommandOutput {
   const input = record(value);
   for (const flag of [input.stdout_truncated, input.stderr_truncated]) {
-    if (flag !== undefined && typeof flag !== "boolean") {
+    if (typeof flag !== "boolean") {
       throw REQUEST_ERROR.create({ detail: "Invalid sandbox truncation flag" });
     }
   }

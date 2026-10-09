@@ -496,7 +496,10 @@ export class Sandbox {
   }
 
   /** Cancel an async background command. */
-  async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
+  async cancelBackgroundCommand(
+    commandId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<BackgroundCommand> {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(
         getSandboxPrivateState(this).apiUrl,
@@ -505,6 +508,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
+        signal: options.signal,
         headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
@@ -542,24 +546,25 @@ export class Sandbox {
   }
 
   /** Close this client. Persistent and always-on workspaces remain available. */
-  async close(): Promise<void> {
+  async close(options: { signal?: AbortSignal } = {}): Promise<void> {
     const state = getSandboxPrivateState(this);
     let updates: Promise<void>;
     do {
       updates = state.lifetimeUpdates;
       await updates;
     } while (updates !== state.lifetimeUpdates);
-    if (state.deleteOnClose) await this.delete();
+    if (state.deleteOnClose) await this.delete(options);
   }
 
   /** Delete the sandbox and its workspace files. */
-  async delete(): Promise<void> {
+  async delete(options: { signal?: AbortSignal } = {}): Promise<void> {
     const res = await fetchSandboxUrl(
       `${getSandboxPrivateState(this).apiUrl}/sandboxes/${
         encodeURIComponent(getSandboxPrivateState(this).sessionId)
       }`,
       {
         method: "DELETE",
+        signal: options.signal,
         headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
