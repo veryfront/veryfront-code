@@ -5,6 +5,8 @@
  * helper preserves header-time completion for non-SSE responses.
  */
 
+import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
+
 type ResponseBodyOutcome = "completed" | "canceled" | "error";
 
 export function isEventStreamResponse(response: Response): boolean {
@@ -112,7 +114,7 @@ export function completeOnResponseBodyConsumption(
   } else {
     // Source errors are still surfaced through terminal reads, but disabling
     // source-close completion must not leave reader.closed unobserved.
-    void reader.closed.catch(() => undefined);
+    void primordialPromiseCatch(reader.closed, () => undefined);
   }
 
   if (signal?.aborted) {
