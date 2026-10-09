@@ -411,3 +411,44 @@ it("keeps queue capture receipt storage private when Map and string casing metho
   assertEquals(patchedSetCalls, 0);
   assertEquals(patchedLowerCalls, 0);
 });
+
+it("rejects an array descriptor that changes to an accessor at the summary copy boundary", () => {
+  const target: unknown[] = ["kept"];
+  let descriptorReads = 0;
+  let inheritedReads = 0;
+  const content = new Proxy(target, {
+    getOwnPropertyDescriptor(object, key) {
+      if (key === "0" && ++descriptorReads >= 4) {
+        return {
+          __proto__: null,
+          get() {
+            throw new Error("own getter must not execute");
+          },
+          enumerable: true,
+          configurable: true,
+        };
+      }
+      return Reflect.getOwnPropertyDescriptor(object, key);
+    },
+  });
+  target.push(content);
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  let failure: unknown;
+  try {
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get() {
+        inheritedReads++;
+        return "injected from inherited getter";
+      },
+    });
+    normalizeConversationRunEvents([{ type: "TOOL_CALL_RESULT", content }]);
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (original) Object.defineProperty(Object.prototype, "value", original);
+    else Reflect.deleteProperty(Object.prototype, "value");
+  }
+  assertEquals(failure instanceof TypeError, true);
+  assertEquals(inheritedReads, 0);
+});

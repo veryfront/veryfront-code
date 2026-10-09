@@ -531,6 +531,9 @@ function summarizeValue(
     for (let index = 0; index < itemCount; index++) {
       const property = ObjectGetOwnPropertyDescriptor(value, `${index}`);
       if (property?.enumerable === true) {
+        if (!ObjectHasOwn(property, "value")) {
+          throw new NativeTypeError("Private JSON requires data properties");
+        }
         defineOwnDataProperty(items, `${index}`, summarizeValue(property.value, depth + 1, seen), {
           enumerable: true,
           writable: true,
