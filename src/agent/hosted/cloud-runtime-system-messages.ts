@@ -7,6 +7,9 @@ import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import { CANONICAL_LOAD_SKILL_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 
+const apply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+
 /** Input payload for create Veryfront Cloud runtime system messages. */
 export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
@@ -26,10 +29,10 @@ export function resolveHostedRuntimeSkillLoaderToolName(
   availableToolNames?: readonly string[],
 ): RuntimeSkillLoaderToolName | undefined {
   if (availableToolNames === undefined) return undefined;
-  if (availableToolNames.includes(CANONICAL_LOAD_SKILL_TOOL_ID)) {
+  if (apply(arrayIncludes, availableToolNames, [CANONICAL_LOAD_SKILL_TOOL_ID])) {
     return CANONICAL_LOAD_SKILL_TOOL_ID;
   }
-  if (availableToolNames.includes(LOAD_SKILL_TOOL_ID)) return LOAD_SKILL_TOOL_ID;
+  if (apply(arrayIncludes, availableToolNames, [LOAD_SKILL_TOOL_ID])) return LOAD_SKILL_TOOL_ID;
   return undefined;
 }
 

@@ -4,6 +4,7 @@ import {
   buildInteractiveVeryfrontCloudRuntimeInstructions,
   buildVeryfrontCloudRuntimeInstructions,
   createVeryfrontCloudRuntimeSystemMessages,
+  resolveHostedRuntimeSkillLoaderToolName,
 } from "./cloud-runtime-system-messages.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
@@ -382,4 +383,23 @@ describe("cloud runtime system messages", () => {
     assertEquals(first[1]?.providerOptions, undefined);
     assertEquals(second[1]?.providerOptions, undefined);
   });
+});
+
+it("resolves hosted loader aliases despite project replacement of Array.includes", () => {
+  const originalIncludes = Array.prototype.includes;
+  let legacyLoader: string | undefined;
+  let absentLoader: string | undefined;
+  let canonicalLoader: string | undefined;
+  try {
+    Array.prototype.includes = () => true;
+    legacyLoader = resolveHostedRuntimeSkillLoaderToolName(["load_skill"]);
+    absentLoader = resolveHostedRuntimeSkillLoaderToolName([]);
+    Array.prototype.includes = () => false;
+    canonicalLoader = resolveHostedRuntimeSkillLoaderToolName(["veryfront__load_skill"]);
+  } finally {
+    Array.prototype.includes = originalIncludes;
+  }
+  assertEquals(legacyLoader, "load_skill");
+  assertEquals(absentLoader, undefined);
+  assertEquals(canonicalLoader, "veryfront__load_skill");
 });
