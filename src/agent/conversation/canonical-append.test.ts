@@ -678,7 +678,7 @@ it("stores queue tool call admissions by occurrence id and preserves sidecar ind
     fetch: (_input, init) => {
       body = JSON.parse(
         String(
-          init && "body" in init ? (init && "body" in init ? init.body : undefined) : undefined,
+          init && "body" in init ? init.body : undefined,
         ),
       ) as Record<string, unknown>;
       return Promise.resolve(
@@ -718,7 +718,7 @@ it("preserves queue runtime observation indexes across prior pending events", as
     fetch: (_input, init) => {
       body = JSON.parse(
         String(
-          init && "body" in init ? (init && "body" in init ? init.body : undefined) : undefined,
+          init && "body" in init ? init.body : undefined,
         ),
       ) as Record<string, unknown>;
       return Promise.resolve(Response.json(appendResponse({ appendedCount: 2 })));
