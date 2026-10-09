@@ -45,6 +45,7 @@ const TRUSTED_RUNNER_JOBS = [
 function expressionBody(expression: string): string {
   const match = /^\$\{\{\s*(.*?)\s*\}\}$/.exec(expression);
   assert(match, "runner expression must use Actions interpolation");
+  assert(match[1] !== undefined, "runner expression must contain its captured body");
   return match[1].replaceAll("needs.runner-trust", 'needs["runner-trust"]');
 }
 
@@ -138,9 +139,12 @@ describe("cicd.yml runner pools", () => {
     assertEquals(job["timeout-minutes"], 2);
     assertEquals(job.permissions, { contents: "read" });
     assert(!("needs" in job), "runner-trust must not wait for other jobs");
-    // Jobs whose `if` has no status function skip when any ancestor skips, so
-    // runner-trust runs on every event and decides inside its step.
-    assert(!("if" in job), "runner-trust must run on every event");
+    // Eligible code jobs have the same fork guard, so this dependency cannot
+    // suppress a code job that is otherwise permitted to run.
+    assertEquals(
+      job.if,
+      "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}",
+    );
     assert(!("environment" in job), "runner-trust must not use a deployment environment");
     assert(!JSON.stringify(job).includes("secrets."), "runner-trust must not read secrets");
     assertEquals(
@@ -150,6 +154,7 @@ describe("cicd.yml runner pools", () => {
     const steps = job.steps as Record<string, unknown>[];
     assertEquals(steps.length, 1, "runner-trust must not check out the code under test");
     const [step] = steps;
+    assert(step, "runner-trust must contain its decision step");
     assertEquals(step.id, "decide");
     assertEquals(
       step.if,

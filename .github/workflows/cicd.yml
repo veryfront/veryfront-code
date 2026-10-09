@@ -42,10 +42,11 @@ jobs:
   # Queued changes never receive eligibility from this decision.
   # The check loads scripts/ci/runner-trust.mjs from the default branch. Any
   # error outputs false, which leaves the routed jobs on GitHub-hosted runners.
-  # Like tested-run, the job runs and succeeds on every event, so jobs whose
-  # `if` has no status function are never skipped because of it.
+  # The job succeeds on events whose repository code jobs are eligible.
+  # Fork code jobs remain skipped by their existing job-level guards.
   # ============================================
   runner-trust:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     name: runner trust
