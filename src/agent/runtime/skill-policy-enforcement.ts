@@ -134,7 +134,7 @@ function trustedToolResultBinding(part: ToolResultPart): string | undefined {
   }
 }
 
-function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
+export function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
   const binding = trustedPlatformPolicyToolResults.get(part);
   return binding !== undefined && binding === trustedToolResultBinding(part);
 }

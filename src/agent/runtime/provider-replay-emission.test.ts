@@ -593,7 +593,7 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("publishes a completed same-turn streamed skill result in a parallel batch", async () => {
+  it("ignores unexecuted same-turn streamed skill results in a parallel batch", async () => {
     const operations: string[] = [];
     const executedInputs: unknown[] = [];
     let completedBatch: unknown;
@@ -666,21 +666,21 @@ describe("provider replay checkpoint emission", () => {
     await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
       .text();
 
-    const effectiveArgs = [
-      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
-      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    const untrustedArgs = [
+      { task: "first" },
+      { task: "second" },
     ];
-    assertEquals(executedInputs, effectiveArgs);
+    assertEquals(executedInputs, untrustedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[0]),
+        toolArgsJson: JSON.stringify(untrustedArgs[0]),
       },
       {
         toolCallId: "child-2",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[1]),
+        toolArgsJson: JSON.stringify(untrustedArgs[1]),
       },
     ]);
     assertEquals(operations, ["turn:complete", "invoke:first", "invoke:second"]);

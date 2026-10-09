@@ -1092,6 +1092,20 @@ it("child denials apply to both platform spellings without denying a colliding p
   }
 });
 
+it("child denials preserve an explicitly selected platform loader alias", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools({
+    ok: true,
+    forkTools: {
+      load_skill: platform,
+      veryfront__load_skill: platform,
+    },
+  }, ["load_skill"], ["veryfront__load_skill"]);
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["veryfront__load_skill"]);
+});
+
 it("child platform denials respect owner-qualified project short names", () => {
   const platform = markTrustedHostToolProvenance({ description: "Platform" });
   const project = { description: "Project", ownerAgentId: "researcher", shortName: "update_file" };
