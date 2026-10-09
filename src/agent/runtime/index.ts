@@ -1781,10 +1781,12 @@ function createPolicyAwareToolResultMessage(
   result: unknown,
   toolDefinition?: ToolDefinition,
   providerExecuted = false,
+  trustedPlatformPolicyResult = false,
 ): Message {
   const message = createToolResultMessage(toolCallId, toolName, result, providerExecuted);
   const part = message.parts[0];
   if (
+    trustedPlatformPolicyResult &&
     part !== undefined && isToolResultPart(part) &&
     hasTrustedPlatformPolicyToolDefinition(toolDefinition)
   ) {
@@ -4148,6 +4150,8 @@ export class AgentRuntime {
                 tc.toolName,
                 result,
                 executionAuthority?.toolDefinition,
+                false,
+                true,
               );
               pushPrivateArray(currentMessages, toolResultMessage);
               await persistMessage(toolResultMessage);
@@ -4633,6 +4637,8 @@ export class AgentRuntime {
             resumeToolCall.name,
             result,
             resumeExecutionAuthority.toolDefinition,
+            false,
+            true,
           );
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
@@ -5746,6 +5752,8 @@ export class AgentRuntime {
             tc.name,
             result,
             executionAuthority.toolDefinition,
+            false,
+            true,
           );
           if (!currentStepToolResults.has(tc.id)) {
             pushPrivateArray(currentMessages, toolResultMessage);
