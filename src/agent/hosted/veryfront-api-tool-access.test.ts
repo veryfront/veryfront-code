@@ -130,6 +130,7 @@ Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile hides mapped tools w
     filterVeryfrontApiToolDefinitionsByAccessProfile({
       toolDefinitions: [
         remoteTool("create_invite"),
+        remoteTool("create_project_invitation"),
         remoteTool("create_domain"),
         remoteTool("download_release"),
         remoteTool("update_file"),
@@ -138,6 +139,62 @@ Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile hides mapped tools w
     }).map((tool) => tool.name),
     ["update_file"],
     "mapped tools whose family is absent from the profile must stay hidden while unmapped tools pass through",
+  );
+});
+
+function collaborationProfile(createInviteVisibility: "visible" | "hidden") {
+  return {
+    version: 1,
+    freshness: {
+      resolved_at: "2026-01-01T00:00:00.000Z",
+      valid_for_ms: 60_000,
+      fail_closed_on_expiry: true,
+    },
+    families: [
+      {
+        family: "collaboration",
+        default_decision: { visibility: "visible", reason_code: "allowed" },
+        action_overrides: [
+          {
+            action: "create_invite",
+            decision: {
+              visibility: createInviteVisibility,
+              reason_code: createInviteVisibility === "visible" ? "allowed" : "role_restriction",
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+Deno.test("filterVeryfrontApiToolDefinitionsByAccessProfile gates create_project_invitation and its create_invite alias by the create_invite action", () => {
+  const toolDefinitions = [
+    remoteTool("create_invite"),
+    remoteTool("create_project_invitation"),
+    remoteTool("veryfront__create_project_invitation"),
+    remoteTool("update_file"),
+  ];
+
+  assertEquals(
+    filterVeryfrontApiToolDefinitionsByAccessProfile({
+      toolDefinitions,
+      profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("hidden")),
+    }).map((tool) => tool.name),
+    ["update_file"],
+    "a hidden create_invite action must hide the canonical invitation tool as well as the alias",
+  );
+  assertEquals(
+    filterVeryfrontApiToolDefinitionsByAccessProfile({
+      toolDefinitions,
+      profile: parseVeryfrontApiToolAccessProfile(collaborationProfile("visible")),
+    }).map((tool) => tool.name),
+    [
+      "create_invite",
+      "create_project_invitation",
+      "veryfront__create_project_invitation",
+      "update_file",
+    ],
   );
 });
 
