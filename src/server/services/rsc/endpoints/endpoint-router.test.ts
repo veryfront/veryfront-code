@@ -608,7 +608,20 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         assertEquals(inCohort?.status, 409);
         assertEquals(inCohort?.headers.get("cache-control"), "no-store");
 
-        assertEquals(builtCacheKeys, ["off", "off"]);
+        // A bare directory source carries no project id, which a partial
+        // rollout buckets out of the cohort, matching its flag-off snapshot.
+        const directorySource = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            dependencyPinningSource: "/tmp/test-project",
+            req: new Request(
+              "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts",
+            ),
+          }),
+        );
+        assertEquals(directorySource?.status, 200);
+
+        assertEquals(builtCacheKeys, ["off", "off", "off"]);
       } finally {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
         setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, originalPercent ?? "100");
