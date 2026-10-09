@@ -12,10 +12,12 @@ import {
   markEnvFileValue,
 } from "#veryfront/platform/compat/process/env.ts";
 import {
+  __bindHostResponseAccessorsForTests,
   __resetOperatorVeryfrontApiOriginsForTests,
   __runWithOutboundFetchTransportForTests,
   createOriginBoundOutboundFetch,
   createOutboundFetchBoundary,
+  createVeryfrontApiDownloadOutboundFetch,
   createVeryfrontApiOriginBoundOutboundFetch,
   guardedOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
@@ -808,5 +810,443 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
         });
       });
     }
+  });
+});
+
+describe("authenticated download transport settlement", () => {
+  it("seals authenticated body streams before async getStream settlement", async () => {
+    const response = __bindHostResponseAccessorsForTests(new Response("authenticated content"));
+    const original = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "then");
+    let intercepted = false;
+    let body: ReadableStream<Uint8Array> | null;
+    Object.defineProperty(ReadableStream.prototype, "then", {
+      configurable: true,
+      get() {
+        intercepted = true;
+        return undefined;
+      },
+    });
+    try {
+      const getStream = async () => response.body;
+      body = await getStream();
+    } finally {
+      if (original) Object.defineProperty(ReadableStream.prototype, "then", original);
+      else Reflect.deleteProperty(ReadableStream.prototype, "then");
+    }
+    assertEquals(intercepted, false);
+    assertEquals(await new Response(body).text(), "authenticated content");
+  });
+
+  it("shadows inherited then hooks before authenticated response settlement", async () => {
+    const response = new Response("authenticated content");
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let intercepted = false;
+    let settled: Response;
+    Object.defineProperty(Response.prototype, "then", {
+      configurable: true,
+      get() {
+        intercepted = true;
+        return undefined;
+      },
+    });
+    try {
+      settled = await Promise.resolve(__bindHostResponseAccessorsForTests(response));
+    } finally {
+      if (original) Object.defineProperty(Response.prototype, "then", original);
+      else Reflect.deleteProperty(Response.prototype, "then");
+    }
+    assertEquals(intercepted, false);
+    assertEquals(await settled.text(), "authenticated content");
+  });
+
+  it("refuses authenticated downloads while an inherited response then hook is installed", async () => {
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let intercepted = false;
+    let dispatched = false;
+    // Native fetch builds its Response after dispatch and resolves its promise with it.
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      dispatched = true;
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      Object.defineProperty(Response.prototype, "then", {
+        configurable: true,
+        get() {
+          intercepted = true;
+          return undefined;
+        },
+      });
+      try {
+        await assertRejects(() => download("https://api.example.test/file"), Error);
+      } finally {
+        if (original) Object.defineProperty(Response.prototype, "then", original);
+        else Reflect.deleteProperty(Response.prototype, "then");
+      }
+    });
+    assertEquals({ intercepted, dispatched }, { intercepted: false, dispatched: false });
+  });
+
+  it("refuses authenticated downloads while a re-parented response prototype is installed", async () => {
+    const parent = Object.getPrototypeOf(Response.prototype);
+    let intercepted = false;
+    let dispatched = false;
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      dispatched = true;
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      Object.setPrototypeOf(
+        Response.prototype,
+        new Proxy(parent, {
+          get(target, key, receiver) {
+            if (key === "then") intercepted = true;
+            return Reflect.get(target, key, receiver);
+          },
+        }),
+      );
+      try {
+        await assertRejects(() => download("https://api.example.test/file"), Error);
+      } finally {
+        Object.setPrototypeOf(Response.prototype, parent);
+      }
+    });
+    assertEquals({ intercepted, dispatched }, { intercepted: false, dispatched: false });
+  });
+
+  it("withholds a download whose response then hook appeared during the request", async () => {
+    const original = Object.getOwnPropertyDescriptor(Response.prototype, "then");
+    let cancelled = false;
+    let resolveTransport!: (response: Response) => void;
+    let startTransport!: () => void;
+    const transportStarted = new Promise<void>((resolve) => {
+      startTransport = resolve;
+    });
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      startTransport();
+      return new Promise<Response>((resolve) => {
+        resolveTransport = resolve;
+      });
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      const result = download("https://api.example.test/file");
+      const rejection = assertRejects(() => result, Error);
+      await transportStarted;
+      Object.defineProperty(Response.prototype, "then", {
+        configurable: true,
+        value: undefined,
+      });
+      try {
+        resolveTransport(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          ),
+        );
+        await rejection;
+      } finally {
+        if (original) Object.defineProperty(Response.prototype, "then", original);
+        else Reflect.deleteProperty(Response.prototype, "then");
+      }
+    });
+    assertEquals(cancelled, true);
+  });
+
+  it("returns authenticated downloads when no settlement hook is installed", async () => {
+    const fetchImpl: typeof fetch = async (_input, _init) => {
+      await Promise.resolve();
+      return new Response("authenticated content");
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      const response = await download("https://api.example.test/file");
+      assertEquals(await response.text(), "authenticated content");
+    });
+  });
+
+  it("waits for cancellation of a late transport response body", async () => {
+    const controller = new AbortController();
+    let resolveTransport!: (response: Response) => void;
+    let releaseCleanup!: () => void;
+    let startTransport!: () => void;
+    let startCleanup!: () => void;
+    const transportStarted = new Promise<void>((resolve) => {
+      startTransport = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      startCleanup = resolve;
+    });
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveTransport = resolve;
+    });
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      startTransport();
+      return pendingResponse;
+    };
+    await __runWithOutboundFetchTransportForTests({
+      fetch: fetchImpl,
+      pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+      resolveHost: () => Promise.resolve(["93.184.216.34"]),
+    }, async () => {
+      const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+      let settled = false;
+      const result = download("https://api.example.test/file", { signal: controller.signal });
+      const rejection = assertRejects(() => result, Error);
+      void result.then(() => {
+        settled = true;
+      }, () => {
+        settled = true;
+      });
+      await transportStarted;
+      controller.abort(new Error("stop download"));
+      resolveTransport(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              startCleanup();
+              return cleanup;
+            },
+          }),
+        ),
+      );
+      await cleanupStarted;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const settledBeforeCleanup = settled;
+      releaseCleanup();
+      await rejection;
+      assertEquals(settledBeforeCleanup, false);
+    });
+  });
+
+  it("does not expose authenticated transport content to a constructor getter", async () => {
+    const original = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!;
+    const nativeThen = Promise.prototype.then;
+    const response = new Response("sentinel-private-content");
+    const hostOperation = Promise.resolve(response);
+    const controller = new AbortController();
+    let exposed = false;
+    let readByHook = false;
+    let intercepted: Promise<void> | undefined;
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        get() {
+          Object.defineProperty(Promise.prototype, "constructor", original);
+          if (this === hostOperation) {
+            exposed = true;
+            intercepted = Reflect.apply(nativeThen, this, [async (value: Response) => {
+              readByHook = await value.clone().text() === "sentinel-private-content";
+            }]);
+          }
+          return Promise;
+        },
+      });
+      return hostOperation;
+    };
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const result = download("https://api.example.test/file", { signal: controller.signal });
+        void result.catch(() => undefined);
+        // Unobservable host work stays owned until the executor's deadline/fence.
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        controller.abort(new Error("test deadline"));
+        await intercepted;
+      });
+    } finally {
+      Object.defineProperty(Promise.prototype, "constructor", original);
+      controller.abort();
+      await response.body?.cancel();
+    }
+    assertEquals({ exposed, readByHook }, { exposed: false, readByHook: false });
+  });
+
+  it("retains the host promise without invoking an inherited indexed setter", async () => {
+    const responsePromise = Promise.resolve(new Response("content"));
+    let exposed = false;
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    const fetchImpl: typeof fetch = (_input, _init) => {
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(value: unknown) {
+          if (value === responsePromise) exposed = true;
+          Object.defineProperty(this, "0", {
+            value,
+            configurable: true,
+            writable: true,
+            enumerable: true,
+          });
+        },
+      });
+      return responsePromise;
+    };
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const response = await download("https://api.example.test/file");
+        await response.body?.cancel();
+      });
+    } finally {
+      if (original) Object.defineProperty(Array.prototype, "0", original);
+      else delete (Array.prototype as unknown as Record<string, unknown>)["0"];
+    }
+    assertEquals(exposed, false);
+  });
+
+  it("does not expose authenticated response internals to patched accessors", async () => {
+    const statusDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "status")!;
+    const okDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+    const headersDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!;
+    const bodyDescriptor = Object.getOwnPropertyDescriptor(Response.prototype, "body")!;
+    const headersGet = Headers.prototype.get;
+    const bodyCancel = ReadableStream.prototype.cancel;
+    const secret = "sentinel-private-download";
+    const response = new Response(secret, {
+      headers: { location: "https://api.example.test/next" },
+    });
+
+    const canPatchResponseAccessors = statusDescriptor.configurable && okDescriptor.configurable &&
+      headersDescriptor.configurable && bodyDescriptor.configurable;
+    let exposed = false;
+    let intercepted: Promise<void> | undefined;
+    const expose = (target: Response) => {
+      if (target !== response) return;
+      exposed = true;
+      intercepted = target.clone().text().then((text) => {
+        exposed = text === secret;
+      });
+    };
+    if (canPatchResponseAccessors) {
+      Object.defineProperty(Response.prototype, "status", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(statusDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "ok", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(okDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "headers", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(headersDescriptor.get!, this, []);
+        },
+      });
+      Object.defineProperty(Response.prototype, "body", {
+        configurable: true,
+        get() {
+          expose(this);
+          return Reflect.apply(bodyDescriptor.get!, this, []);
+        },
+      });
+    }
+    Headers.prototype.get = function (name: string) {
+      exposed = true;
+      return Reflect.apply(headersGet, this, [name]);
+    };
+    ReadableStream.prototype.cancel = function (reason?: unknown) {
+      exposed = true;
+      return Reflect.apply(bodyCancel, this, [reason]);
+    };
+    try {
+      await __runWithOutboundFetchTransportForTests({
+        fetch: () => Promise.resolve(response),
+        pinnedFetch: () => Promise.resolve(response),
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      }, async () => {
+        const download = createVeryfrontApiDownloadOutboundFetch("https://api.example.test");
+        const downloaded = await download("https://api.example.test/file", {
+          redirect: "error",
+        });
+        assertEquals(downloaded.ok, true);
+        assertEquals(downloaded.status, 200);
+      });
+      await intercepted;
+    } finally {
+      if (canPatchResponseAccessors) {
+        Object.defineProperty(Response.prototype, "status", statusDescriptor);
+        Object.defineProperty(Response.prototype, "ok", okDescriptor);
+        Object.defineProperty(Response.prototype, "headers", headersDescriptor);
+        Object.defineProperty(Response.prototype, "body", bodyDescriptor);
+      }
+      Headers.prototype.get = headersGet;
+      ReadableStream.prototype.cancel = bodyCancel;
+      await response.body?.cancel();
+    }
+    assertEquals(exposed, false);
+  });
+
+  it("binds response accessors without inherited descriptor fields", async () => {
+    const response = new Response("private");
+    const objectGetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "get");
+    const objectSetDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "set");
+    let descriptorTrapCalls = 0;
+    let bound: Response | undefined;
+    Object.defineProperty(Object.prototype, "get", {
+      configurable: true,
+      get() {
+        descriptorTrapCalls++;
+        return undefined;
+      },
+    });
+    Object.defineProperty(Object.prototype, "set", {
+      configurable: true,
+      get() {
+        descriptorTrapCalls++;
+        return undefined;
+      },
+    });
+    try {
+      bound = __bindHostResponseAccessorsForTests(response);
+      assertEquals(bound.ok, true);
+      assertEquals(bound.status, 200);
+    } finally {
+      if (objectGetDescriptor) Object.defineProperty(Object.prototype, "get", objectGetDescriptor);
+      else delete (Object.prototype as Record<string, unknown>).get;
+      if (objectSetDescriptor) Object.defineProperty(Object.prototype, "set", objectSetDescriptor);
+      else delete (Object.prototype as Record<string, unknown>).set;
+    }
+    assertEquals(descriptorTrapCalls, 0);
+    assertEquals(await bound?.text(), "private");
   });
 });

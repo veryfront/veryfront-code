@@ -112,6 +112,10 @@ async function handleNodeRequest(
     recordNodeIncomingRequestPeer(request, req);
 
     const response = await handler(request);
+    if (req.aborted || res.destroyed) {
+      await response.body?.cancel(new DOMException("HTTP client disconnected", "AbortError"));
+      return;
+    }
     if (response.status === 101) return;
 
     res.writeHead(response.status, toNodeHeaders(response));
@@ -119,6 +123,7 @@ async function handleNodeRequest(
     res.end();
   } catch (error) {
     serverLogger.debug("toNodeHandler request failed", { error });
+    if (req.aborted || res.destroyed) return;
     // Node ignores whatever a request listener returns, so a throw from this
     // handler surfaces as an unhandled rejection. Writing the head again
     // after it was already flushed is exactly that case, so only send the
