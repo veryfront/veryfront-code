@@ -2561,6 +2561,85 @@ describe("Sandbox", () => {
       }
     });
 
+    for (const invalid of ["", "   "]) {
+      it(`rejects active project selector ${JSON.stringify(invalid)} without deleting the workspace`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "active-valid",
+            endpoint: "https://sb.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          jsonResponse({ ok: true }),
+        ]);
+        let project = "valid-project";
+        const sandbox = Sandbox.createLazy({
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          getProjectId: () => project,
+        });
+        try {
+          await sandbox.runCommand("true");
+          const before = fetchCalls.length;
+          project = invalid;
+          await assertRejects(() => sandbox.runCommand("true"), Error);
+          assertEquals(fetchCalls.length, before);
+          assertEquals(sandbox.id, "active-valid");
+        } finally {
+          project = "valid-project";
+          await sandbox.close();
+        }
+      });
+    }
+
+    it("restores retained cleanup protection after visiting an ephemeral project", async () => {
+      const persistent = {
+        id: "retained-a",
+        endpoint: "https://a.test",
+        status: "running",
+        workspace_storage: "persistent",
+        ttl_mode: "default",
+      };
+      mockFetch([
+        jsonResponse(persistent),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        jsonResponse({
+          id: "temporary-b",
+          endpoint: "https://b.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        textResponse(""),
+        jsonResponse(persistent),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        textResponse(""),
+      ]);
+      let project = "a";
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        getProjectId: () => project,
+      });
+      await sandbox.runCommand("true");
+      project = "b";
+      await sandbox.runCommand("true");
+      project = "a";
+      await sandbox.runCommand("true");
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "DELETE").map((call) => call.url),
+        ["https://api.test.com/sandboxes/temporary-b"],
+      );
+    });
+
     it("retains always-on workspaces when the selected project changes", async () => {
       mockFetch([
         jsonResponse({
@@ -2581,6 +2660,15 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         commandResponse([{ type: "exit", exitCode: 0 }]),
+        jsonResponse({
+          id: "workspace-1",
+          endpoint: "https://sb1.test",
+          status: "running",
+          workspace_storage: "persistent",
+          ttl_mode: "always_on",
+        }),
+        jsonResponse({ ok: true }),
+        commandResponse([{ type: "stdout", data: "retained" }, { type: "exit", exitCode: 0 }]),
       ]);
       let project = "project-1";
       const sandbox = Sandbox.createLazy({
@@ -2595,6 +2683,15 @@ describe("Sandbox", () => {
         project = "project-2";
         await sandbox.runCommand("true");
         assertEquals(sandbox.id, "workspace-2");
+        project = "project-1";
+        assertEquals((await sandbox.runCommand("pwd")).stdout, "retained");
+        assertEquals(sandbox.id, "workspace-1");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+          ).length,
+          2,
+        );
       } finally {
         await sandbox.close();
       }

@@ -9,6 +9,7 @@ import {
 } from "./response.ts";
 import {
   assertSandboxCreationOptions,
+  assertSandboxSelector,
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
@@ -186,7 +187,7 @@ export class LazySandbox {
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
-  private retainedSession: { id: string; projectReference: string | null } | null = null;
+  private readonly retainedSessions = new Map<string | null, string>();
   private sessionProjectId: string | null = null;
   private ensurePromise: PendingOperation | null = null;
   private closePromise: PendingOperation | null = null;
@@ -593,7 +594,7 @@ export class LazySandbox {
           await this.deleteSession(currentSessionId);
         }
         if (!this.deleteOnClose) {
-          this.retainedSession = { id: currentSessionId, projectReference: this.sessionProjectId };
+          this.retainedSessions.set(this.sessionProjectId, currentSessionId);
         }
         this.resetSessionState(currentSessionId);
       })(),
@@ -611,10 +612,7 @@ export class LazySandbox {
   }
 
   get id(): string | null {
-    return this.sessionId ??
-      (this.retainedSession?.projectReference === this.resolveProjectId()
-        ? this.retainedSession.id
-        : null);
+    return this.sessionId ?? this.retainedSessions.get(this.resolveProjectId()) ?? null;
   }
 
   get url(): string | null {
@@ -630,12 +628,12 @@ export class LazySandbox {
       await this.attachExistingSession(this.sandboxId);
       return;
     }
-    if (this.retainedSession) {
-      if (this.retainedSession.projectReference === this.resolveProjectId()) {
-        await this.attachExistingSession(this.retainedSession.id);
-        return;
-      }
-      this.retainedSession = null;
+    const retained = this.retainedSessions.get(this.resolveProjectId());
+    if (retained) {
+      // Only workspaces protected from automatic deletion enter this map.
+      this.deleteOnClose = false;
+      await this.attachExistingSession(retained);
+      return;
     }
 
     for (let attempt = 1; attempt <= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
@@ -688,7 +686,7 @@ export class LazySandbox {
         await this.deleteSession(currentSessionId);
       }
       if (currentSessionId && !this.deleteOnClose) {
-        this.retainedSession = { id: currentSessionId, projectReference: this.sessionProjectId };
+        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
       throw error;
@@ -813,7 +811,9 @@ export class LazySandbox {
       if (currentSessionId && this.deleteOnClose) {
         await this.deleteSession(currentSessionId);
       }
-      this.retainedSession = null;
+      if (currentSessionId && !this.deleteOnClose) {
+        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+      }
       this.resetSessionState(currentSessionId ?? undefined);
     }
 
@@ -869,7 +869,9 @@ export class LazySandbox {
   }
 
   private resolveProjectId(): string | null {
-    return this.getProjectId() ?? null;
+    const projectId = this.getProjectId();
+    assertSandboxSelector(projectId ?? undefined, "projectReference");
+    return projectId ?? null;
   }
 
   private resetSessionState(sessionId?: string): void {
@@ -1011,7 +1013,7 @@ export class LazySandbox {
       await this.deleteSession(sessionId);
     }
     if (!this.deleteOnClose) {
-      this.retainedSession = { id: sessionId, projectReference: this.sessionProjectId };
+      this.retainedSessions.set(this.sessionProjectId, sessionId);
     }
     this.resetSessionState(sessionId);
   }
