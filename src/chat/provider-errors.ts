@@ -9,6 +9,7 @@ import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
   AGENT_PROVIDER_AUTH_ERROR,
   AI_PROVIDER_BILLING_ERROR,
+  AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR,
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
@@ -212,6 +213,13 @@ function parseKnownProblemBodyInternal(
   // whatever status an older gateway sent (503).
   if (allowInferencePolicy && getOwnDataProperty(body, "code") === "eu_inference_policy") {
     return inferencePolicyError(getOwnDataProperty(body, "model"));
+  }
+
+  if (
+    allowInferencePolicy &&
+    getOwnDataProperty(body, "code") === "ai_provider_spend_check_unavailable"
+  ) {
+    return { ...AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR };
   }
 
   const slugValue = getOwnDataProperty(body, "slug");
