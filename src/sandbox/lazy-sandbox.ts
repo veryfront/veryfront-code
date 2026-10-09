@@ -852,13 +852,16 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await this.#fetchControl(
+    const response = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
       {
         method: "DELETE",
         headers: this.#authHeaders(),
       },
     );
+    if (!response.ok) {
+      throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
+    }
   }
 
   #requireEndpoint(): string {

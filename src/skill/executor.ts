@@ -535,11 +535,12 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       };
     } finally {
       try {
-        await boundedSandboxCleanup((signal) => sandbox.close({ signal }));
+        // Each execution owns a disposable workspace, including when storage is persistent.
+        await boundedSandboxCleanup((signal) => sandbox.delete({ signal }));
       } catch (error) {
         // Best-effort cleanup; log at warn so persistent failures (e.g. auth
         // revoked) leave a trace rather than silently leaking sandbox pods.
-        logger.warn("[skill/executor] Failed to close sandbox", error);
+        logger.warn("[skill/executor] Failed to delete disposable sandbox", error);
       }
     }
   }

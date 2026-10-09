@@ -392,54 +392,89 @@ describe("src/skill/executor", () => {
       }
     });
 
-    it("uploads a bounded script tree and executes from its private root", async () => {
+    for (const storage of ["ephemeral", "persistent"] as const) {
+      it(`uploads and deletes its disposable ${storage} script workspace`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          jsonResponse({
+            id: "session-snapshot",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: storage,
+          }),
+          (_input, init) => {
+            const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            return jsonResponse({
+              results: body.files.map((file) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            });
+          },
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          backgroundCommandResponse(),
+          textResponse(""),
+        ]);
+
+        const result = await getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.ts",
+          scriptContent: 'import "./helper.ts";',
+          scriptSnapshot: {
+            entryPath: "scripts/jobs/run.ts",
+            files: [
+              { path: "scripts/jobs/helper.ts", content: "export {};" },
+              { path: "scripts/jobs/run.ts", content: 'import "./helper.ts";' },
+            ],
+          },
+        });
+
+        assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 1);
+        assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
+        assertEquals(fetchCalls[3]!.url.endsWith("/commands"), true);
+        assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
+        const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
+          files: Array<{ path: string; content: string }>;
+        };
+        assertEquals(body.files.length, 2);
+        assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
+        assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
+        assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+      });
+    }
+
+    it("deletes its disposable persistent workspace after script upload fails", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       mockFetch([
         jsonResponse({
-          id: "session-snapshot",
+          id: "failed-upload",
           endpoint: "https://sandbox.example.com",
           status: "running",
-          workspace_storage: "ephemeral",
+          workspace_storage: "persistent",
         }),
-        (_input, init) => {
-          const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
-          return jsonResponse({
-            results: body.files.map((file) => ({
-              path: file.path,
-              status: "written",
-              error: null,
-            })),
-          });
-        },
-        commandResponse([{ type: "exit", exitCode: 0 }]),
-        backgroundCommandResponse("running", "", null),
-        backgroundCommandResponse(),
+        textResponse("upload failed", 503),
         textResponse(""),
       ]);
-
-      const result = await getSkillScriptExecutor().execute({
-        scriptPath: "scripts/run.ts",
-        scriptContent: 'import "./helper.ts";',
-        scriptSnapshot: {
-          entryPath: "scripts/jobs/run.ts",
-          files: [
-            { path: "scripts/jobs/helper.ts", content: "export {};" },
-            { path: "scripts/jobs/run.ts", content: 'import "./helper.ts";' },
-          ],
-        },
-      });
-
-      assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
-      assertEquals(fetchCalls[3]!.url.endsWith("/commands"), true);
-      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
-      const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
-        files: Array<{ path: string; content: string }>;
-      };
-      assertEquals(body.files.length, 2);
-      assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
-      assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
-      assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+      await assertRejects(
+        () =>
+          getSkillScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo disposable",
+          }),
+        Error,
+        "Write files failed: 503",
+      );
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "DELETE").map((call) =>
+          new URL(call.url).pathname
+        ),
+        [
+          "/sandboxes/failed-upload",
+        ],
+      );
     });
 
     for (const timeoutSeconds of [50, 60, 300]) {
@@ -654,7 +689,7 @@ describe("src/skill/executor", () => {
       });
     }
 
-    for (const stalled of ["cancel", "close"] as const) {
+    for (const stalled of ["cancel", "delete"] as const) {
       it(`bounds stalled ${stalled} cleanup after the background script deadline`, async () => {
         setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
         setEnv("VERYFRONT_API_URL", "https://api.test.com");
@@ -698,7 +733,7 @@ describe("src/skill/executor", () => {
             return delayed;
           },
           (_input, init) => {
-            if (stalled !== "close") return textResponse("");
+            if (stalled !== "delete") return textResponse("");
             cleanupSignal = init?.signal;
             reportCleanup();
             return delayed;

@@ -523,6 +523,46 @@ describe("Sandbox", () => {
     }
   }
 
+  for (const storage of ["persistent", "ephemeral"] as const) {
+    for (const status of [403, 503]) {
+      it(`retains the lazy workspace for retry after ${storage} cleanup returns ${status}`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "retry-cleanup",
+            endpoint: "https://sb.test",
+            status: "running",
+            workspace_storage: storage,
+          }),
+          jsonResponse({ ok: true }),
+          textResponse("delete failed", status),
+          jsonResponse({ ok: true }),
+        ]);
+        const sandbox = Sandbox.createLazy({
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          deleteOnClose: true,
+          ...(storage === "ephemeral" ? { ttlMode: "always_on" as const } : {}),
+        });
+        await sandbox.ensure();
+        const attempts = await Promise.allSettled([sandbox.close(), sandbox.close()]);
+        assertEquals(attempts.map((result) => result.status), ["rejected", "rejected"]);
+        assertEquals(sandbox.id, "retry-cleanup");
+        assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 1);
+        await sandbox.close();
+        assertEquals(sandbox.id, null);
+        assertEquals(
+          fetchCalls.filter((call) => call.init?.method === "DELETE").map((call) =>
+            new URL(call.url).pathname
+          ),
+          [
+            "/sandboxes/retry-cleanup",
+            "/sandboxes/retry-cleanup",
+          ],
+        );
+      });
+    }
+  }
+
   it("retains returned persistent storage after a bootstrap failure", async () => {
     const session = {
       id: "persistent",
