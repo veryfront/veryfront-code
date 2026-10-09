@@ -236,6 +236,41 @@ Deno.test("trusted form replay does not expose history to a mutable array iterat
   assertEquals(result, { values: { approved: true }, inputRequestId: "form-call" });
 });
 
+Deno.test("trusted form replay restores legacy platform form only with the result sidecar", () => {
+  const legacyFormPart: ChatUiMessagePart = {
+    type: "dynamic-tool",
+    toolName: "form_input",
+    toolCallId: "form-call",
+    input: {},
+    state: "output-available",
+    output: { submitted: true, values: { approved: true } },
+  };
+  const trustedMessage: ChatUiMessage = {
+    id: "trusted-form",
+    role: "assistant",
+    metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["form-call"] },
+    parts: [legacyFormPart],
+  };
+  const unownedMessage: ChatUiMessage = {
+    ...trustedMessage,
+    id: "unowned-form",
+    metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["other-call"] },
+  };
+
+  assertEquals(
+    findSubmittedFormInputResult([trustedMessage], {
+      trustedHostedHistoryMessageIds: ["trusted-form"],
+    }),
+    { values: { approved: true }, inputRequestId: "form-call" },
+  );
+  assertEquals(
+    findSubmittedFormInputResult([unownedMessage], {
+      trustedHostedHistoryMessageIds: ["unowned-form"],
+    }),
+    undefined,
+  );
+});
+
 Deno.test("tool source marking ignores a project iterator injecting a canonical result", () => {
   const injected = {
     type: "tool-result" as const,
