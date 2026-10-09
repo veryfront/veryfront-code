@@ -104,6 +104,7 @@ function releasePublishScript(npmMockBody: string[]): string {
     "}",
     "sleep() { :; }",
     'release_publish_package_dir "$PACKAGE_DIR"',
+    'wait_for_stable_npm_git_heads "$PACKAGE_NAME"',
   ].join("\n");
 }
 
@@ -657,6 +658,83 @@ describe("npm package publishing", () => {
       );
     });
   });
+
+  for (
+    const scenario of [
+      "converges",
+      "mismatch",
+      "exhausted",
+      "budget",
+      "lookup-budget",
+    ]
+  ) {
+    it(`stable metadata batch ${scenario} preserves verification after all publishes`, async () => {
+      await withTempDir(async (stateDir) => {
+        const log = `${stateDir}/log`;
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "verify_npm_compatibility_artifact() { :; }",
+            "package_dirs() { printf '%s\\n' extension npm; }",
+            "canonical_tarball_for_package_dir() { echo package.tgz; }",
+            'jq() { echo "$PACKAGE_DIR"; }',
+            'publish_npm_package_with_retry() { echo "publish:$1:$2" >> "$LOG"; }',
+            "round=0",
+            'sleep() { echo sleep >> "$LOG"; round=$((round + 1)); }',
+            "lookup_npm_git_head() {",
+            '  echo "lookup:$1:$round" >> "$LOG"',
+            '  PUBLISHED_GIT_HEAD=""',
+            '  if [ "$SCENARIO" = mismatch ]; then PUBLISHED_GIT_HEAD=wrong; fi',
+            '  if [ "$SCENARIO" = lookup-budget ]; then NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$((NPM_GIT_HEAD_WAIT_SPENT_SECONDS + 10)); fi',
+            '  if [ "$SCENARIO" = converges ] && [ "$round" -ge 2 ]; then PUBLISHED_GIT_HEAD="$GITHUB_SHA"; fi',
+            "}",
+            "run_release_publish",
+          ].join("\n"),
+          {
+            VERSION: "0.1.0",
+            GITHUB_SHA: "expected-head",
+            NPM_PACK_DIR: "artifact",
+            LOG: log,
+            SCENARIO: scenario,
+            NPM_GIT_HEAD_WAIT_ATTEMPTS: "3",
+            NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+            NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: scenario.endsWith("budget") ? "20" : "200",
+          },
+        );
+        const lines = (await Deno.readTextFile(log)).trim().split("\n");
+        assertEquals(lines.slice(0, 2), [
+          "publish:fail-closed:extension",
+          "publish:fail-closed:npm",
+        ]);
+        assertEquals(output.code, scenario === "converges" ? 0 : 1);
+        const sleeps = lines.filter((line) => line === "sleep").length;
+        assertEquals(
+          sleeps,
+          scenario === "converges" || scenario === "budget" ? 2 : scenario === "exhausted" ? 3 : 0,
+        );
+        if (scenario === "converges") {
+          assertEquals(lines.slice(2), [
+            "lookup:extension:0",
+            "lookup:npm:0",
+            "sleep",
+            "lookup:extension:1",
+            "lookup:npm:1",
+            "sleep",
+            "lookup:extension:2",
+            "lookup:npm:2",
+          ]);
+        } else {
+          assertStringIncludes(
+            decoder.decode(output.stdout),
+            `::error::Published extension@0.1.0 gitHead is ${
+              scenario === "mismatch" ? "wrong" : ""
+            }, expected expected-head.`,
+          );
+        }
+      });
+    });
+  }
 
   // A stable publish on 2026-09-21 landed 58 minutes after `npm publish` started
   // and its gitHead metadata appeared 43 seconds after a five-minute wait gave
@@ -2761,14 +2839,17 @@ describe("RC metadata verification order", () => {
   });
 
   it("keeps the maintenance publish lookup fail-closed after batch preflight", async () => {
-    const output = await runBash([
-      "set -euo pipefail",
-      'source "$SCRIPT_PATH"',
-      "jq() { echo veryfront; }",
-      'npm() { echo "npm error code ETIMEDOUT" >&2; return 1; }',
-      'publish_npm_package_with_retry() { echo "UNSAFE-PUBLISH"; }',
-      "rc_publish_package_dir package",
-    ].join("\n"), { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head", NPM_MAINTENANCE_RELEASE: "true" });
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "jq() { echo veryfront; }",
+        'npm() { echo "npm error code ETIMEDOUT" >&2; return 1; }',
+        'publish_npm_package_with_retry() { echo "UNSAFE-PUBLISH"; }',
+        "rc_publish_package_dir package",
+      ].join("\n"),
+      { VERSION: "0.1.0-rc.1", GITHUB_SHA: "expected-head", NPM_MAINTENANCE_RELEASE: "true" },
+    );
     assertEquals(output.code, 1);
     assertEquals(decoder.decode(output.stdout).includes("UNSAFE-PUBLISH"), false);
     assertStringIncludes(decoder.decode(output.stderr), "npm registry version lookup failed");
