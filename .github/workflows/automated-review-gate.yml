@@ -22,6 +22,13 @@ on:
 
 permissions: {}
 
+# Coalesce normal signals before they allocate runners or enter status-write
+# locks. Let the running workflow finish its failure propagation. Safety jobs
+# and ignored events have unique admission groups and keep their inner queues.
+concurrency:
+  group: automated-review-events-${{ github.event_name == 'pull_request_target' && format('automated-review-wakeup-pr-{0}-eligible', github.event.pull_request.number) || github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.comment.user.id == 199175422 && github.event.comment.user.type == 'Bot' && format('automated-review-wakeup-pr-{0}-eligible', github.event.issue.number) || github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review' && endsWith(github.event.workflow_run.display_title, '-eligible') && github.event.workflow_run.display_title || format('run-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   timeout_targets:
     name: find timed-out automated reviews
@@ -599,7 +606,6 @@ jobs:
     steps:
       - name: Resolve the current head inside the publisher lock
         id: resolve
-        if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3
@@ -698,6 +704,13 @@ jobs:
                 context.payload.pull_request?.updated_at,
               reviewEpochRunKey: String(context.runId),
             });
+            core.setOutput("review-request-key", result.reviewRequestKey ?? "");
+            core.setOutput(
+              "review-request-epoch",
+              Number.isFinite(result.reviewRequestEpochTime)
+                ? new Date(result.reviewRequestEpochTime).toISOString()
+                : "",
+            );
             if (
               context.eventName === "pull_request_target" &&
               context.payload.action === "ready_for_review" &&
@@ -814,33 +827,18 @@ jobs:
               core.warning(result.failure.message);
             }
             return result.state;
-      # A pending status on a trusted push event means no review exists for
-      # this head yet, and nothing would request one: the Codex connector
-      # handles open and ready-for-review events, but not a push to an open
-      # pull request. Post the "@codex review" request for synchronize and
-      # reopened events. Request explicitly after ready-for-review only when
-      # an ambiguous run-bound reset invalidated the connector's automatic
-      # proof and requires replacement evidence.
-      # The helper re-fetches the PR immediately before posting so a queued
-      # stale event cannot bind its marker to a request for a newer head. A
-      # base edit gets a marker scoped to the run, which invalidates
-      # proof issued for an earlier base without coupling normal reviews to a
-      # moving base commit. A rerun keeps the same marker, so it re-evaluates
-      # evidence after the original reset instead of creating another epoch
-      # that would erase a successful review submitted in the meantime.
+      # A surviving comment or wakeup can replace a pending synchronize or
+      # lifecycle event. Use the resolved head and published durable epoch to
+      # request missing proof. The helper revalidates eligibility, evidence and
+      # epoch before posting, and deduplicates its fixed request marker.
       - name: Request an automated review of the current commit
-        if: >-
-          github.event_name == 'pull_request_target' &&
-          github.event.pull_request.draft == false &&
-          (github.event.action == 'synchronize' ||
-           github.event.action == 'reopened' ||
-           (github.event.action == 'ready_for_review' &&
-            steps.publish.outputs.explicit-ready-request == 'true') ||
-           (github.event.action == 'edited' && github.event.changes.base)) &&
-          steps.publish.outputs.result == 'pending'
+        if: steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}
+          PULL_NUMBER: ${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}
+          REVIEW_REQUEST_KEY: ${{ steps.publish.outputs.review-request-key }}
+          REVIEW_REQUEST_EPOCH: ${{ steps.publish.outputs.review-request-epoch }}
         with:
           retries: 3
           script: |
@@ -860,23 +858,15 @@ jobs:
               Buffer.from(file.content, "base64").toString("base64")
             }`;
             const { requestAutomatedReview } = await import(gateUrl);
-            const pullRequest = context.payload.pull_request;
             const result = await requestAutomatedReview({
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pullNumber: pullRequest.number,
+              pullNumber: Number(process.env.PULL_NUMBER),
               headSha: process.env.TARGET_SHA,
-              requestKey: context.payload.action === "edited"
-                ? "base"
-                : context.payload.action === "reopened"
-                ? "reopen"
-                : context.payload.action === "ready_for_review"
-                ? "ready"
-                : undefined,
-              reviewEpochNotBefore:
-                context.payload.pull_request?.updated_at,
-              reviewEpochRunKey: String(context.runId),
+              requestKey: process.env.REVIEW_REQUEST_KEY || undefined,
+              reviewEpochNotAfter: process.env.REVIEW_REQUEST_EPOCH || undefined,
+              validateRequestEpoch: Boolean(process.env.REVIEW_REQUEST_KEY),
               revalidateReviewEvidence: true,
             });
             core.notice(
