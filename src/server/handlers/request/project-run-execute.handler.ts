@@ -239,6 +239,7 @@ const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectFreeze = Object.freeze;
 const ResponseStatusGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "status")!.get!;
 const ResponseOkGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 const ResponseBodyGetter = ObjectGetOwnPropertyDescriptor(Response.prototype, "body")!.get!;
@@ -2463,6 +2464,20 @@ function snapshotProjectRunObservationEvent(
   return { ...snapshot, type: snapshot.type };
 }
 
+function freezeProjectModelCallCaptureReceipt(receipt: {
+  eventId: string;
+  projectId: string;
+  runId: string;
+  modelCallId: string;
+}): { eventId: string; projectId: string; runId: string; modelCallId: string } {
+  return IntrinsicReflectApply(ObjectFreeze, Object, [{
+    eventId: receipt.eventId,
+    projectId: receipt.projectId,
+    runId: receipt.runId,
+    modelCallId: receipt.modelCallId,
+  }]) as { eventId: string; projectId: string; runId: string; modelCallId: string };
+}
+
 function createProjectRunObservationMirror(input: {
   runId: string;
   canonicalRunId: string;
@@ -2594,12 +2609,12 @@ function createProjectRunObservationMirror(input: {
           }
           modelCallCaptureReceipts.set(
             IntrinsicReflectApply(StringToLowerCase, value.model_call_id, []) as string,
-            {
+            freezeProjectModelCallCaptureReceipt({
               eventId: value.event_id,
               projectId: value.project_id,
               runId: value.run_id,
               modelCallId: value.model_call_id,
-            },
+            }),
           );
         }
       }

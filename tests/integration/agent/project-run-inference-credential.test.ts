@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { agent as createAgent } from "#veryfront/agent";
 import {
   createProjectRunInferenceModelResolver,
@@ -256,6 +257,9 @@ describe("project-run inference credential", () => {
       "weak-delete",
       "response-ok",
       "array",
+      "freeze",
+      "als-run",
+      "als-get",
     ] as const
   ) {
     it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
@@ -276,6 +280,9 @@ describe("project-run inference credential", () => {
       const originalWeakDelete = WeakMap.prototype.delete;
       const originalOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
       const originalArrayIsArray = Array.isArray;
+      const originalFreeze = Object.freeze;
+      const originalAsyncRun = AsyncLocalStorage.prototype.run;
+      const originalAsyncGetStore = AsyncLocalStorage.prototype.getStore;
       const deps = {
         runTask: async () => {
           if (replacement === "case") {
@@ -351,6 +358,37 @@ describe("project-run inference credential", () => {
               return originalArrayIsArray(value);
             }) as typeof Array.isArray;
           }
+          if (replacement === "freeze") {
+            Object.freeze = function <T>(value: T): Readonly<T> {
+              if (isRecord(value) && typeof value.modelCallId === "string") {
+                observedReceipts.push(value);
+                throw new Error("project receipt freeze hook");
+              }
+              return Reflect.apply(originalFreeze, Object, [value]) as Readonly<T>;
+            };
+          }
+          if (replacement === "als-run") {
+            AsyncLocalStorage.prototype.run = function (
+              this: AsyncLocalStorage<unknown>,
+              ...args: unknown[]
+            ) {
+              if ((JSON.stringify(args[0]) ?? "").includes("modelCallId")) {
+                observedReceipts.push(args[0]);
+                throw new Error("project async run receipt hook");
+              }
+              return Reflect.apply(originalAsyncRun, this, args);
+            };
+          }
+          if (replacement === "als-get") {
+            AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
+              const store = Reflect.apply(originalAsyncGetStore, this, []);
+              if ((JSON.stringify(store) ?? "").includes("modelCallId")) {
+                observedReceipts.push(store);
+                throw new Error("project async getStore receipt hook");
+              }
+              return store;
+            };
+          }
           let answer;
           try {
             answer = await managed.generate({ input: "Hello" });
@@ -362,6 +400,9 @@ describe("project-run inference credential", () => {
             WeakMap.prototype.delete = originalWeakDelete;
             Object.defineProperty(Response.prototype, "ok", originalOk);
             Array.isArray = originalArrayIsArray;
+            Object.freeze = originalFreeze;
+            AsyncLocalStorage.prototype.run = originalAsyncRun;
+            AsyncLocalStorage.prototype.getStore = originalAsyncGetStore;
           }
           return { success: true, result: { text: answer.text }, durationMs: 1 };
         },

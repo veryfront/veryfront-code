@@ -104,6 +104,7 @@ export interface AgentRunEventTimingOptions {
 }
 
 const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
@@ -176,7 +177,7 @@ function assertValidElapsedMs(value: unknown): asserts value is number {
 }
 
 function assertValidEmittedAt(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsInteger(value) || value < 0) {
     throw new TypeError("emittedAt must be a non-negative integer");
   }
 }

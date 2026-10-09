@@ -1,11 +1,12 @@
 import { readProjectExecutionParent } from "#veryfront/server/handlers/request/project-run-parent.ts";
+import { createTimedAgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getPrivateRunEventAppendRequestByteLength } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   appendConversationRunEvents,
   createConversationRunEventQueueController,
 } from "#veryfront/agent/conversation/durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createAgUiEncoderState,
@@ -19,6 +20,70 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "#veryfront/agent/conversation/run-event-normalization.ts";
+
+const projectRunParentRunId = "run_parent";
+const projectRunParentProjectId = "project_parent";
+const projectRunParentAttempt = {
+  canonicalRunId: "11111111-1111-4111-8111-111111111111",
+  attemptId: "attempt",
+  workerId: "worker",
+};
+
+function projectRunParentToken(override: Record<string, unknown> = {}): string {
+  const payload = btoa(JSON.stringify({
+    tokenUse: "run_event_writer",
+    runId: projectRunParentRunId,
+    projectId: projectRunParentProjectId,
+    projectExecutionAttempt: projectRunParentAttempt,
+    ...override,
+  }));
+  return `test.${payload}.signature`;
+}
+
+function requestBodyFrom(init: unknown): string {
+  if (typeof init === "object" && init !== null && "body" in init) return String(init.body);
+  return "";
+}
+
+describe("project run parent private intrinsics", () => {
+  for (
+    const replacement of [() => null, () => {
+      throw new Error("project exec replacement");
+    }]
+  ) {
+    it(`validates parent UUIDs with captured RegExp execution (${replacement.toString()})`, () => {
+      const exec = RegExp.prototype.exec;
+      try {
+        RegExp.prototype.exec = replacement;
+        assertEquals(
+          readProjectExecutionParent(
+            projectRunParentToken(),
+            projectRunParentRunId,
+            projectRunParentProjectId,
+          ),
+          {
+            canonicalRunId: projectRunParentAttempt.canonicalRunId,
+            attemptId: projectRunParentAttempt.attemptId,
+          },
+        );
+        assertThrows(() =>
+          readProjectExecutionParent(
+            projectRunParentToken({
+              projectExecutionAttempt: {
+                ...projectRunParentAttempt,
+                canonicalRunId: "not-a-uuid",
+              },
+            }),
+            projectRunParentRunId,
+            projectRunParentProjectId,
+          )
+        );
+      } finally {
+        RegExp.prototype.exec = exec;
+      }
+    });
+  }
+});
 
 describe("observation encoder private intrinsics", () => {
   it("preserves observed tool inputs when project code replaces JSON.stringify", () => {
@@ -239,7 +304,9 @@ describe("observation normalization private intrinsics", () => {
       };
       Object.entries = () => [];
       Object.fromEntries = () => ({});
-      Array.isArray = (() => false) as typeof Array.isArray;
+      Array.isArray = function (_value: unknown): _value is unknown[] {
+        return false;
+      };
       normalized = normalizeConversationRunEvents([{ type: "TOOL_CALL_RESULT", content }]);
     } finally {
       WeakSet.prototype.has = originalHas;
@@ -248,12 +315,13 @@ describe("observation normalization private intrinsics", () => {
       Object.fromEntries = originalFromEntries;
       Array.isArray = originalIsArray;
     }
-    const result = normalized[0].content as typeof content;
+    const [first] = normalized;
+    if (!first) throw new Error("Expected normalized tool result");
+    const result = first.content as typeof content;
     assertEquals(result.answer, "preserved");
     assertEquals(result.padding.startsWith("xxx"), true);
     assertEquals(
-      getConversationRunEventJsonByteLength(normalized[0]) <=
-        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      getConversationRunEventJsonByteLength(first) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
       true,
     );
   });
@@ -309,7 +377,7 @@ describe("observation append serialization", () => {
       expectedPreviousExternalEventSequence: 0,
       events: [event, event],
       fetch: (_url, init) => {
-        requestBody = String(init?.body);
+        requestBody = requestBodyFrom(init);
         return Promise.resolve(Response.json({
           run_id: canonicalRunId,
           latest_event_id: 1,
@@ -551,6 +619,45 @@ describe("private observation authority and sizing", () => {
       RegExp.prototype.test = original;
     }
     assertEquals(parent, { canonicalRunId, attemptId: "attempt" });
+  });
+
+  it("validates model-call emittedAt timing with captured integer checks", () => {
+    let stamped;
+    const sink = createTimedAgentRunEventSink((event) => {
+      stamped = event;
+    }, {
+      nowMs: () => 12,
+      epochMs: () => 123,
+      startedMs: 2,
+    });
+    const original = Number.isInteger;
+    try {
+      Number.isInteger = () => {
+        throw new Error("mutable Number.isInteger");
+      };
+      sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] });
+      assertEquals(stamped, {
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        messages: [],
+        elapsedMs: 10,
+        emittedAt: 123,
+      });
+    } finally {
+      Number.isInteger = original;
+    }
+
+    try {
+      Number.isInteger = () => true;
+      assertThrows(() =>
+        sink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          messages: [],
+          emittedAt: 123.5,
+        })
+      );
+    } finally {
+      Number.isInteger = original;
+    }
   });
 
   it("sizes private model-call events after project code replaces TextEncoder encode", () => {

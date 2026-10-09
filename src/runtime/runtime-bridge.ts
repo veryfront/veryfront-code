@@ -59,6 +59,7 @@ const cloneStructuredValue = globalThis.structuredClone;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectFreeze = Object.freeze;
 const ArrayIsArray = Array.isArray;
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
@@ -930,7 +931,10 @@ async function emitModelCallContextEvent(
       "Model call capture receipt is missing or invalid",
     );
   }
-  return { receipt: Object.freeze(receipt.data), assertActive };
+  return {
+    receipt: ReflectApply(ObjectFreeze, Object, [receipt.data]) as AgentRunModelCallCaptureReceipt,
+    assertActive,
+  };
 }
 
 function runWithModelCallCapture<T>(
