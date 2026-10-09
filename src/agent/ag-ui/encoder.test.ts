@@ -31,6 +31,19 @@ describe("agent/ag-ui-encoder", () => {
       }), TypeError);
   });
 
+  it("preserves size-compliant tool inputs above the default private structural budget", () => {
+    const input = new Array(100_001).fill(0);
+    const events = mapRuntimeStreamEventToAgUiEvents(createAgUiEncoderState(), {
+      type: "tool-input-available",
+      toolCallId: "tool-many-cells",
+      toolName: "lookup",
+      input,
+    });
+    const args = events.find((event) => event.event === "ToolCallArgs");
+    assertEquals(JSON.stringify(input).length < 240 * 1024, true);
+    assertEquals(args?.payload.delta, JSON.stringify(input));
+  });
+
   it("maps text, reasoning, step, and tool lifecycle events into AG-UI payloads", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

@@ -11,6 +11,7 @@ import {
   privateTextStartsWith,
 } from "#veryfront/security/private-text.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "../conversation/run-event-limits.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame } from "./native-run-events.ts";
@@ -155,7 +156,12 @@ export function createAgUiEncoderState(
 }
 
 function serializeToolInput(input: unknown): string {
-  const serialized = privateJsonStringify(input ?? {});
+  const serialized = privateJsonStringify(
+    input ?? {},
+    null,
+    undefined,
+    MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  );
   if (serialized === undefined) throw new TypeError("Observed tool input is not JSON data");
   return serialized;
 }
