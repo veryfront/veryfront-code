@@ -1,3 +1,4 @@
+import { isPersistedReasoningPart } from "./streamed-assistant-message.ts";
 import { isTerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -1353,7 +1354,7 @@ export function processStreamInternal(
         if (next === "timeout") {
           if (
             wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
-            !somePrivateArray(state.reasoningParts, (part) => part.text.length > 0)
+            !somePrivateArray(state.reasoningParts, isPersistedReasoningPart)
           ) {
             throw createRuntimeProviderStreamFailure(
               new Error("Provider stream timed out before producing output"),

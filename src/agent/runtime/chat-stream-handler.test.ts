@@ -1128,7 +1128,7 @@ describe("chat-stream-handler", () => {
       assertEquals(events, []);
     });
 
-    for (const kind of ["reasoning", "tool"] as const) {
+    for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
       it(`preserves ${kind}-only idle completion when provider finish is optional`, async () => {
         const { controller, encoder } = createSSECollector();
         const state = createStreamState();
@@ -1137,6 +1137,9 @@ describe("chat-stream-handler", () => {
             async *[Symbol.asyncIterator]() {
               if (kind === "reasoning") {
                 yield { type: "reasoning-delta", id: "r1", delta: "Thinking." };
+              } else if (kind === "signature" || kind === "redactedData") {
+                yield { type: "reasoning-start", id: "r1" };
+                yield { type: "reasoning-end", id: "r1", [kind]: "opaque-provider-data" };
               } else {
                 yield { type: "tool-input-start", id: "t1", toolName: "lookup" };
                 yield { type: "tool-input-delta", id: "t1", delta: "{}" };
