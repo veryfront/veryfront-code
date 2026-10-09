@@ -238,6 +238,27 @@ describe("input-utils", () => {
       });
     });
 
+    it("preserves trusted multilingual skill instructions at the accepted character limit", () => {
+      const instructions = "界".repeat(1_048_576);
+      const skill = markTrustedPlatformPolicyToolResultPart({
+        type: "tool-result",
+        toolCallId: "multilingual-skill",
+        toolName: "veryfront__load_skill",
+        result: {
+          skillId: "trusted",
+          instructions,
+          references: ["guide.md"],
+          scripts: ["check.ts"],
+        },
+      });
+      const [normalized] = normalizeInput([{ id: "large-skill", role: "tool", parts: [skill] }]);
+      assertExists(normalized);
+      assertEquals(hydrateActiveSkillStateFromMessages([normalized]).activeSkillId, "trusted");
+      assertEquals(prepareTrustedPlatformPolicyMessageForPersistence(normalized).metadata, {
+        __veryfrontTrustedPlatformPolicyToolResultIds: ["multilingual-skill"],
+      });
+    });
+
     it("assigns generated ids when message has no id", () => {
       const messages = [
         {

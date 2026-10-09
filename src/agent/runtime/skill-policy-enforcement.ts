@@ -24,6 +24,7 @@ import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
@@ -104,7 +105,19 @@ function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefi
     type !== "tool-result" || typeof toolCallId !== "string" || toolCallId.length === 0 ||
     typeof toolName !== "string" || toolName.length === 0
   ) return undefined;
-  const result = snapshotBoundedJsonValue(readToolResultOwnDataProperty(part, "result"));
+  const isSkillLoad = toolName === "load_skill" || toolName === "veryfront__load_skill";
+  // A valid UTF-16 skill character uses at most three UTF-8 bytes, or six JSON
+  // escape bytes. Include the existing bounded reference/script path inventory.
+  const result = isSkillLoad
+    ? snapshotBoundedJsonValue(
+      readToolResultOwnDataProperty(part, "result"),
+      3 * SKILL_DOCUMENT_MAX_CHARACTERS,
+      6 * SKILL_DOCUMENT_MAX_CHARACTERS +
+        6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
+          (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
+        65_536,
+    )
+    : snapshotBoundedJsonValue(readToolResultOwnDataProperty(part, "result"));
   if (!result.success) return undefined;
   try {
     return privateJsonStringify({ toolCallId, toolName, result: result.value });

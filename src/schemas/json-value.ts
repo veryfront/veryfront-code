@@ -142,10 +142,19 @@ function encodedByteLength(value: string): number {
  * this walk are copied, so a stateful Proxy cannot change the value between
  * validation and later consumption. Rejections include the path to the
  * narrowest invalid value that could be identified without invoking caller
- * code.
+ * code. Boundary owners may supply explicit string and serialized byte ceilings
+ * matching their existing accepted payload limits; all structural safeguards remain.
  */
-export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
-  const result = snapshotBoundedJsonWithSize(value);
+export function snapshotBoundedJsonValue(
+  value: unknown,
+  maxStringBytes = JSON_VALUE_MAX_STRING_BYTES,
+  maxSerializedBytes = JSON_VALUE_MAX_SERIALIZED_BYTES,
+): BoundedJsonSnapshot {
+  if (
+    !numberIsSafeInteger(maxStringBytes) || maxStringBytes <= 0 ||
+    !numberIsSafeInteger(maxSerializedBytes) || maxSerializedBytes <= 0
+  ) return { success: false, path: [] };
+  const result = snapshotBoundedJsonWithSize(value, undefined, maxStringBytes, maxSerializedBytes);
   return result.success ? { success: true, value: result.value } : result;
 }
 
@@ -172,7 +181,12 @@ export function boundedJsonByteLength(value: unknown): number | undefined {
   return result.success ? result.serializedBytes : undefined;
 }
 
-function snapshotBoundedJsonWithSize(value: unknown, maxSourceBytes?: number):
+function snapshotBoundedJsonWithSize(
+  value: unknown,
+  maxSourceBytes?: number,
+  maxStringBytes = JSON_VALUE_MAX_STRING_BYTES,
+  maxSerializedBytes = JSON_VALUE_MAX_SERIALIZED_BYTES,
+):
   | { success: true; value: BoundedJsonValue; serializedBytes: number }
   | { success: false; path: readonly BoundedJsonPathSegment[] } {
   let activePath: SnapshotPathNode | undefined;
@@ -191,7 +205,7 @@ function snapshotBoundedJsonWithSize(value: unknown, maxSourceBytes?: number):
 
     const addSerializedBytes = (amount: number): boolean => {
       serializedBytes += amount;
-      return serializedBytes <= (maxSourceBytes ?? JSON_VALUE_MAX_SERIALIZED_BYTES);
+      return serializedBytes <= (maxSourceBytes ?? maxSerializedBytes);
     };
 
     const assign = (frame: SnapshotVisitFrame, canonical: BoundedJsonValue): void => {
@@ -232,7 +246,7 @@ function snapshotBoundedJsonWithSize(value: unknown, maxSourceBytes?: number):
       }
       if (typeof current === "string") {
         if (
-          utf8LengthWithin(current, maxSourceBytes ?? JSON_VALUE_MAX_STRING_BYTES) === undefined
+          utf8LengthWithin(current, maxSourceBytes ?? maxStringBytes) === undefined
         ) {
           return invalidJsonSnapshot(frame.path);
         }
