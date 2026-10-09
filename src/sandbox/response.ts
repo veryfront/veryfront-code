@@ -12,6 +12,14 @@ import type {
   SandboxStatus,
 } from "./types.ts";
 
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+/** @internal Only explicit ephemeral storage permits automatic creation cleanup. */
+export function hasEphemeralSandboxStorage(value: unknown): boolean {
+  return value !== null && typeof value === "object" &&
+    getOwnPropertyDescriptor(value, "workspace_storage")?.value === "ephemeral";
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw REQUEST_ERROR.create({ detail: "Invalid sandbox response" });

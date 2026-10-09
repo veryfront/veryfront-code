@@ -95,6 +95,97 @@ describe("Sandbox", () => {
     __resetEnvLoaderForTests();
   });
 
+  for (const storage of [undefined, "persistant", "persistent", "ephemeral"]) {
+    for (const lazy of [false, true]) {
+      it(`enables close deletion only for explicit ephemeral creation storage: ${storage}, lazy=${lazy}`, async () => {
+        mockFetch([
+          Response.json({
+            id: "policy-check",
+            endpoint: "https://sb.test",
+            status: "running",
+            ...(storage === undefined ? {} : { workspace_storage: storage }),
+          }),
+          ...(lazy ? [jsonResponse({ ok: true })] : []),
+          jsonResponse({ ok: true }),
+        ]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com" };
+        if (lazy) {
+          const sandbox = Sandbox.createLazy(options);
+          await sandbox.ensure();
+          await sandbox.close();
+        } else {
+          const sandbox = await Sandbox.create(options);
+          await sandbox.close();
+        }
+        assertEquals(
+          fetchCalls.some((call) => call.init?.method === "DELETE"),
+          storage === "ephemeral",
+        );
+      });
+    }
+  }
+
+  for (const storage of [undefined, "persistant"]) {
+    it(`retains unknown created storage through bootstrap failure and reconnect: ${storage}`, async () => {
+      const session = {
+        id: "unknown-policy",
+        endpoint: "https://sb.test",
+        status: "running",
+        ...(storage === undefined ? {} : { workspace_storage: storage }),
+      };
+      mockFetch([
+        Response.json(session),
+        textResponse("heartbeat failed", 503),
+        Response.json(session),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        deleteOnClose: true,
+      });
+      await assertRejects(() => sandbox.ensure(), Error);
+      await sandbox.close();
+      assertEquals(sandbox.id, session.id);
+      await sandbox.ensure();
+      await sandbox.close();
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      assertEquals(
+        fetchCalls.some((call) =>
+          call.init?.method === "GET" && call.url.endsWith(`/sandboxes/${session.id}`)
+        ),
+        true,
+      );
+    });
+  }
+
+  for (const lazy of [false, true]) {
+    it(`retains unknown creation storage while readiness polling completes: lazy=${lazy}`, async () => {
+      const session = { id: "pending-unknown", endpoint: "https://sb.test", status: "pending" };
+      mockFetch([
+        Response.json(session),
+        Response.json({ ...session, status: "running", workspace_storage: "persistent" }),
+        ...(lazy ? [jsonResponse({ ok: true })] : []),
+        jsonResponse({ ok: true }),
+      ]);
+      const options = { authToken: "token", apiUrl: "https://api.test.com" };
+      if (lazy) {
+        const sandbox = Sandbox.createLazy(options);
+        await sandbox.ensure();
+        await sandbox.close();
+      } else {
+        const sandbox = await Sandbox.create(options);
+        await sandbox.close();
+      }
+      assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+    });
+  }
+
   it("does not expose ambient authentication through a static class method", () => {
     setEnv("VERYFRONT_API_URL", "https://api.test.com");
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
@@ -1568,7 +1659,12 @@ describe("Sandbox", () => {
 
   it("retains cleanup ownership when explicit deletion fails", async () => {
     mockFetch([
-      jsonResponse({ id: "retry-delete", endpoint: "https://sb.test", status: "running" }),
+      jsonResponse({
+        id: "retry-delete",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+      }),
       textResponse("Unavailable", 503),
       jsonResponse({ ok: true }),
     ]);
@@ -1581,7 +1677,12 @@ describe("Sandbox", () => {
   describe("close()", () => {
     it("should send delete request", async () => {
       mockFetch([
-        jsonResponse({ id: "s7", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "s7",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+        }),
         jsonResponse({ ok: true }),
       ]);
 
@@ -1595,7 +1696,12 @@ describe("Sandbox", () => {
 
     it("should throw on close failure", async () => {
       mockFetch([
-        jsonResponse({ id: "s7", endpoint: "https://sb.test", status: "running" }),
+        jsonResponse({
+          id: "s7",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+        }),
         textResponse("delete failed", 503),
       ]);
 
@@ -1826,6 +1932,7 @@ describe("Sandbox", () => {
           id: "sandbox-1",
           endpoint: "https://sandbox-1.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         textResponse("heartbeat failed", 503),
         jsonResponse({ ok: true }),
@@ -1833,6 +1940,7 @@ describe("Sandbox", () => {
           id: "sandbox-2",
           endpoint: "https://sandbox-2.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ ok: true }),
         jsonResponse({ path: "notes.txt", content: "file-body" }),
@@ -1927,6 +2035,7 @@ describe("Sandbox", () => {
           id: "sandbox-1",
           endpoint: "https://sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
       );
 
@@ -2633,6 +2742,7 @@ describe("Sandbox", () => {
           id: "stale",
           endpoint: "https://2826936518.sandbox.veryfront.org",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         () => {
           throw new TypeError("fetch failed");
@@ -2645,6 +2755,7 @@ describe("Sandbox", () => {
           id: "fresh",
           endpoint: "https://1373820032.sandbox.veryfront.org",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),
@@ -2874,6 +2985,7 @@ describe("Sandbox", () => {
           id: "sandbox-1",
           endpoint: "https://1111111111.sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ ok: true }),
         () => {
@@ -2890,6 +3002,7 @@ describe("Sandbox", () => {
           id: "sandbox-2",
           endpoint: "https://2222222222.sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ ok: true }),
         ndjsonResponse([
@@ -3317,6 +3430,7 @@ describe("Sandbox", () => {
           id: "sandbox-1",
           endpoint: "https://sandbox-1.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
@@ -3405,6 +3519,7 @@ describe("Sandbox", () => {
           id: "sandbox-1",
           endpoint: "https://sandbox-1.sandbox.veryfront.org",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),

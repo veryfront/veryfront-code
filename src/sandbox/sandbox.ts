@@ -8,6 +8,7 @@
 
 import {
   assertSandboxFilesWritten,
+  hasEphemeralSandboxStorage,
   parseSandboxBackgroundCommand,
   parseSandboxBackgroundCommandOutput,
   parseSandboxCapabilities,
@@ -141,7 +142,8 @@ export class Sandbox {
       });
     }
 
-    const { id, endpoint, status, workspace_storage } = await res.json();
+    const session = await res.json();
+    const { id, endpoint, status } = session;
 
     // If not yet running, poll until ready
     if (status !== "running") {
@@ -153,7 +155,7 @@ export class Sandbox {
       id,
       authToken,
       apiUrl,
-      options.ttlMode !== "always_on" && workspace_storage !== "persistent",
+      options.ttlMode !== "always_on" && hasEphemeralSandboxStorage(session),
       true,
     );
   }

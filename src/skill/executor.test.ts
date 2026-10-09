@@ -400,6 +400,7 @@ describe("src/skill/executor", () => {
           id: "session-snapshot",
           endpoint: "https://sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         (_input, init) => {
           const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
@@ -450,6 +451,7 @@ describe("src/skill/executor", () => {
             id: "timeout-parity",
             endpoint: "https://sandbox.example.com",
             status: "running",
+            workspace_storage: "ephemeral",
           }),
           (_input, init) =>
             jsonResponse({
@@ -483,6 +485,54 @@ describe("src/skill/executor", () => {
       });
     }
 
+    for (const flag of ["stdout_truncated", "stderr_truncated"]) {
+      for (const status of ["completed", "running"]) {
+        it(`reports ${status} background ${flag} as an output-limit failure`, async () => {
+          setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+          setEnv("VERYFRONT_API_URL", "https://api.test.com");
+          const truncated = await backgroundCommandResponse(
+            status,
+            "partial",
+            status === "completed" ? 0 : null,
+          ).json();
+          truncated[flag] = true;
+          truncated.stderr = "partial error";
+          mockFetch([
+            jsonResponse({
+              id: "truncated-script",
+              endpoint: "https://sb.test",
+              status: "running",
+              workspace_storage: "ephemeral",
+            }),
+            (_input, init) =>
+              jsonResponse({
+                results: JSON.parse(String(init?.body)).files.map(
+                  (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
+                ),
+              }),
+            commandResponse([{ type: "exit", exitCode: 0 }]),
+            backgroundCommandResponse("running", "", null),
+            jsonResponse(truncated),
+            ...(status === "running" ? [backgroundCommandResponse("canceled", "", null)] : []),
+            textResponse(""),
+          ]);
+          const result = await getSkillScriptExecutor().execute({
+            scriptPath: "run.sh",
+            scriptContent: "echo partial",
+            timeoutMs: 60_000,
+          });
+          assertEquals(result.stdout, "partial");
+          assertEquals(result.exitCode, 125);
+          assertStringIncludes(result.stderr, "truncated");
+          assertStringIncludes(result.stderr, "partial error");
+          if (status === "running") {
+            assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+          }
+          assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
+        });
+      }
+    }
+
     for (const timeoutSeconds of [60, 300]) {
       it(`waits for the configured ${timeoutSeconds}-second background deadline and cancels`, async () => {
         setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
@@ -496,6 +546,7 @@ describe("src/skill/executor", () => {
             id: "background-timeout",
             endpoint: "https://sandbox.example.com",
             status: "running",
+            workspace_storage: "ephemeral",
           }),
           (_input, init) =>
             jsonResponse({
@@ -549,6 +600,7 @@ describe("src/skill/executor", () => {
           id: "session-timeout",
           endpoint: "https://sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
         (_input, init) => {
           const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };

@@ -398,6 +398,8 @@ subprocesses.
   Cloud scripts use background sandbox commands above `55000` ms so the
   synchronous API limit does not shorten your configured timeout. Commands are
   canceled at the configured deadline, and the executor closes its sandbox.
+  Truncated cloud script output returns output-limit exit code `125`, including
+  partial output and an explanatory error.
 
 ## Connect to a route
 

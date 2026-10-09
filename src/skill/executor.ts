@@ -37,6 +37,8 @@ const MAX_SCRIPT_TIMEOUT_MS = 300_000;
 // Canonical synchronous sandbox commands have a shorter limit than local scripts.
 const MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS = 55;
 const TIMEOUT_EXIT_CODE = 124;
+// Matches the local subprocess output-limit termination code.
+const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -456,6 +458,17 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           backgroundCommandId = command.id;
           while (!polling.signal.aborted) {
             const output = await sandbox.getBackgroundCommandOutput(command.id);
+            if (output.stdoutTruncated || output.stderrTruncated) {
+              if (output.status === "pending" || output.status === "running") {
+                await sandbox.cancelBackgroundCommand(command.id);
+              }
+              return {
+                stdout: output.stdout,
+                stderr: `${output.stderr}\nScript output was truncated by the sandbox capture limit`
+                  .trim(),
+                exitCode: OUTPUT_LIMIT_EXIT_CODE,
+              };
+            }
             if (
               output.status === "completed" || output.status === "failed" ||
               output.status === "canceled"

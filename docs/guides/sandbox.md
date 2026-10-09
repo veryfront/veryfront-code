@@ -219,8 +219,10 @@ await sandbox.close();
 
 `checkHealth()` and `checkReadiness()` do not record activity. `heartbeat()`
 records activity but does not extend fixed expiry. `getEnvironment()` returns
-redacted values. Closing a client obtained through `get()` or `attach()` leaves
-the sandbox available. Use `delete()` when you intend to remove it.
+redacted values. A creation response must explicitly identify ephemeral storage before automatic
+cleanup can delete its workspace. Missing or incompatible storage metadata
+makes `close()` detach and preserve the workspace. Closing a client obtained
+through `get()` or `attach()` leaves the sandbox available. Use `delete()` when you intend to remove it.
 
 A retained always-on workspace is not replaced automatically after a missing,
 inaccessible or unhealthy runtime response. Its ID stays available on the
