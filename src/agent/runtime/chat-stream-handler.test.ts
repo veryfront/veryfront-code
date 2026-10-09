@@ -18,7 +18,10 @@ import {
   createRuntimeProviderStreamFailure,
   readRuntimeProviderStreamFailureCause,
 } from "#veryfront/runtime/provider-stream-error-provenance.ts";
-import { ProviderOutputTruncatedError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  ProviderOutputTruncatedError,
+  ProviderStreamProtocolError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   announceStreamedToolCallInput,
   createRuntimeStreamSource,
@@ -4316,6 +4319,43 @@ describe("resolveRelayableExecutionFailure", () => {
 
     // The whole point of #1467: the real classified cause reaches the run error.
     assertEquals(relayed?.code, "PROVIDER_OUTPUT_TRUNCATED");
+  });
+
+  it("reports a rejected successful provider stream as a stream protocol error", () => {
+    for (const provider of ["openai", "anthropic", "google", "mistral"] as const) {
+      const rejected = new ProviderStreamProtocolError({
+        provider,
+        status: 200,
+        message: `${provider} request failed: invalid successful stream (private-provider-event)`,
+        retryable: false,
+      });
+      const failure = createRuntimeProviderStreamFailure(rejected);
+
+      assertEquals(resolveRuntimeExecutionErrorEvent(failure), {
+        type: "error",
+        error:
+          "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
+        code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+      });
+      assertEquals(
+        resolveRelayableExecutionFailure(failure)?.code,
+        "PROVIDER_STREAM_PROTOCOL_ERROR",
+      );
+    }
+  });
+
+  it("keeps an unclassified successful-status provider failure generic", () => {
+    const unclassified = new ProviderRequestError({
+      provider: "openai",
+      status: 200,
+      message: "openai request failed: private detail",
+      retryable: false,
+    });
+
+    assertEquals(
+      resolveRuntimeExecutionErrorEvent(createRuntimeProviderStreamFailure(unclassified)),
+      { type: "error", error: "Provider stream failed" },
+    );
   });
 });
 

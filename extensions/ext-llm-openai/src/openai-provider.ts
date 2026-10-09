@@ -18,11 +18,14 @@ import {
   buildProviderError,
   createOpenAIRequestInit,
   createWarningCollector,
+  DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   getOpenAIChatCompletionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
   isNumberArray,
   mergeUsage,
+  notifyProviderRequestRetry,
   parseRetryAfterMs,
   ProviderError,
   ProviderOverloadedError,
@@ -37,6 +40,7 @@ import {
   type RuntimeUsage,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
+  waitForProviderStreamRetry,
 } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
@@ -1131,6 +1135,10 @@ export function createOpenAIModelRuntime(
   };
 }
 
+const MAX_OPENAI_RESPONSES_STREAM_REPLAYS = 2;
+const OPENAI_RESPONSES_STREAM_REPLAY_DELAY_MS = 1_000;
+const OPENAI_RESPONSES_STREAM_REPLAY_HEADERS_BUDGET_MS = 10_000;
+
 export function createOpenAIResponsesRuntime(
   config: OpenAIRuntimeConfig,
   modelId: string,
@@ -1194,28 +1202,92 @@ export function createOpenAIResponsesRuntime(
       );
       const webSearchToolName = resolveOpenAIWebSearchDescriptor(options.tools)?.name;
       const providerAbortScope = createOpenAIProviderAbortScope(options.abortSignal);
-      try {
-        const responseStream = await requestStream({
+      const requestInit = createOpenAIRequestInit({
+        apiKey: config.apiKey,
+        extraHeaders: options.headers,
+        body: JSON.stringify(body),
+        signal: providerAbortScope.controller.signal,
+      });
+      const headersBudgetStartedAt = Math.floor(performance.now());
+      const remainingHeadersBudgetMs = () =>
+        Math.max(
+          0,
+          DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS -
+            (Math.floor(performance.now()) - headersBudgetStartedAt),
+        );
+      const issueStream = (replay = false) => {
+        const budget = Math.min(
+          replay
+            ? OPENAI_RESPONSES_STREAM_REPLAY_HEADERS_BUDGET_MS
+            : DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
+          remainingHeadersBudgetMs(),
+        );
+        providerAbortScope.controller.signal.throwIfAborted();
+        return requestStream({
           url,
           fetchImpl,
           providerLabel,
           providerKind,
           modelId,
-          init: createOpenAIRequestInit({
-            apiKey: config.apiKey,
-            extraHeaders: options.headers,
-            body: JSON.stringify(body),
-            signal: providerAbortScope.controller.signal,
-          }),
+          init: requestInit,
+          headersTimeoutMs: Math.min(
+            replay
+              ? OPENAI_RESPONSES_STREAM_REPLAY_HEADERS_BUDGET_MS
+              : DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+            budget,
+          ),
+          totalHeadersBudgetMs: budget,
         });
+      };
+      try {
+        const responseStream = await issueStream();
+        // Match the existing provider retry bound/backoff within one header
+        // budget. A single yielded part permanently forbids replay, including
+        // tool and reasoning metadata; no consumer-visible work is duplicated.
+        const replayTransientStream = async function* (): AsyncIterable<unknown> {
+          let currentStream = responseStream;
+          for (let replayCount = 0;; replayCount++) {
+            let yielded = false;
+            try {
+              for await (
+                const part of streamOpenAIResponsesParts(currentStream, {
+                  ...responseContext,
+                  webSearchToolName,
+                  preserveRawOutputItems: true,
+                })
+              ) {
+                yielded = true;
+                yield part;
+              }
+              return;
+            } catch (error) {
+              const transient = (error instanceof ProviderOverloadedError ||
+                error instanceof ProviderRateLimitError) && error.retryable;
+              if (yielded || replayCount >= MAX_OPENAI_RESPONSES_STREAM_REPLAYS || !transient) {
+                throw error;
+              }
+              providerAbortScope.controller.signal.throwIfAborted();
+              const delayMs = OPENAI_RESPONSES_STREAM_REPLAY_DELAY_MS * 2 ** replayCount;
+              if (delayMs >= remainingHeadersBudgetMs()) throw error;
+              notifyProviderRequestRetry({
+                providerLabel,
+                modelId,
+                reason: "stream interrupted",
+                attempt: replayCount + 2,
+                maxAttempts: MAX_OPENAI_RESPONSES_STREAM_REPLAYS + 1,
+                delayMs,
+              });
+              await waitForProviderStreamRetry(delayMs, providerAbortScope.controller.signal);
+              providerAbortScope.controller.signal.throwIfAborted();
+              if (remainingHeadersBudgetMs() <= 0) throw error;
+              currentStream = await issueStream(true);
+            }
+          }
+        };
         const drained = warnings.drain();
         return {
           stream: createCancelableOpenAIProviderStream(
-            streamOpenAIResponsesParts(responseStream, {
-              ...responseContext,
-              webSearchToolName,
-              preserveRawOutputItems: true,
-            }),
+            replayTransientStream(),
             providerAbortScope.controller,
             providerAbortScope.dispose,
           ),

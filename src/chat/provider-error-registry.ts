@@ -66,6 +66,17 @@ export const PROVIDER_OUTPUT_TRUNCATED_ERROR = {
   status: 502,
 } as const;
 
+/**
+ * The provider returned a successful status, but its response stream broke the
+ * provider's event protocol. Non-retryable for the same attempt.
+ */
+export const PROVIDER_STREAM_PROTOCOL_ERROR = {
+  code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+  message:
+    "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
+  status: 502,
+} as const;
+
 export const GATEWAY_PROJECT_REQUIRED_ERROR = {
   code: "GATEWAY_PROJECT_REQUIRED",
   message: "A project is required to use Veryfront-managed AI inference",
@@ -110,6 +121,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "AI_PROVIDER_BILLING_ERROR",
   "GATEWAY_PROJECT_REQUIRED",
   "PROVIDER_OUTPUT_TRUNCATED",
+  "PROVIDER_STREAM_PROTOCOL_ERROR",
   "MODEL_NOT_PERMITTED",
   "INFERENCE_POLICY_DENIED",
 ] as const;
@@ -156,6 +168,7 @@ const failures = {
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
   GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
   PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR: PROVIDER_STREAM_PROTOCOL_ERROR,
   MODEL_NOT_PERMITTED: MODEL_NOT_PERMITTED_ERROR,
   INFERENCE_POLICY_DENIED: INFERENCE_POLICY_DENIED_ERROR,
 } as const;
