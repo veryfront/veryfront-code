@@ -18,6 +18,7 @@ import { DurableRunEventPersistenceError } from "../conversation/private-run-eve
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -30,6 +31,8 @@ import {
   getEmptyHostedFinalizedMessageTerminalError,
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
+
+const pauseLogger = getBaseLogger("Agent pause");
 
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
 
@@ -404,6 +407,7 @@ export async function finalizeHostedChatRun(
   input: FinalizeHostedChatRunInput,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    pauseLogger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
     if (input.streamError) {
       invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, input.streamError);
     }

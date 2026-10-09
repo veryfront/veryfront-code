@@ -147,5 +147,9 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
   isAborted: boolean;
   message: { parts: ReadonlyArray<unknown> };
 }): boolean {
-  return !input.isAborted && input.message.parts.length === 0;
+  // Step markers and runtime context are diagnostic data, not an assistant response.
+  return !input.isAborted && !input.message.parts.some((part) =>
+    !isRecord(part) ||
+    (part.type !== "step-start" && part.type !== "data-veryfront.runtime_context")
+  );
 }
