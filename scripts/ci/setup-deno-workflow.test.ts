@@ -478,6 +478,43 @@ async function runChromiumInstall(
   }
 }
 
+describe("install-chromium browser cache", () => {
+  it("restores and saves only the browser download with an exact, version-bound key", async () => {
+    const action = await parseYamlFile(CHROMIUM_ACTION_PATH);
+    const runs = asRecord(action.runs, `${CHROMIUM_ACTION_PATH}.runs`);
+    const steps = asSteps(runs.steps, `${CHROMIUM_ACTION_PATH}.runs.steps`);
+    const names = steps.map((step) => String(step.name));
+    const restore = steps.find((step) => step.uses === CACHE_RESTORE_ACTION);
+    const save = steps.find((step) => step.uses === CACHE_SAVE_ACTION);
+    assert(restore, "the browser cache must use the pinned restore-only action");
+    assert(save, "the browser cache must use the pinned save-only action");
+    const restoreWith = asRecord(restore.with, "browser cache restore inputs");
+    assertEquals(restoreWith.path, "~/.cache/ms-playwright");
+    assertEquals(
+      "restore-keys" in restoreWith,
+      false,
+      "a partial key could restore a browser from another Playwright version",
+    );
+    const key = String(restoreWith.key);
+    assertStringIncludes(key, "${{ steps.browser-cache-key.outputs.command }}");
+    assertStringIncludes(key, "hashFiles('deno.lock', 'deno.json')");
+    assertEquals(save.if, "steps.browser-cache.outputs.cache-hit != 'true'");
+    assertEquals(
+      asRecord(save.with, "browser cache save inputs").key,
+      "${{ steps.browser-cache.outputs.cache-primary-key }}",
+    );
+    // The OS dependency install keeps running on every job; only the download
+    // is cached, and the cache is saved only after a successful install.
+    assert(
+      names.indexOf("Restore Playwright browser cache") <
+        names.indexOf("Install Chromium"),
+    );
+    assertEquals(names.at(-1), "Save Playwright browser cache");
+    const install = steps.find((step) => step.name === "Install Chromium");
+    assertEquals(install?.if, undefined);
+  });
+});
+
 describe("install-chromium failure diagnosis", () => {
   it("names the install deadline when timeout reports exit 124", async () => {
     const result = await runChromiumInstall({ status: 124, elapsedSeconds: 240 });

@@ -15,6 +15,29 @@ inputs:
 runs:
   using: composite
   steps:
+    # The browser download is cacheable and needs no root; the OS dependency
+    # install below still runs on every job. On a cache hit Playwright finds
+    # the browser already installed and skips only the download. The key is
+    # exact (no restore-keys) so a job never runs a browser from another
+    # Playwright version.
+    - name: Resolve Playwright browser cache key
+      id: browser-cache-key
+      shell: bash
+      env:
+        INSTALL_COMMAND: ${{ inputs.install-command }}
+      run: |
+        set -euo pipefail
+        echo "command=$(printf '%s' "${INSTALL_COMMAND}" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Playwright browser cache
+      id: browser-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.browser-cache-key.outputs.command }}-${{ hashFiles('deno.lock', 'deno.json') }}
+
     - name: Configure apt sources, retries, and mirrors
       shell: bash
       run: |
@@ -146,3 +169,10 @@ runs:
           reap_apt_lock_holders
           sleep "${retry_backoff_seconds}"
         done
+
+    - name: Save Playwright browser cache
+      if: steps.browser-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.browser-cache.outputs.cache-primary-key }}
