@@ -86,7 +86,7 @@ describe("integration endpoint specs", () => {
       ["databricks", "cancel_job_run", "Request job run cancellation"],
       ["assemblyai", "delete_transcript", "Permanently delete transcript and data"],
       ["digitalocean", "delete_droplet", "Permanently destroy droplet"],
-      ["google-cloud-storage", "delete_object", "Permanently delete object"],
+      ["google-cloud-storage", "delete_object", "Delete object (may be permanent)"],
       ["sprites", "delete_sprite", "Permanently destroy sprite and filesystem"],
       ["sprites", "restore_checkpoint", "Replace sprite state with checkpoint"],
       ["gmail", "update_draft", "Replace draft"],

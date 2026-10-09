@@ -23853,7 +23853,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__delete_object",
       "name": "Delete Object",
-      "description": "Permanently delete object",
+      "description": "Delete object (may be permanent)",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
