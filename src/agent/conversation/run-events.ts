@@ -84,6 +84,7 @@ export function serializeConversationToolResultContent(value: unknown): {
 
 /**
  * Carry a chunk's provider-execution marker into the durable record.
+ * Explicit false preserves local ownership when a later result marks itself provider-executed.
  *
  * The version 1 reader replays a stored result as a provider tool result only
  * when the durable call records that it was provider-executed; a call that
@@ -94,8 +95,9 @@ export function serializeConversationToolResultContent(value: unknown): {
  */
 function providerExecutionMarker(
   chunk: { providerExecuted?: boolean },
-): { providerExecuted?: true } {
-  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
+): { providerExecuted?: boolean } {
+  const providerExecuted = chunk.providerExecuted;
+  return typeof providerExecuted === "boolean" ? { providerExecuted } : {};
 }
 
 function encodeCustomDataEvent(

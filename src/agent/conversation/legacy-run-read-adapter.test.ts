@@ -698,7 +698,7 @@ describe("conversation run lifecycle read adapter", () => {
       ]);
       assertEquals(
         events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
-        providerExecuted ? true : undefined,
+        providerExecuted,
       );
       const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
       assertEquals(result.status, "ok");
@@ -726,7 +726,7 @@ describe("conversation run lifecycle read adapter", () => {
       ]);
       assertEquals(
         events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
-        providerExecuted ? true : undefined,
+        providerExecuted,
       );
       const result = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
       assertEquals(result.status, "ok");

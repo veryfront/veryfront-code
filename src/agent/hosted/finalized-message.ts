@@ -710,6 +710,7 @@ export async function persistToolResultOwnershipCorrections(
   try {
     await append;
   } finally {
+    // append was awaited above; compare promise identity so only its owning writer clears the slot.
     if (ownershipAppends.get(state) === append) ownershipAppends.set(state, undefined);
   }
 }
