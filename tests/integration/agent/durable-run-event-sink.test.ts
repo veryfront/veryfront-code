@@ -93,6 +93,39 @@ function createModelCallContextEventWithText(
 }
 
 describe("agent/hosted/durable-run-event-sink", () => {
+  it("keeps the authoritative mirror private when WeakMap methods are replaced", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+    const originalGet = WeakMap.prototype.get;
+    const originalSet = WeakMap.prototype.set;
+    const originalDelete = WeakMap.prototype.delete;
+    const apply = Reflect.apply;
+    let mirrorExposures = 0;
+    try {
+      WeakMap.prototype.get = function (key) {
+        if (key === target.result) mirrorExposures++;
+        return apply(originalGet, this, [key]);
+      };
+      WeakMap.prototype.set = function (key, value) {
+        if (key === target.result) mirrorExposures++;
+        return apply(originalSet, this, [key, value]);
+      };
+      WeakMap.prototype.delete = function (key) {
+        if (key === target.result) mirrorExposures++;
+        return apply(originalDelete, this, [key]);
+      };
+      await sink(createModelCallContextEventWithText(1));
+      await sink(createModelCallContextEventWithText(2));
+    } finally {
+      WeakMap.prototype.get = originalGet;
+      WeakMap.prototype.set = originalSet;
+      WeakMap.prototype.delete = originalDelete;
+    }
+    assertEquals(mirrorExposures, 0);
+    assertEquals(target.appended.length, 2);
+    assertEquals(target.isDisposed(), false);
+  });
+
   it("returns the exact capture receipt after flushing and never derives it from the cursor", async () => {
     const receipt = {
       eventId: "9007199254740993",

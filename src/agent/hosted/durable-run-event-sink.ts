@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import {
   addAbortSignalListenerOnce,
@@ -26,7 +27,10 @@ import {
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
-const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<unknown>>();
+const persistenceTails = createPrivateWeakStore<
+  ConversationRunChunkMirror,
+  Promise<unknown> | undefined
+>();
 
 export { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 
@@ -73,7 +77,7 @@ async function serializePersistence<T>(
     return await current;
   } finally {
     if (persistenceTails.get(mirror) === current) {
-      persistenceTails.delete(mirror);
+      persistenceTails.set(mirror, undefined);
     }
   }
 }
