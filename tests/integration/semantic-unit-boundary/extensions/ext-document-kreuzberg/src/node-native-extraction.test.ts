@@ -1,23 +1,32 @@
 import process from "node:process";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { extractWithNativeProcessNode } from "../../../../../../extensions/ext-document-kreuzberg/src/node-native-extraction.ts";
 
-const executables = await Promise.all(["node", "bun"].map(async (execPath) => ({
-  execPath,
-  available: await new Deno.Command(execPath, {
-    args: ["--version"],
-    stdout: "null",
-    stderr: "null",
-  }).output().then((result) => result.success, () => false),
-})));
+const executables = await Promise.all(["node", "bun"].map(async (execPath) => {
+  try {
+    const result = await new Deno.Command(execPath, {
+      args: ["--version"],
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    if (!result.success) {
+      throw new Error(`${execPath} --version failed with exit code ${result.code}`);
+    }
+    return { execPath, available: true };
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    return { execPath, available: false };
+  }
+}));
 describe("Node and Bun native extraction process cancellation", () => {
   for (const { execPath, available } of executables) {
     it(
       `kills the actual ${execPath} child on abort and preserves reason`,
       { ignore: !available },
       async () => {
-        const directory = await Deno.makeTempDir();
+        const directory = await makeTempDir();
         const path = `${directory}/fixture.mjs`;
         await Deno.writeTextFile(
           path,
@@ -80,7 +89,7 @@ describe("Node and Bun native extraction process cancellation", () => {
         `${execPath} settles ${scenario} with an actual child`,
         { ignore: !available },
         async () => {
-          const directory = await Deno.makeTempDir();
+          const directory = await makeTempDir();
           const path = `${directory}/fixture.mjs`;
           const output = scenario === "blocked callback"
             ? 'process.stdout.write(JSON.stringify({type:"progress",event:{unit:"file",current:1}})+"\\n");setInterval(()=>{},1000);'
@@ -138,7 +147,7 @@ describe("Node and Bun native extraction process cancellation", () => {
       );
     }
     it(`contains an actual ${execPath} child crash`, { ignore: !available }, async () => {
-      const directory = await Deno.makeTempDir();
+      const directory = await makeTempDir();
       const path = `${directory}/fixture.mjs`;
       await Deno.writeTextFile(
         path,

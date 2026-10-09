@@ -1,10 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { runKnowledgeParser } from "../../../../../../cli/commands/knowledge/parser.ts";
 
 describe("knowledge parser cancellation", () => {
   it("forwards signal and refuses late extraction output after abort", async () => {
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const filePath = `${directory}/report.pdf`;
     const outputDir = `${directory}/output`;
     await Deno.writeTextFile(filePath, "%PDF-1.4");
