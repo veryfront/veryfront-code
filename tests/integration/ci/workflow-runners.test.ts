@@ -297,9 +297,35 @@ describe("public runner pool workflow", () => {
   });
 });
 
-// Required status contexts on main. A job called through a reusable workflow
-// reports as `<caller> / <called job>`, so every job behind a required context
-// must stay a plain job in its workflow, under its exact name.
+// Required status contexts on main, copied from the repository ruleset
+// (`gh api repos/veryfront/veryfront-code/rules/branches/main`) and classic
+// branch protection (`gh api repos/veryfront/veryfront-code/branches/main/protection/required_status_checks`).
+// Update these lists whenever either changes.
+const RULESET_REQUIRED_CONTEXTS = [
+  "Automated review",
+  "SonarQube Cloud quality gate",
+  "ci (format)",
+  "ci (lint)",
+  "ci (typecheck)",
+  "quality gate (merge)",
+  "tests (binary e2e)",
+  "tests (integration)",
+];
+const BRANCH_PROTECTION_REQUIRED_CONTEXTS = [
+  "Analyze",
+  "ci (format)",
+  "ci (lint)",
+  "ci (typecheck)",
+  "coverage gate",
+  "tests (binary e2e)",
+  "tests (integration)",
+  "tests (rsc browser e2e)",
+];
+// Contexts posted as commit statuses rather than by a job.
+const REQUIRED_STATUS_CONTEXTS = ["Automated review"];
+// Every context that must keep its exact name. A job called through a reusable
+// workflow reports as `<caller> / <called job>`, so each job behind one of
+// these must stay a plain job in its workflow.
 const REQUIRED_JOB_CONTEXTS = [
   "Analyze",
   "SonarQube Cloud quality gate",
@@ -307,7 +333,9 @@ const REQUIRED_JOB_CONTEXTS = [
   "ci (lint)",
   "ci (typecheck)",
   "coverage gate",
+  "quality gate (artifact)",
   "quality gate (merge)",
+  "quality gate (registry)",
   "tests (binary e2e)",
   "tests (integration)",
   "tests (rsc browser e2e)",
@@ -345,6 +373,27 @@ function checkNames(id: string, job: Record<string, unknown>): string[] {
 }
 
 describe("required status contexts", () => {
+  it("covers every ruleset, branch protection and documented quality gate context", async () => {
+    const documented = new Set(
+      (await Deno.readTextFile(new URL("../../../.github/QUALITY_GATES.md", import.meta.url)))
+        .match(/`(?:quality gate \([a-z]+\)|SonarQube Cloud quality gate)`/g)
+        ?.map((context) => context.slice(1, -1)),
+    );
+    assert(documented.size >= 4, "QUALITY_GATES.md must name the stable gate checks");
+    for (
+      const context of [
+        ...RULESET_REQUIRED_CONTEXTS,
+        ...BRANCH_PROTECTION_REQUIRED_CONTEXTS,
+        ...documented,
+      ]
+    ) {
+      assert(
+        REQUIRED_JOB_CONTEXTS.includes(context) || REQUIRED_STATUS_CONTEXTS.includes(context),
+        `required context "${context}" is missing from the protected list`,
+      );
+    }
+  });
+
   it("keeps every required job context on a plain job under its exact name", async () => {
     const produced = new Map<string, string>();
     for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
