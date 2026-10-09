@@ -37,7 +37,6 @@ import {
   assertHtmlDoesNotInclude,
   assertNoBrowserHydrationErrors,
   assertNoServerLogErrors,
-  BINARY_HASH_PATH,
   BINARY_PATH,
   cleanupBinaryTestCache,
   createTestProject,
@@ -56,18 +55,6 @@ try {
   // .env file doesn't exist - that's fine
 }
 for (const key of PROVIDER_ENV_KEYS) Deno.env.delete(key);
-
-// Every suite in this file shares one compiled binary. Remove it once, when the
-// test process exits, so a later suite does not recompile it.
-globalThis.addEventListener("unload", () => {
-  for (const path of [BINARY_PATH, BINARY_HASH_PATH]) {
-    try {
-      Deno.removeSync(path);
-    } catch {
-      // The binary may not exist or may already be cleaned up.
-    }
-  }
-});
 
 const COMPILED_BINARY_E2E_OPTIONS = {
   sanitizeOps: false,

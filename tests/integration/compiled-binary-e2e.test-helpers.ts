@@ -56,9 +56,26 @@ export interface BrowserPageSession {
 
 let binaryCompiled: Promise<void> | undefined;
 
-/** Compile the binary at most once per test process, shared by every suite in the file. */
+function removeBinaryOnExit(): void {
+  for (const path of [BINARY_PATH, BINARY_HASH_PATH]) {
+    try {
+      Deno.removeSync(path);
+    } catch {
+      // The binary may not exist or may already be cleaned up.
+    }
+  }
+}
+
+/**
+ * Compile the binary at most once per test process, shared by every suite in the file.
+ * The binary is removed when the process exits, and only once a suite has set it up,
+ * so importing the file without running a suite leaves an existing binary in place.
+ */
 export function ensureBinaryCompiled(): Promise<void> {
-  binaryCompiled ??= compileBinary();
+  if (!binaryCompiled) {
+    globalThis.addEventListener("unload", removeBinaryOnExit);
+    binaryCompiled = compileBinary();
+  }
   return binaryCompiled;
 }
 
