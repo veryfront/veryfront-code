@@ -261,6 +261,34 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review evidence", () => {
+  it("accepts completed security metadata and rejects contradictory summary rows", async () => {
+    const original = codexReviewSummary().body;
+    const metadata = `<!-- codex-security-review:v1 ${JSON.stringify({ blockingSeverityThreshold: "P0", headSha: HEAD, mergeGateEnabled: false, pullRequestNumber: 4425, repository: "veryfront/veryfront-code", status: "completed" })} -->`;
+    const lines = original.split("\n");
+    lines[1] = metadata;
+    lines.splice(9, 0, lines[8].replace("📝 **Code Review**", "🔒 **Security Review**"));
+    const body = lines.join("\n");
+    const evidence = (value: string) => ({ reviews: [], comments: [codexReviewSummary({ body: value })], reactions: [codexCompletionReaction()] });
+    const resolveHead = () => Promise.resolve(HEAD);
+    assertEquals((await findAutomatedReview(evidence(body), HEAD, resolveHead))?.source, "codex-summary");
+    assertEquals((await findAutomatedReview(
+      evidence(body.replace(`"headSha":"${HEAD}"`, `"headSha":"${HEAD.toUpperCase()}"`)),
+      HEAD, resolveHead,
+    ))?.source, "codex-summary");
+    for (const invalid of [
+      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:11:43Z")),
+      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:32:44Z")),
+      body.replace(metadata, "<!-- codex-security-review:v1 malformed -->"),
+      body.replace(`"headSha":"${HEAD}"`, `"headSha":"${"f".repeat(40)}"`),
+      body.replace('"status":"completed"', '"status":"pending"'),
+      body.replace(`"headSha":"${HEAD}"`, `"headSha":["${HEAD}"]`),
+      body.replace("🔒 **Security Review**", "📝 **Code Review**"),
+      body.replace("🔒 **Security Review**", "Unknown review"),
+      body.replace(lines[9], `${lines[9]}\n${lines[9]}`),
+      body.replace(lines[9], lines[9].replace(HEAD.slice(0, 7), "f".repeat(7))),
+    ]) assertEquals(await findAutomatedReview(evidence(invalid), HEAD, resolveHead), undefined);
+  });
+
   it("accepts fractional completion within GitHub's represented update second", async () => {
     const resolveHead = () => Promise.resolve(HEAD);
     const summary = codexReviewSummary({
@@ -7101,6 +7129,137 @@ describe("review wakeup identity", () => {
 });
 
 describe("automated review workflow", () => {
+  it("routes direct events to one runner with the resolver's per-pull lock", async () => {
+    const jobs = record(
+      record(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow").jobs,
+      "jobs",
+    );
+    const target = record(jobs.target, "target");
+    const publisher = record(jobs.review, "publisher");
+    const invalidator = record(jobs.invalidate, "invalidator");
+    const evaluate = (
+      expression: unknown,
+      eventName: string,
+      event: Record<string, unknown>,
+      targetResult = "skipped",
+      key = "",
+    ) =>
+      new Function(
+        "github",
+        "needs",
+        "format",
+        "endsWith",
+        "cancelled",
+        `return (${String(expression).replace(/\$\{\{(.*?)\}\}/gs, "$1")});`,
+      )(
+        { event_name: eventName, event },
+        { target: { result: targetResult, outputs: { key } } },
+        (pattern: string, value: unknown) => pattern.replace("{0}", String(value)),
+        (value: string, suffix: string) => value.endsWith(suffix),
+        () => false,
+      );
+    const comment = {
+      issue: { number: 42, pull_request: {} },
+      comment: { user: bot("chatgpt-codex-connector[bot]", CODEX_ID) },
+    };
+    const wakeup = {
+      workflow_run: {
+        event: "pull_request_review",
+        display_title: "automated-review-wakeup-pr-42-eligible",
+      },
+    };
+    const direct = [
+      ["pull_request_target", {
+        pull_request: { number: 42, head: { sha: HEAD } },
+      }],
+      ["pull_request_target", {
+        pull_request: { number: 42, head: { sha: NEW_HEAD } },
+      }],
+      ["issue_comment", comment],
+    ] as const;
+    for (const [eventName, event] of direct) {
+      assert(
+        !evaluate(target.if, eventName, event),
+        "direct events must not allocate a target runner",
+      );
+      assert(
+        evaluate(publisher.if, eventName, event),
+        "skipped target must not skip a direct publisher",
+      );
+      const group = record(publisher.concurrency, "publisher lock").group;
+      // Evaluate just the expression after the stable automated-review- prefix.
+      const expression = String(group).slice("automated-review-".length);
+      assertEquals(
+        evaluate(expression, eventName, event),
+        evaluate(expression, "workflow_run", wakeup, "success", "pr-42"),
+      );
+      const outputs: Record<string, string> = {};
+      const targetScript = String(
+        record(record((target.steps as unknown[])[0], "resolver").with, "inputs").script,
+      );
+      await new Function("github", "core", "context", `return (async () => {${targetScript}})();`)(
+        { rest: {
+          git: { getRef: () => Promise.resolve({ data: { object: { sha: NEW_HEAD } } }) },
+          repos: { listCommitStatusesForRef: () => Promise.resolve({ data: [] }) },
+        } },
+        { setOutput: (key: string, value: string) => { outputs[key] = value; },
+          setFailed: (message: string) => { throw new Error(message); } },
+        { eventName, payload: event, repo: { owner: "veryfront", repo: "veryfront-code" } },
+      );
+      assertEquals(evaluate(expression, eventName, event), outputs.key);
+      assertEquals(outputs["head-sha"], NEW_HEAD, "queued events resolve the live head");
+      assertEquals(outputs["status-id"], "0", "resolution retains the failure boundary");
+      assertEquals(
+        record(invalidator.concurrency, "invalidator lock").group,
+        group,
+      );
+    }
+    for (
+      const user of [
+        bot("other[bot]", CODEX_ID),
+        bot("chatgpt-codex-connector[bot]", 1),
+        { ...bot("chatgpt-codex-connector[bot]", CODEX_ID), type: "User" },
+      ]
+    ) {
+      assert(
+        !evaluate(publisher.if, "issue_comment", {
+          ...comment,
+          comment: { user },
+        }),
+      );
+    }
+    assert(
+      !evaluate(publisher.if, "issue_comment", {
+        ...comment,
+        issue: { number: 42 },
+      }),
+    );
+    assert(evaluate(target.if, "workflow_run", wakeup));
+    assert(evaluate(publisher.if, "workflow_run", wakeup, "success", "pr-42"));
+    assert(!evaluate(publisher.if, "workflow_run", wakeup, "failure", "pr-42"));
+    assert(
+      !evaluate(target.if, "workflow_run", {
+        workflow_run: { ...wakeup.workflow_run, display_title: "ineligible" },
+      }),
+    );
+    assert(evaluate(target.if, "merge_group", {}));
+    assert(!evaluate(publisher.if, "merge_group", {}, "success", "pr-42"));
+    assert(!evaluate(target.if, "schedule", {}));
+    assert(!evaluate(publisher.if, "schedule", {}));
+    const resolver = record(
+      (publisher.steps as unknown[])[0],
+      "in-job resolver",
+    );
+    assertEquals(resolver.id, "resolve");
+    assertEquals(
+      record(resolver.with, "resolver inputs").script,
+      record(
+        record((target.steps as unknown[])[0], "target resolver").with,
+        "target inputs",
+      ).script,
+    );
+  });
+
   it("uses the tested gate from the trusted default branch", async () => {
     const workflowText = await Deno.readTextFile(WORKFLOW_PATH);
     const workflow = record(
@@ -7234,12 +7393,8 @@ describe("automated review workflow", () => {
     const targetIf = String(targetJob.if);
     for (
       const condition of [
-        "github.event_name != 'schedule'",
         "github.event_name == 'merge_group'",
-        "github.event.issue.pull_request",
-        "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'",
-        "github.event.comment.user.id == 199175422",
-        "github.event.comment.user.type == 'Bot'",
+        "github.event_name == 'workflow_run'",
         "github.event.workflow_run.event == 'pull_request_review'",
         "endsWith(github.event.workflow_run.display_title, '-eligible')",
       ]
@@ -7465,11 +7620,14 @@ describe("automated review workflow", () => {
       statuses: "write",
     });
     const publisherConcurrency = {
-      group: "automated-review-${{ needs.target.outputs.key }}",
+      group: "automated-review-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || needs.target.outputs.key }}",
       queue: "max",
     };
     assertEquals(job.needs, "target");
     assertEquals(record(job.outputs, "review outputs"), {
+      head_sha: "${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}",
+      pull_number: "${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}",
+      status_id: "${{ steps.resolve.outputs.status-id || needs.target.outputs.status_id }}",
       force_invalidate: "${{ steps.publish.outputs.force-invalidate }}",
       source_status_id: "${{ steps.publish.outputs.source-status-id }}",
     });
@@ -7480,19 +7638,37 @@ describe("automated review workflow", () => {
       !String(job.if).includes("CodeRabbit"),
       "CodeRabbit must not be able to enter Codex review reconciliation",
     );
-    assertEquals(job.if, "github.event_name != 'merge_group'");
+    for (
+      const condition of [
+        "!cancelled()",
+        "github.event_name == 'pull_request_target'",
+        "github.event_name == 'issue_comment'",
+        "github.event.issue.pull_request",
+        "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.comment.user.id == 199175422",
+        "github.event.comment.user.type == 'Bot'",
+        "github.event_name == 'workflow_run' && needs.target.result == 'success'",
+      ]
+    ) assert(String(job.if).includes(condition));
     const steps = job.steps;
     assert(Array.isArray(steps));
-    const gate = record(steps[0], "gate");
+    const inJobResolver = record(steps[0], "in-job resolver");
+    assertEquals(inJobResolver.id, "resolve");
+    assertEquals(
+      inJobResolver.if,
+      "github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'",
+    );
+    assertEquals(record(inJobResolver.with, "in-job resolver inputs").script, targetScript);
+    const gate = record(steps[1], "gate");
     const script = String(record(gate.with, "gate inputs").script);
     assertTrustedGateLoad(script);
     assertEquals(
       record(gate.env, "gate environment").TARGET_SHA,
-      "${{ needs.target.outputs.head_sha }}",
+      "${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}",
     );
     assertEquals(
       record(gate.env, "gate environment").PULL_NUMBER,
-      "${{ needs.target.outputs.pull_number }}",
+      "${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}",
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("publishReviewResolutionFailure"));
@@ -7570,7 +7746,7 @@ describe("automated review workflow", () => {
       "the published state must land in the step output as a plain string",
     );
 
-    const request = record(steps[1], "request step");
+    const request = record(steps[2], "request step");
     const requestCondition = String(request.if);
     for (
       const guard of [
@@ -7720,9 +7896,9 @@ describe("automated review workflow", () => {
     assertEquals(
       record(invalidateJob.env, "invalidate environment"),
       {
-        TARGET_SHA: "${{ needs.target.outputs.head_sha }}",
-        PULL_NUMBER: "${{ needs.target.outputs.pull_number }}",
-        RECONCILIATION_STATUS_ID: "${{ needs.target.outputs.status_id }}",
+        TARGET_SHA: "${{ needs.review.outputs.head_sha || needs.target.outputs.head_sha }}",
+        PULL_NUMBER: "${{ needs.review.outputs.pull_number || needs.target.outputs.pull_number }}",
+        RECONCILIATION_STATUS_ID: "${{ needs.review.outputs.status_id || needs.target.outputs.status_id }}",
         SOURCE_STATUS_ID: "${{ needs.review.outputs.source_status_id }}",
         FORCE_INVALIDATE: "${{ needs.review.outputs.force_invalidate }}",
       },

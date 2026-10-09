@@ -37,7 +37,6 @@ import {
   assertHtmlDoesNotInclude,
   assertNoBrowserHydrationErrors,
   assertNoServerLogErrors,
-  BINARY_HASH_PATH,
   BINARY_PATH,
   cleanupBinaryTestCache,
   createTestProject,
@@ -123,16 +122,7 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     await ensureBinaryCompiled();
   });
 
-  afterAll(async () => {
-    // Clean up the test binary after all tests complete
-    try {
-      await cleanupBinaryTestCache();
-      await Deno.remove(BINARY_PATH);
-      await Deno.remove(BINARY_HASH_PATH);
-    } catch {
-      // Ignore errors - binary may not exist or may already be cleaned up
-    }
-  });
+  afterAll(cleanupBinaryTestCache);
 
   it("emits only JSON events when compiled build initialization runs", async () => {
     const projectDir = await makeTempDir({ prefix: "compiled-build-json-" });
@@ -3446,11 +3436,7 @@ export default function Home() {
 // Separate suite lets the native lifecycle regression run without browser fixtures.
 describe("Compiled Binary Memory Recycle", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(ensureBinaryCompiled);
-  afterAll(async () => {
-    await cleanupBinaryTestCache();
-    await Deno.remove(BINARY_PATH);
-    await Deno.remove(BINARY_HASH_PATH);
-  });
+  afterAll(cleanupBinaryTestCache);
   it("should recycle compiled production serve after sustained RSS pressure", async () => {
     const projectDir = await createTestProject(
       "memory-recycle",

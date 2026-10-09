@@ -1130,8 +1130,8 @@ describe("proxy routing invalidation Redis bus", () => {
       },
     });
 
-    await busB?.close();
     assert(busA);
+    await busB?.close();
     const result = await settleWithin(
       busA.publish(createEvent()),
       "remaining replica acknowledgement after drain",
