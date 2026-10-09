@@ -95,7 +95,7 @@ describe("integration endpoint specs", () => {
       ["azure-document-intelligence", "get_analyze_result", "Poll document analysis result"],
       ["ionos", "get_request_status", "Poll asynchronous request status"],
       ["ionos", "start_server", "Start Enterprise server"],
-      ["ionos", "stop_server", "Force server shutdown; release unreserved IPs"],
+      ["ionos", "stop_server", "Force Enterprise shutdown; release unreserved IPs"],
       ["apollo", "search_organizations", "Search organizations (consumes credits)"],
       ["apollo", "enrich_person", "Enrich person (consumes credits)"],
       ["apollo", "enrich_organization", "Enrich organization (consumes credits)"],

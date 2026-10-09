@@ -29970,7 +29970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Force server shutdown; release unreserved IPs",
+      "description": "Force Enterprise shutdown; release unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
