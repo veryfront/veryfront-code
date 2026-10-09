@@ -173,6 +173,10 @@ describe("tested merge-queue run workflow", () => {
     assertStringIncludes(String(dryRun.run), "scripts/ci/queue-tree-dry-run.ts");
     assertEquals(asRecord(dryRun.env, "queue env").QUEUE_HEAD_REF, "${{ github.ref_name }}");
     assertEquals(dryRun.id, undefined, "dry-run decisions cannot drive gate conditions");
+    for (const step of [record, artifact, dryRun]) {
+      assertEquals(step["continue-on-error"], true, "a measurement failure must not gate a merge");
+    }
+    assertEquals(dryRun["timeout-minutes"], 3, "a hung lookup must not hold the queue entry");
     assertEquals(
       asRecord(tested.outputs, "tested outputs").reuse,
       "${{ steps.decide.outputs.reuse || 'false' }}",

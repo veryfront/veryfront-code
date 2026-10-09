@@ -95,8 +95,10 @@ jobs:
       - uses: ./.github/actions/setup-deno
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '')
         timeout-minutes: 5
+      # The tree steps below only measure reuse; a failure there is a miss and never gates a merge.
       - name: Record the tested PR tree
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         id: pr-tree
         run: |
           tree="$(git rev-parse HEAD^{tree})"
@@ -105,6 +107,7 @@ jobs:
           echo "$tree" > dist/tested-tree/tree.txt
       - name: Upload the tested PR tree
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tested-tree-${{ steps.pr-tree.outputs.tree }}
@@ -114,6 +117,8 @@ jobs:
           overwrite: true
       - name: Measure identical queue tree (dry run)
         if: github.event_name == 'merge_group'
+        continue-on-error: true
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
           QUEUE_HEAD_REF: ${{ github.ref_name }}
