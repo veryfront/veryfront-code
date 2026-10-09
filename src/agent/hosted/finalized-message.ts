@@ -236,7 +236,8 @@ export function buildFinalizedMessageState(
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
   const completedParts = persistedMessage.parts.map((part) => {
     if (
-      !input.isAborted && isToolUiPart(part) && part.state === "output-available" &&
+      !input.isAborted && isToolUiPart(part) &&
+      ["output-available", "output-error", "output-denied"].includes(part.state) &&
       part.providerExecuted === undefined && finalStepFallbackParts.some((fallback) =>
         isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
         toolPartName(fallback) === toolPartName(part) && fallback.providerExecuted === true
@@ -610,8 +611,14 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
   if (input.isAborted || !input.persistedMessage.id) return [];
   return input.finalizedMessage.parts.flatMap((part) => {
     if (
-      !isToolUiPart(part) || part.state !== "output-available" || part.providerExecuted !== true ||
-      !input.mirroredToolChunkState.outputAvailableToolCallIds.has(part.toolCallId) ||
+      !isToolUiPart(part) ||
+      !["output-available", "output-error", "output-denied"].includes(part.state) ||
+      part.providerExecuted !== true ||
+      !(part.state === "output-available"
+        ? input.mirroredToolChunkState.outputAvailableToolCallIds
+        : part.state === "output-error"
+        ? input.mirroredToolChunkState.outputErrorToolCallIds
+        : input.mirroredToolChunkState.outputDeniedToolCallIds).has(part.toolCallId) ||
       input.mirroredToolChunkState.ownershipCorrectedToolCallIds?.has(part.toolCallId)
     ) return [];
     const persisted = input.persistedMessage.parts.filter((candidate) =>
@@ -620,9 +627,9 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
     if (persisted.length !== 1) return [];
     const original = persisted[0]!;
     if (
-      !isToolUiPart(original) || original.state !== "output-available" ||
+      !isToolUiPart(original) || original.state !== part.state ||
       original.providerExecuted !== undefined || original.output !== part.output ||
-      original.input !== part.input
+      original.errorText !== part.errorText || original.input !== part.input
     ) return [];
     const toolName = toolPartName(part);
     if (!toolName) return [];

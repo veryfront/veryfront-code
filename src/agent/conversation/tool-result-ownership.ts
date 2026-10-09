@@ -13,7 +13,7 @@ function readCorrection(value: unknown): Correction | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
-    Object.keys(record).sort().join(",") !==
+    Object.keys(record).sort((left, right) => left.localeCompare(right)).join(",") !==
       "parentMessageId,providerExecuted,schemaVersion,toolCallId,toolName"
   ) return null;
   if (record.schemaVersion !== 1 || record.providerExecuted !== true) return null;

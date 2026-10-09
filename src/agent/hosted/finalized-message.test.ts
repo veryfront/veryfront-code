@@ -1709,3 +1709,80 @@ Deno.test("completed ownership requires the same final-step tool name", () => {
   });
   assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
 });
+
+for (const state of ["output-error", "output-denied"] as const) {
+  Deno.test(`completed ${state} recovers provider ownership without changing verdict`, () => {
+    const part = {
+      type: "tool-web_fetch" as const,
+      toolCallId: "failed",
+      state,
+      input: { original: true },
+      ...(state === "output-error" ? { errorText: "original failure" } : {}),
+    };
+    const result = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep: {
+        toolCalls: [{
+          toolCallId: "failed",
+          toolName: "web_fetch",
+          input: {},
+          providerExecuted: true,
+        }],
+      },
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(result.sanitizedFinalizedMessage.parts, [{ ...part, providerExecuted: true }]);
+    const mirror = createMirroredToolChunkState();
+    (state === "output-error" ? mirror.outputErrorToolCallIds : mirror.outputDeniedToolCallIds).add(
+      "failed",
+    );
+    const correction = buildToolResultOwnershipCorrectionEvents({
+      persistedMessage: result.persistedMessage,
+      finalizedMessage: result.sanitizedFinalizedMessage,
+      mirroredToolChunkState: mirror,
+      isAborted: false,
+    });
+    assertEquals(correction.length, 1);
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "m" });
+    const events = [
+      ...encoder.encode({ type: "tool-input-start", toolCallId: "failed", toolName: "web_fetch" }),
+      ...encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "failed",
+        toolName: "web_fetch",
+        input: part.input,
+      }),
+      ...encoder.encode(
+        state === "output-error"
+          ? { type: "tool-output-error", toolCallId: "failed", errorText: "original failure" }
+          : { type: "tool-output-denied", toolCallId: "failed" },
+      ),
+      ...correction,
+    ];
+    const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      const semantic = replay.frames.filter((frame) => frame.class === "semantic").map((frame) =>
+        frame.event
+      );
+      assertEquals(semantic.filter((event) => event.type === "provider_tool_result").length, 1);
+      assertEquals(
+        semantic.some((event) => event.type === "custom" && event.name === "legacy-tool-result"),
+        false,
+      );
+    }
+    assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+    assertEquals(JSON.stringify(correction).includes("original"), false);
+    assertEquals(
+      buildToolResultOwnershipCorrectionEvents({
+        persistedMessage: result.persistedMessage,
+        finalizedMessage: result.sanitizedFinalizedMessage,
+        mirroredToolChunkState: mirror,
+        isAborted: true,
+      }),
+      [],
+    );
+  });
+}
