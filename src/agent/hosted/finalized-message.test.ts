@@ -1687,6 +1687,70 @@ Deno.test("ownership metadata requires missing ownership and a completed mirrore
   }
 });
 
+for (
+  const [label, finalStep] of [
+    ["conflicting duplicate calls", {
+      toolCalls: [
+        { toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: false },
+        { toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: true },
+      ],
+    }],
+    ["conflicting call and result", {
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: {}, providerExecuted: false }],
+      toolResults: [{
+        toolCallId: "c",
+        toolName: "web_fetch",
+        input: {},
+        output: "provider result",
+        providerExecuted: true,
+      }],
+    }],
+    ["repeated provider response messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: false,
+            }],
+          },
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              input: {},
+              providerExecuted: true,
+            }],
+          },
+        ],
+      },
+    }],
+  ] as const
+) {
+  Deno.test(`completed ownership is not promoted from ${label}`, () => {
+    const part = {
+      type: "tool-web_fetch" as const,
+      toolCallId: "c",
+      state: "output-available" as const,
+      input: {},
+      output: "actual result",
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
+  });
+}
+
 Deno.test("completed ownership requires the same final-step tool name", () => {
   const part = {
     type: "tool-web_fetch" as const,

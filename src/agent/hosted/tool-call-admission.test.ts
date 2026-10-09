@@ -316,7 +316,11 @@ describe("private tool-call admission", () => {
         );
         assertEquals(
           storedStarts[0]?.providerExecuted,
-          scenario === "configured-provider" ? true : undefined,
+          scenario === "configured-provider"
+            ? true
+            : scenario === "explicit-false"
+            ? false
+            : undefined,
         );
         assert(
           !JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"),
