@@ -2,6 +2,9 @@ import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-
 import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-resume-call-digest.json" with {
   type: "json",
 };
+import toolExposureDigestContract from "../../../tests/fixtures/contracts/api-auth-tool-exposure-checkpoint-digest.json" with {
+  type: "json",
+};
 import "#veryfront/schemas/_test-setup.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
@@ -18,7 +21,10 @@ import {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import {
+  computeToolExposureCheckpointSha256,
+  type ParsedHostedChatRequest,
+} from "./chat-request-parser.ts";
 import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
@@ -2463,6 +2469,43 @@ describe("agent/hosted-chat-request", () => {
     );
     if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
     assertEquals(parsed.serverResolvedResumeToolCall, resumeDigestContract.resumeToolCall);
+    assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.forwardedProps, { harmless: true });
+  });
+
+  it("binds ordinary-chat tool exposure to the signed checkpoint digest contract", async () => {
+    const checkpoint = toolExposureDigestContract.checkpoint;
+    assertEquals(
+      await computeHash(toolExposureDigestContract.serialized),
+      toolExposureDigestContract.sha256,
+    );
+    assertEquals(
+      await computeToolExposureCheckpointSha256(checkpoint),
+      toolExposureDigestContract.sha256,
+    );
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+          forwardedProps: { serverResolvedToolExposureCheckpoint: checkpoint, harmless: true },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () =>
+          Promise.resolve({
+            verified: true,
+            toolExposureCheckpointSha256: toolExposureDigestContract.sha256,
+          }),
+      },
+    );
+    if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+    assertEquals(parsed.serverResolvedToolExposureCheckpoint, checkpoint);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.forwardedProps, { harmless: true });
   });

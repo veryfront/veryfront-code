@@ -17,6 +17,7 @@ import {
   createManagedDurableBrokerHandler,
 } from "./managed-broker.ts";
 import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
+import { computeToolExposureCheckpointSha256 } from "../hosted/chat-request-parser.ts";
 import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
 import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts";
 
@@ -418,6 +419,79 @@ describe("managed durable broker handler", () => {
     } finally {
       fixture.release();
       await managed.close();
+    }
+  });
+
+  it("restores a signed tool exposure checkpoint only when the start grants checkpoint persistence", async () => {
+    const checkpoint = { version: 2, loadedToolNames: ["create_file"] };
+    for (const granted of [true, false]) {
+      const fixture = runtimeFixture();
+      const execution = new AbortController();
+      let started: ManagedExecutorStartInput | undefined;
+      const managed = createManagedDurableBrokerHandler({
+        owner: { scopeKind: "global", serviceName: "test-service" },
+        broker: {
+          start: (input) => {
+            started = input;
+            return Promise.resolve(fixture.runtime);
+          },
+        },
+        ingress: {
+          authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: async () => ({
+            verified: true,
+            toolExposureCheckpointSha256: await computeToolExposureCheckpointSha256(checkpoint),
+          }),
+        },
+        prepare: () => {
+          const start = managedStart({ agentId: "builder" });
+          return Promise.resolve({
+            start: granted
+              ? { ...start, persistence: { persistToolExposureCheckpoint: () => {} } }
+              : start,
+            messages: [],
+            executionSignal: execution.signal,
+            output: {
+              write: () => Promise.resolve(),
+              finish: () => Promise.resolve(),
+            },
+          });
+        },
+      });
+      try {
+        const response = await managed.handle(
+          new Request("https://broker.test/api/runs", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-run-event-token": "synthetic-event-token",
+            },
+            body: JSON.stringify({
+              messages: [],
+              context: {
+                projectId,
+                branchId: "branch-1",
+                conversationId: "00000000-0000-4000-8000-000000000001",
+              },
+              durableRootRun: {
+                runId: "run-1",
+                messageId: "00000000-0000-4000-8000-000000000002",
+              },
+              forwardedProps: { serverResolvedToolExposureCheckpoint: checkpoint },
+            }),
+          }),
+        );
+        assertEquals(response.status, 202, await response.clone().text());
+        assertEquals(
+          started?.persistence.initialToolExposureCheckpoint,
+          granted ? checkpoint : undefined,
+        );
+        execution.abort();
+      } finally {
+        fixture.release();
+        await managed.close();
+      }
     }
   });
 

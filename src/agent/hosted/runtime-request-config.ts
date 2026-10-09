@@ -107,6 +107,22 @@ export function getServerResolvedToolExposureCheckpoint(
 }
 
 /**
+ * Resolve the tool exposure checkpoint a hosted request restores: the one bound
+ * to the verified run-event token's digest, else the verified envelope's.
+ */
+export function resolveHostedRequestToolExposureCheckpoint(request: {
+  forwardedProps?: Record<string, unknown>;
+  serverEnvelopeVerified?: true;
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+}): ToolExposureCheckpoint | undefined {
+  return request.serverResolvedToolExposureCheckpoint ??
+    getServerResolvedToolExposureCheckpoint(
+      request.forwardedProps,
+      request.serverEnvelopeVerified === true,
+    );
+}
+
+/**
  * Read the provider replay checkpoints resolved by the authenticated server.
  *
  * Unverified envelopes never yield replay state. A verified envelope carrying
