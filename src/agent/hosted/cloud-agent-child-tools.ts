@@ -1,3 +1,4 @@
+import { hasExplicitHostedToolName } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 /**
  * Hosted child tool assembly — MCP server resolution, delegation binding,
@@ -79,13 +80,17 @@ function resolveHostedChildSkillLoaderToolName(
   deniedToolNames: ReadonlySet<string>,
 ): string | undefined {
   if (
-    deniedToolNames.has(LOAD_SKILL_TOOL_ID) ||
-    deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)
+    (deniedToolNames.has(LOAD_SKILL_TOOL_ID) ||
+      deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)) &&
+    !((hasExplicitHostedToolName(agentConfig, LOAD_SKILL_TOOL_ID) &&
+      !deniedToolNames.has(LOAD_SKILL_TOOL_ID)) ||
+      (hasExplicitHostedToolName(agentConfig, CANONICAL_LOAD_SKILL_TOOL_ID) &&
+        !deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)))
   ) {
     return undefined;
   }
-  const requestedToolNames = agentConfig.tools === true ? [] : agentConfig.tools ?? [];
-  return requestedToolNames.includes(CANONICAL_LOAD_SKILL_TOOL_ID)
+  return hasExplicitHostedToolName(agentConfig, CANONICAL_LOAD_SKILL_TOOL_ID) &&
+      !deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)
     ? CANONICAL_LOAD_SKILL_TOOL_ID
     : LOAD_SKILL_TOOL_ID;
 }

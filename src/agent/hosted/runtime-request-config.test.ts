@@ -7,6 +7,7 @@ import {
   getForwardedHostedRuntimeOverrides,
   getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
+  hasExplicitHostedToolName,
   resolveHostedRuntimeAllowedTools,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
@@ -722,4 +723,25 @@ it("authored knowledge supplies its loader independently and client overrides on
     }),
     ["search_knowledge"],
   );
+});
+
+it("explicit hosted grants require own data configuration and array entries", () => {
+  const name = "veryfront__load_skill";
+  assertEquals(hasExplicitHostedToolName({ tools: [name] }, name), true);
+  const inherited = {};
+  Object.setPrototypeOf(inherited, { tools: [name] });
+  assertEquals(hasExplicitHostedToolName(inherited, name), false);
+  let reads = 0;
+  const accessor = {
+    get tools(): string[] {
+      reads++;
+      return [name];
+    },
+  };
+  assertEquals(hasExplicitHostedToolName(accessor, name), false);
+  const entries: string[] = [];
+  entries.length = 1;
+  Object.setPrototypeOf(entries, { 0: name });
+  assertEquals(hasExplicitHostedToolName({ tools: entries }, name), false);
+  assertEquals(reads, 0);
 });

@@ -569,6 +569,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly selects resolved canonical deleg
 
 Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly authorized project invoke_agent", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
     agentId: "writer",
     projectId: "project-1",
     model: "anthropic/claude-sonnet-4-6",
@@ -595,7 +596,6 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly auth
     hostToolPolicy: { allow: ["invoke_agent"] },
     allowedToolNames: ["invoke_agent"],
     remoteToolSources: [],
-    preloadLatestConversationUserText: false,
   });
 
   assertEquals(toolAssembly.localToolNames, ["invoke_agent"]);
@@ -2695,4 +2695,61 @@ Deno.test("forwards authenticated platform server identity to the runtime source
   });
   assertEquals(receivedKind, "veryfront-api");
   assertEquals(receivedId, "custom-platform");
+});
+
+it("assembled trusted loader remains executable with an explicit grant and sibling denial", async () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: {
+        authToken: "token",
+        projectId: "project-1",
+        model: "anthropic/claude-sonnet-4-6",
+        availableSkillIds: ["plan"],
+      },
+      instructions: "Base",
+      localTools: markTrustedHostToolSet({
+        load_skill: localTool("Load"),
+        veryfront__load_skill: localTool("Load"),
+      }),
+      allowedToolNames: granted ? [granted] : [],
+      deniedToolNames: names.filter((name) => name !== granted),
+      apiUrl: "https://api.example.test",
+      apiMcpUrl: "https://api.example.test/mcp",
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+    assertEquals(assembly.localToolNames, granted ? [granted] : []);
+    if (granted) {
+      assertEquals(
+        await assembly.runtimeTools[granted]!.execute!({}),
+        { ok: true },
+      );
+    }
+  }
+});
+
+it("explicit canonical platform grant survives legacy denial through remote execution", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Base",
+    localTools: {},
+    allowedToolNames: ["veryfront__create_file"],
+    deniedToolNames: ["create_file"],
+    apiUrl: "https://api.example.test",
+    apiMcpUrl: "https://api.example.test/mcp",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.remoteToolNames, ["veryfront__create_file"]);
+  await assembly.remoteToolSources[0]!.executeTool("veryfront__create_file", {});
+  await assertRejects(async () =>
+    await assembly.remoteToolSources[0]!.executeTool("create_file", {})
+  );
 });

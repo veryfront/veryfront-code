@@ -3621,3 +3621,96 @@ Deno.test("hosted skill replay preserves source authority when adjacent results 
   assertEquals(prepared.filter((message) => message.role === "tool").length, 1);
   assertEquals(hydrateActiveSkillStateFromMessages(prepared).activeSkillId, "stored");
 });
+
+it("explicit skill-loader grants survive a sibling spelling denial", async () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    let visible: readonly string[] | undefined;
+    let skillCount = 0;
+    await prepareHostedChatRuntimeCreationOptions({
+      request: createParsedHostedChatRequest(),
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Hosted agent",
+        instructions: "Base",
+        tools: granted ? [granted] : [],
+        deniedTools: names.filter((name) => name !== granted),
+        skills: true,
+      },
+      projectId: "project-1",
+      authToken: "token-1",
+      hostToolPolicy: { allow: names },
+      resolveModelId: (id) => id,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy",
+            instructions: "Deploy safely.",
+            allowedTools: ["bash"],
+          }],
+        }),
+      buildInstructions: (input) => {
+        skillCount = input.skills?.length ?? 0;
+        visible = input.availableToolNames;
+        return buildVeryfrontCloudRuntimeInstructions(input);
+      },
+    });
+    assertEquals(visible, granted ? [granted] : []);
+    assertEquals(skillCount, granted ? 1 : 0);
+  }
+});
+
+it("caller tool selection cannot grant an unconfigured canonical loader through assembly", async () => {
+  for (const tools of [[], ["get_file"], true] as const) {
+    const prepared = await prepareHostedChatRuntimeCreationOptions({
+      request: createParsedHostedChatRequest({
+        runtimeOverrides: { allowedTools: ["veryfront__load_skill"] },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Agent",
+        instructions: "Base",
+        tools: tools === true ? true : [...tools],
+        deniedTools: ["load_skill"],
+        skills: true,
+      },
+      projectId: "project-1",
+      authToken: "token",
+      resolveModelId: (id) => id,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy",
+            instructions: "Deploy safely.",
+          }],
+        }),
+      buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    });
+    assertEquals(prepared.creationOptions.allowedTools, []);
+    const loader = {
+      description: "Load",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      taskContext: { projectId: "project-1", availableSkillIds: ["deploy"] },
+      instructions: "Base",
+      localTools: markTrustedHostToolSet({ load_skill: loader, veryfront__load_skill: loader }),
+      allowedToolNames: prepared.creationOptions.allowedTools,
+      deniedToolNames: prepared.creationOptions.deniedTools,
+      remoteToolSources: [],
+    });
+    assertEquals(assembly.localToolNames, []);
+    assertEquals(assembly.runtimeTools.veryfront__load_skill, undefined);
+  }
+});
