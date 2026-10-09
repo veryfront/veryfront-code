@@ -18,6 +18,8 @@ import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
 
+const objectHasOwn = Object.hasOwn;
+
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
@@ -821,14 +823,14 @@ export function stampAgUiEventTiming(
   // emittedAt`. Both are stamped because wall clocks can step backwards and
   // the monotonic reading cannot.
   for (const { payload } of primordialArrayValues(events)) {
-    if (Object.hasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
-    if (Object.hasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
+    if (objectHasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
+    if (objectHasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
   }
 
   const needsElapsedMs =
-    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "elapsedMs")).length > 0;
+    primordialArrayFilter(events, ({ payload }) => !objectHasOwn(payload, "elapsedMs")).length > 0;
   const needsEmittedAt =
-    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "emittedAt")).length > 0;
+    primordialArrayFilter(events, ({ payload }) => !objectHasOwn(payload, "emittedAt")).length > 0;
   const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
     ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
     : undefined;
@@ -843,10 +845,10 @@ export function stampAgUiEventTiming(
     ...entry,
     payload: {
       ...entry.payload,
-      ...(elapsedMs !== undefined && !Object.hasOwn(entry.payload, "elapsedMs")
+      ...(elapsedMs !== undefined && !objectHasOwn(entry.payload, "elapsedMs")
         ? { elapsedMs }
         : {}),
-      ...(emittedAt !== undefined && !Object.hasOwn(entry.payload, "emittedAt")
+      ...(emittedAt !== undefined && !objectHasOwn(entry.payload, "emittedAt")
         ? { emittedAt }
         : {}),
     },

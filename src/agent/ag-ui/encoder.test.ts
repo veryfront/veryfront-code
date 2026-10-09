@@ -239,6 +239,40 @@ describe("agent/ag-ui-encoder", () => {
     assertEquals("elapsedMs" in (events[0]?.payload ?? {}), false);
   });
 
+  for (
+    const replacement of [() => true, () => false, () => {
+      throw new Error("mutable ownership check");
+    }]
+  ) {
+    it(`stamps and validates timing with captured ownership (${replacement.toString()})`, () => {
+      const state = createAgUiEncoderState({ nowMs: () => 10, epochMs: () => 1_786_866_357_364 });
+      const original = Object.hasOwn;
+      let stamped;
+      let supplied;
+      let invalidError: unknown;
+      try {
+        Object.hasOwn = replacement;
+        stamped = stampAgUiEventTiming(state, [{ event: "Custom", payload: {} }]);
+        supplied = stampAgUiEventTiming(state, [{
+          event: "Custom",
+          payload: { elapsedMs: 12.5, emittedAt: 123 },
+        }]);
+        try {
+          stampAgUiEventTiming(state, [{ event: "Custom", payload: { elapsedMs: undefined } }]);
+        } catch (error) {
+          invalidError = error;
+        }
+      } finally {
+        Object.hasOwn = original;
+      }
+      assertEquals(stamped?.[0]?.payload.elapsedMs, 0);
+      assertEquals(stamped?.[0]?.payload.emittedAt, 1_786_866_357_364);
+      assertEquals(supplied?.[0]?.payload.elapsedMs, 12.5);
+      assertEquals(supplied?.[0]?.payload.emittedAt, 123);
+      assertEquals(invalidError instanceof TypeError, true);
+    });
+  }
+
   it("preserves valid supplied timing and rejects invalid present timing", () => {
     const state = createAgUiEncoderState({
       nowMs: () => Number.NaN,

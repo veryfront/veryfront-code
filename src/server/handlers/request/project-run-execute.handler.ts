@@ -51,7 +51,7 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   buildConversationRunEventBatches,
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
@@ -209,6 +209,9 @@ const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** Overall decision deadline; unknown authority leaves a resumable hold. */
 const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
 const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
+const PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT = 100;
+const PROJECT_RUN_OBSERVATION_FLUSH_DELAY_MS = 50;
+const PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT = 300;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
  * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
@@ -243,6 +246,8 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
@@ -2432,6 +2437,27 @@ async function withProjectRunObservationDeadline<T>(input: {
   }
 }
 
+type ProjectRunObservationEvent = Record<string, unknown> & { type: string };
+
+function snapshotProjectRunObservationEvent(
+  event: Record<string, unknown>,
+): ProjectRunObservationEvent {
+  const encoded = privateJsonStringify(
+    event,
+    null,
+    undefined,
+    MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  );
+  if (typeof encoded !== "string") {
+    throw new DurableRunEventPersistenceError("Project run observation event is invalid");
+  }
+  const snapshot: unknown = privateJsonParse(encoded);
+  if (!isRecord(snapshot) || typeof snapshot.type !== "string") {
+    throw new DurableRunEventPersistenceError("Project run observation event is invalid");
+  }
+  return { ...snapshot, type: snapshot.type };
+}
+
 function createProjectRunObservationMirror(input: {
   runId: string;
   canonicalRunId: string;
@@ -2445,6 +2471,12 @@ function createProjectRunObservationMirror(input: {
   let latestEventId = 0;
   let disabled = false;
   let appendOrdinal = 0;
+  let pendingEvents: Record<string, unknown>[] = [];
+  let appendQueue: Promise<void> = primordialPromiseResolve(undefined);
+  let appendFailure: unknown;
+  let scheduledAppendCount = 0;
+  let queuedEventCount = 0;
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
   const modelCallCaptureReceipts = createPrivateMap<
     string,
     { eventId: string; projectId: string; runId: string; modelCallId: string }
@@ -2571,8 +2603,106 @@ function createProjectRunObservationMirror(input: {
       throw error;
     }
   };
+  const scheduleAppend = (events: Record<string, unknown>[]) => {
+    if (disabled || events.length === 0) return;
+    clearFlushTimer();
+    scheduledAppendCount++;
+    queuedEventCount += events.length;
+    appendQueue = primordialPromiseThen(
+      appendQueue,
+      async () => {
+        try {
+          await append(events);
+        } finally {
+          scheduledAppendCount--;
+          queuedEventCount -= events.length;
+        }
+      },
+      (error) => {
+        scheduledAppendCount--;
+        queuedEventCount -= events.length;
+        throw error;
+      },
+    );
+    void primordialPromiseCatch(appendQueue, (error) => {
+      disabled = true;
+      appendFailure ??= error;
+    });
+  };
+  const startFlushTimer = () => {
+    if (disabled || flushTimer !== undefined || pendingEvents.length === 0) return;
+    flushTimer = TaskSetTimeout(() => {
+      flushTimer = undefined;
+      schedulePendingBatches(true);
+    }, PROJECT_RUN_OBSERVATION_FLUSH_DELAY_MS);
+  };
+  const clearFlushTimer = () => {
+    if (flushTimer === undefined) return;
+    TaskClearTimeout(flushTimer);
+    flushTimer = undefined;
+  };
+  const schedulePendingBatches = (flushAll: boolean) => {
+    if (flushAll) clearFlushTimer();
+    let scheduledEventCount = 0;
+    for (
+      const batch of primordialArrayValues(
+        buildConversationRunEventBatches({
+          events: pendingEvents,
+          maxEventsPerBatch: PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT,
+        }),
+      )
+    ) {
+      const isTailBatch = scheduledEventCount + batch.length === pendingEvents.length;
+      if (
+        !flushAll && isTailBatch &&
+        batch.length < PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT
+      ) break;
+      scheduleAppend(batch);
+      scheduledEventCount += batch.length;
+    }
+    if (scheduledEventCount > 0) {
+      pendingEvents = IntrinsicReflectApply(
+        ArrayPrototypeSlice,
+        pendingEvents,
+        [scheduledEventCount],
+      ) as Record<string, unknown>[];
+    }
+    if (!flushAll) startFlushTimer();
+  };
   return {
-    appendEvents: (events) => append(events),
+    appendEvents: async (events) => {
+      if (appendFailure !== undefined) throw appendFailure;
+      if (disabled || events.length === 0) return;
+      const snapshots: Record<string, unknown>[] = [];
+      for (const event of primordialArrayValues(events)) {
+        IntrinsicReflectApply(
+          ArrayPrototypePush,
+          snapshots,
+          [snapshotProjectRunObservationEvent(event)],
+        );
+      }
+      for (
+        const batch of primordialArrayValues(
+          buildConversationRunEventBatches({
+            events: snapshots,
+            maxEventsPerBatch: PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT,
+          }),
+        )
+      ) {
+        IntrinsicReflectApply(ArrayPrototypePush, pendingEvents, batch);
+        schedulePendingBatches(false);
+        if (queuedEventCount >= PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT) {
+          try {
+            await appendQueue;
+          } catch (error) {
+            disabled = true;
+            appendFailure ??= error;
+            throw error;
+          }
+        }
+      }
+      if (appendFailure !== undefined) throw appendFailure;
+    },
     appendExecutionEntry: async () => {
       // A redelivered trusted attempt records the same logical entry and exact payload.
       const hash = await computeObservationHash(privateJsonStringify([
@@ -2601,13 +2731,27 @@ function createProjectRunObservationMirror(input: {
       return receipt;
     },
     async flush() {
+      for (;;) {
+        schedulePendingBatches(true);
+        const queue = appendQueue;
+        try {
+          await queue;
+        } catch (error) {
+          disabled = true;
+          appendFailure ??= error;
+          throw error;
+        }
+        if (pendingEvents.length === 0 && scheduledAppendCount === 0 && appendQueue === queue) {
+          break;
+        }
+      }
       return {
         disabled,
         latestEventId,
         latestExternalEventSequence: 0,
-        inFlight: false,
-        pendingEventCount: 0,
-        hasFlushTimer: false,
+        inFlight: scheduledAppendCount > 0,
+        pendingEventCount: pendingEvents.length,
+        hasFlushTimer: flushTimer !== undefined,
         hasRetryTimer: false,
         consecutiveFailures: 0,
       };
@@ -2617,14 +2761,15 @@ function createProjectRunObservationMirror(input: {
         disabled,
         latestEventId,
         latestExternalEventSequence: 0,
-        inFlight: false,
-        pendingEventCount: 0,
-        hasFlushTimer: false,
+        inFlight: scheduledAppendCount > 0,
+        pendingEventCount: pendingEvents.length,
+        hasFlushTimer: flushTimer !== undefined,
         hasRetryTimer: false,
         consecutiveFailures: 0,
       };
     },
     dispose() {
+      clearFlushTimer();
       disabled = true;
     },
   };
@@ -2728,50 +2873,42 @@ async function withProjectRunRuntimeObservations<T>(
         // Parent entry is recorded once by this host boundary; nested agent contexts
         // must not create a second parent execution-start occurrence.
         if (event.type === "data-veryfront.runtime_context") return;
-        const events = primordialArrayMap(
-          mapRuntimeStreamEventToAgUiEvents(encoder, event),
-          ({ event: type, payload }) => {
-            // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
-            // agent's streamed failure as a native, nonterminal runtime observation.
-            const candidate = type === "RunError"
-              ? buildRuntimeEventRecordedEvent({
-                runtime: "veryfront",
-                kind: "agent_error",
-                value: {
-                  ...payload,
-                  ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
-                },
-              }).durable
-              : coerceWireEvent(type, payload);
-            if (typeof candidate.type !== "string") {
-              throw new Error(
-                "Invalid encoded project run observation event",
-              );
-            }
-            const observation = { ...candidate, type: candidate.type };
-            // Mandatory evidence must serialize before public cycle-aware fallback.
-            privateJsonStringify(
-              observation,
-              null,
-              undefined,
-              MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+        const events: ProjectRunObservationEvent[] = [];
+        for (
+          const { event: type, payload } of primordialArrayValues(
+            mapRuntimeStreamEventToAgUiEvents(encoder, event),
+          )
+        ) {
+          // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
+          // agent's streamed failure as a native, nonterminal runtime observation.
+          const candidate = type === "RunError"
+            ? buildRuntimeEventRecordedEvent({
+              runtime: "veryfront",
+              kind: "agent_error",
+              value: {
+                ...payload,
+                ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
+              },
+            }).durable
+            : coerceWireEvent(type, payload);
+          if (typeof candidate.type !== "string") {
+            throw new Error(
+              "Invalid encoded project run observation event",
             );
-            return observation;
-          },
-        );
+          }
+          IntrinsicReflectApply(
+            ArrayPrototypePush,
+            events,
+            [snapshotProjectRunObservationEvent({ ...candidate, type: candidate.type })],
+          );
+        }
         const normalized = normalizeConversationRunEvents(
           primordialArrayFilter(
             events,
             (candidate) => isPermittedProjectRunObservationEventType(candidate.type),
           ),
         );
-        for (
-          const batch of primordialArrayValues(
-            buildConversationRunEventBatches({ events: normalized, maxEventsPerBatch: 100 }),
-          )
-        ) {
-          await mirror.appendEvents(batch);
-        }
+        await mirror.appendEvents(normalized);
       } catch (error) {
         // Encoding and batching failures also lose mandatory evidence, even when
         // project code catches the error before any append reaches the API.
@@ -2813,6 +2950,15 @@ async function withProjectRunRuntimeObservations<T>(
       throw new DurableRunEventPersistenceError("Project run observation sink is disabled");
     }
     return result;
+  } catch (error) {
+    const snapshot = mirror.getSnapshot();
+    if (!snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
+      await mirror.flush({
+        abortSignal: input.abortSignal,
+        throwOnTimeoutRetry: true,
+      });
+    }
+    throw error;
   } finally {
     revokeRuntimeObservationWriterCapability(runtimeObservationWriterCapability);
     mirror.dispose();
