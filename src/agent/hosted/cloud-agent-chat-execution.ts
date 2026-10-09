@@ -86,6 +86,8 @@ import {
 } from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
+const objectAssign = Object.assign;
+
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
 
@@ -130,12 +132,12 @@ export function buildLocalTools(
         selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
         taskContext,
       });
-      Object.assign(tools, markTrustedHostToolSet(delegateTools));
+      objectAssign(tools, markTrustedHostToolSet(delegateTools));
     } else {
       // Generic invoke_agent remains the platform tool for dynamic agent
       // selection. Explicit scoped delegate bindings opt into fixed targets.
       const invokeAgentTool = createInvokeAgentTool(context, taskContext);
-      Object.assign(
+      objectAssign(
         tools,
         withPlatformHostToolAliases(
           { invoke_agent: markTrustedHostToolProvenance(invokeAgentTool) },
