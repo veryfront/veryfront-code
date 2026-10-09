@@ -5,6 +5,7 @@ export type HostedChildForkInstructionsContext = {
   projectId?: string | null;
   branchId?: string | null;
   availableSkillIds?: readonly string[];
+  skillLoaderToolName?: "load_skill" | "veryfront__load_skill";
 };
 
 /** Shared hosted child fork instructions base value. */
@@ -67,7 +68,10 @@ export const HOSTED_CHILD_FORK_INSTRUCTIONS_BASE =
 export function buildHostedChildForkInstructions(
   context: HostedChildForkInstructionsContext = {},
 ): string {
-  const sections: string[] = [HOSTED_CHILD_FORK_INSTRUCTIONS_BASE];
+  const skillLoaderToolName = context.skillLoaderToolName ?? "load_skill";
+  const sections: string[] = [
+    HOSTED_CHILD_FORK_INSTRUCTIONS_BASE.replaceAll("load_skill", skillLoaderToolName),
+  ];
   const projectId = context.projectId ?? "";
 
   if (projectId) {
@@ -89,7 +93,7 @@ Do NOT guess or invent project references, always use the values above.
     const ids = [...context.availableSkillIds].sort(compareStrings).join(", ");
     sections.push(`
 ## Available Skills
-Use load_skill to load instructions. Available: ${ids}`);
+Use ${skillLoaderToolName} to load instructions. Available: ${ids}`);
   }
 
   return sections.join("\n");

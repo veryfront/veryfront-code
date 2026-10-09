@@ -266,10 +266,16 @@ export function resolveHostedRuntimeAllowedTools(input: {
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
     if (deniedToolNames.has(toolName)) continue;
-    if (
-      configuredToolNames.has(toolName) ||
-      (isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation)
-    ) selectedToolNames.add(toolName);
+    if (configuredToolNames.has(toolName)) {
+      selectedToolNames.add(toolName);
+    } else if (
+      isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation &&
+      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID) &&
+      !deniedToolNames.has(INVOKE_AGENT_TOOL_ID)
+    ) {
+      // An implicit grant belongs to the platform, never a project-owned legacy collision.
+      selectedToolNames.add(CANONICAL_INVOKE_AGENT_TOOL_ID);
+    }
   }
   return [...selectedToolNames];
 }

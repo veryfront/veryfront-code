@@ -613,7 +613,7 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested cano
   assertEquals(resolve(["plan"], ["veryfront__invoke_agent"]), ["get_file"]);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
+Deno.test("resolveHostedRuntimeRequestConfig binds implicit legacy delegation to the canonical platform tool", () => {
   const resolve = (skills: RuntimeAgentMarkdownDefinition["skills"]) =>
     resolveHostedRuntimeRequestConfig({
       request: {
@@ -626,14 +626,26 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested lega
       resolveModelId: (model) => model,
     }).requestedAllowedTools;
 
-  assertEquals(resolve(["plan"]), ["get_file", "invoke_agent"]);
-  assertEquals(resolve("plan"), ["get_file", "invoke_agent"]);
-  assertEquals(resolve({ plan: true }), ["get_file", "invoke_agent"]);
-  assertEquals(resolve(true), ["get_file", "invoke_agent"]);
-  assertEquals(resolve(undefined), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(["plan"]), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve("plan"), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve({ plan: true }), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(true), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(undefined), ["get_file", "veryfront__invoke_agent"]);
   assertEquals(resolve(false), ["get_file"]);
   assertEquals(resolve([]), ["get_file"]);
   assertEquals(resolve({ plan: false }), ["get_file"]);
+});
+
+Deno.test("implicit delegation respects either platform denial and preserves explicit project grants", () => {
+  const resolve = (tools: string[], deniedTools: string[]) =>
+    resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools: ["invoke_agent"] } },
+      agentConfig: createAgentConfig({ tools, deniedTools, skills: ["plan"] }),
+      resolveModelId: (model) => model,
+    }).requestedAllowedTools;
+  assertEquals(resolve([], ["veryfront__invoke_agent"]), []);
+  assertEquals(resolve([], ["invoke_agent"]), []);
+  assertEquals(resolve(["invoke_agent"], ["veryfront__invoke_agent"]), ["invoke_agent"]);
 });
 
 describe("resolveHostedRuntimeRequestConfig", () => {

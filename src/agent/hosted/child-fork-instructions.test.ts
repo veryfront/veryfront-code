@@ -62,3 +62,13 @@ Deno.test("buildHostedChildForkInstructions omits empty available skills", () =>
 
   assertEquals(result.includes("## Available Skills"), false);
 });
+
+Deno.test("child fork guidance names the canonical-only skill loader", () => {
+  const result = buildHostedChildForkInstructions({
+    skillLoaderToolName: "veryfront__load_skill",
+    availableSkillIds: ["plan"],
+  });
+  assert(result.includes("Use `veryfront__load_skill`"));
+  assert(result.includes("Use veryfront__load_skill to load instructions"));
+  assert(!result.includes("Use `load_skill`"));
+});
