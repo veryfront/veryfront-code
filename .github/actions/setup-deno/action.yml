@@ -182,12 +182,8 @@ runs:
         timeout --signal=TERM --kill-after=15s 3m \
           deno cache --frozen src/index.ts
 
-    # Merge-queue runs restore but never save. Their caches are scoped to an
-    # ephemeral gh-readonly-queue ref that no later PR, queue entry or main run
-    # can read, so each save only uploads ~300 MB onto the queue's critical
-    # path and pushes reusable PR and main caches out of the repository quota.
     - name: Save complete Deno dependency cache
-      if: inputs.warm-cache == 'true' && inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true' && github.event_name != 'merge_group'
+      if: inputs.warm-cache == 'true' && inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/veryfront-deno-cache
