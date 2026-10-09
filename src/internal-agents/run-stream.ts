@@ -1100,6 +1100,12 @@ function compactRuntimeMessagesForStream(
   ) as Message[];
 }
 
+function isTrustedHostedPolicyMetadataRole(
+  role: RuntimeRunAgentInput["messages"][number]["role"] | Message["role"],
+): role is "assistant" | "tool" {
+  return role === "assistant" || role === "tool";
+}
+
 function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
   runtimeMessages: readonly Message[],
   sourceMessages: RuntimeRunAgentInput["messages"],
@@ -1119,7 +1125,7 @@ function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
     if (!Object.hasOwn(sourceMessages, index)) continue;
     const message = sourceMessages[index]!;
     if (!message.id || !trustedSourceIds.has(message.id)) continue;
-    if (sourceById.has(message.id) || message.role !== "assistant") {
+    if (sourceById.has(message.id) || !isTrustedHostedPolicyMetadataRole(message.role)) {
       sourceById.set(message.id, null);
     } else {
       sourceById.set(message.id, message);
@@ -1131,7 +1137,8 @@ function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
     const sourceMessage = sourceById.get(message.id);
-    const restoredMessage = sourceMessage && message.role === "assistant"
+    const restoredMessage = sourceMessage && message.role === sourceMessage.role &&
+        isTrustedHostedPolicyMetadataRole(message.role)
       ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
       : message;
     restoredMessages[restoredMessages.length] = sourceMessage

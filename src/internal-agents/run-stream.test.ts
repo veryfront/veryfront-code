@@ -5404,7 +5404,12 @@ describe("internal-agents/run-stream", () => {
   });
   describe("trusted hosted AG-UI skill history", () => {
     function loadedSkillHistoryInput(
-      options: { trustedIds?: readonly string[]; duplicateTrustedId?: boolean } = {},
+      options: {
+        trustedIds?: readonly string[];
+        duplicateTrustedId?: boolean;
+        includePolicySidecar?: boolean;
+        toolName?: "load_skill" | "veryfront__load_skill";
+      } = {},
     ): Parameters<typeof createRuntimeAgentStreamResponse>[0] {
       const loadSkillResult = JSON.stringify({
         skillId: "review",
@@ -5412,6 +5417,7 @@ describe("internal-agents/run-stream", () => {
         references: ["references/checklist.md"],
         scripts: ["scripts/check.ts"],
       });
+      const toolName = options.toolName ?? "veryfront__load_skill";
       return {
         agentId: "trusted-history-agent",
         threadId: crypto.randomUUID(),
@@ -5428,7 +5434,7 @@ describe("internal-agents/run-stream", () => {
               id: "load-skill-call",
               type: "function",
               function: {
-                name: "veryfront__load_skill",
+                name: toolName,
                 arguments: JSON.stringify({ skillId: "review" }),
               },
             }],
@@ -5438,6 +5444,9 @@ describe("internal-agents/run-stream", () => {
             role: "tool",
             toolCallId: "load-skill-call",
             content: loadSkillResult,
+            ...(options.includePolicySidecar
+              ? { metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["load-skill-call"] } }
+              : {}),
           },
           { id: "next-user", role: "user", content: "Use the loaded skill." },
         ],
@@ -5447,6 +5456,44 @@ describe("internal-agents/run-stream", () => {
           ? { serverResolvedTrustedHostedHistoryMessageIds: options.trustedIds }
           : {}),
       } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    }
+
+    async function capturedRestoredMessages(
+      input: Parameters<typeof createRuntimeAgentStreamResponse>[0],
+    ): Promise<AgentMessage[]> {
+      const agent = {
+        id: "trusted-history-agent",
+        config: {
+          id: "trusted-history-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "Use loaded skill state.",
+          tools: true,
+          skills: false,
+          maxSteps: 1,
+        },
+      } as unknown as Agent;
+      let capturedMessages: AgentMessage[] = [];
+
+      const response = await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (messages) => {
+            capturedMessages = messages;
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      await response.text();
+      return capturedMessages;
+    }
+
+    function trustedLoadSidecarIds(messages: readonly AgentMessage[]): unknown {
+      return messages.find((message) => message.id === "trusted-load")?.metadata
+        ?.["__veryfrontTrustedPlatformPolicyToolResultIds"];
     }
 
     async function firstModelToolNames(
@@ -5474,9 +5521,53 @@ describe("internal-agents/run-stream", () => {
       return model.toolNames(0);
     }
 
+    it("preserves trusted tool-role policy sidecars through AG-UI compaction", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          includePolicySidecar: true,
+        }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), ["load-skill-call"]);
+    });
+
+    it("does not preserve unauthenticated tool-role policy sidecars", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({ includePolicySidecar: true }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), undefined);
+    });
+
+    it("does not preserve duplicate trusted tool-role policy sidecars", async () => {
+      const messages = await capturedRestoredMessages(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          duplicateTrustedId: true,
+          includePolicySidecar: true,
+        }),
+      );
+
+      assertEquals(trustedLoadSidecarIds(messages), undefined);
+    });
+
     it("restores active skill tools from server-authenticated AG-UI history after compaction", async () => {
       const toolNames = await firstModelToolNames(
         loadedSkillHistoryInput({ trustedIds: ["trusted-load"] }),
+      );
+
+      assertEquals(toolNames.includes("load_skill_reference"), true);
+      assertEquals(toolNames.includes("execute_skill_script"), true);
+    });
+
+    it("restores active skill tools from authenticated tool-role legacy load_skill sidecars", async () => {
+      const toolNames = await firstModelToolNames(
+        loadedSkillHistoryInput({
+          trustedIds: ["trusted-load"],
+          includePolicySidecar: true,
+          toolName: "load_skill",
+        }),
       );
 
       assertEquals(toolNames.includes("load_skill_reference"), true);
