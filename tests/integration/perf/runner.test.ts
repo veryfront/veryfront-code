@@ -20,6 +20,7 @@ describe("framework profiling command", () => {
         );
       }
     };
+    let checkStderr = "";
     const check = async (cwd?: string) => {
       const result = await new Deno.Command("deno", {
         args: [
@@ -33,6 +34,7 @@ describe("framework profiling command", () => {
         stdout: "piped",
         stderr: "piped",
       }).output();
+      checkStderr = new TextDecoder().decode(result.stderr);
       return result.code;
     };
     try {
@@ -151,7 +153,7 @@ describe("framework profiling command", () => {
       }
       assertEquals(await check(head), 1);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, imports: {} }));
-      assertEquals(await check(), 1);
+      assertEquals(await check(), 1, checkStderr);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify(config));
       await Deno.writeTextFile(`${base}/deno.lock`, "changed dependency graph");
       assertEquals(await check(), 1);
