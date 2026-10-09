@@ -208,6 +208,35 @@ function parseCompletedSecurityReviewDisplay(lines) {
   return securityRow;
 }
 
+function parseSummaryCompletionDatetime(value) {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+      .exec(value);
+  if (!match) return Number.NaN;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]) {
+    return Number.NaN;
+  }
+  return Date.parse(value);
+}
+
 function hasInvalidSummaryCompletionTime(completedAt, updatedAt, updatedAtIsWholeSecond) {
   return !Number.isFinite(completedAt) ||
     (completedAt > updatedAt &&
@@ -247,13 +276,13 @@ function parseCompletedCodexSummary(comment) {
   if (!row || row[1] !== row[2] || row[4].trim().length === 0) {
     return undefined;
   }
-  const completedAt = Date.parse(row[1]);
+  const completedAt = parseSummaryCompletionDatetime(row[1]);
   const createdAt = Date.parse(comment?.created_at ?? "");
   const updatedAtText = comment?.updated_at ?? "";
   const updatedAt = Date.parse(updatedAtText);
   const updatedAtIsWholeSecond =
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(updatedAtText);
-  const securityCompletedAt = securityRow ? Date.parse(securityRow[1]) : undefined;
+  const securityCompletedAt = securityRow ? parseSummaryCompletionDatetime(securityRow[1]) : undefined;
   if (
     securityCompletedAt !== undefined &&
     hasInvalidSummaryCompletionTime(securityCompletedAt, updatedAt, updatedAtIsWholeSecond)

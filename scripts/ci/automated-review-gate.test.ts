@@ -373,6 +373,67 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("rejects missing-time and invalid-calendar completion values in either summary row", async () => {
+    const invalid = [
+      "2026-09-06",
+      "2026-09-06 14:32:42Z",
+      "2026-02-30T14:32:42Z",
+      "2025-02-29T14:32:42Z",
+      "2026-09-31T14:32:42Z",
+      "2026-09-06T24:00:00Z",
+      "2026-09-06T14:60:00Z",
+      "2026-09-06T14:32:60Z",
+    ];
+    for (const row of [8, 9]) {
+      for (const completion of invalid) {
+        const summary = codexSecurityReviewSummary();
+        const lines = (summary.body as string).split("\n");
+        lines[row] = lines[row]!.replaceAll(
+          "2026-09-06T14:32:42.547857Z",
+          completion,
+        );
+        summary.body = lines.join("\n");
+        assertEquals(
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [summary],
+              reactions: [codexCompletionReaction()],
+            },
+            HEAD,
+            () => Promise.resolve(HEAD),
+          ),
+          undefined,
+          `${row}: ${completion}`,
+        );
+      }
+    }
+    const leap = codexSecurityReviewSummary();
+    leap.body = (leap.body as string).replaceAll(
+      "2026-09-06T14:32:42.547857Z",
+      "2024-02-29T14:32:42.547857Z",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [leap],
+          reactions: [codexCompletionReaction()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-summary",
+    );
+    const offset = codexSecurityReviewSummary();
+    offset.body = (offset.body as string).replaceAll(
+      "2026-09-06T14:32:42.547857Z", "2024-02-29T15:32:42.547857+01:00",
+    );
+    assertEquals((await findAutomatedReview({
+      reviews: [], comments: [offset], reactions: [codexCompletionReaction()],
+    }, HEAD, () => Promise.resolve(HEAD)))?.source, "codex-summary");
+  });
+
   it("uses the explicit code-review row when the two display rows are reordered", async () => {
     const summary = codexSecurityReviewSummary();
     const lines = (summary.body as string).split("\n");
