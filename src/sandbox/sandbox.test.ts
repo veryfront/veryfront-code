@@ -143,7 +143,6 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "token",
         apiUrl: "https://api.test.com",
-        deleteOnClose: true,
       });
       await assertRejects(() => sandbox.ensure(), Error);
       await sandbox.close();
@@ -380,6 +379,37 @@ describe("Sandbox", () => {
       );
     });
   }
+  for (const storage of ["ephemeral", "persistent", undefined, "future"] as const) {
+    for (const ttlMode of ["default", "always_on"] as const) {
+      for (const deleteOnClose of [undefined, true, false]) {
+        it(`honors lazy cleanup override ${deleteOnClose} for ${storage} storage and ${ttlMode} lifetime`, async () => {
+          mockFetch([
+            jsonResponse({
+              id: "cleanup-policy",
+              endpoint: "https://sb.test",
+              status: "running",
+              ...(storage === undefined ? {} : { workspace_storage: storage }),
+            }),
+            jsonResponse({ ok: true }),
+            jsonResponse({ ok: true }),
+          ]);
+          const sandbox = Sandbox.createLazy({
+            authToken: "token",
+            apiUrl: "https://api.test.com",
+            ttlMode,
+            ...(deleteOnClose === undefined ? {} : { deleteOnClose }),
+          });
+          await sandbox.ensure();
+          await sandbox.close();
+          assertEquals(
+            fetchCalls.some((call) => call.init?.method === "DELETE"),
+            deleteOnClose ?? (storage === "ephemeral" && ttlMode !== "always_on"),
+          );
+        });
+      }
+    }
+  }
+
   it("retains returned persistent storage after a bootstrap failure", async () => {
     const session = {
       id: "persistent",

@@ -672,8 +672,8 @@ export class LazySandbox {
     }
 
     const session = await res.json();
-    this.deleteOnClose = hasEphemeralSandboxStorage(session) &&
-      (this.requestedDeleteOnClose ?? this.creationPolicy.ttlMode !== "always_on");
+    this.deleteOnClose = this.requestedDeleteOnClose ??
+      (hasEphemeralSandboxStorage(session) && this.creationPolicy.ttlMode !== "always_on");
     this.sessionId = session.id;
     this.sessionProjectId = projectId;
 

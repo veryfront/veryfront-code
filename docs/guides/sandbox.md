@@ -172,7 +172,10 @@ await sandbox.close();
 Closing a persistent or always-on client keeps the workspace by default, including
 persistent workspaces with timed cleanup. A lazy client deletes a newly created
 temporary workspace on close by default. Set `deleteOnClose: false` to retain it.
-Set `deleteOnClose: true` to delete a persistent or always-on workspace on close.
+For a lazy client, set `deleteOnClose: true` to delete a persistent or always-on
+workspace on close.
+The explicit flag also applies when storage metadata is missing or unknown;
+without an override, cleanup requires confirmed ephemeral storage.
 Files and user-installed tools
 under `/workspace` survive runtime replacement. Running processes and changes
 outside `/workspace` do not persist. Use `sandbox.delete()` to delete the
