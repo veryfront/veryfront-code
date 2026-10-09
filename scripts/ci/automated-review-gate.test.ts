@@ -373,6 +373,39 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("uses the explicit code-review row when the two display rows are reordered", async () => {
+    const summary = codexSecurityReviewSummary();
+    const lines = (summary.body as string).split("\n");
+    [lines[8], lines[9]] = [lines[9], lines[8]];
+    summary.body = lines.join("\n");
+    const evidence = {
+      reviews: [],
+      comments: [summary],
+      reactions: [codexCompletionReaction()],
+    };
+    assertEquals(
+      (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))
+        ?.source,
+      "codex-summary",
+    );
+    const wrongCodeHead = {
+      ...summary,
+      body: summary.body.replace(
+        lines[9],
+        lines[9].replace(HEAD.slice(0, 7), OTHER_HEAD.slice(0, 7)),
+      ),
+    };
+    assertEquals(
+      await findAutomatedReview(
+        { ...evidence, comments: [wrongCodeHead] },
+        HEAD,
+        () => Promise.resolve(OTHER_HEAD),
+      ),
+      undefined,
+      "security metadata and its matching row cannot supply the code-review head",
+    );
+  });
+
   it("rejects malformed and ambiguous security displays without accepting them as code proof", async () => {
     const summary = codexSecurityReviewSummary();
     const body = summary.body as string;

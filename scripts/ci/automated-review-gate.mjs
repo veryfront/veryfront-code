@@ -202,13 +202,19 @@ function parseCompletedCodexSummary(comment) {
       metadata.status !== "completed"
     ) return undefined;
     lines[1] = "";
-    securityRow = CODEX_SECURITY_SUMMARY_ROW.exec(lines[9] ?? "");
+    // Accept either display order within the same two-row table. The explicit
+    // labels identify each role; extra, missing or duplicate rows still fail closed.
+    const summaryRows = lines.slice(8, 10);
+    const codeRowLine = summaryRows.find((line) => CODEX_REVIEW_SUMMARY_ROW.test(line));
+    const securityRowLine = summaryRows.find((line) => CODEX_SECURITY_SUMMARY_ROW.test(line));
+    if (!codeRowLine || !securityRowLine) return undefined;
+    securityRow = CODEX_SECURITY_SUMMARY_ROW.exec(securityRowLine);
     if (
       !securityRow || securityRow[1] !== securityRow[2] ||
       securityRow[4].trim().length === 0 ||
       !metadata.headSha.toLowerCase().startsWith(securityRow[3].toLowerCase())
     ) return undefined;
-    lines.splice(9, 1);
+    lines.splice(8, 2, codeRowLine);
   }
   const expectedPrefix = [
     CODEX_REVIEW_SUMMARY_MARKER,
@@ -850,6 +856,11 @@ function commentFollowsHeadCommit(timeline, commentId, headSha) {
   return headIndex >= 0 && commentIndex > headIndex;
 }
 
+/** @param {number} pullNumber */
+function draftReviewStatusDescription(pullNumber) {
+  return `PR#${pullNumber} draft waits for review`;
+}
+
 function reviewFailureDescription(pullNumber, kind, retryPending = false) {
   const detail = REVIEW_FAILURE_DETAILS.get(kind) ??
     "review status unavailable";
@@ -993,7 +1004,7 @@ function canReusePendingStatus(
   const description = typeof status.description === "string"
     ? status.description
     : "";
-  if (isDraft) return description === `PR#${pullNumber} draft waits for review`;
+  if (isDraft) return description === draftReviewStatusDescription(pullNumber);
   return description.startsWith(`PR#${pullNumber} waits for review `) ||
     description.startsWith(`PR#${pullNumber} reset base:`);
 }
@@ -1896,7 +1907,7 @@ export async function publishAutomatedReviewStatus({
       baseBinding,
       effectiveReviewResetKey,
     );
-  } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
+  } else if (isDraft) description = draftReviewStatusDescription(pullNumber);
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
   }
@@ -2082,7 +2093,7 @@ function reviewTimeoutContext(pull, pullNumber) {
     ) return false;
     if (context.state === "PENDING") {
       return context.description.startsWith(descriptionPrefix) &&
-        context.description !== `PR#${pullNumber} draft waits for review`;
+        context.description !== draftReviewStatusDescription(pullNumber);
     }
     return context.state === "FAILURE" &&
       (context.description ===
