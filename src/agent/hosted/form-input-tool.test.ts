@@ -1,4 +1,4 @@
-import type { ChatUiMessage, ChatUiMessagePart } from "../../chat/types.ts";
+import type { ChatUiMessagePart } from "../../chat/types.ts";
 import { schemaToJsonSchema } from "#veryfront/schemas/json-schema.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getFormInputToolInputSchema } from "../input/request-protocol.ts";
