@@ -1105,6 +1105,56 @@ it("tool search matches a canonical namespace as a whole token", () => {
   );
 });
 
+it("tool search falls back to the local id when a canonical query has no integration match", () => {
+  const authorized = [
+    definition("list_files", "List project files"),
+    definition("list_files_archive", "List archived files"),
+    definition("github__list_files", "List files in a GitHub repository"),
+    definition("veryfront_list_files", "A local tool that only shares normalized text"),
+  ];
+  for (const query of ["veryfront__list_files", "VERYFRONT__LIST_FILES"]) {
+    const state = createToolExposureState();
+    const result = searchToolExposure({ query, authorized, state });
+    assertEquals(result.matches.map((match) => match.name), ["list_files"], query);
+    assertEquals(result.loadedCount, 1);
+    assertEquals([...state.loadedToolNames], ["list_files"]);
+  }
+
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list_files",
+      authorized: [],
+      available: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).matches,
+    [{ name: "list_files", description: "List project files", status: "available" }],
+  );
+});
+
+it("tool search keeps integration evidence ahead of the local id fallback", () => {
+  // A namespace with real evidence is discovery, not a mistyped local id.
+  assertEquals(
+    searchToolExposure({
+      query: "jira__list_files",
+      authorized: [
+        definition("list_files", "List project files"),
+        definition("jira__list_projects", "List Jira projects on a site"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["jira__list_projects"],
+  );
+  // A malformed canonical query has no local id to fall back to.
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list__files",
+      authorized: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).miss,
+    true,
+  );
+});
+
 it("tool search accepts canonical ids with the authorization layer's segment grammar", () => {
   // The authoritative grammar allows consecutive and trailing separators; search
   // must not be stricter, or it disagrees with authorization about what an id is.

@@ -547,7 +547,24 @@ function rankToolExposureMatches(input: {
           (description) => testPrivateRegExp(namespacePattern, description),
         );
     });
-    return rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
+    const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
+    if (namespaceMatches.length > 0 || canonicalName === null) return namespaceMatches;
+
+    // With no integration evidence at all, models often prefix a local tool with a
+    // product namespace (`veryfront__list_files`). Fall back to the exact local id
+    // only: the same-named canonical tool of another namespace is not a match, and
+    // a normalized phrase match would reintroduce `jira_list_projects`.
+    const localId = privateTextSlice(canonicalName, canonical.namespace.length + 2);
+    return sortSearchItems(
+      mapPrivateArray(
+        filterPrivateArray(
+          candidates,
+          (candidate) => privateTextToLowerCase(candidate.name) === localId,
+        ),
+        toSearchMatch,
+      ),
+      compareToolSearchMatches,
+    );
   }
 
   // The query taken whole is the strongest signal for every non-canonical query.
