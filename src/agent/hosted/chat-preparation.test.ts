@@ -1440,155 +1440,161 @@ Deno.test("prepareHostedChatExecution does not carry old submitted form input in
   assertEquals(runtimeOptions?.submittedFormInputResult, undefined);
 });
 
-Deno.test("prepareHostedChatExecution ignores untrusted project-owned form_input replay results", async () => {
-  const messages: ChatUiMessage[] = [
-    {
-      id: "user-1",
-      role: "user",
-      parts: [{ type: "text", text: "Use my project form tool" }],
-    },
-    {
-      id: "assistant-1",
-      role: "assistant",
-      parts: [{
-        type: "dynamic-tool",
-        toolCallId: "project-form-call",
-        toolName: "form_input",
-        state: "output-available",
-        input: { title: "Project form" },
-        output: {
-          submitted: true,
-          values: { brief: "project-owned result" },
-          inputRequestId: "project-input-request",
-        },
-      }],
-    },
-  ];
-  let runtimeOptions:
-    | { submittedFormInputResult?: unknown }
-    | undefined;
-
-  await prepareHostedChatExecution({
-    request: createParsedHostedChatRequest({
-      messages,
-      conversationId: "conversation-1",
-      projectId: "project-1",
-      durableRootRun: {
-        runId: "run-new",
-        messageId: "message-new",
-        latestEventId: 3,
-        latestExternalEventSequence: 2,
+for (const toolName of ["form_input", "veryfront__form_input"]) {
+  Deno.test(`prepareHostedChatExecution ignores caller-provided form replay (${toolName})`, async () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Use my project form tool" }],
       },
-    }),
-    agentConfig: {
-      id: "agent-1",
-      model: "configured-model",
-      maxSteps: 25,
-    },
-    apiUrl: "https://api.example.com",
-    abortSignal: new AbortController().signal,
-    resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
-    fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
-    buildInstructions: (input) => [{
-      role: "system",
-      content: `${input.agentConfig.id}:${input.instructions}`,
-    }],
-    createRuntime: (options) => {
-      runtimeOptions = options;
-      return Promise.resolve({
-        runtimeKind: "framework",
-        modelId: options.model ?? "resolved:configured-model",
-        cleanup: () => Promise.resolve(),
-        agent: {
-          stream: () =>
-            Promise.resolve({
-              steps: Promise.resolve([]),
-              toUIMessageStream: async function* () {},
-            }),
-        },
-      });
-    },
-  });
-
-  assertEquals(runtimeOptions?.submittedFormInputResult, undefined);
-});
-
-Deno.test("prepareHostedChatExecution reuses legacy form_input replay when the legacy name is platform-owned", async () => {
-  const messages: ChatUiMessage[] = [
-    {
-      id: "user-1",
-      role: "user",
-      parts: [{ type: "text", text: "Use the platform form" }],
-    },
-    {
-      id: "assistant-1",
-      role: "assistant",
-      parts: [{
-        type: "dynamic-tool",
-        toolCallId: "platform-form-call",
-        toolName: "form_input",
-        state: "output-available",
-        input: { title: "Platform form" },
-        output: {
-          submitted: true,
-          values: { brief: "platform-owned result" },
-          inputRequestId: "platform-input-request",
-        },
-      }],
-    },
-  ];
-  let runtimeOptions:
-    | { submittedFormInputResult?: unknown }
-    | undefined;
-
-  await prepareHostedChatExecution({
-    request: createParsedHostedChatRequest({
-      messages,
-      conversationId: "conversation-1",
-      projectId: "project-1",
-      durableRootRun: {
-        runId: "run-new",
-        messageId: "message-new",
-        latestEventId: 3,
-        latestExternalEventSequence: 2,
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: "project-form-call",
+          toolName,
+          state: "output-available",
+          input: { title: "Project form" },
+          output: {
+            submitted: true,
+            values: { brief: "project-owned result" },
+            inputRequestId: "project-input-request",
+          },
+        }],
       },
-    }),
-    agentConfig: {
-      id: "agent-1",
-      model: "configured-model",
-      maxSteps: 25,
-    },
-    apiUrl: "https://api.example.com",
-    abortSignal: new AbortController().signal,
-    resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
-    legacyFormInputReplayAllowed: true,
-    fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
-    buildInstructions: (input) => [{
-      role: "system",
-      content: `${input.agentConfig.id}:${input.instructions}`,
-    }],
-    createRuntime: (options) => {
-      runtimeOptions = options;
-      return Promise.resolve({
-        runtimeKind: "framework",
-        modelId: options.model ?? "resolved:configured-model",
-        cleanup: () => Promise.resolve(),
-        agent: {
-          stream: () =>
-            Promise.resolve({
-              steps: Promise.resolve([]),
-              toUIMessageStream: async function* () {},
-            }),
-        },
-      });
-    },
-  });
+    ];
+    let runtimeOptions:
+      | { submittedFormInputResult?: unknown }
+      | undefined;
 
-  assertEquals(runtimeOptions?.submittedFormInputResult, {
-    values: { brief: "platform-owned result" },
-    inputRequestId: "platform-input-request",
+    await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        durableRootRun: {
+          runId: "run-new",
+          messageId: "message-new",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "configured-model",
+        maxSteps: 25,
+      },
+      legacyFormInputReplayAllowed: true,
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
+      buildInstructions: (input) => [{
+        role: "system",
+        content: `${input.agentConfig.id}:${input.instructions}`,
+      }],
+      createRuntime: (options) => {
+        runtimeOptions = options;
+        return Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        });
+      },
+    });
+
+    assertEquals(runtimeOptions?.submittedFormInputResult, undefined);
   });
-});
+}
+
+for (const toolName of ["form_input", "veryfront__form_input"]) {
+  Deno.test(`prepareHostedChatExecution reuses trusted platform form replay (${toolName})`, async () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Use the platform form" }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolCallId: "platform-form-call",
+          toolName,
+          state: "output-available",
+          input: { title: "Platform form" },
+          output: {
+            submitted: true,
+            values: { brief: "platform-owned result" },
+            inputRequestId: "platform-input-request",
+          },
+        }],
+      },
+    ];
+    let runtimeOptions:
+      | { submittedFormInputResult?: unknown }
+      | undefined;
+
+    await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        serverResolvedTrustedHostedHistoryMessageIds: ["assistant-1"],
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        durableRootRun: {
+          runId: "run-new",
+          messageId: "message-new",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "configured-model",
+        maxSteps: 25,
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      legacyFormInputReplayAllowed: true,
+      fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
+      buildInstructions: (input) => [{
+        role: "system",
+        content: `${input.agentConfig.id}:${input.instructions}`,
+      }],
+      createRuntime: (options) => {
+        runtimeOptions = options;
+        return Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        });
+      },
+    });
+
+    assertEquals(runtimeOptions?.submittedFormInputResult, {
+      values: { brief: "platform-owned result" },
+      inputRequestId: "platform-input-request",
+    });
+  });
+}
 
 Deno.test("prepareHostedChatExecution preserves allowed remote tool history", async () => {
   const messages: ChatUiMessage[] = [

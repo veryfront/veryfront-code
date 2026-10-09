@@ -19,6 +19,8 @@ import {
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
 import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
 
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
 
@@ -275,19 +277,37 @@ function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   return -1;
 }
 
-/** Find the latest submitted form_input result persisted after the latest user message. */
+/** Find the latest submitted form result in trusted server-loaded history after the latest user message. */
 export function findSubmittedFormInputResult(
   messages: readonly ChatUiMessage[],
-  options: { legacyFormInputReplayAllowed?: boolean } = {},
+  options: {
+    legacyFormInputReplayAllowed?: boolean;
+    trustedHostedHistoryMessageIds?: readonly string[];
+  } = {},
 ): HostedSubmittedFormInputResult | undefined {
+  const trustedIds = createPrivateMap<string, true>();
+  const ids = options.trustedHostedHistoryMessageIds ?? [];
+  for (let index = 0; index < ids.length; index++) {
+    if (!Object.hasOwn(ids, index)) continue;
+    const id = ids[index];
+    if (typeof id === "string") trustedIds.set(id, true);
+  }
+  const sources = createPrivateMap<string, ChatUiMessage | null>();
+  for (let index = 0; index < messages.length; index++) {
+    if (!Object.hasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    if (message.role !== "assistant" || !trustedIds.has(message.id)) continue;
+    sources.set(message.id, sources.has(message.id) ? null : message);
+  }
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
-
-  for (const message of messages.slice(startIndex)) {
+  for (let index = startIndex; index < messages.length; index++) {
+    if (!Object.hasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    if (sources.get(message.id) !== message) continue;
     for (const part of message.parts) {
       result = extractSubmittedFormInputResult(part, options) ?? result;
     }
   }
-
   return result;
 }

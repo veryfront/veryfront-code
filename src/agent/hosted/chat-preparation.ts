@@ -748,6 +748,7 @@ export async function prepareHostedChatExecution<
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages, {
     legacyFormInputReplayAllowed: input.legacyFormInputReplayAllowed,
+    trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
   });
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
