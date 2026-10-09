@@ -1,3 +1,4 @@
+import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
@@ -919,9 +920,11 @@ async function emitModelCallContextEvent(
   const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
   if (
     !receipt.success ||
-    receipt.data.modelCallId.toLowerCase() !== modelCallId?.toLowerCase() ||
-    receipt.data.runId.toLowerCase() !== writerScope.canonicalRunId.toLowerCase() ||
-    receipt.data.projectId.toLowerCase() !== writerScope.projectId.toLowerCase()
+    modelCallId === undefined ||
+    privateTextToLowerCase(receipt.data.modelCallId) !== privateTextToLowerCase(modelCallId) ||
+    privateTextToLowerCase(receipt.data.runId) !==
+      privateTextToLowerCase(writerScope.canonicalRunId) ||
+    privateTextToLowerCase(receipt.data.projectId) !== privateTextToLowerCase(writerScope.projectId)
   ) {
     throw new DurableRunEventPersistenceError(
       "Model call capture receipt is missing or invalid",

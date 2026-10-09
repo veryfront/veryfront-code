@@ -58,7 +58,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Answers every model call with one streamed completion and records its bearer. */
 function captureModelAuthorizations(
-  options: { projectId?: string } = {},
+  options: { projectId?: string; onCapture?: (modelCallId: string) => void } = {},
 ): Array<string | null> {
   const authorizations: Array<string | null> = [];
   installMockFetch(
@@ -80,6 +80,7 @@ function captureModelAuthorizations(
               }]
               : []
           );
+        for (const capture of captures) options.onCapture?.(capture.model_call_id);
         return Response.json({
           run_id: runEventsPath[1],
           latest_event_id: 1,
@@ -239,85 +240,106 @@ describe("project-run inference credential", () => {
     assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
   });
 
-  it("keeps host capture receipts private despite replaced Map operations", async () => {
-    const projectId = "22222222-2222-4222-8222-222222222222";
-    const authorizations = captureModelAuthorizations({ projectId });
-    const managed = createManagedModelAgent("project-run-task-agent");
-    const observedReceipts: unknown[] = [];
-    const originalSet = Map.prototype.set;
-    const deps = {
-      runTask: async () => {
-        Map.prototype.set = function (key, value) {
-          if (
-            isRecord(value) && typeof value.eventId === "string" &&
-            typeof value.modelCallId === "string"
-          ) {
-            observedReceipts.push(value);
-            return this;
+  for (const replacement of ["map", "case"] as const) {
+    it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const captureIds = new Set<string>();
+      const authorizations = captureModelAuthorizations({
+        projectId,
+        onCapture: (id) => captureIds.add(id),
+      });
+      const managed = createManagedModelAgent("project-run-task-agent");
+      const observedReceipts: unknown[] = [];
+      const originalSet = Map.prototype.set;
+      const originalLowerCase = String.prototype.toLowerCase;
+      const deps = {
+        runTask: async () => {
+          if (replacement === "case") {
+            String.prototype.toLowerCase = function () {
+              const value = String(this);
+              if (captureIds.has(value)) {
+                observedReceipts.push(value);
+                throw new Error("project capture identifier hook");
+              }
+              return Reflect.apply(originalLowerCase, this, []);
+            };
           }
-          return originalSet.call(this, key, value);
-        };
-        let answer;
-        try {
-          answer = await managed.generate({ input: "Hello" });
-        } finally {
-          Map.prototype.set = originalSet;
-        }
-        return { success: true, result: { text: answer.text }, durationMs: 1 };
-      },
-      ensureProjectDiscovery: async () => {
-        const discovery = createEmptyDiscoveryResult();
-        discovery.tasks.set("smoke", { name: "Smoke", run: async () => ({ ok: true }) });
-        return discovery;
-      },
-      now: () => 0,
-      sleep: async () => {},
-    } as unknown as ProjectRunExecuteHandlerDeps;
-    const body = {
-      runId: "run_task_smoke",
-      kind: "task",
-      target: "task:smoke",
-      projectId,
-      canonicalRunId: "11111111-1111-4111-8111-111111111111",
-    };
-    const path = "/api/control-plane/runs/run_task_smoke/execute";
-    const rawBody = JSON.stringify(body);
-    const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
-      requestId: body.runId,
-      projectId: body.projectId,
-      requestMethod: "POST",
-      requestPath: path,
-    });
-    const request = new Request(`https://example.com${path}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-veryfront-control-plane-jws": jws,
-        "x-token": BROADER_TOKEN,
-        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
-        "x-veryfront-run-event-token": createProjectRunEventToken({
-          runId: body.runId,
-          projectId: body.projectId,
-          canonicalRunId: body.canonicalRunId,
-        }),
-      },
-      body: rawBody,
-    });
+          if (replacement === "map") {
+            Map.prototype.set = function (key, value) {
+              if (
+                isRecord(value) && typeof value.eventId === "string" &&
+                typeof value.modelCallId === "string"
+              ) {
+                observedReceipts.push(value);
+                return this;
+              }
+              return originalSet.call(this, key, value);
+            };
+          }
+          let answer;
+          try {
+            answer = await managed.generate({ input: "Hello" });
+          } finally {
+            Map.prototype.set = originalSet;
+            String.prototype.toLowerCase = originalLowerCase;
+          }
+          return { success: true, result: { text: answer.text }, durationMs: 1 };
+        },
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("smoke", { name: "Smoke", run: async () => ({ ok: true }) });
+          return discovery;
+        },
+        now: () => 0,
+        sleep: async () => {},
+      } as unknown as ProjectRunExecuteHandlerDeps;
+      const body = {
+        runId: "run_task_smoke",
+        kind: "task",
+        target: "task:smoke",
+        projectId,
+        canonicalRunId: "11111111-1111-4111-8111-111111111111",
+      };
+      const path = "/api/control-plane/runs/run_task_smoke/execute";
+      const rawBody = JSON.stringify(body);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
+        requestId: body.runId,
+        projectId: body.projectId,
+        requestMethod: "POST",
+        requestPath: path,
+      });
+      const request = new Request(`https://example.com${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+          "x-token": BROADER_TOKEN,
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId: body.runId,
+            projectId: body.projectId,
+            canonicalRunId: body.canonicalRunId,
+          }),
+        },
+        body: rawBody,
+      });
 
-    const ctx = createCtx(publicKeyPem);
-    ctx.projectId = body.projectId;
-    const result = await new ProjectRunExecuteHandler(deps).handle(request, ctx);
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = body.projectId;
+      const result = await new ProjectRunExecuteHandler(deps).handle(request, ctx);
 
-    assertExists(result.response);
-    assertEquals(await result.response.json(), {
-      success: true,
-      result: { text: "Hello" },
-      duration_ms: 1,
-      logs: null,
+      assertExists(result.response);
+      assertEquals(await result.response.json(), {
+        success: true,
+        result: { text: "Hello" },
+        duration_ms: 1,
+        logs: null,
+      });
+      assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
+      assertEquals(observedReceipts, []);
+      assertEquals(captureIds.size, 1);
     });
-    assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
-    assertEquals(observedReceipts, []);
-  });
+  }
 });
 
 describe("project-run inference credential isolation", () => {

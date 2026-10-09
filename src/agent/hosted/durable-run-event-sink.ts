@@ -1,3 +1,4 @@
+import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import {
   addAbortSignalListenerOnce,
   removeAbortSignalListener,
@@ -341,7 +342,8 @@ export function createDurableRunEventSink(input: {
             );
             if (
               !receipt.success ||
-              receipt.data.modelCallId.toLowerCase() !== event.modelCallId.toLowerCase()
+              privateTextToLowerCase(receipt.data.modelCallId) !==
+                privateTextToLowerCase(event.modelCallId)
             ) {
               throw new DurableRunEventPersistenceError(
                 "Durable model capture receipt is missing or invalid",

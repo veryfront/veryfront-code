@@ -2550,12 +2550,15 @@ function createProjectRunObservationMirror(input: {
               "Project run observation model-call receipt is invalid",
             );
           }
-          modelCallCaptureReceipts.set(value.model_call_id.toLowerCase(), {
-            eventId: value.event_id,
-            projectId: value.project_id,
-            runId: value.run_id,
-            modelCallId: value.model_call_id,
-          });
+          modelCallCaptureReceipts.set(
+            IntrinsicReflectApply(StringToLowerCase, value.model_call_id, []) as string,
+            {
+              eventId: value.event_id,
+              projectId: value.project_id,
+              runId: value.run_id,
+              modelCallId: value.model_call_id,
+            },
+          );
         }
       }
     } catch (error) {
@@ -2587,7 +2590,7 @@ function createProjectRunObservationMirror(input: {
     },
     handleChunk: async () => {},
     takeModelCallCaptureReceipt(modelCallId) {
-      const key = modelCallId.toLowerCase();
+      const key = IntrinsicReflectApply(StringToLowerCase, modelCallId, []) as string;
       const receipt = modelCallCaptureReceipts.get(key);
       if (receipt) modelCallCaptureReceipts.delete(key);
       return receipt;
