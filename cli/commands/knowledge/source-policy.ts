@@ -118,10 +118,13 @@ function isSupportedKnowledgeFile(path: string): boolean {
   return TEXT_FALLBACK_FILENAMES.has(fileName);
 }
 
-function classifyCommonKnowledgePath(path: string): KnowledgeIngestSourceDecision | null {
+function classifyCommonKnowledgePath(
+  path: string,
+  allowHidden = false,
+): KnowledgeIngestSourceDecision | null {
   const segments = normalizePathSegments(path);
   const hiddenSegment = findHiddenSegment(segments);
-  if (hiddenSegment != null) {
+  if (!allowHidden && hiddenSegment != null) {
     return {
       kind: "skip",
       reason: "hidden_path",
@@ -141,8 +144,11 @@ function classifyCommonKnowledgePath(path: string): KnowledgeIngestSourceDecisio
   return null;
 }
 
-export function classifyKnowledgeDirectoryPath(path: string): KnowledgeIngestSourceDecision {
-  return classifyCommonKnowledgePath(path) ?? { kind: "ingest" };
+export function classifyKnowledgeDirectoryPath(
+  path: string,
+  allowHidden = false,
+): KnowledgeIngestSourceDecision {
+  return classifyCommonKnowledgePath(path, allowHidden) ?? { kind: "ingest" };
 }
 
 export function classifyKnowledgeSourcePath(path: string): KnowledgeIngestSourceDecision {

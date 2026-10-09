@@ -129,7 +129,9 @@ With `--json`, the command returns a machine-readable run result with
   "metadata": {
     "requested_count": 1,
     "source_mode": "explicit_sources",
-    "knowledge_path": "knowledge"
+    "knowledge_path": "knowledge",
+    "okf_bundle": false,
+    "pending_acceptance": []
   },
   "summary": {
     "requested_count": 1,

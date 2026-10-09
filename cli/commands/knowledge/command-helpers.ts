@@ -176,9 +176,9 @@ function classifySourceOrSkip(input: {
 }
 
 function classifyDirectoryOrSkip(
-  input: { source: string },
+  input: { source: string; allowHidden?: boolean },
 ): KnowledgeIngestSkippedFileResult | null {
-  const decision = classifyKnowledgeDirectoryPath(input.source);
+  const decision = classifyKnowledgeDirectoryPath(input.source, input.allowHidden);
   if (decision.kind === "ingest") {
     return null;
   }
@@ -216,7 +216,7 @@ export async function collectLocalFiles(
     return { sources: [], skipped: [] };
   }
 
-  const skippedRootDirectory = okfBundle ? null : classifyDirectoryOrSkip({ source: root });
+  const skippedRootDirectory = classifyDirectoryOrSkip({ source: root, allowHidden: okfBundle });
   if (skippedRootDirectory != null) {
     return {
       sources: [],
@@ -232,7 +232,7 @@ export async function collectLocalFiles(
     for await (const entry of fs.readDir(dir)) {
       const entryPath = join(dir, entry.name);
       if (entry.isDirectory) {
-        const skipped = okfBundle ? null : classifyDirectoryOrSkip({ source: entryPath });
+        const skipped = classifyDirectoryOrSkip({ source: entryPath, allowHidden: okfBundle });
         if (skipped != null) {
           collection.skipped.push(skipped);
           continue;

@@ -1327,6 +1327,48 @@ it("collects hidden OKF upload Markdown without downloading viewer artifacts", a
   assertEquals(collection.skipped[0]?.source, "uploads/.bundle/viz.html");
 });
 
+it("retains skipped-only prefix results without retrying a directory prefix", async () => {
+  let calls = 0;
+  const collection = await collectKnowledgeSources(
+    { sources: [], path: "uploads/docs", all: true, recursive: true, okfBundle: false },
+    {
+      client: createMockClient({
+        get: () => {
+          calls++;
+          return Promise.resolve({
+            data: [{ type: "file", path: "uploads/docs/archive.zip" }],
+            page_info: { next: null },
+          });
+        },
+      }),
+      projectSlug: "my-project",
+      downloadUploads: async () => {
+        throw new Error("must not download unsupported files");
+      },
+    },
+  );
+  assertEquals(calls, 1);
+  assertEquals(collection.sources, []);
+  assertEquals(collection.skipped.map((source) => source.reason), ["unsupported_file_type"]);
+});
+
+it("excludes dependency directories from OKF bundle walks", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-ignored-" });
+  try {
+    await Deno.mkdir(join(root, "node_modules", "package"), { recursive: true });
+    await Deno.writeTextFile(join(root, "index.md"), "# Bundle\n");
+    await Deno.writeTextFile(join(root, "node_modules", "package", "index.md"), "# Dependency\n");
+    const collection = await collectKnowledgeSources(
+      { sources: [], path: root, all: true, recursive: true, okfBundle: true },
+      { client: createMockClient(), projectSlug: "my-project", downloadUploads: async () => [] },
+    );
+    assertEquals(collection.sources.map((source) => source.localPath), [join(root, "index.md")]);
+    assertEquals(collection.skipped.map((source) => source.reason), ["ignored_directory"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 it("collects Markdown in hidden OKF roots and directories", async () => {
   const tempDir = await makeTempDir({ prefix: "veryfront-okf-hidden-" });
   const root = join(tempDir, ".bundle");
