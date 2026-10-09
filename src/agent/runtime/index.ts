@@ -3257,6 +3257,7 @@ export class AgentRuntime {
             closeSSEStream(controller);
           } catch (streamError) {
             if (isAgentManualPauseBoundary(streamError)) {
+              logger.info("Agent stopped at a pause boundary", { agentId: this.id });
               try {
                 await turnPersistence.finalize();
                 this.#manualPause?.persisted?.(true);

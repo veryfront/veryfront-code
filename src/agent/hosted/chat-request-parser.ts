@@ -28,6 +28,8 @@ import {
   safeParseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./tool-exposure-checkpoint.ts";
 import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
@@ -161,6 +163,12 @@ export type ParsedHostedChatRequest = {
   serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
+  /**
+   * Tool exposure checkpoint from forwardedProps whose exact value matches the
+   * digest carried by the verified run-event token. Set only on paths whose
+   * request body is otherwise untrusted.
+   */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /**
    * Integration tools the control plane resolved for this run, taken from the
    * verified run-event token rather than the request body. Absent unless a
@@ -359,6 +367,35 @@ async function withVerifiedRunEventAppendToken(
     }
   }
 
+  let verifiedToolExposureCheckpoint: ToolExposureCheckpoint | undefined;
+  if (!trustServerEnvelope) {
+    let signedToolExposureCheckpointSha256: unknown;
+    try {
+      signedToolExposureCheckpointSha256 = readOwnDataProperty(
+        verification,
+        "toolExposureCheckpointSha256",
+        "Writer verification",
+        false,
+      );
+    } catch {
+      return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+    }
+    if (signedToolExposureCheckpointSha256 !== undefined) {
+      const checkpoint = getServerResolvedToolExposureCheckpoint(
+        parsedRequest.forwardedProps,
+        true,
+      );
+      const digest = checkpoint ? await computeToolExposureCheckpointSha256(checkpoint) : undefined;
+      if (
+        !digest || typeof signedToolExposureCheckpointSha256 !== "string" ||
+        digest !== signedToolExposureCheckpointSha256
+      ) {
+        return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+      }
+      verifiedToolExposureCheckpoint = checkpoint;
+    }
+  }
+
   const verifiedRequest: ParsedHostedChatRequest = {
     ...(trustServerEnvelope
       ? parsedRequest
@@ -378,6 +415,9 @@ async function withVerifiedRunEventAppendToken(
       }
       : {}),
     ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
+    ...(verifiedToolExposureCheckpoint
+      ? { serverResolvedToolExposureCheckpoint: verifiedToolExposureCheckpoint }
+      : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
@@ -409,9 +449,23 @@ function stripUnverifiedServerResolvedRequestState(
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
     serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
+    serverResolvedToolExposureCheckpoint: _serverResolvedToolExposureCheckpoint,
     ...publicParsedRequest
   } = parsedRequest;
   return publicParsedRequest;
+}
+
+/**
+ * SHA-256 of a tool exposure checkpoint as the run-event token binds it: the
+ * JSON text of `{ version, loadedToolNames }` in that key order.
+ */
+export function computeToolExposureCheckpointSha256(
+  checkpoint: ToolExposureCheckpoint,
+): Promise<string> {
+  return computeHash(privateJsonStringify({
+    version: checkpoint.version,
+    loadedToolNames: checkpoint.loadedToolNames,
+  }));
 }
 
 /**
