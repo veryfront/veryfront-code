@@ -248,6 +248,24 @@ export interface BuildDetachedFallbackChunksInput {
   hasIncompleteFallbackToolParts: boolean;
 }
 
+/**
+ * Ownership evidence is promoted only from exactly one final-step record for the call:
+ * duplicate or conflicting records for the same tool call id are ambiguous and never promote.
+ */
+function hasUniqueProviderOwnedFallback(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): boolean {
+  if (!isToolUiPart(part)) return false;
+  const matches = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  if (matches.length !== 1) return false;
+  const [match] = matches;
+  return match !== undefined && isToolUiPart(match) &&
+    toolPartName(match) === toolPartName(part) && match.providerExecuted === true;
+}
+
 /** State for build finalized message. */
 export function buildFinalizedMessageState(
   input: BuildFinalizedMessageStateInput,
@@ -257,17 +275,11 @@ export function buildFinalizedMessageState(
     : input.responseMessage;
   const finalStepFallbackParts = buildFallbackUiMessageParts(input.finalStep);
   const completedParts = persistedMessage.parts.map((part) => {
-    const ownershipMatches = isToolUiPart(part)
-      ? finalStepFallbackParts.filter((fallback) =>
-        isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-        toolPartName(fallback) === toolPartName(part)
-      )
-      : [];
     if (
       !input.isAborted && isToolUiPart(part) &&
       terminalToolOutputState(part.state) !== undefined &&
-      part.providerExecuted === undefined && ownershipMatches.length === 1 &&
-      isToolUiPart(ownershipMatches[0]!) && ownershipMatches[0]!.providerExecuted === true
+      part.providerExecuted === undefined &&
+      hasUniqueProviderOwnedFallback(finalStepFallbackParts, part)
     ) {
       return { ...part, providerExecuted: true };
     }
