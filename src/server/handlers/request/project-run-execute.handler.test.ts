@@ -2301,6 +2301,36 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("rejects a missing preview destination before fetching upload sources", async () => {
+    const body = {
+      runId: "run_knowledge_missing_branch",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      runtimeTargetKind: "preview_branch",
+      config: { paths: ["uploads/guide.md"] },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_missing_branch/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    let fetched = false;
+    const result = await withMockFetch(
+      (() => {
+        fetched = true;
+        throw new Error("must reject before download");
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(signed.request, createCtx(signed.publicKeyPem)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(result.response.status, 400);
+    assertStringIncludes(JSON.stringify(payload), "runtimeTargetBranchId");
+    assertEquals(fetched, false);
+  });
+
   it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
     const controller = new AbortController();
     const listingStarted = Promise.withResolvers<void>();

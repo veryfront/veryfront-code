@@ -22,8 +22,10 @@ veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploa
 
 Studio knowledge-ingest runs write generated files to their admitted preview branch.
 Main-branch runs keep writing to main. The destination comes from the signed run
-target, not ingestion task configuration. Environment-target output behavior is
-unchanged; this does not define an environment-to-source destination policy.
+target, not ingestion task configuration. A preview target requires a branch ID
+before source downloads begin. Environment-target runs retain the current main
+destination in this change. [The writable-target follow-up](https://github.com/veryfront/veryfront-code/pull/5014)
+rejects environment targets until an explicit main or preview destination is admitted.
 
 ## Prerequisites
 
