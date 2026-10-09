@@ -20,7 +20,7 @@ import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils"
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { inspectOkfDocument } from "veryfront/knowledge";
-import { classifyKnowledgeSourcePath } from "./source-policy.ts";
+import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
 import {
   buildKnowledgeIngestRunResult,
@@ -209,8 +209,11 @@ function defaultOutputRoot(): Promise<string> {
 function classifySourceOrSkip(input: {
   source: string;
   localSourcePath?: string | null;
+  okfBundle?: boolean;
 }): KnowledgeIngestSkippedFileResult | null {
-  const decision = classifyKnowledgeSourcePath(input.source);
+  const decision = input.okfBundle
+    ? classifyKnowledgeDirectoryPath(input.source, true)
+    : classifyKnowledgeSourcePath(input.source);
   if (decision.kind === "ingest") {
     return null;
   }
@@ -279,7 +282,7 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[], okfBundle = fa
     }
 
     const source = formatKnowledgeUploadSource(item.path);
-    const skippedUpload = okfBundle ? null : classifySourceOrSkip({ source });
+    const skippedUpload = classifySourceOrSkip({ source, okfBundle });
     if (skippedUpload == null) {
       uploadTargets.push(item.path);
       continue;
@@ -794,17 +797,20 @@ export async function ingestResolvedSources(
     try {
       const sourceName = buildKnowledgeSourceName(source);
       const eventLogger = deps.eventLogger;
-      const parserDeps = eventLogger
-        ? {
-          onProgress: (event: DocumentExtractionProgressEvent) => {
-            deps.signal?.throwIfAborted();
-            eventLogger.info(
-              "Knowledge source extraction progress",
-              buildExtractionProgressMetadata(sourceName, event),
-            );
-          },
-        }
-        : undefined;
+      const parserDeps = {
+        signal: deps.signal,
+        ...(eventLogger
+          ? {
+            onProgress: (event: DocumentExtractionProgressEvent) => {
+              deps.signal?.throwIfAborted();
+              eventLogger.info(
+                "Knowledge source extraction progress",
+                buildExtractionProgressMetadata(sourceName, event),
+              );
+            },
+          }
+          : {}),
+      };
       parser = await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,

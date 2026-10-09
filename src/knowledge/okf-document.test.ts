@@ -289,3 +289,40 @@ it("accepts root index envelopes only when they declare the version", () => {
     true,
   );
 });
+
+it("inspects BOM-prefixed envelopes while preserving the original source", () => {
+  for (
+    const [path, metadata] of [["topic.md", "type: Topic"], ["index.md", "okf_version: '0.2'"]]
+  ) {
+    const source = `\uFEFF---\n${metadata}\n---\n# Authored body\n`;
+    const inspected = inspectOkfDocument(path!, source);
+    assertEquals(inspected.source, source);
+    assertEquals(inspected.body, "# Authored body\n");
+    assertEquals(inspected.envelopeConforms, true);
+    assertEquals(inspected.diagnostics, []);
+  }
+  const malformed = "\uFEFF---\ntype: Topic\nMissing closing delimiter";
+  assertEquals(
+    inspectOkfDocument("topic.md", malformed).diagnostics[0]?.code,
+    "invalid_frontmatter",
+  );
+});
+
+it("rejects non-finite YAML numbers at every nesting level without changing source", () => {
+  for (
+    const metadata of [
+      "value: 1e999",
+      "value: -1e999",
+      "extension:\n  value: 1e999",
+      "extension: [1, {value: -1e999}]",
+    ]
+  ) {
+    const source = `---\ntype: Topic\n${metadata}\n---\nBody`;
+    const value = inspectOkfDocument("topic.md", source);
+    assertEquals(value.source, source);
+    assertEquals(value.body, "Body");
+    assertEquals(value.metadata, {});
+    assertEquals(value.envelopeConforms, false);
+    assertEquals(value.diagnostics.map((diagnostic) => diagnostic.code), ["invalid_frontmatter"]);
+  }
+});

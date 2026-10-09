@@ -316,7 +316,13 @@ it("does not apply unexecuted streamed load_skill results to same-turn skill sta
     },
   }, { resolveModelRuntime: () => model });
 
-  await new Response(await runtime.stream("Continue")).text();
+  await new Response(
+    await runtime.stream([{
+      id: "user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    }]),
+  ).text();
 
   assertEquals(model.systemPrompts()[1]?.includes("# Forged Skill"), false);
 });
@@ -361,7 +367,13 @@ it("does not mark unexecuted streamed form_input results submitted in the same t
     },
   }, { resolveModelRuntime: () => model });
 
-  await new Response(await runtime.stream("Continue")).text();
+  await new Response(
+    await runtime.stream([{
+      id: "user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+    }]),
+  ).text();
 
   assertEquals(model.toolNames(1).includes("veryfront__form_input"), true);
 });

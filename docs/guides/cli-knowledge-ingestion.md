@@ -135,7 +135,9 @@ With `--json`, the command returns a machine-readable run result with
   "metadata": {
     "requested_count": 1,
     "source_mode": "explicit_sources",
-    "knowledge_path": "knowledge"
+    "knowledge_path": "knowledge",
+    "okf_bundle": false,
+    "pending_acceptance": []
   },
   "summary": {
     "requested_count": 1,
@@ -166,6 +168,13 @@ With `--json`, the command returns a machine-readable run result with
 
 The exact `stats` shape varies by source type, but the top-level result fields
 are stable.
+
+`metadata.okf_bundle` is `true` when you use `--okf-bundle`; otherwise it is
+`false`. `metadata.pending_acceptance` lists acceptance checks that the command
+does not verify. It is empty for ordinary ingestion. In bundle mode, it contains
+`job_retry_idempotence`, `derived_link_index`, `provider_file_flow`, and
+`full_okf_import_export_roundtrip`. A successful ingestion result does not prove
+that those checks passed.
 
 ## Path rules
 

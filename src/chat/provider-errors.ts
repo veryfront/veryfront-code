@@ -5,6 +5,8 @@ import {
   ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderStreamProtocolError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
@@ -21,6 +23,7 @@ import {
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
   PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
   registeredProviderFailure,
 } from "./provider-error-registry.ts";
 export { safeJsonParse };
@@ -519,11 +522,21 @@ function parseProviderErrorInner(
   const registered = registeredProviderFailure(error);
   if (registered) return registered;
 
+  if (error instanceof ProviderRateLimitError) {
+    return {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    };
+  }
   if (error instanceof ProviderQuotaError) {
     return AI_PROVIDER_BILLING_ERROR;
   }
   if (error instanceof ProviderOutputTruncatedError) {
     return PROVIDER_OUTPUT_TRUNCATED_ERROR;
+  }
+  if (error instanceof ProviderStreamProtocolError) {
+    return PROVIDER_STREAM_PROTOCOL_ERROR;
   }
   if (error instanceof ProviderOverloadedError) {
     return {

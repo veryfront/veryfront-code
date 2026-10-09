@@ -39,7 +39,12 @@ export interface KnowledgeParserInput {
 }
 
 export type ExtractDocumentText = (
-  input: { filePath: string; mimeType: string; onProgress?: DocumentExtractionProgress },
+  input: {
+    filePath: string;
+    mimeType: string;
+    onProgress?: DocumentExtractionProgress;
+    signal?: AbortSignal;
+  },
 ) => Promise<string>;
 
 type DocumentKreuzbergExtensionModule = {
@@ -53,11 +58,13 @@ type DocumentKreuzbergExtensionModule = {
 };
 
 export interface RunKnowledgeParsersDeps {
+  signal?: AbortSignal;
   extractDocumentText?: ExtractDocumentText;
   onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
 }
 
 interface ResolvedRunKnowledgeParsersDeps {
+  signal?: AbortSignal;
   extractDocumentText: ExtractDocumentText;
   onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
 }
@@ -269,13 +276,17 @@ async function preserveOkfCompanion(input: {
   filePath: string;
   outputDir: string;
   relativePath: string;
+  signal?: AbortSignal;
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfCompanionRelativePath(input.relativePath);
+  input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
+  input.signal?.throwIfAborted();
   decodeOkfUtf8(relativePath, bytes);
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
-  await Deno.writeFile(outputPath, bytes);
+  input.signal?.throwIfAborted();
+  await Deno.writeFile(outputPath, bytes, { signal: input.signal });
   return {
     success: true,
     source_path: input.filePath,
@@ -297,9 +308,12 @@ async function preserveOkfDocument(input: {
   outputDir: string;
   relativePath: string;
   sourceReference?: string;
+  signal?: AbortSignal;
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfDocumentRelativePath(input.relativePath);
+  input.signal?.throwIfAborted();
   const source = decodeOkfUtf8(relativePath, await Deno.readFile(input.filePath));
+  input.signal?.throwIfAborted();
   const inspected = inspectOkfDocument(relativePath, source);
   if (!inspected.envelopeConforms) {
     const details = inspected.diagnostics.map((diagnostic) => diagnostic.message).join(" ");
@@ -307,7 +321,8 @@ async function preserveOkfDocument(input: {
   }
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
-  await Deno.writeTextFile(outputPath, source);
+  input.signal?.throwIfAborted();
+  await Deno.writeTextFile(outputPath, source, { signal: input.signal });
   const title = typeof inspected.metadata.title === "string" && inspected.metadata.title.trim()
     ? inspected.metadata.title
     : titleizeFilename(relativePath);
@@ -475,7 +490,12 @@ async function parseWithKreuzberg(
 ): Promise<ParserOutput> {
   const mimeType = MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream";
   const content = cleanText(
-    await deps.extractDocumentText({ filePath: path, mimeType, onProgress: deps.onProgress }),
+    await deps.extractDocumentText({
+      filePath: path,
+      mimeType,
+      onProgress: deps.onProgress,
+      signal: deps.signal,
+    }),
   );
   return {
     content: content || "_No extractable text found in document._",
@@ -545,15 +565,23 @@ function buildSummary(sourceType: string, stats: Record<string, unknown>): strin
 }
 
 async function defaultExtractDocumentText(
-  input: { filePath: string; mimeType: string; onProgress?: DocumentExtractionProgress },
+  input: {
+    filePath: string;
+    mimeType: string;
+    onProgress?: DocumentExtractionProgress;
+    signal?: AbortSignal;
+  },
 ): Promise<string> {
+  input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
+  input.signal?.throwIfAborted();
   const { KreuzbergDocumentExtractor } = await importFirstPartyExtensionModule<
     DocumentKreuzbergExtensionModule
   >(
     "ext-document-kreuzberg",
     "@veryfront/ext-document-kreuzberg",
   );
+  input.signal?.throwIfAborted();
   const extractor = new KreuzbergDocumentExtractor();
   return await extractor.extractInWorker(
     bytes.buffer.slice(
@@ -561,7 +589,7 @@ async function defaultExtractDocumentText(
       bytes.byteOffset + bytes.byteLength,
     ),
     input.mimeType,
-    { onProgress: input.onProgress },
+    { onProgress: input.onProgress, signal: input.signal },
   );
 }
 
@@ -595,6 +623,7 @@ export async function runKnowledgeParsers(input: {
   files: KnowledgeParserInput[];
   outputDir: string;
 }, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult[]> {
+  deps.signal?.throwIfAborted();
   if (!input.files.length) {
     return [];
   }
@@ -602,30 +631,36 @@ export async function runKnowledgeParsers(input: {
   const parserDeps: ResolvedRunKnowledgeParsersDeps = {
     extractDocumentText: deps.extractDocumentText ?? defaultExtractDocumentText,
     onProgress: deps.onProgress,
+    signal: deps.signal,
   };
 
+  deps.signal?.throwIfAborted();
   await Deno.mkdir(input.outputDir, { recursive: true });
   const results: KnowledgeParserResult[] = [];
 
   for (const file of input.files) {
     try {
+      deps.signal?.throwIfAborted();
       const stat = await Deno.stat(file.filePath);
       if (!stat.isFile) {
         throw new Error(`File not found: ${file.filePath}`);
       }
 
+      deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
         const preserve = file.okfRelativePath.toLowerCase().endsWith(".md")
           ? preserveOkfDocument({
             filePath: file.filePath,
             outputDir: input.outputDir,
             relativePath: file.okfRelativePath,
+            signal: deps.signal,
             sourceReference: file.sourceReference,
           })
           : preserveOkfCompanion({
             filePath: file.filePath,
             outputDir: input.outputDir,
             relativePath: file.okfRelativePath,
+            signal: deps.signal,
           });
         results.push(await preserve);
         continue;
@@ -633,6 +668,7 @@ export async function runKnowledgeParsers(input: {
 
       const definition = selectParserDefinition(file.filePath);
       const parsed = await definition.parse(file.filePath, parserDeps);
+      deps.signal?.throwIfAborted();
       const content = cleanText(parsed.content);
       const fileName = basename(file.filePath);
       const extension = extname(fileName);
@@ -654,7 +690,8 @@ export async function runKnowledgeParsers(input: {
         "",
       ].join("\n");
 
-      await Deno.writeTextFile(outputPath, markdown);
+      deps.signal?.throwIfAborted();
+      await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
       results.push({
         success: true,
         source_path: file.filePath,
@@ -671,6 +708,7 @@ export async function runKnowledgeParsers(input: {
         document_kind: "generated",
       });
     } catch (error) {
+      deps.signal?.throwIfAborted();
       if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
         throw error;
       }
