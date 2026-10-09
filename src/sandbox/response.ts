@@ -13,11 +13,14 @@ import type {
 } from "./types.ts";
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 
 /** @internal Only explicit ephemeral storage permits automatic creation cleanup. */
 export function hasEphemeralSandboxStorage(value: unknown): boolean {
-  return value !== null && typeof value === "object" &&
-    getOwnPropertyDescriptor(value, "workspace_storage")?.value === "ephemeral";
+  if (value === null || typeof value !== "object") return false;
+  const descriptor = getOwnPropertyDescriptor(value, "workspace_storage");
+  return descriptor !== undefined && objectHasOwn(descriptor, "value") &&
+    descriptor.value === "ephemeral";
 }
 
 function record(value: unknown): Record<string, unknown> {

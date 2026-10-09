@@ -29,6 +29,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { CommandStreamEvent } from "./sandbox.ts";
+import { hasEphemeralSandboxStorage } from "./response.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
@@ -185,6 +186,22 @@ describe("Sandbox", () => {
       assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
     });
   }
+
+  it("does not enable creation cleanup from inherited or accessor storage policy", () => {
+    assertEquals(
+      hasEphemeralSandboxStorage(Object.create({ workspace_storage: "ephemeral" })),
+      false,
+    );
+    let getterCalls = 0;
+    const session = Object.defineProperty({}, "workspace_storage", {
+      get() {
+        getterCalls++;
+        return "ephemeral";
+      },
+    });
+    assertEquals(hasEphemeralSandboxStorage(session), false);
+    assertEquals(getterCalls, 0);
+  });
 
   it("does not expose ambient authentication through a static class method", () => {
     setEnv("VERYFRONT_API_URL", "https://api.test.com");
