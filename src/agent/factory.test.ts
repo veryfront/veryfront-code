@@ -943,12 +943,18 @@ description: Excluded skill
     });
     const observedToolNames: string[][] = [];
     const observedPrompts: string[] = [];
-    const model: ModelRuntime = {
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
       provider: "hosted",
       modelId: "hosted/canonical-replacement-loader",
       async doGenerate(options) {
         observedToolNames.push(toolNamesFromModelOptions(options));
-        observedPrompts.push(flattenSystemInstructions(options.prompt));
+        observedPrompts.push(
+          flattenSystemInstructions(
+            options.prompt.filter((
+              message,
+            ): message is Extract<typeof message, { role: "system" }> => message.role === "system"),
+          ),
+        );
         return {
           content: [{ type: "text", text: "done" }],
           finishReason: "stop",
