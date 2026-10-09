@@ -659,6 +659,8 @@ Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classi
           const signal = new Request(input, init).signal;
           return new Promise<Response>((_resolve, reject) => {
             signal.addEventListener("abort", () => {
+              // Observe the exchange timeout before triggering caller cancellation.
+              // Both cancellations occur before the transport rejects.
               controller.abort("parent-writer-token-must-not-leak");
               reject(signal.reason);
             }, { once: true });
@@ -672,6 +674,7 @@ Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classi
     "Unable to initialize durable child event persistence",
   );
 
+  assertEquals(controller.signal.aborted, true);
   assertEquals(
     error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
     "timeout",
