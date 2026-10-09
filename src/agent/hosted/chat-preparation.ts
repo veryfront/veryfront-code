@@ -135,13 +135,12 @@ export type HostedChatRuntimePreparationSteering = {
 };
 
 function mergePreservedSourceMessageIds(
-  checkpointIds: readonly string[] | undefined,
-  retentionIds: readonly string[] | undefined,
+  ...sourceIdGroups: Array<readonly string[] | undefined>
 ): readonly string[] | undefined {
-  if (checkpointIds === undefined && retentionIds === undefined) {
+  if (sourceIdGroups.every((ids) => ids === undefined)) {
     return undefined;
   }
-  return [...new Set([...(checkpointIds ?? []), ...(retentionIds ?? [])])];
+  return [...new Set(sourceIdGroups.flatMap((ids) => ids ?? []))];
 }
 
 /** Input payload for hosted chat runtime instructions. */
@@ -919,6 +918,7 @@ export async function prepareHostedChatRuntimeMessages(
         ...options.historicalToolInputRetention,
         preserveSourceMessageIds: mergePreservedSourceMessageIds(
           options.providerReplayCheckpointMessageIds,
+          options.trustedHostedHistoryMessageIds,
           options.historicalToolInputRetention?.preserveSourceMessageIds,
         ),
       },
@@ -949,6 +949,7 @@ export async function prepareHostedChatRuntimeMessages(
       ...options.historicalToolInputRetention,
       preserveSourceMessageIds: mergePreservedSourceMessageIds(
         options.providerReplayCheckpointMessageIds,
+        options.trustedHostedHistoryMessageIds,
         options.historicalToolInputRetention?.preserveSourceMessageIds,
       ),
     },
