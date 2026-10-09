@@ -1,5 +1,8 @@
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
-import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
+import {
+  acceptInheritedRunAdmission,
+  acceptWorkflowInheritedRunAdmission,
+} from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -1218,6 +1221,42 @@ describe("private workflow inherited execution response", () => {
       );
     });
   }
+  const privateVariant = (
+    body: string,
+    init: { status?: number; drop?: string[] } = {},
+  ) => {
+    const headers = new Headers(privateResponse(projection).headers);
+    for (const name of init.drop ?? []) headers.delete(name);
+    return new Response(body, { status: init.status ?? 202, headers });
+  };
+  for (
+    const [name, response] of [
+      ["a failed status", () => privateVariant(JSON.stringify(projection), { status: 409 })],
+      [
+        "missing no-store",
+        () => privateVariant(JSON.stringify(projection), { drop: ["Cache-Control"] }),
+      ],
+      [
+        "missing terminal token",
+        () =>
+          privateVariant(JSON.stringify(projection), { drop: ["X-Veryfront-Run-Terminal-Token"] }),
+      ],
+      ["a malformed body", () => privateVariant("{not json")],
+    ] as const
+  ) {
+    it(`rejects private response with ${name}`, async () => {
+      await assertRejects(
+        () => acceptWorkflowInheritedRunAdmission(response(), binding),
+        Error,
+        "binding mismatch",
+      );
+    });
+  }
+  it("admits a private non-terminal response through the direct admission path", async () => {
+    const run = await acceptInheritedRunAdmission(privateResponse(projection), binding);
+    assertEquals(run.canonicalRunId, childId);
+    assertEquals(run.conversationId, conversationId);
+  });
 });
 
 describe("workflow terminal admission result validation", () => {

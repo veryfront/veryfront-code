@@ -262,7 +262,7 @@ for (const nextStep of [10_001, Number.MAX_SAFE_INTEGER]) {
       token: "pause-test-token",
       signal: new AbortController().signal,
       fetch: (_url, init) => {
-        sent = JSON.parse(init!.body as string);
+        sent = JSON.parse(String(observeFetchRequestInit(init).body));
         return Promise.resolve(Response.json({ stop: true }));
       },
     });

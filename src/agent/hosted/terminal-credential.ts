@@ -279,9 +279,16 @@ async function normalizeInheritedExecutionResponse(
     response.headers.get("Content-Type")?.split(";")[0]?.trim() !==
       "application/vnd.veryfront.inherited-run+json"
   ) return response;
-  const value = await response.clone().json();
-  const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
-  const route = terminalRoute(token ?? undefined, terminalRoutingRunId(token ?? ""));
+  const mismatch = () => new Error("Inherited child resource binding mismatch");
+  let value;
+  let route: { id: string; generation: string };
+  try {
+    value = await response.clone().json();
+    const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER) ?? "";
+    route = terminalRoute(token, terminalRoutingRunId(token));
+  } catch {
+    throw mismatch();
+  }
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const terminal = ["completed", "failed", "cancelled"].includes(value?.status);
   if (
@@ -298,9 +305,11 @@ async function normalizeInheritedExecutionResponse(
     (terminal && !Object.hasOwn(value, "output")) ||
     (value.error !== undefined &&
       (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
-  ) throw new Error("Inherited child resource binding mismatch");
+  ) throw mismatch();
   const headers = new Headers(response.headers);
   headers.set("Content-Type", "application/json");
+  headers.delete("Content-Length");
+  headers.delete("Content-Encoding");
   return new Response(
     JSON.stringify({
       id: value.canonicalRunId,
