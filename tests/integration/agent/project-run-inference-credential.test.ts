@@ -29,6 +29,7 @@ import {
 const INFERENCE_TOKEN = "project-run-inference-token";
 const BROADER_TOKEN = "broader-project-runtime-token";
 const encoder = new TextEncoder();
+const ArrayIsArray = Array.isArray;
 
 function createProjectRunEventToken(input: {
   runId: string;
@@ -53,7 +54,7 @@ function createProjectRunEventToken(input: {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 /** Answers every model call with one streamed completion and records its bearer. */
@@ -67,7 +68,7 @@ function captureModelAuthorizations(
       const runEventsPath = new URL(request.url).pathname.match(/^\/runs\/([0-9a-f-]+)\/events$/i);
       if (runEventsPath) {
         const payload: unknown = await request.json();
-        const events = isRecord(payload) && Array.isArray(payload.events) ? payload.events : [];
+        const events = isRecord(payload) && ArrayIsArray(payload.events) ? payload.events : [];
         const captures = events.filter(isRecord)
           .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
           .flatMap((event, index) =>
@@ -240,7 +241,17 @@ describe("project-run inference credential", () => {
     assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
   });
 
-  for (const replacement of ["map", "case", "weak-get", "weak-set", "weak-delete"] as const) {
+  for (
+    const replacement of [
+      "map",
+      "case",
+      "weak-get",
+      "weak-set",
+      "weak-delete",
+      "response-ok",
+      "array",
+    ] as const
+  ) {
     it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
       const projectId = "22222222-2222-4222-8222-222222222222";
       const captureIds = new Set<string>();
@@ -255,6 +266,8 @@ describe("project-run inference credential", () => {
       const originalWeakGet = WeakMap.prototype.get;
       const originalWeakSet = WeakMap.prototype.set;
       const originalWeakDelete = WeakMap.prototype.delete;
+      const originalOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+      const originalIsArray = Array.isArray;
       const deps = {
         runTask: async () => {
           if (replacement === "case") {
@@ -306,6 +319,33 @@ describe("project-run inference credential", () => {
               return originalWeakDelete.call(this, key);
             };
           }
+          if (replacement === "response-ok") {
+            Object.defineProperty(Response.prototype, "ok", {
+              ...originalOk,
+              get() {
+                if (
+                  captureIds.size > 0 &&
+                  this.headers.get("content-type")?.includes("application/json")
+                ) {
+                  observedReceipts.push(this);
+                  throw new Error("project append response hook");
+                }
+                return Reflect.apply(originalOk.get!, this, []);
+              },
+            });
+          }
+          if (replacement === "array") {
+            Array.isArray = (value: unknown): value is unknown[] => {
+              if (
+                typeof value === "object" && value !== null &&
+                ("model_call_captures" in value || "model_call_id" in value)
+              ) {
+                observedReceipts.push(value);
+                throw new Error("project append receipt array hook");
+              }
+              return originalIsArray(value);
+            };
+          }
           let answer;
           try {
             answer = await managed.generate({ input: "Hello" });
@@ -315,6 +355,8 @@ describe("project-run inference credential", () => {
             WeakMap.prototype.get = originalWeakGet;
             WeakMap.prototype.set = originalWeakSet;
             WeakMap.prototype.delete = originalWeakDelete;
+            Object.defineProperty(Response.prototype, "ok", originalOk);
+            Array.isArray = originalIsArray;
           }
           return { success: true, result: { text: answer.text }, durationMs: 1 };
         },

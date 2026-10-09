@@ -160,6 +160,7 @@ import {
   createAgUiEncoderState,
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
+import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -2505,10 +2506,12 @@ function createProjectRunObservationMirror(input: {
               body: encodedBody,
             },
           );
-          if (!response.ok) {
+          if (!IntrinsicReflectApply(ResponseOkGetter, response, [])) {
             disabled = true;
             throw new DurableRunEventPersistenceError(
-              `Project run observation append failed (${response.status})`,
+              `Project run observation append failed (${
+                IntrinsicReflectApply(ResponseStatusGetter, response, [])
+              })`,
             );
           }
           const body = await IntrinsicReflectApply(ResponsePrototypeJson, response, []);
@@ -2516,7 +2519,7 @@ function createProjectRunObservationMirror(input: {
           return { response, body };
         },
       }));
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
+      if (!body || typeof body !== "object" || ArrayIsArray(body)) {
         throw new DurableRunEventPersistenceError(
           "Project run observation append receipt is invalid",
         );
@@ -2530,13 +2533,13 @@ function createProjectRunObservationMirror(input: {
       if (typeof receipt.latest_event_id === "number") latestEventId = receipt.latest_event_id;
       const captures = receipt.model_call_captures;
       if (captures !== undefined) {
-        if (!Array.isArray(captures)) {
+        if (!ArrayIsArray(captures)) {
           throw new DurableRunEventPersistenceError(
             "Project run observation model-call receipt is invalid",
           );
         }
         for (const capture of primordialArrayValues(captures)) {
-          if (!capture || typeof capture !== "object" || Array.isArray(capture)) {
+          if (!capture || typeof capture !== "object" || ArrayIsArray(capture)) {
             throw new DurableRunEventPersistenceError(
               "Project run observation model-call receipt is invalid",
             );
@@ -2726,7 +2729,15 @@ async function withProjectRunRuntimeObservations<T>(
         const events = primordialArrayMap(
           mapRuntimeStreamEventToAgUiEvents(encoder, event),
           ({ event: type, payload }) => {
-            const candidate = coerceWireEvent(type, payload);
+            // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
+            // agent's streamed failure as a native, nonterminal runtime observation.
+            const candidate = type === "RunError"
+              ? buildRuntimeEventRecordedEvent({
+                runtime: "veryfront",
+                kind: "agent_error",
+                value: payload,
+              }).durable
+              : coerceWireEvent(type, payload);
             if (typeof candidate.type !== "string") {
               throw new Error(
                 "Invalid encoded project run observation event",
