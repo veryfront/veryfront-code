@@ -488,6 +488,20 @@ describe("integration endpoint specs", () => {
       ],
       [
         "gocardless",
+        "create_payment",
+        "body",
+        "payments",
+        "Wait for the mandates_active webhook before collecting against this mandate.",
+      ],
+      [
+        "gocardless",
+        "create_subscription",
+        "body",
+        "subscriptions",
+        "Wait for the mandates_active webhook before creating a subscription against this mandate.",
+      ],
+      [
+        "gocardless",
         "retry_payment",
         "params",
         "paymentId",

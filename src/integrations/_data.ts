@@ -22382,7 +22382,7 @@ export const connectors: IntegrationConfig[] = [
           "payments": {
             "type": "object",
             "description":
-              'Payment resource. Required: amount (integer, in the smallest currency unit, e.g. pence or cents), currency (e.g. GBP, EUR, USD), and links with a mandate ID, e.g. {"amount": 1000, "currency": "GBP", "links": {"mandate": "MD123"}}. Optional: charge_date (YYYY-MM-DD, rolled forward to the mandate\'s next possible charge date if too early), description, reference, and metadata.',
+              'Payment resource. Wait for the mandates_active webhook before collecting against this mandate. Required: amount (integer, in the smallest currency unit, e.g. pence or cents), currency (e.g. GBP, EUR, USD), and links with a mandate ID, e.g. {"amount": 1000, "currency": "GBP", "links": {"mandate": "MD123"}}. Optional: charge_date (YYYY-MM-DD, rolled forward to the mandate\'s next possible charge date if too early), description, reference, and metadata.',
             "required": true,
           },
         },
@@ -22415,7 +22415,7 @@ export const connectors: IntegrationConfig[] = [
           "subscriptions": {
             "type": "object",
             "description":
-              'Subscription resource. Required: amount (integer, in the smallest currency unit), currency (e.g. GBP, EUR, USD), interval_unit (weekly, monthly, or yearly), and links with a mandate ID, e.g. {"amount": 2500, "currency": "GBP", "interval_unit": "monthly", "links": {"mandate": "MD123"}}. Optional: interval (periods between charges), day_of_month, start_date (YYYY-MM-DD), count (total number of payments), name, and metadata.',
+              'Subscription resource. Wait for the mandates_active webhook before creating a subscription against this mandate. Required: amount (integer, in the smallest currency unit), currency (e.g. GBP, EUR, USD), interval_unit (weekly, monthly, or yearly), and links with a mandate ID, e.g. {"amount": 2500, "currency": "GBP", "interval_unit": "monthly", "links": {"mandate": "MD123"}}. Optional: interval (periods between charges), day_of_month, start_date (YYYY-MM-DD), count (total number of payments), name, and metadata.',
             "required": true,
           },
         },
