@@ -303,7 +303,7 @@ async function normalizeInheritedExecutionResponse(
     (binding.conversationId !== undefined && value.conversationId !== binding.conversationId) ||
     !["pending", "running", "waiting", "completed", "failed", "cancelled"].includes(value.status) ||
     (terminal && !Object.hasOwn(value, "output")) ||
-    (value.error !== undefined &&
+    (value.error != null &&
       (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
   ) throw mismatch();
   const headers = new Headers(response.headers);

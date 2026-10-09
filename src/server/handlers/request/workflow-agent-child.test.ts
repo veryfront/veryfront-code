@@ -1186,6 +1186,18 @@ describe("private workflow inherited execution response", () => {
       });
     });
   }
+  it("treats a null private error as absent", async () => {
+    const run = await acceptWorkflowInheritedRunAdmission(
+      privateResponse({ ...projection, error: null }),
+      binding,
+    );
+    assertEquals("canonicalRunId" in run && run.canonicalRunId, childId);
+    const result = await acceptWorkflowInheritedRunAdmission(
+      privateResponse({ ...projection, status: "completed", output: "done", error: null }),
+      binding,
+    );
+    assertEquals(result, { terminalReceipt: { status: "completed", output: "done" } });
+  });
   it("rejects terminal projection without its durable result", async () => {
     await assertRejects(
       () =>
@@ -1207,6 +1219,8 @@ describe("private workflow inherited execution response", () => {
       { dispatchNonce: "stale" },
       { conversationId: "bad" },
       { outputMessageId: "bad" },
+      { error: { code: 1, message: "bad" } },
+      { error: { code: "CHILD_FAILED" } },
     ]
   ) {
     it(`rejects private binding ${JSON.stringify(change)}`, async () => {
