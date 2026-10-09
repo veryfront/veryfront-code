@@ -205,6 +205,13 @@ export async function observeGeneratedAgentTurn(
       input: call.input,
     });
   }
+  if (turn.finishReason !== undefined || turn.usage !== undefined) {
+    await observe({
+      type: "message-finish",
+      ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
+      ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
+    });
+  }
 }
 
 /** Observe only committed tool outcomes, never credentials or provider metadata. */

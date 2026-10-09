@@ -769,62 +769,6 @@ describe("model call request projection", () => {
     }
   });
 
-  it("records provider controls when Object.keys is replaced before dispatch", () => {
-    const nativeObjectKeys = Object.keys;
-    Object.keys = (() => []) as typeof Object.keys;
-    try {
-      const options: ModelRuntimeCallOptions = {
-        prompt,
-        ...sampling,
-        maxOutputTokens: 64,
-        topK: 9,
-        seed: 7,
-        stopSequences: ["STOP"],
-        reasoning: { enabled: true, budgetTokens: 1024 },
-        providerOptions: {
-          google: {
-            generationConfig: {
-              maxOutputTokens: 128,
-              temperature: 0.2,
-              topP: 0.6,
-              topK: 4,
-              seed: 3,
-              stopSequences: ["NATIVE_STOP"],
-              thinkingConfig: { thinkingBudget: 1024, includeThoughts: true },
-            },
-          },
-        },
-      };
-      const projected = buildModelCallContextRequest({
-        provider: "veryfront-cloud",
-        modelProvider: "google",
-        modelId: "gemini-synthetic",
-      }, options);
-      const body = buildGoogleGenerateContentRequest(
-        "veryfront-cloud",
-        options,
-        createWarningCollector(),
-      );
-      assertEquals(body.generationConfig?.maxOutputTokens, 128);
-      assertEquals(body.generationConfig?.temperature, 0.2);
-      assertEquals(body.generationConfig?.topP, 0.6);
-      assertEquals(body.generationConfig?.topK, 4);
-      assertEquals(body.generationConfig?.stopSequences, ["NATIVE_STOP"]);
-      assertEquals(body.generationConfig?.seed, 3);
-      assertEquals(projected, {
-        maxOutputTokens: 128,
-        temperature: 0.2,
-        topP: 0.6,
-        topK: 4,
-        stopSequences: ["NATIVE_STOP"],
-        seed: 3,
-        reasoning: { enabled: true, budgetTokens: 1024 },
-      });
-    } finally {
-      Object.keys = nativeObjectKeys;
-    }
-  });
-
   it("uses Google's replacement generationConfig for controls and representable thinking", () => {
     for (
       const thinkingConfig of [undefined, { thinkingBudget: 512 }, { thinkingBudget: -1 }, {

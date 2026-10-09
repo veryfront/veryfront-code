@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fileURLToPath } from "node:url";
 import {
+  buildTestFileCommandArgGroups,
   buildTestFileCommandArgs,
   LOOPBACK_ALLOW_NET,
   PROVIDER_EGRESS_DENY_NET,
@@ -47,6 +48,43 @@ describe("test:file task command", () => {
       "--filter",
       "coverage",
     ]);
+  });
+
+  it("splits mixed source and script targets across their matching configs", () => {
+    const groups = buildTestFileCommandArgGroups([
+      "src/config/cicd-coverage-workflow.test.ts",
+      "scripts/security/audit-npm.test.ts",
+      "--filter",
+      "audit",
+    ]);
+
+    assertEquals(groups.length, 2);
+    assertEquals(groups[0]!.includes("--preload=src/testing/preload.ts"), true);
+    assertEquals(groups[0]!.includes("--config=scripts/test.deno.json"), false);
+    assertEquals(
+      groups[0]!.includes("src/config/cicd-coverage-workflow.test.ts"),
+      true,
+    );
+    assertEquals(
+      groups[0]!.includes("scripts/security/audit-npm.test.ts"),
+      false,
+    );
+    assertEquals(groups[0]!.slice(-2), ["--filter", "audit"]);
+
+    assertEquals(groups[1]!.includes("--config=scripts/test.deno.json"), true);
+    assertEquals(
+      groups[1]!.includes("--preload=src/testing/preload.ts"),
+      false,
+    );
+    assertEquals(
+      groups[1]!.includes("scripts/security/audit-npm.test.ts"),
+      true,
+    );
+    assertEquals(
+      groups[1]!.includes("src/config/cicd-coverage-workflow.test.ts"),
+      false,
+    );
+    assertEquals(groups[1]!.slice(-2), ["--filter", "audit"]);
   });
 
   it("keeps integration paths on the provider deny-list", () => {

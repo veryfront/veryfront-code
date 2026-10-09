@@ -74,7 +74,7 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
 
 class TestFileUsageError extends Error {}
 
-export function buildTestFileCommandArgs(
+function buildTestFileCommandArgsForRawArgs(
   rawArgs: string[],
   fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
 ): string[] {
@@ -83,9 +83,6 @@ export function buildTestFileCommandArgs(
   const usesIntegrationPermissions = targets.some((target) =>
     isIntegrationTarget(target, fileSystem)
   );
-  if (hasDenoPermissionFlag(rawArgs)) {
-    throw new TestFileUsageError(FORWARDED_PERMISSION_MESSAGE);
-  }
   const configArgs = usesScriptsConfig
     ? ["--config=scripts/test.deno.json"]
     : ["--preload=src/testing/preload.ts"];
@@ -104,6 +101,63 @@ export function buildTestFileCommandArgs(
     "--unstable-net",
     ...rawArgs,
   ];
+}
+
+function filterRawArgsByTargetKind(
+  rawArgs: string[],
+  keepTarget: (target: string) => boolean,
+): string[] {
+  const filtered: string[] = [];
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index]!;
+    if (arg === "--") {
+      filtered.push(...rawArgs.slice(index));
+      break;
+    }
+    if (arg.startsWith("-")) {
+      filtered.push(arg);
+      const option = arg.split("=", 1)[0]!;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        index += 1;
+        filtered.push(rawArgs[index]!);
+      }
+      continue;
+    }
+    if (keepTarget(arg)) filtered.push(arg);
+  }
+  return filtered;
+}
+
+export function buildTestFileCommandArgGroups(
+  rawArgs: string[],
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): string[][] {
+  const targets = getPositionalTestTargets(rawArgs);
+  if (hasDenoPermissionFlag(rawArgs)) {
+    throw new TestFileUsageError(FORWARDED_PERMISSION_MESSAGE);
+  }
+  const hasScriptsTargets = targets.some(isScriptsPath);
+  const hasSourceTargets = targets.some((target) => !isScriptsPath(target));
+  if (!hasScriptsTargets || !hasSourceTargets) {
+    return [buildTestFileCommandArgsForRawArgs(rawArgs, fileSystem)];
+  }
+  return [
+    buildTestFileCommandArgsForRawArgs(
+      filterRawArgsByTargetKind(rawArgs, (target) => !isScriptsPath(target)),
+      fileSystem,
+    ),
+    buildTestFileCommandArgsForRawArgs(
+      filterRawArgsByTargetKind(rawArgs, isScriptsPath),
+      fileSystem,
+    ),
+  ];
+}
+
+export function buildTestFileCommandArgs(
+  rawArgs: string[],
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): string[] {
+  return buildTestFileCommandArgGroups(rawArgs, fileSystem)[0]!;
 }
 
 function isScriptsPath(arg: string): boolean {
@@ -160,10 +214,10 @@ function isIntegrationTarget(
 
 async function main(): Promise<void> {
   let targets: string[];
-  let commandArgs: string[];
+  let commandArgGroups: string[][];
   try {
     targets = getPositionalTestTargets(Deno.args);
-    commandArgs = buildTestFileCommandArgs(Deno.args);
+    commandArgGroups = buildTestFileCommandArgGroups(Deno.args);
   } catch (error) {
     if (!(error instanceof TestFileUsageError)) throw error;
     console.error(error.message);
@@ -175,15 +229,17 @@ async function main(): Promise<void> {
       )
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
-  const command = new Deno.Command("deno", {
-    args: commandArgs,
-    clearEnv: true,
-    env: buildTestProcessEnv(Deno.env.toObject(), environment),
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const status = await command.spawn().status;
-  if (!status.success) Deno.exit(status.code);
+  for (const commandArgs of commandArgGroups) {
+    const command = new Deno.Command("deno", {
+      args: commandArgs,
+      clearEnv: true,
+      env: buildTestProcessEnv(Deno.env.toObject(), environment),
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const status = await command.spawn().status;
+    if (!status.success) Deno.exit(status.code);
+  }
 }
 
 if (import.meta.main) {

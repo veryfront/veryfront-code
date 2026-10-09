@@ -25,6 +25,8 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
 import { withLocalChildExecution } from "./local-child-execution.ts";
+import { AgentRuntime } from "../runtime/index.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
@@ -485,6 +487,55 @@ describe("agentAsTool", () => {
       Error,
       "Veryfront API MCP is unavailable",
     );
+  });
+
+  it("observes generated-turn finish metadata from a custom provider", async () => {
+    const model = scriptedModel([{ text: "generated answer", finishReason: "stop" }], {
+      only: "generate",
+      provider: "custom",
+      modelId: "custom/generated-turn-observer",
+      usage: {
+        inputTokens: 2,
+        outputTokens: 3,
+        totalTokens: 5,
+        reasoningTokens: 1,
+        usageCaptureStatus: "complete",
+      },
+    });
+    const runtime = new AgentRuntime("generated-turn-observer", {
+      model: "custom/generated-turn-observer",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => runtime.generate("Synthetic input"),
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.text, "generated answer");
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+    assertEquals(finish.totalUsage, {
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+      reasoningTokens: 1,
+      usageCaptureStatus: "complete",
+    });
   });
 
   it("routes the real generic delegation through its request-scoped owner exactly once", async () => {

@@ -4930,6 +4930,12 @@
       "jsr:@std/path@1.1.4",
       "jsr:@std/testing@1.0.17"
     ],
+    "packageJson": {
+      "overrides": {
+        "tldts": "7.4.16",
+        "tldts-core": "7.4.16"
+      }
+    },
     "members": {
       "extensions/ext-auth-jwt": {
         "dependencies": [

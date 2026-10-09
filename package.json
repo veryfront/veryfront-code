@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "overrides": {
+    "tldts": "7.4.16",
+    "tldts-core": "7.4.16"
+  }
+}

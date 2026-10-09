@@ -9093,11 +9093,10 @@ describe("project run inference credential header", () => {
           const payload = requestJsonBody(init);
           const events = payload?.events;
           if (!Array.isArray(events)) throw new Error("Expected event batch");
-          if (
-            events.some((event) =>
-              event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
-            )
-          ) {
+          const runtimeContextEvents = (events as Record<string, unknown>[]).filter((event) =>
+            event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+          );
+          if (runtimeContextEvents.length > 0) {
             entryObservations++;
             assertEquals(events, [{
               type: "RUNTIME_EVENT_RECORDED",
@@ -9163,6 +9162,27 @@ describe("project run inference credential header", () => {
     assertEquals(
       appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta),
       ["Looking up", "OK.", "Second."],
+    );
+    assertEquals(
+      appended
+        .filter((event) =>
+          event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+        )
+        .map((event) => event.value),
+      [
+        {
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        },
+        {
+          finishReason: "stop",
+          totalUsage: { inputTokens: 6, outputTokens: 1, totalTokens: 7 },
+        },
+        {
+          finishReason: "stop",
+          totalUsage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 },
+        },
+      ],
     );
     assertEquals(
       appended.filter((event) => event.type === "TOOL_CALL_START").map((event) => event.toolCallId),
@@ -9334,6 +9354,7 @@ describe("project run inference credential header", () => {
           }
           runtimeAppendCalls++;
           if (runtimeAppendCalls === 3) {
+            await Promise.resolve();
             queueFilled.resolve();
             await releaseFirstAppend.promise;
           }
@@ -9350,7 +9371,6 @@ describe("project run inference credential header", () => {
         }, async () => {
           const pending = handler.handle(request, ctx);
           await queueFilled.promise;
-          await delay(0);
           assertEquals(taskFinishedStreaming, false);
           assertEquals(producedDeltas <= 300, true);
           assertEquals(producedDeltas < 450, true);
@@ -10234,11 +10254,10 @@ describe("project run inference credential header", () => {
             const payload = requestJsonBody(init);
             const events = payload?.events;
             if (!Array.isArray(events)) throw new Error("Expected event batch");
-            if (
-              events.some((event) =>
-                event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
-              )
-            ) {
+            const runtimeContextEvents = events.filter((event) =>
+              event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+            );
+            if (runtimeContextEvents.length > 0) {
               entryObservations++;
               assertEquals(events, [{
                 type: "RUNTIME_EVENT_RECORDED",

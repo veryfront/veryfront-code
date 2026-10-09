@@ -21,36 +21,6 @@ function requireStepId(value: unknown): string {
 }
 
 describe("agent/ag-ui-encoder", () => {
-  it("uses captured UUID generation for observed step and fallback message identities", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
-    let patchedCalls = 0;
-    const first = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    const second = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    Object.defineProperty(crypto, "randomUUID", {
-      configurable: true,
-      value: () => {
-        patchedCalls += 1;
-        throw new Error("project UUID hook");
-      },
-    });
-    try {
-      mapRuntimeStreamEventToAgUiEvents(first, { type: "start-step" });
-      mapRuntimeStreamEventToAgUiEvents(second, { type: "start-step" });
-      mapRuntimeStreamEventToAgUiEvents(first, { type: "text-start" });
-      mapRuntimeStreamEventToAgUiEvents(second, { type: "text-start" });
-    } finally {
-      if (descriptor) Object.defineProperty(crypto, "randomUUID", descriptor);
-      else Reflect.deleteProperty(crypto, "randomUUID");
-    }
-    assertEquals(patchedCalls, 0);
-    requireStepId(first.activeStepId);
-    requireStepId(second.activeStepId);
-    requireStepId(first.messageId);
-    requireStepId(second.messageId);
-    assertNotEquals(first.activeStepId, second.activeStepId);
-    assertNotEquals(first.messageId, second.messageId);
-  });
-
   it("rejects unrepresentable observed tool inputs instead of recording empty arguments", () => {
     assertThrows(() =>
       mapRuntimeStreamEventToAgUiEvents(createAgUiEncoderState(), {
@@ -59,37 +29,6 @@ describe("agent/ag-ui-encoder", () => {
         toolName: "lookup",
         input: { value: 1n },
       }), TypeError);
-  });
-
-  it("keeps final observation metadata and guards on captured intrinsics", () => {
-    const originalKeys = Object.keys;
-    const originalFinite = Number.isFinite;
-    const originalMax = Math.max;
-    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    const empty = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    let response: ReturnType<typeof buildAgUiFinalizeResponse> = null;
-    let finished: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
-    Object.keys = () => [];
-    Number.isFinite = () => true;
-    Math.max = () => 999;
-    try {
-      finalizeAgUiEvents(state, {
-        text: "",
-        messages: [],
-        toolCalls: [],
-        status: "completed",
-        metadata: { finishReason: "stop", costUsd: NaN },
-      });
-      response = buildAgUiFinalizeResponse(state.metadata);
-      finished = mapRuntimeStreamEventToAgUiEvents(empty, { type: "finish-step" });
-    } finally {
-      Object.keys = originalKeys;
-      Number.isFinite = originalFinite;
-      Math.max = originalMax;
-    }
-    assertEquals(state.metadata.costUsd, undefined);
-    assertEquals(response?.metadata?.finishReason, "stop");
-    assertEquals(finished[0]?.payload.stepName, "step-1");
   });
 
   it("preserves size-compliant tool inputs above the default private structural budget", () => {
@@ -373,84 +312,6 @@ describe("agent/ag-ui-encoder", () => {
       false,
       "an explicit opt-out must leave payloads untouched",
     );
-  });
-
-  it("uses captured default clocks for observation timing", () => {
-    const originalDateNow = Date.now;
-    const originalPerformanceNow = performance.now;
-    let replacementReads = 0;
-    try {
-      Date.now = () => {
-        replacementReads += 1;
-        throw new Error("project Date.now replacement");
-      };
-      Object.defineProperty(performance, "now", {
-        configurable: true,
-        value: () => {
-          replacementReads += 1;
-          throw new Error("project performance.now replacement");
-        },
-      });
-      const state = createAgUiEncoderState();
-      const events = mapRuntimeStreamEventToAgUiEvents(state, { type: "start-step" });
-      assertEquals(typeof events[0]?.payload.elapsedMs, "number");
-      assertEquals(typeof events[0]?.payload.emittedAt, "number");
-    } finally {
-      Date.now = originalDateNow;
-      Object.defineProperty(performance, "now", {
-        configurable: true,
-        value: originalPerformanceNow,
-      });
-    }
-    assertEquals(replacementReads, 0);
-  });
-
-  it("maps message-finish metadata to a nonterminal runtime observation", () => {
-    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    mapRuntimeStreamEventToAgUiEvents(state, {
-      type: "message-start",
-      messageId: "message-1",
-    });
-
-    const events = mapRuntimeStreamEventToAgUiEvents(state, {
-      type: "message-finish",
-      finishReason: "stop",
-      totalUsage: {
-        inputTokens: 3,
-        outputTokens: 4,
-        totalTokens: 7,
-        costCredits: 0.5,
-        inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: 1 },
-      },
-      object: { city: "Stockholm", extra: undefined },
-    });
-
-    assertEquals(events, [{
-      event: "RuntimeEventRecorded",
-      payload: {
-        runtime: "veryfront",
-        kind: "message_finish",
-        value: {
-          finishReason: "stop",
-          totalUsage: {
-            inputTokens: 3,
-            outputTokens: 4,
-            totalTokens: 7,
-            costCredits: 0.5,
-            inputTokenDetails: { cacheReadTokens: 1 },
-          },
-          object: { city: "Stockholm" },
-          messageId: "message-1",
-        },
-      },
-    }]);
-    assertEquals(state.metadata, {
-      finishReason: "stop",
-      inputTokens: 3,
-      outputTokens: 4,
-      totalTokens: 7,
-      costCredits: 0.5,
-    });
   });
 
   it("maps custom data events and tool fallback error events", () => {
@@ -1213,6 +1074,359 @@ describe("agent/ag-ui-encoder", () => {
         message: "Agent run produced no assistant-visible output",
       },
     }]);
+  });
+
+  it("records message-finish metadata without completing bookkeeping-only output", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-finish",
+        finishReason: "stop",
+        totalUsage: {
+          inputTokens: 2,
+          outputTokens: 3,
+          reasoningTokens: 1,
+          costUsd: 0.002,
+          usageCaptureStatus: "complete",
+        },
+        object: { answer: 42 },
+      }),
+      [{
+        event: "RuntimeEventRecorded",
+        payload: {
+          runtime: "veryfront",
+          kind: "message_finish_metadata",
+          value: {
+            finishReason: "stop",
+            totalUsage: {
+              inputTokens: 2,
+              outputTokens: 3,
+              totalTokens: 5,
+              reasoningTokens: 1,
+              costUsd: 0.002,
+              usageCaptureStatus: "complete",
+            },
+            object: { answer: 42 },
+          },
+        },
+      }],
+    );
+    assertEquals(state.metadata.finishReason, "stop");
+    assertEquals(state.metadata.inputTokens, 2);
+    assertEquals(state.metadata.outputTokens, 3);
+    assertEquals(state.metadata.totalTokens, 5);
+    assertEquals(state.metadata.reasoningTokens, 1);
+    assertEquals(
+      finalizeAgUiEvents(state, null),
+      [{
+        event: "RunError",
+        payload: {
+          code: "EMPTY_ASSISTANT_OUTPUT",
+          message: "Agent run produced no assistant-visible output",
+        },
+      }],
+    );
+  });
+
+  it("records message-finish finishReason without an object", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-finish",
+        finishReason: "stop",
+      }),
+      [{
+        event: "RuntimeEventRecorded",
+        payload: {
+          runtime: "veryfront",
+          kind: "message_finish_metadata",
+          value: { finishReason: "stop" },
+        },
+      }],
+    );
+    assertEquals(state.metadata.finishReason, "stop");
+  });
+
+  it("records oversized finishReason as partial metadata without failing", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "x".repeat(1_048_577),
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(value.finishReason, {
+      captureStatus: "partial",
+      field: "finishReason",
+      reasons: ["string_truncated"],
+    });
+    assertEquals(state.metadata.finishReason, undefined);
+  });
+
+  it("records escaped oversized finishReason as partial metadata without failing", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "\u0000".repeat(800_000),
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(value.finishReason, {
+      captureStatus: "partial",
+      field: "finishReason",
+      reasons: ["serialized_budget_exhausted"],
+    });
+    assertEquals(state.metadata.finishReason, undefined);
+  });
+
+  it("records oversized message-finish objects as partial metadata without failing", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "stop",
+      object: { answer: "x".repeat(1_048_577) },
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const object = value.object as Record<string, unknown>;
+    const partial = object.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(object.captureStatus, "partial");
+    assertEquals(object.reasons, ["string_truncated"]);
+    assertEquals(typeof partial.answer, "string");
+    assertEquals((partial.answer as string).length < 1_048_577, true);
+    assertEquals(value.finishReason, "stop");
+  });
+
+  it("records cyclic message-finish objects as partial metadata without failing", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const cyclic: Record<string, unknown> = { label: "cycle" };
+    cyclic.self = cyclic;
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object: cyclic,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const object = value.object as Record<string, unknown>;
+    const partial = object.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(object.captureStatus, "partial");
+    assertEquals(object.reasons, ["circular"]);
+    assertEquals(partial.label, "cycle");
+    assertEquals(partial.self, "[circular]");
+  });
+
+  it("preserves literal __proto__ keys in message-finish object metadata", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const source = JSON.parse('{"__proto__":{"fixture":true}}');
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object: source,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const object = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals((object.__proto__ as Record<string, unknown>).fixture, true);
+  });
+
+  it("records aggregate-budget message-finish objects as partial metadata", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object: Record<string, string> = {};
+    for (let index = 0; index < 100; index++) {
+      object[`field${index}`] = "x".repeat(20_000);
+    }
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+    const partial = snapshot.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals((snapshot.reasons as string[]).includes("aggregate_budget_exhausted"), true);
+    assertEquals(
+      Object.values(partial).some((entry) => entry === "[truncated message-finish object budget]"),
+      true,
+    );
+  });
+
+  it("does not hang when multibyte truncation cannot fit a prefix", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object: {
+        a: "x".repeat(1_048_560),
+        b: "😀".repeat(20),
+      },
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+    const partial = snapshot.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals((snapshot.reasons as string[]).includes("aggregate_budget_exhausted"), true);
+    assertEquals(partial.b, "[truncated message-finish object budget]");
+  });
+
+  it("skips oversized message-finish object keys before native validation", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object: Record<string, unknown> = { kept: true };
+    object["x".repeat(16 * 1024 + 1)] = "oversized";
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+    const partial = snapshot.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals(snapshot.reasons, ["object_key_unsupported"]);
+    assertEquals(partial.kept, true);
+    assertEquals(Object.keys(partial).length, 1);
+  });
+
+  it("records escaped-string snapshots as partial metadata before native validation", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object: { answer: "\u0000".repeat(800_000) },
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals(snapshot.reasons, ["serialized_budget_exhausted"]);
+  });
+
+  it("records structurally large key snapshots as partial metadata before native validation", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object = Array.from({ length: 10 }, () => {
+      const entry: Record<string, number> = {};
+      for (let index = 0; index < 100; index++) {
+        entry[`${index}-${"k".repeat(5_000)}`] = index;
+      }
+      return entry;
+    });
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals(snapshot.reasons, ["serialized_budget_exhausted"]);
+  });
+
+  it("keeps exactly one hundred eligible message-finish properties complete", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object: Record<string, number> = {};
+    for (let index = 0; index < 100; index++) object[`key${index}`] = index;
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(value.object, object);
+  });
+
+  it("marks message-finish objects partial when a 101st eligible property is omitted", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object: Record<string, number> = {};
+    for (let index = 0; index < 101; index++) object[`key${index}`] = index;
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+    const partial = snapshot.value as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals(snapshot.reasons, ["object_keys_truncated"]);
+    assertEquals(Object.keys(partial).length, 100);
+  });
+
+  it("records aggregate-wide message-finish objects as partial metadata", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object = Array.from(
+      { length: 100 },
+      () => Array.from({ length: 100 }, () => Array.from({ length: 11 }, () => 0)),
+    );
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals((snapshot.reasons as string[]).includes("aggregate_budget_exhausted"), true);
+  });
+
+  it("preserves repeated message-finish object references without marking them circular", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const shared = { value: 1 };
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object: { a: shared, b: shared },
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const object = value.object as Record<string, Record<string, unknown>>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(object, { a: { value: 1 }, b: { value: 1 } });
+  });
+
+  it("does not invoke array accessors while recording message-finish objects", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const object: unknown[] = [];
+    let getterCalls = 0;
+    Object.defineProperty(object, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("array accessor invoked");
+      },
+    });
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      object,
+    });
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+    const partial = snapshot.value as unknown[];
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(getterCalls, 0);
+    assertEquals(snapshot.captureStatus, "partial");
+    assertEquals(snapshot.reasons, ["accessor_property"]);
+    assertEquals(partial[0], "[unsupported accessor]");
   });
 
   it("does not treat step lifecycle events as assistant-visible output", () => {

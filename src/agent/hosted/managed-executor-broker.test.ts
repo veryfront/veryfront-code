@@ -62,6 +62,8 @@ const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
+const realSetTimeout = globalThis.setTimeout;
+const realDelay = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function runWithKnowledgeApiTransport<T>(
@@ -1258,6 +1260,7 @@ describe("managed executor broker", () => {
       modelId,
       resolveProvider: () => "provider",
       fetch,
+      eventPersistenceTimeoutMs: 100,
     });
     configureCanonical(
       f.input,
@@ -1284,9 +1287,10 @@ describe("managed executor broker", () => {
       abortSignal: new AbortController().signal,
     });
     await appendEntered.promise;
+    const openingResultPromise = Promise.allSettled([opening]);
 
-    await time.tickAsync(30_000);
-    const openingResult = await Promise.allSettled([opening]);
+    await realDelay(150);
+    const openingResult = await openingResultPromise;
     const streamError = openingResult[0]?.status === "rejected"
       ? openingResult[0].reason
       : undefined;
