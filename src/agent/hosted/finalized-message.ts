@@ -32,6 +32,22 @@ function toolPartName(part: ChatUiMessage["parts"][number]): string {
     : "";
 }
 
+/** Match legacy terminal aliases to the output state already used by mirrored chunks. */
+function terminalToolOutputState(state: string): "available" | "error" | "denied" | undefined {
+  switch (state) {
+    case "output-available":
+    case "completed":
+      return "available";
+    case "output-error":
+    case "error":
+      return "error";
+    case "output-denied":
+      return "denied";
+    default:
+      return undefined;
+  }
+}
+
 function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
   return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
     (part.redactedData?.length ?? 0) > 0;
@@ -237,7 +253,7 @@ export function buildFinalizedMessageState(
   const completedParts = persistedMessage.parts.map((part) => {
     if (
       !input.isAborted && isToolUiPart(part) &&
-      ["output-available", "output-error", "output-denied"].includes(part.state) &&
+      terminalToolOutputState(part.state) !== undefined &&
       part.providerExecuted === undefined && finalStepFallbackParts.some((fallback) =>
         isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
         toolPartName(fallback) === toolPartName(part) && fallback.providerExecuted === true
@@ -610,13 +626,14 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
 }): ConversationRunEvent[] {
   if (input.isAborted || !input.persistedMessage.id) return [];
   return input.finalizedMessage.parts.flatMap((part) => {
+    if (!isToolUiPart(part)) return [];
+    const outputState = terminalToolOutputState(part.state);
     if (
-      !isToolUiPart(part) ||
-      !["output-available", "output-error", "output-denied"].includes(part.state) ||
+      outputState === undefined ||
       part.providerExecuted !== true ||
-      !(part.state === "output-available"
+      !(outputState === "available"
         ? input.mirroredToolChunkState.outputAvailableToolCallIds
-        : part.state === "output-error"
+        : outputState === "error"
         ? input.mirroredToolChunkState.outputErrorToolCallIds
         : input.mirroredToolChunkState.outputDeniedToolCallIds).has(part.toolCallId) ||
       input.mirroredToolChunkState.ownershipCorrectedToolCallIds?.has(part.toolCallId)

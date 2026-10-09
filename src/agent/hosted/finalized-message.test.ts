@@ -1710,14 +1710,17 @@ Deno.test("completed ownership requires the same final-step tool name", () => {
   assertEquals(state.sanitizedFinalizedMessage.parts, [part]);
 });
 
-for (const state of ["output-error", "output-denied"] as const) {
+for (const state of ["output-error", "output-denied", "completed", "error"] as const) {
   Deno.test(`completed ${state} recovers provider ownership without changing verdict`, () => {
+    const isErrored = state === "output-error" || state === "error";
+    const isAvailable = state === "completed";
     const part = {
       type: "tool-web_fetch" as const,
       toolCallId: "failed",
       state,
       input: { original: true },
-      ...(state === "output-error" ? { errorText: "original failure" } : {}),
+      ...(isErrored ? { errorText: "original failure" } : {}),
+      ...(isAvailable ? { output: "original result" } : {}),
     };
     const result = buildFinalizedMessageState({
       responseMessage: { id: "m", role: "assistant", parts: [part] },
@@ -1734,9 +1737,13 @@ for (const state of ["output-error", "output-denied"] as const) {
     });
     assertEquals(result.sanitizedFinalizedMessage.parts, [{ ...part, providerExecuted: true }]);
     const mirror = createMirroredToolChunkState();
-    (state === "output-error" ? mirror.outputErrorToolCallIds : mirror.outputDeniedToolCallIds).add(
-      "failed",
-    );
+    (isAvailable
+      ? mirror.outputAvailableToolCallIds
+      : isErrored
+      ? mirror.outputErrorToolCallIds
+      : mirror.outputDeniedToolCallIds).add(
+        "failed",
+      );
     const correction = buildToolResultOwnershipCorrectionEvents({
       persistedMessage: result.persistedMessage,
       finalizedMessage: result.sanitizedFinalizedMessage,
@@ -1755,7 +1762,9 @@ for (const state of ["output-error", "output-denied"] as const) {
         input: part.input,
       }),
       ...encoder.encode(
-        state === "output-error"
+        isAvailable
+          ? { type: "tool-output-available", toolCallId: "failed", output: "original result" }
+          : isErrored
           ? { type: "tool-output-error", toolCallId: "failed", errorText: "original failure" }
           : { type: "tool-output-denied", toolCallId: "failed" },
       ),
