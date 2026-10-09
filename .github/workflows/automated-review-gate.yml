@@ -832,7 +832,12 @@ jobs:
       # request missing proof. The helper revalidates eligibility, evidence and
       # epoch before posting, and deduplicates its fixed request marker.
       - name: Request an automated review of the current commit
-        if: steps.publish.outputs.result == 'pending'
+        if: >-
+          steps.publish.outputs.result == 'pending' &&
+          !(github.event_name == 'pull_request_target' &&
+            (github.event.action == 'opened' ||
+             (github.event.action == 'ready_for_review' &&
+              steps.publish.outputs.explicit-ready-request != 'true')))
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}

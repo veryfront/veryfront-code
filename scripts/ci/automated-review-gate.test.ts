@@ -7190,11 +7190,18 @@ describe("automated review workflow", () => {
       undefined,
       "wakeups also refresh the current head inside the lock",
     );
-    assertEquals(
-      record(reviewSteps[2], "request").if,
-      "steps.publish.outputs.result == 'pending'",
-      "a surviving comment must request a review lost with an older synchronize event",
-    );
+    const requestIf = String(record(reviewSteps[2], "request").if);
+    const requests = (eventName: string, action: string, explicitReady = "") =>
+      new Function("github", "steps", `return (${requestIf.replaceAll(".explicit-ready-request", '["explicit-ready-request"]')});`)(
+        { event_name: eventName, event: { action } },
+        { publish: { outputs: { result: "pending", "explicit-ready-request": explicitReady } } },
+      );
+    assertEquals(requests("issue_comment", "created"), true);
+    assertEquals(requests("workflow_run", "completed"), true);
+    assertEquals(requests("pull_request_target", "synchronize"), true);
+    assertEquals(requests("pull_request_target", "opened"), false);
+    assertEquals(requests("pull_request_target", "ready_for_review"), false);
+    assertEquals(requests("pull_request_target", "ready_for_review", "true"), true);
   });
 
   it("refreshes a delayed wakeup to the live head inside the publisher lock", async () => {
@@ -7942,7 +7949,9 @@ describe("automated review workflow", () => {
     );
 
     const request = record(steps[2], "request step");
-    assertEquals(request.if, "steps.publish.outputs.result == 'pending'", "coalesced signals request only missing proof; the helper enforces current eligibility");
+    for (const required of ["steps.publish.outputs.result == 'pending'", "github.event_name == 'pull_request_target'", "github.event.action == 'opened'", "github.event.action == 'ready_for_review'", "steps.publish.outputs.explicit-ready-request != 'true'"]) {
+      assert(String(request.if).includes(required), "pending survivors recover requests while preserving automatic open/ready reviews");
+    }
     const requestScript = String(
       record(request.with, "request inputs").script,
     );
