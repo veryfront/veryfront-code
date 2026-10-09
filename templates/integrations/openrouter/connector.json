@@ -112,7 +112,7 @@
     {
       "id": "openrouter__get_credits",
       "name": "Get Credits",
-      "description": "Get credits",
+      "description": "Get credits (requires management key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

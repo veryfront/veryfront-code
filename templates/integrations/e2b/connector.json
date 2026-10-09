@@ -47,7 +47,7 @@
     {
       "id": "e2b__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create sandbox",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

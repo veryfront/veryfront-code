@@ -501,7 +501,7 @@
     {
       "id": "harvest__delete_time_entry",
       "name": "Delete Time Entry",
-      "description": "Delete time entry",
+      "description": "Delete unlocked, unbilled time entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

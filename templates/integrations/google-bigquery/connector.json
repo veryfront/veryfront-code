@@ -182,7 +182,7 @@
     {
       "id": "google-bigquery__preview_table_data",
       "name": "Preview Table Data",
-      "description": "Preview table data",
+      "description": "Preview table data without query charges",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

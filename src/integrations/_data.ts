@@ -2037,7 +2037,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apify__run_actor_sync",
       "name": "Run Actor (Sync)",
-      "description": "Run actor (sync)",
+      "description": "Run actor synchronously (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8112,7 +8112,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__release_session",
       "name": "Release Session",
-      "description": "Request session release",
+      "description": "Request session release to stop billing",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13588,7 +13588,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create sandbox",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13706,7 +13706,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description": "Stop sandbox",
+      "description": "Stop sandbox; pause billing, preserve state",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14560,7 +14560,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__create_droplet",
       "name": "Create Droplet",
-      "description": "Create droplet",
+      "description": "Create billable droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16058,7 +16058,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create sandbox",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16908,7 +16908,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fal__run_model",
       "name": "Run Model",
-      "description": "Run model",
+      "description": "Run model (billed per run)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16948,7 +16948,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_submit",
       "name": "Submit Queue Request",
-      "description": "Submit queue request",
+      "description": "Submit queue request (billed per run)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -23139,7 +23139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__preview_table_data",
       "name": "Preview Table Data",
-      "description": "Preview table data",
+      "description": "Preview table data without query charges",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26548,7 +26548,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__delete_time_entry",
       "name": "Delete Time Entry",
-      "description": "Delete time entry",
+      "description": "Delete unlocked, unbilled time entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -28366,7 +28366,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__create_server",
       "name": "Create Server",
-      "description": "Create server",
+      "description": "Create billable server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -36285,7 +36285,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__power_search",
       "name": "Power Search",
-      "description": "Search companies with filters",
+      "description": "Search narrowly; billed per unique company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36331,7 +36331,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__suggest",
       "name": "Suggest Companies",
-      "description": "Suggest companies and people",
+      "description": "Suggest companies and people (unbilled)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36373,7 +36373,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__get_person",
       "name": "Get Person",
-      "description": "Get person",
+      "description": "Get person (billed lookup)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37369,7 +37369,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Delete file and all vector-store references",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -37386,7 +37386,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_usage_completions",
       "name": "Get Completions Usage",
-      "description": "Get completions usage",
+      "description": "Get completions usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37430,7 +37430,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_costs",
       "name": "Get Costs",
-      "description": "Get costs",
+      "description": "Get costs (requires organization admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37485,7 +37485,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_usage_embeddings",
       "name": "Get Embeddings Usage",
-      "description": "Get embeddings usage",
+      "description": "Get embeddings usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37675,7 +37675,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__get_credits",
       "name": "Get Credits",
-      "description": "Get credits",
+      "description": "Get credits (requires management key)",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://openrouter.ai/api/v1/credits" },
     }],
@@ -52531,7 +52531,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stability-ai__text_to_image",
       "name": "Text to Image",
-      "description": "Generate image",
+      "description": "Generate image (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

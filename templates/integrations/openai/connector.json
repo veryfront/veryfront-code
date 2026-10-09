@@ -289,7 +289,7 @@
     {
       "id": "openai__delete_file",
       "name": "Delete File",
-      "description": "Delete file",
+      "description": "Delete file and all vector-store references",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -307,7 +307,7 @@
     {
       "id": "openai__get_usage_completions",
       "name": "Get Completions Usage",
-      "description": "Get completions usage",
+      "description": "Get completions usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -351,7 +351,7 @@
     {
       "id": "openai__get_costs",
       "name": "Get Costs",
-      "description": "Get costs",
+      "description": "Get costs (requires organization admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -408,7 +408,7 @@
     {
       "id": "openai__get_usage_embeddings",
       "name": "Get Embeddings Usage",
-      "description": "Get embeddings usage",
+      "description": "Get embeddings usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

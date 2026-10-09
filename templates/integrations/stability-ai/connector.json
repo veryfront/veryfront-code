@@ -71,7 +71,7 @@
     {
       "id": "stability-ai__text_to_image",
       "name": "Text to Image",
-      "description": "Generate image",
+      "description": "Generate image (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

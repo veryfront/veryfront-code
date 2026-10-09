@@ -110,7 +110,7 @@
     {
       "id": "browserbase__release_session",
       "name": "Release Session",
-      "description": "Request session release",
+      "description": "Request session release to stop billing",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

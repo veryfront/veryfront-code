@@ -86,7 +86,7 @@
     {
       "id": "daytona__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create sandbox",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -231,7 +231,7 @@
     {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description": "Stop sandbox",
+      "description": "Stop sandbox; pause billing, preserve state",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

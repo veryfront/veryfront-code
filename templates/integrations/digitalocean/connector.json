@@ -134,7 +134,7 @@
     {
       "id": "digitalocean__create_droplet",
       "name": "Create Droplet",
-      "description": "Create droplet",
+      "description": "Create billable droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

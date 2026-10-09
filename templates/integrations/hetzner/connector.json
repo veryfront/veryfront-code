@@ -105,7 +105,7 @@
     {
       "id": "hetzner__create_server",
       "name": "Create Server",
-      "description": "Create server",
+      "description": "Create billable server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

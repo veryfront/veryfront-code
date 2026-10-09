@@ -74,7 +74,7 @@
     {
       "id": "apify__run_actor_sync",
       "name": "Run Actor (Sync)",
-      "description": "Run actor (sync)",
+      "description": "Run actor synchronously (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
