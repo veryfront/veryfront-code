@@ -6,7 +6,10 @@ import {
   type ToolExecutionContext,
   type ToolSet,
 } from "#veryfront/tool";
-import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  inheritTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import {
   runWithoutRequestContext as runWithoutProjectRequestContext,
@@ -488,7 +491,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
     (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return {
+      return inheritTrustedHostToolProvenance(tool, {
         ...tool,
         execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
           try {
@@ -500,7 +503,7 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
             throw new TypeErrorConstructor("Hosted project tool execution failed");
           }
         },
-      };
+      });
     },
   );
 }
@@ -514,15 +517,16 @@ export function scopeHostedRuntimeTools(input: {
   const scopedTools = scopeHostedRuntimeToolResults(input.tools);
   return mapOwnRecord(
     scopedTools,
-    (_toolName, tool) => ({
-      ...tool,
-      execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-        withoutHostedCredentials({
-          taskContext: input.taskContext,
-          cloudContext: input.cloudContext,
-          operation: () => apply(tool.execute, tool, [toolInput, context]),
-        }),
-    }),
+    (_toolName, tool) =>
+      inheritTrustedHostToolProvenance(tool, {
+        ...tool,
+        execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+          withoutHostedCredentials({
+            taskContext: input.taskContext,
+            cloudContext: input.cloudContext,
+            operation: () => apply(tool.execute, tool, [toolInput, context]),
+          }),
+      }),
   );
 }
 
