@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import {
@@ -36,6 +37,9 @@ const MAX_SUMMARY_OBJECT_KEYS = 24;
 const MAX_SUMMARY_STRING_BYTES = 8 * 1024;
 
 const encoder = new PrivateTextEncoder();
+const objectEntries = Object.entries;
+const objectFromEntries = Object.fromEntries;
+const isArray = Array.isArray;
 
 type ConversationRunEventRecord = Record<string, unknown> & { type: string };
 
@@ -107,10 +111,10 @@ export function normalizeConversationRunEvent(
     return [event];
   }
   event = normalizeChildRunLifecycleEvent(event);
-  // Invalid private serialization must fail the mandatory observation sink;
-  // only valid oversized data may become a bounded omission or summary.
+  // Public events retain cycle-aware summarization. Mandatory observations
+  // validate serialization at their host boundary before normalization.
   if (
-    measureConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+    getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
   ) {
     return [event];
   }
@@ -458,7 +462,11 @@ function truncateUtf8String(value: string, maxBytes: number, suffix: string): st
   return `${prefix}${suffix}`;
 }
 
-function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new WeakSet()): unknown {
+function summarizeValue(
+  value: unknown,
+  depth = 0,
+  seen = createPrivateWeakStore<object, true>(),
+): unknown {
   if (typeof value === "string") {
     return truncateUtf8String(value, MAX_SUMMARY_STRING_BYTES, "… [truncated]");
   }
@@ -467,7 +475,7 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
     return value;
   }
 
-  if (seen.has(value)) {
+  if (seen.get(value)) {
     return "[circular]";
   }
 
@@ -475,9 +483,9 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
     return "[truncated nested data]";
   }
 
-  seen.add(value);
+  seen.set(value, true);
 
-  if (Array.isArray(value)) {
+  if (isArray(value)) {
     const items = primordialArrayMap(
       primordialArraySlice(value, 0, MAX_SUMMARY_ARRAY_ITEMS),
       (item) => summarizeValue(item, depth + 1, seen),
@@ -491,12 +499,12 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
     return items;
   }
 
-  const entries = Object.entries(value);
+  const entries = objectEntries(value);
   const summarizedEntries = primordialArrayMap(
     primordialArraySlice(entries, 0, MAX_SUMMARY_OBJECT_KEYS),
     (entry) => [entry[0], summarizeValue(entry[1], depth + 1, seen)] as const,
   );
-  const summarizedObject = Object.fromEntries(primordialArrayValues(summarizedEntries));
+  const summarizedObject = objectFromEntries(primordialArrayValues(summarizedEntries));
 
   if (entries.length > MAX_SUMMARY_OBJECT_KEYS) {
     return {
@@ -509,7 +517,7 @@ function summarizeValue(value: unknown, depth = 0, seen: WeakSet<object> = new W
 }
 
 function describeValueType(value: unknown): string {
-  if (Array.isArray(value)) {
+  if (isArray(value)) {
     return "array";
   }
 

@@ -144,6 +144,40 @@ describe("observation normalization private intrinsics", () => {
     assertEquals(normalized, events);
   });
 
+  it("preserves oversized object evidence despite replaced collection and object intrinsics", () => {
+    const originalHas = WeakSet.prototype.has;
+    const originalAdd = WeakSet.prototype.add;
+    const originalEntries = Object.entries;
+    const originalFromEntries = Object.fromEntries;
+    const originalIsArray = Array.isArray;
+    const content = { answer: "preserved", padding: "x".repeat(300_000) };
+    let normalized: ReturnType<typeof normalizeConversationRunEvents> = [];
+    try {
+      WeakSet.prototype.has = () => true;
+      WeakSet.prototype.add = function () {
+        return this;
+      };
+      Object.entries = () => [];
+      Object.fromEntries = () => ({});
+      Array.isArray = (() => false) as typeof Array.isArray;
+      normalized = normalizeConversationRunEvents([{ type: "TOOL_CALL_RESULT", content }]);
+    } finally {
+      WeakSet.prototype.has = originalHas;
+      WeakSet.prototype.add = originalAdd;
+      Object.entries = originalEntries;
+      Object.fromEntries = originalFromEntries;
+      Array.isArray = originalIsArray;
+    }
+    const result = normalized[0].content as typeof content;
+    assertEquals(result.answer, "preserved");
+    assertEquals(result.padding.startsWith("xxx"), true);
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized[0]) <=
+        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
+  });
+
   it("splits oversized text without losing data when project byte and slice methods are replaced", () => {
     const delta = "escaped\n".repeat(50_000);
     const encode = TextEncoder.prototype.encode;

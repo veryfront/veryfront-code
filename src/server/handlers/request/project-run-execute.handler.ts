@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
@@ -2443,7 +2444,7 @@ function createProjectRunObservationMirror(input: {
   let latestEventId = 0;
   let disabled = false;
   let appendOrdinal = 0;
-  const modelCallCaptureReceipts = new Map<
+  const modelCallCaptureReceipts = createPrivateMap<
     string,
     { eventId: string; projectId: string; runId: string; modelCallId: string }
   >();
@@ -2727,7 +2728,15 @@ async function withProjectRunRuntimeObservations<T>(
                 "Invalid encoded project run observation event",
               );
             }
-            return { ...candidate, type: candidate.type };
+            const observation = { ...candidate, type: candidate.type };
+            // Mandatory evidence must serialize before public cycle-aware fallback.
+            privateJsonStringify(
+              observation,
+              null,
+              undefined,
+              MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+            );
+            return observation;
           },
         );
         const normalized = normalizeConversationRunEvents(

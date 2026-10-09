@@ -23,6 +23,13 @@ describe("agent/conversation-run-event-normalization", () => {
     assertEquals(getConversationRunEventJsonByteLength(circular), Number.POSITIVE_INFINITY);
   });
 
+  it("summarizes cyclic public tool results without failing the run", () => {
+    const content: Record<string, unknown> = { answer: "preserved" };
+    content.self = content;
+    const [event] = normalizeConversationRunEvent({ type: "TOOL_CALL_RESULT", content });
+    assertEquals(event.content, { answer: "preserved", self: "[circular]" });
+  });
+
   it("returns small events unchanged", () => {
     const event = { type: "TEXT_MESSAGE_CONTENT", delta: "Hello" };
     assertEquals(normalizeConversationRunEvent(event), [event]);
