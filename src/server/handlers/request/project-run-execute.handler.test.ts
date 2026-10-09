@@ -11143,6 +11143,74 @@ describe("project run inference credential header", () => {
     assertEquals(taskRan, false);
   });
 
+  it("normalizes cyclic public tool results before snapshotting project run observations", async () => {
+    const runId = "run_cyclic_tool_result_observation";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observation-probe",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const output: Record<string, unknown> = { label: "cyclic-result" };
+            output.self = output;
+            await control.onEvent({
+              type: "tool-output-available",
+              toolCallId: "tool-cyclic",
+              output,
+            });
+            return { text: "done", toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const events = requestJsonBody(init)?.events;
+          if (Array.isArray(events)) {
+            for (const event of events) appended.push(event as Record<string, unknown>);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: Array.isArray(events) ? events.length : 0,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    const toolResult = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(toolResult);
+    assertEquals(toolResult.toolCallId, "tool-cyclic");
+    assertEquals(toolResult.content, { label: "cyclic-result", self: "[circular]" });
+  });
+
   it("keeps mandatory model input unchanged when project code replaces JSON and EventTarget methods", async () => {
     const runId = "run_private_observation_json";
     const canonicalRunId = "12121212-1212-4121-8121-121212121212";

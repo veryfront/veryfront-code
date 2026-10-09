@@ -2887,16 +2887,15 @@ async function withProjectRunRuntimeObservations<T>(
                 ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
               },
             }).durable
+            : type === "ToolCallResult"
+            ? { type: "TOOL_CALL_RESULT", ...payload }
             : coerceWireEvent(type, payload);
           if (typeof candidate.type !== "string") {
             throw new Error(
               "Invalid encoded project run observation event",
             );
           }
-          primordialArrayPush(
-            events,
-            snapshotProjectRunObservationEvent({ ...candidate, type: candidate.type }),
-          );
+          primordialArrayPush(events, { ...candidate, type: candidate.type });
         }
         const normalized = normalizeConversationRunEvents(
           primordialArrayFilter(
