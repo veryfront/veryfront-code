@@ -86,10 +86,47 @@ import {
 } from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
-const objectAssign = Object.assign;
-
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
+const reflectApply = Reflect.apply;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+
+function hasOwn(value: HostToolSet | PropertyDescriptor, key: PropertyKey): boolean {
+  return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
+}
+
+function ownDataValue(value: HostToolSet, key: string): unknown {
+  const descriptor = reflectApply(objectGetOwnPropertyDescriptor, Object, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor !== undefined && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+function dataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = objectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.writable = true;
+  descriptor.value = value;
+  return descriptor;
+}
+
+function defineData(target: HostToolSet, key: string, value: unknown): void {
+  reflectApply(objectDefineProperty, Object, [target, key, dataDescriptor(value)]);
+}
+
+function copyOwnDataTools(target: HostToolSet, source: HostToolSet): void {
+  const keys = reflectApply(objectKeys, Object, [source]) as string[];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const value = ownDataValue(source, key);
+    if (value !== undefined) defineData(target, key, value);
+  }
+}
 
 /** Full type of a prepared cloud agent chat execution, ready to stream or detach. */
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
@@ -132,12 +169,12 @@ export function buildLocalTools(
         selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
         taskContext,
       });
-      objectAssign(tools, markTrustedHostToolSet(delegateTools));
+      copyOwnDataTools(tools, markTrustedHostToolSet(delegateTools));
     } else {
       // Generic invoke_agent remains the platform tool for dynamic agent
       // selection. Explicit scoped delegate bindings opt into fixed targets.
       const invokeAgentTool = createInvokeAgentTool(context, taskContext);
-      objectAssign(
+      copyOwnDataTools(
         tools,
         withPlatformHostToolAliases(
           { invoke_agent: markTrustedHostToolProvenance(invokeAgentTool) },
