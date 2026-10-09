@@ -130,11 +130,11 @@ type CacheEntryResult = { key: string; found: boolean; value: string | null };
 /**
  * Maps a backend TTL to the cache entry API's `ttl_seconds`, a whole number of
  * seconds from 1 to {@link API_CACHE_MAX_TTL_SECONDS}. A non-positive TTL
- * expires the entry at once (see `CacheBackend.set`), and NaN or positive
- * infinity is invalid, so neither is sent as `ttl_seconds`.
+ * expires the entry at once (see `CacheBackend.set`), and a non-finite TTL
+ * (NaN or either infinity) is invalid, so it neither writes nor expires.
  */
 function toApiTtlSeconds(ttlSeconds: number): number | "expire" | "invalid" {
-  if (Number.isNaN(ttlSeconds) || ttlSeconds === Number.POSITIVE_INFINITY) return "invalid";
+  if (!Number.isFinite(ttlSeconds)) return "invalid";
   if (ttlSeconds <= 0) return "expire";
   return Math.min(Math.ceil(ttlSeconds), API_CACHE_MAX_TTL_SECONDS);
 }

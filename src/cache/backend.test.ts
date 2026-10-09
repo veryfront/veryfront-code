@@ -1517,6 +1517,45 @@ it("ApiCacheBackend expires an entry written with a non-positive TTL instead of 
   }
 });
 
+it("ApiCacheBackend refuses a negative infinity TTL on set and setBatch without a request", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const requests: Array<{ method: string; path: string }> = [];
+
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  installMockFetch(
+    ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ method: init?.method ?? "GET", path: new URL(String(input)).pathname });
+      return Promise.resolve(Response.json({ key: "k", status: "deleted" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "test-explicit-token",
+      circuitBreakerName: "api-cache-negative-infinity-ttl-test",
+    });
+
+    await cache.set("neg-set", "v", Number.NEGATIVE_INFINITY);
+    const setRequests = requests.splice(0);
+    await cache.setBatch([{ key: "neg-batch", value: "v", ttl: Number.NEGATIVE_INFINITY }]);
+    const setBatchRequests = requests.splice(0);
+
+    assertEquals({ set: setRequests, setBatch: setBatchRequests }, { set: [], setBatch: [] });
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+  }
+});
+
 it("ApiCacheBackend getBatch returns empty map for empty keys", async () => {
   const { ApiCacheBackend } = await importBackend();
 
