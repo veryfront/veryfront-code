@@ -324,7 +324,7 @@
     {
       "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
-      "description": "Render invoice PDF",
+      "description": "Render non-draft invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -333,7 +333,7 @@
           "id": {
             "type": "string",
             "in": "path",
-            "description": "Invoice id (UUID)",
+            "description": "Invoice id (UUID) Draft invoices have no document file and are rejected; use a non-draft invoice.",
             "required": true
           }
         }

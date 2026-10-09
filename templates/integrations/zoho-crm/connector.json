@@ -234,7 +234,7 @@
     {
       "id": "zoho-crm__create_records",
       "name": "Create Records",
-      "description": "Create records",
+      "description": "Create up to 100 CRM records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -250,7 +250,7 @@
         "body": {
           "data": {
             "type": "array",
-            "description": "Array of record objects keyed by field API names, e.g. [{\"Last_Name\":\"Smith\",\"Company\":\"Acme\"}]",
+            "description": "Array of record objects keyed by field API names, e.g. [{\"Last_Name\":\"Smith\",\"Company\":\"Acme\"}] At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.",
             "required": true
           }
         },
@@ -284,7 +284,7 @@
         "body": {
           "data": {
             "type": "array",
-            "description": "Array with one record object of field API names to update, e.g. [{\"Lead_Status\":\"Contacted\"}]",
+            "description": "Array with one record object of field API names to update, e.g. [{\"Lead_Status\":\"Contacted\"}] Requires the ZohoCRM.modules.UPDATE OAuth scope.",
             "required": true
           }
         },

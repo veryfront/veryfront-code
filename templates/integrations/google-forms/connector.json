@@ -151,7 +151,7 @@
           "formId": {
             "type": "string",
             "in": "path",
-            "description": "Form ID to update",
+            "description": "Form ID to update Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
             "required": true
           }
         },

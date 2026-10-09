@@ -38,7 +38,7 @@
         "body": {
           "files": {
             "type": "string",
-            "description": "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request",
+            "description": "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request Remote URLs are not accepted; fetch the file first and provide its content.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"

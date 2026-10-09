@@ -242,7 +242,7 @@
     {
       "id": "pandadoc__create_document_from_template",
       "name": "Create Document from Template",
-      "description": "Create document from template",
+      "description": "Create draft document from template",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -288,7 +288,7 @@
     {
       "id": "pandadoc__send_document",
       "name": "Send Document",
-      "description": "Send document",
+      "description": "Send draft document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

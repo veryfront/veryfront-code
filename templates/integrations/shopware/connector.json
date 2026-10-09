@@ -220,7 +220,7 @@
         "body": {
           "product": {
             "type": "object",
-            "description": "Product payload, e.g. {\"name\":\"T-shirt\",\"productNumber\":\"SW-1001\",\"stock\":10,\"taxId\":\"<tax uuid>\",\"price\":[{\"currencyId\":\"<currency uuid>\",\"gross\":19.99,\"net\":16.8,\"linked\":true}]}",
+            "description": "Product payload, e.g. {\"name\":\"T-shirt\",\"productNumber\":\"SW-1001\",\"stock\":10,\"taxId\":\"<tax uuid>\",\"price\":[{\"currencyId\":\"<currency uuid>\",\"gross\":19.99,\"net\":16.8,\"linked\":true}]} Requires name, productNumber, stock, taxId, and a price array.",
             "required": true
           }
         },

@@ -173,7 +173,7 @@
     {
       "id": "google-contacts__create_contact",
       "name": "Create Contact",
-      "description": "Create contact",
+      "description": "Create contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -214,7 +214,7 @@
     {
       "id": "google-contacts__update_contact",
       "name": "Update Contact",
-      "description": "Update contact",
+      "description": "Update contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

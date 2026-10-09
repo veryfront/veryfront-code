@@ -468,7 +468,7 @@
     {
       "id": "sheets__find_replace",
       "name": "Find and Replace",
-      "description": "Find and replace",
+      "description": "Find and replace spreadsheet text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

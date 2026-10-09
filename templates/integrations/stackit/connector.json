@@ -30,7 +30,7 @@
     {
       "id": "stackit__list_projects",
       "name": "List Projects",
-      "description": "List projects",
+      "description": "List projects (requires parent or member)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39,12 +39,12 @@
           "containerParentId": {
             "type": "string",
             "in": "query",
-            "description": "Identifier of the parent resource container (organization or folder); containerId or UUID"
+            "description": "Identifier of the parent resource container (organization or folder); containerId or UUID At least one of containerParentId or member is required."
           },
           "member": {
             "type": "string",
             "in": "query",
-            "description": "Email address of the user or service account whose visible projects should be listed"
+            "description": "Email address of the user or service account whose visible projects should be listed At least one of containerParentId or member is required."
           },
           "limit": {
             "type": "number",

@@ -306,7 +306,7 @@
     {
       "id": "xero__create_invoice_attachment",
       "name": "Create Invoice Attachment",
-      "description": "Create invoice attachment",
+      "description": "Create invoice attachment (25 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -344,7 +344,7 @@
         "body": {
           "content": {
             "type": "string",
-            "description": "Base64-encoded file content; the decoded bytes are sent as the raw request body",
+            "description": "Base64-encoded file content; the decoded bytes are sent as the raw request body The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
             "required": true,
             "encoding": "base64"
           }

@@ -5315,7 +5315,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "status": {
             "type": "string",
-            "description": "New status for the request: approved, denied, or canceled",
+            "description":
+              "New status for the request: approved, denied, or canceled The API user must have approval permissions.",
             "required": true,
           },
           "note": {
@@ -7223,7 +7224,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__upload_file",
       "name": "Upload File",
-      "description": "Upload file",
+      "description": "Upload file (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7245,7 +7246,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded file content, sent decoded as the binary multipart 'file' part",
+              "Base64-encoded file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -7263,7 +7264,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__upload_file_version",
       "name": "Upload File Version",
-      "description": "Upload file version",
+      "description": "Upload file version (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7286,7 +7287,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part",
+              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -8707,7 +8708,8 @@ export const connectors: IntegrationConfig[] = [
           "bookingUid": {
             "type": "string",
             "in": "path",
-            "description": "UID of the booking to reschedule (from list_bookings)",
+            "description":
+              "UID of the booking to reschedule (from list_bookings) Only accepted or pending bookings can be rescheduled.",
             "required": true,
           },
           "cal-api-version": {
@@ -19610,7 +19612,8 @@ export const connectors: IntegrationConfig[] = [
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to start",
+            "description":
+              "Name of the VM instance to start Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19640,7 +19643,8 @@ export const connectors: IntegrationConfig[] = [
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to stop",
+            "description":
+              "Name of the VM instance to stop Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19730,7 +19734,8 @@ export const connectors: IntegrationConfig[] = [
           "projectId": {
             "type": "string",
             "in": "path",
-            "description": "Google Cloud project ID",
+            "description":
+              "Google Cloud project ID Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
             "required": true,
           },
           "location": {
@@ -23800,7 +23805,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "content": {
             "type": "string",
-            "description": "Raw object content sent as the request body",
+            "description":
+              "Raw object content sent as the request body Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -23819,7 +23825,8 @@ export const connectors: IntegrationConfig[] = [
           "sourceBucket": {
             "type": "string",
             "in": "path",
-            "description": "Bucket containing the source object",
+            "description":
+              "Bucket containing the source object Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
           "sourceObject": {
@@ -23869,7 +23876,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F",
+              "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -24090,7 +24097,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__create_contact",
       "name": "Create Contact",
-      "description": "Create contact",
+      "description": "Create contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24132,7 +24139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__update_contact",
       "name": "Update Contact",
-      "description": "Update contact",
+      "description": "Update contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -24377,7 +24384,8 @@ export const connectors: IntegrationConfig[] = [
           "formId": {
             "type": "string",
             "in": "path",
-            "description": "Form ID to update",
+            "description":
+              "Form ID to update Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
             "required": true,
           },
         },
@@ -32633,7 +32641,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
-      "description": "Render invoice PDF",
+      "description": "Render non-draft invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32642,7 +32650,8 @@ export const connectors: IntegrationConfig[] = [
           "id": {
             "type": "string",
             "in": "path",
-            "description": "Invoice id (UUID)",
+            "description":
+              "Invoice id (UUID) Draft invoices have no document file and are rejected; use a non-draft invoice.",
             "required": true,
           },
         },
@@ -40668,7 +40677,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__create_document_from_template",
       "name": "Create Document from Template",
-      "description": "Create document from template",
+      "description": "Create draft document from template",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40709,7 +40718,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__send_document",
       "name": "Send Document",
-      "description": "Send document",
+      "description": "Send draft document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46737,7 +46746,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__process_leave_request",
       "name": "Process Leave Request",
-      "description": "Process leave request",
+      "description": "Process pending leave request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46746,7 +46755,8 @@ export const connectors: IntegrationConfig[] = [
           "leaveRequestId": {
             "type": "string",
             "in": "path",
-            "description": "ID of the leave request to process (from List Leave Requests)",
+            "description":
+              "ID of the leave request to process (from List Leave Requests) The leave request must be pending.",
             "required": true,
           },
           "action": {
@@ -50382,7 +50392,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__find_replace",
       "name": "Find and Replace",
-      "description": "Find and replace",
+      "description": "Find and replace spreadsheet text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50821,7 +50831,7 @@ export const connectors: IntegrationConfig[] = [
           "product": {
             "type": "object",
             "description":
-              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]}',
+              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]} Requires name, productNumber, stock, taxId, and a price array.',
             "required": true,
           },
         },
@@ -52669,7 +52679,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "stackit__list_projects",
       "name": "List Projects",
-      "description": "List projects",
+      "description": "List projects (requires parent or member)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52679,13 +52689,13 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Identifier of the parent resource container (organization or folder); containerId or UUID",
+              "Identifier of the parent resource container (organization or folder); containerId or UUID At least one of containerParentId or member is required.",
           },
           "member": {
             "type": "string",
             "in": "query",
             "description":
-              "Email address of the user or service account whose visible projects should be listed",
+              "Email address of the user or service account whose visible projects should be listed At least one of containerParentId or member is required.",
           },
           "limit": {
             "type": "number",
@@ -55887,7 +55897,7 @@ export const connectors: IntegrationConfig[] = [
           "files": {
             "type": "string",
             "description":
-              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request",
+              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request Remote URLs are not accepted; fetch the file first and provide its content.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -59242,7 +59252,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__create_invoice_attachment",
       "name": "Create Invoice Attachment",
-      "description": "Create invoice attachment",
+      "description": "Create invoice attachment (25 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -59279,7 +59289,7 @@ export const connectors: IntegrationConfig[] = [
           "content": {
             "type": "string",
             "description":
-              "Base64-encoded file content; the decoded bytes are sent as the raw request body",
+              "Base64-encoded file content; the decoded bytes are sent as the raw request body The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
             "required": true,
             "encoding": "base64",
           },
@@ -59949,7 +59959,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__create_records",
       "name": "Create Records",
-      "description": "Create records",
+      "description": "Create up to 100 CRM records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59966,7 +59976,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}]',
+              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}] At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.',
             "required": true,
           },
         },
@@ -59998,7 +60008,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}]',
+              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}] Requires the ZohoCRM.modules.UPDATE OAuth scope.',
             "required": true,
           },
         },

@@ -147,7 +147,7 @@
     {
       "id": "rippling__process_leave_request",
       "name": "Process Leave Request",
-      "description": "Process leave request",
+      "description": "Process pending leave request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -156,7 +156,7 @@
           "leaveRequestId": {
             "type": "string",
             "in": "path",
-            "description": "ID of the leave request to process (from List Leave Requests)",
+            "description": "ID of the leave request to process (from List Leave Requests) The leave request must be pending.",
             "required": true
           },
           "action": {

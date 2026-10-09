@@ -56,6 +56,18 @@ describe("integration endpoint specs", () => {
   it("keeps asynchronous and conversation-window semantics in short summaries", () => {
     const expected: [string, string, string][] = [
       ["adyen", "create_refund", "Start payment refund"],
+      ["google-contacts", "create_contact", "Create contact (requires full Contacts scope)"],
+      ["google-contacts", "update_contact", "Update contact (requires full Contacts scope)"],
+      ["stackit", "list_projects", "List projects (requires parent or member)"],
+      ["box", "upload_file", "Upload file (50 MB maximum)"],
+      ["box", "upload_file_version", "Upload file version (50 MB maximum)"],
+      ["pandadoc", "send_document", "Send draft document"],
+      ["zoho-crm", "create_records", "Create up to 100 CRM records"],
+      ["sheets", "find_replace", "Find and replace spreadsheet text"],
+      ["lexoffice", "get_invoice_document", "Render non-draft invoice PDF"],
+      ["xero", "create_invoice_attachment", "Create invoice attachment (25 MB maximum)"],
+      ["rippling", "process_leave_request", "Process pending leave request"],
+      ["pandadoc", "create_document_from_template", "Create draft document from template"],
       ["openai", "delete_file", "Delete file and all vector-store references"],
       ["north-data", "power_search", "Search narrowly; billed per unique company"],
       ["openai", "get_usage_completions", "Get completions usage (requires admin key)"],
@@ -137,6 +149,156 @@ describe("integration endpoint specs", () => {
     ];
     for (const [connectorName, toolName, summary] of expected) {
       assertEquals(getTool(connectorName, toolName).description, summary);
+    }
+  });
+  it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
+    const expected: [string, string, "params" | "body", string, string][] = [
+      [
+        "unstructured",
+        "partition_document",
+        "body",
+        "files",
+        "Remote URLs are not accepted; fetch the file first and provide its content.",
+      ],
+      [
+        "stackit",
+        "list_projects",
+        "params",
+        "containerParentId",
+        "At least one of containerParentId or member is required.",
+      ],
+      [
+        "stackit",
+        "list_projects",
+        "params",
+        "member",
+        "At least one of containerParentId or member is required.",
+      ],
+      [
+        "box",
+        "upload_file",
+        "body",
+        "file",
+        "The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+      ],
+      [
+        "box",
+        "upload_file_version",
+        "body",
+        "file",
+        "The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+      ],
+      [
+        "zoho-crm",
+        "create_records",
+        "body",
+        "data",
+        "At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.",
+      ],
+      [
+        "zoho-crm",
+        "update_record",
+        "body",
+        "data",
+        "Requires the ZohoCRM.modules.UPDATE OAuth scope.",
+      ],
+      [
+        "gcp",
+        "start_compute_instance",
+        "params",
+        "instance",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+      ],
+      [
+        "gcp",
+        "stop_compute_instance",
+        "params",
+        "instance",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+      ],
+      [
+        "gcp",
+        "list_cloud_functions",
+        "params",
+        "projectId",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
+      ],
+      [
+        "google-cloud-storage",
+        "upload_object",
+        "body",
+        "content",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-cloud-storage",
+        "copy_object",
+        "params",
+        "sourceBucket",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-cloud-storage",
+        "delete_object",
+        "params",
+        "objectName",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-forms",
+        "set_publish_settings",
+        "params",
+        "formId",
+        "Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
+      ],
+      [
+        "bamboohr",
+        "update_time_off_request_status",
+        "body",
+        "status",
+        "The API user must have approval permissions.",
+      ],
+      [
+        "cal-com",
+        "reschedule_booking",
+        "params",
+        "bookingUid",
+        "Only accepted or pending bookings can be rescheduled.",
+      ],
+      [
+        "shopware",
+        "create_product",
+        "body",
+        "product",
+        "Requires name, productNumber, stock, taxId, and a price array.",
+      ],
+      [
+        "lexoffice",
+        "get_invoice_document",
+        "params",
+        "id",
+        "Draft invoices have no document file and are rejected; use a non-draft invoice.",
+      ],
+      [
+        "xero",
+        "create_invoice_attachment",
+        "body",
+        "content",
+        "The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
+      ],
+      [
+        "rippling",
+        "process_leave_request",
+        "params",
+        "leaveRequestId",
+        "The leave request must be pending.",
+      ],
+    ];
+    for (const [connector, tool, location, field, requirement] of expected) {
+      assertStringIncludes(
+        String(getTool(connector, tool).endpoint?.[location]?.[field]?.description),
+        requirement,
+      );
     }
   });
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {

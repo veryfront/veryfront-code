@@ -228,7 +228,7 @@
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to start",
+            "description": "Name of the VM instance to start Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true
           }
         }
@@ -258,7 +258,7 @@
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to stop",
+            "description": "Name of the VM instance to stop Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true
           }
         }
@@ -350,7 +350,7 @@
           "projectId": {
             "type": "string",
             "in": "path",
-            "description": "Google Cloud project ID",
+            "description": "Google Cloud project ID Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
             "required": true
           },
           "location": {
