@@ -101,6 +101,18 @@ describe("ToolCall", () => {
     }
   }
 
+  it("renders provider-safe nested skill load input in the compact skill row", () => {
+    const tool: ChatDynamicToolPart = {
+      ...skillTool,
+      toolName: "veryfront__load_skill",
+      input: { load: { skillId: "invoice" } },
+    };
+    const html = renderToString(<ToolCall tool={tool} defaultExpanded />);
+    assertEquals(html.includes("Parameters"), false);
+    assertEquals(html.includes("unknown"), false);
+    assertStringIncludes(html, "invoice");
+  });
+
   it("renders canonical delegation and streamed child content in the child-agent card", () => {
     const tool: ChatDynamicToolPart = { ...invokeAgentTool, toolName: "veryfront__invoke_agent" };
     const message = {
