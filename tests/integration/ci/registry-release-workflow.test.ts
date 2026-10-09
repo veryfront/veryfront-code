@@ -2239,3 +2239,59 @@ describe("RC publication alongside the reused main Sonar scan", () => {
     }
   });
 });
+
+it("diagnoses failed RC publishing without building or executing installed packages", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const diagnostic = namedStep(registry, "Diagnose failed RC publish");
+  assertEquals(diagnostic.if, "${{ needs.prerelease.result != 'success' }}");
+  for (const name of ["Build registry validation image", "Validate exact registry release"]) {
+    assertEquals(namedStep(registry, name).if, "${{ needs.prerelease.result == 'success' }}");
+  }
+  for (
+    const required of [
+      "diagnoseRegistryPackages",
+      "--user 1000:1000",
+      "--read-only",
+      "--cap-drop ALL",
+      "--security-opt no-new-privileges=true",
+      "--network=bridge",
+      "target=/source,readonly",
+      "runtimePackages",
+      "npm?.publish === false",
+    ]
+  ) {
+    assertStringIncludes(String(diagnostic.run), required);
+  }
+  assertEquals(String(diagnostic.run).includes("docker build"), false);
+  assertEquals(String(diagnostic.run).includes("npm install"), false);
+  assertEquals(
+    asRecord(diagnostic.env, "diagnostic env").RC_VERSION,
+    "${{ needs.prerelease.outputs.version }}",
+  );
+});
+
+it("reports failed RC diagnostics as a formatted failure without a stack trace", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const run = String(namedStep(registry, "Diagnose failed RC publish").run);
+  const start = run.indexOf("-e '") + "-e '".length;
+  const script = run.slice(start, run.lastIndexOf("'"));
+  // Without RC_VERSION the inline entrypoint fails before any registry lookup.
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
+      script,
+    ],
+    cwd: fromFileUrl(new URL("../../../", import.meta.url)),
+    env: { RC_VERSION: "" },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = decoder.decode(output.stderr);
+  assertEquals(output.code, 1, stderr);
+  assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration].");
+  assertEquals(/^\s+at /m.test(stderr), false, stderr);
+  assertEquals(stderr.includes("registry-release-integrity.ts"), false, stderr);
+});
