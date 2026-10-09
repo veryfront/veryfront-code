@@ -14,7 +14,7 @@ import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "../conversation/run-event-limits.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { AgentResponse } from "../types.ts";
-import { buildNativeRunEventFrame } from "./native-run-events.ts";
+import { buildNativeRunEventFrame, buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
 
@@ -29,10 +29,22 @@ const ArrayIsArray = Array.isArray;
 const objectKeys = Object.keys;
 const intrinsicCrypto = crypto;
 const cryptoRandomUUID = intrinsicCrypto.randomUUID;
+const intrinsicPerformance = performance;
+const performanceNow = intrinsicPerformance.now;
+const intrinsicDate = Date;
+const dateNow = intrinsicDate.now;
 const reflectApply = Reflect.apply;
 
 function randomUUID(): string {
   return reflectApply(cryptoRandomUUID, intrinsicCrypto, []) as string;
+}
+
+function defaultNowMs(): number {
+  return reflectApply(performanceNow, intrinsicPerformance, []) as number;
+}
+
+function defaultEpochMs(): number {
+  return reflectApply(dateNow, intrinsicDate, []) as number;
 }
 
 /** Event emitted for AG-UI runtime stream. */
@@ -149,8 +161,8 @@ export function createAgUiEncoderState(
   // Clocked by default. This state is built at three separate composition
   // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
   // for every run -- which is exactly what happened twice before.
-  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
-  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
+  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? defaultNowMs;
+  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? defaultEpochMs;
   return {
     ...(nowMs ? { nowMs, startedMs: options.startedMs ?? nowMs() } : {}),
     ...(epochMs ? { epochMs } : {}),
@@ -323,6 +335,115 @@ function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEven
       state.metadata.provider = provider;
     }
   }
+}
+
+function applyFinishEventMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
+  if (typeof event.finishReason === "string") {
+    state.metadata.finishReason = event.finishReason;
+  }
+
+  const usage = (event.totalUsage ?? event.usage) as Record<string, unknown> | undefined;
+  if (!usage || typeof usage !== "object" || ArrayIsArray(usage)) return;
+
+  if (typeof usage.inputTokens === "number") state.metadata.inputTokens = usage.inputTokens;
+  if (typeof usage.outputTokens === "number") state.metadata.outputTokens = usage.outputTokens;
+  if (typeof usage.totalTokens === "number") state.metadata.totalTokens = usage.totalTokens;
+  if (typeof usage.cachedInputTokens === "number") {
+    state.metadata.cachedInputTokens = usage.cachedInputTokens;
+  } else if (typeof usage.cacheReadInputTokens === "number") {
+    state.metadata.cachedInputTokens = usage.cacheReadInputTokens;
+  }
+  if (typeof usage.cacheCreationInputTokens === "number") {
+    state.metadata.cacheCreationInputTokens = usage.cacheCreationInputTokens;
+  }
+  if (typeof usage.cacheCreation1hInputTokens === "number") {
+    state.metadata.cacheCreation1hInputTokens = usage.cacheCreation1hInputTokens;
+  }
+  if (typeof usage.cacheReadInputTokens === "number") {
+    state.metadata.cacheReadInputTokens = usage.cacheReadInputTokens;
+  }
+  if (typeof usage.reasoningTokens === "number") {
+    state.metadata.reasoningTokens = usage.reasoningTokens;
+  }
+  if (typeof usage.billableInputTokens === "number") {
+    state.metadata.billableInputTokens = usage.billableInputTokens;
+  }
+  if (typeof usage.billableOutputTokens === "number") {
+    state.metadata.billableOutputTokens = usage.billableOutputTokens;
+  }
+  if (typeof usage.costUsd === "number") state.metadata.costUsd = usage.costUsd;
+  if (typeof usage.providerInputCostUsd === "number") {
+    state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
+  }
+  if (typeof usage.providerOutputCostUsd === "number") {
+    state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
+  }
+  if (typeof usage.providerCostUsd === "number") {
+    state.metadata.providerCostUsd = usage.providerCostUsd;
+  }
+  if (typeof usage.veryfrontInputChargeUsd === "number") {
+    state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
+  }
+  if (typeof usage.veryfrontOutputChargeUsd === "number") {
+    state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
+  }
+  if (typeof usage.veryfrontChargeUsd === "number") {
+    state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.veryfrontBilledUsd === "number") {
+    state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
+  }
+  if (typeof usage.costCredits === "number") state.metadata.costCredits = usage.costCredits;
+  if (
+    usage.costSource === "gateway" || usage.costSource === "missing" ||
+    usage.costSource === "partial"
+  ) {
+    state.metadata.costSource = usage.costSource;
+  }
+  if (usage.billingMode === "direct" || usage.billingMode === "deferred") {
+    state.metadata.billingMode = usage.billingMode;
+  }
+  if (
+    usage.usageCaptureStatus === "complete" ||
+    usage.usageCaptureStatus === "partial" ||
+    usage.usageCaptureStatus === "missing"
+  ) {
+    state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
+  }
+}
+
+function omitUndefinedObjectProperties(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (ArrayIsArray(value)) {
+    return primordialArrayMap(value, (item) => omitUndefinedObjectProperties(item));
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const key of objectKeys(value)) {
+    const item = (value as Record<string, unknown>)[key];
+    if (item !== undefined) sanitized[key] = omitUndefinedObjectProperties(item);
+  }
+  return sanitized;
+}
+
+function createMessageFinishObservation(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent {
+  const value: Record<string, unknown> = {
+    ...(typeof event.finishReason === "string" ? { finishReason: event.finishReason } : {}),
+    ...(event.totalUsage !== undefined
+      ? { totalUsage: omitUndefinedObjectProperties(event.totalUsage) }
+      : {}),
+    ...(event.usage !== undefined ? { usage: omitUndefinedObjectProperties(event.usage) } : {}),
+    ...(event.object !== undefined ? { object: omitUndefinedObjectProperties(event.object) } : {}),
+    ...(state.messageId ? { messageId: state.messageId } : {}),
+  };
+  return buildRuntimeEventRecordedEvent({
+    runtime: "veryfront",
+    kind: "message_finish",
+    value,
+  }).live;
 }
 
 function applyResponseMetadata(
@@ -1133,6 +1254,11 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
           createStepEvent(state, "StepFinished", event),
         ],
       ]);
+
+    case "message-finish":
+    case "finish":
+      applyFinishEventMetadata(state, event);
+      return [createMessageFinishObservation(state, event)];
 
     case "data":
       applyDataMetadata(state, event);

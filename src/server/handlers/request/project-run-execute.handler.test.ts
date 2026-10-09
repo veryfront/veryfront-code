@@ -9093,7 +9093,11 @@ describe("project run inference credential header", () => {
           const payload = requestJsonBody(init);
           const events = payload?.events;
           if (!Array.isArray(events)) throw new Error("Expected event batch");
-          if (events.some((event) => event.type === "RUNTIME_EVENT_RECORDED")) {
+          if (
+            events.some((event) =>
+              event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+            )
+          ) {
             entryObservations++;
             assertEquals(events, [{
               type: "RUNTIME_EVENT_RECORDED",
@@ -10230,7 +10234,11 @@ describe("project run inference credential header", () => {
             const payload = requestJsonBody(init);
             const events = payload?.events;
             if (!Array.isArray(events)) throw new Error("Expected event batch");
-            if (events.some((event) => event.type === "RUNTIME_EVENT_RECORDED")) {
+            if (
+              events.some((event) =>
+                event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+              )
+            ) {
               entryObservations++;
               assertEquals(events, [{
                 type: "RUNTIME_EVENT_RECORDED",

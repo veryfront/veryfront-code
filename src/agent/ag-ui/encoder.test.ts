@@ -375,6 +375,84 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("uses captured default clocks for observation timing", () => {
+    const originalDateNow = Date.now;
+    const originalPerformanceNow = performance.now;
+    let replacementReads = 0;
+    try {
+      Date.now = () => {
+        replacementReads += 1;
+        throw new Error("project Date.now replacement");
+      };
+      Object.defineProperty(performance, "now", {
+        configurable: true,
+        value: () => {
+          replacementReads += 1;
+          throw new Error("project performance.now replacement");
+        },
+      });
+      const state = createAgUiEncoderState();
+      const events = mapRuntimeStreamEventToAgUiEvents(state, { type: "start-step" });
+      assertEquals(typeof events[0]?.payload.elapsedMs, "number");
+      assertEquals(typeof events[0]?.payload.emittedAt, "number");
+    } finally {
+      Date.now = originalDateNow;
+      Object.defineProperty(performance, "now", {
+        configurable: true,
+        value: originalPerformanceNow,
+      });
+    }
+    assertEquals(replacementReads, 0);
+  });
+
+  it("maps message-finish metadata to a nonterminal runtime observation", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-start",
+      messageId: "message-1",
+    });
+
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "stop",
+      totalUsage: {
+        inputTokens: 3,
+        outputTokens: 4,
+        totalTokens: 7,
+        costCredits: 0.5,
+        inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: 1 },
+      },
+      object: { city: "Stockholm", extra: undefined },
+    });
+
+    assertEquals(events, [{
+      event: "RuntimeEventRecorded",
+      payload: {
+        runtime: "veryfront",
+        kind: "message_finish",
+        value: {
+          finishReason: "stop",
+          totalUsage: {
+            inputTokens: 3,
+            outputTokens: 4,
+            totalTokens: 7,
+            costCredits: 0.5,
+            inputTokenDetails: { cacheReadTokens: 1 },
+          },
+          object: { city: "Stockholm" },
+          messageId: "message-1",
+        },
+      },
+    }]);
+    assertEquals(state.metadata, {
+      finishReason: "stop",
+      inputTokens: 3,
+      outputTokens: 4,
+      totalTokens: 7,
+      costCredits: 0.5,
+    });
+  });
+
   it("maps custom data events and tool fallback error events", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
