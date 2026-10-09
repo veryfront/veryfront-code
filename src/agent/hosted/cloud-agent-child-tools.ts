@@ -39,7 +39,9 @@ import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
   CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
   isLoadSkillToolName,
   LOAD_SKILL_TOOL_ID,
 } from "../platform-tool-names.ts";
@@ -73,6 +75,12 @@ const HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES = new Set([
   CANONICAL_LOAD_SKILL_TOOL_ID,
   "load_skill_reference",
   "veryfront__load_skill_reference",
+]);
+const HOSTED_CHILD_PARENT_CONTROL_TOOL_NAMES = new Set([
+  "invoke_agent",
+  "veryfront__invoke_agent",
+  FORM_INPUT_TOOL_ID,
+  CANONICAL_FORM_INPUT_TOOL_ID,
 ]);
 
 function resolveHostedChildSkillLoaderToolName(
@@ -311,7 +319,8 @@ export function resolveHostedChildToolNames(
   return [
     ...new Set([
       ...(agentConfig.tools ?? []).filter((toolName) =>
-        !HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES.has(toolName)
+        !HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES.has(toolName) &&
+        !HOSTED_CHILD_PARENT_CONTROL_TOOL_NAMES.has(toolName)
       ),
       ...(agentConfig.providerTools ?? []),
       ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
