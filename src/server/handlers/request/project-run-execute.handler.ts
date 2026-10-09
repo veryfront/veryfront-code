@@ -47,9 +47,14 @@ import {
 import {
   primordialArrayFilter,
   primordialArrayMap,
+  primordialArrayPush,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
-import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
+import {
+  getConversationRunEventJsonByteLength,
+  normalizeConversationRunEvents,
+} from "#veryfront/agent/conversation/run-event-normalization.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
@@ -209,6 +214,11 @@ const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** Overall decision deadline; unknown authority leaves a resumable hold. */
 const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
 const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
+// Streamed deltas are queued and appended in bounded batches instead of one request
+// per delta. Every flush drains the queue: structural observations, each mandatory
+// sink write before inference and the final flush all perform one.
+const PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENTS = 100;
+const PROJECT_RUN_OBSERVATION_MAX_QUEUED_BYTES = 512 * 1024;
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
  * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
@@ -2571,8 +2581,47 @@ function createProjectRunObservationMirror(input: {
       throw error;
     }
   };
+  let queuedEvents: Record<string, unknown>[] = [];
+  let queuedBytes = 0;
+  let drainTail: Promise<void> = resolvePrivatePromise();
+  // Drains run one at a time in queue order; a failed append disables the mirror,
+  // so later drains drop their events and every flush reports the disabled state.
+  const drainQueuedEvents = (): Promise<void> => {
+    const drain = async () => {
+      while (queuedEvents.length > 0) {
+        const events = queuedEvents;
+        queuedEvents = [];
+        queuedBytes = 0;
+        for (
+          const batch of primordialArrayValues(
+            buildConversationRunEventBatches({
+              events,
+              maxEventsPerBatch: PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENTS,
+            }),
+          )
+        ) {
+          await append(batch);
+        }
+      }
+    };
+    const current = chainPrivatePromise(drainTail, drain, drain);
+    drainTail = chainPrivatePromise(current, () => undefined, () => undefined);
+    return current;
+  };
   return {
-    appendEvents: (events) => append(events),
+    appendEvents: async (events) => {
+      if (disabled) return;
+      for (const event of primordialArrayValues(events)) {
+        primordialArrayPush(queuedEvents, event);
+        queuedBytes += getConversationRunEventJsonByteLength(event);
+      }
+      if (
+        queuedEvents.length >= PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENTS ||
+        queuedBytes >= PROJECT_RUN_OBSERVATION_MAX_QUEUED_BYTES
+      ) {
+        await drainQueuedEvents();
+      }
+    },
     appendExecutionEntry: async () => {
       // A redelivered trusted attempt records the same logical entry and exact payload.
       const hash = await computeObservationHash(privateJsonStringify([
@@ -2601,6 +2650,7 @@ function createProjectRunObservationMirror(input: {
       return receipt;
     },
     async flush() {
+      await drainQueuedEvents();
       return {
         disabled,
         latestEventId,
@@ -2613,6 +2663,9 @@ function createProjectRunObservationMirror(input: {
       };
     },
     getSnapshot() {
+      // Queued observations are not reported as pending: every sink write flushes
+      // the whole queue itself, and events queued by a concurrent stream after
+      // that flush must not fail the unrelated sink write.
       return {
         disabled,
         latestEventId,
@@ -2626,8 +2679,14 @@ function createProjectRunObservationMirror(input: {
     },
     dispose() {
       disabled = true;
+      queuedEvents = [];
+      queuedBytes = 0;
     },
   };
+}
+
+function isProjectRunObservationDeltaEvent(type: string): boolean {
+  return type === "text-delta" || type === "reasoning-delta" || type === "tool-input-delta";
 }
 
 function isPermittedProjectRunObservationEventType(type: string): boolean {
@@ -2772,6 +2831,11 @@ async function withProjectRunRuntimeObservations<T>(
         ) {
           await mirror.appendEvents(batch);
         }
+        // Deltas stay queued; every structural event (message, step, tool, finish)
+        // flushes them so append failures still reach the observed stream.
+        if (!isProjectRunObservationDeltaEvent(event.type)) {
+          await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+        }
       } catch (error) {
         // Encoding and batching failures also lose mandatory evidence, even when
         // project code catches the error before any append reaches the API.
@@ -2793,22 +2857,41 @@ async function withProjectRunRuntimeObservations<T>(
         undefined,
         createObserver,
       );
-    const result = await runWithMandatoryRunEventSink(
-      sink,
-      () =>
-        withLocalChildExecution(
-          executeChild,
-          input.operation,
-          undefined,
-          undefined,
-          createObserver,
-        ),
-    );
-    const snapshot = await mirror.flush({
-      abortSignal: input.abortSignal,
-      throwOnTimeoutRetry: true,
-    });
+    let result: T;
+    try {
+      result = await runWithMandatoryRunEventSink(
+        sink,
+        () =>
+          withLocalChildExecution(
+            executeChild,
+            input.operation,
+            undefined,
+            undefined,
+            createObserver,
+          ),
+      );
+    } catch (error) {
+      // Observations queued before the failure stay visible; the execution error wins.
+      try {
+        await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+      } catch {
+        // The original execution error remains the reported failure.
+      }
+      throw error;
+    }
     const failedExecution = isRecord(result) && result.success === false;
+    let snapshot: Awaited<ReturnType<typeof mirror.flush>>;
+    try {
+      snapshot = await mirror.flush({
+        abortSignal: input.abortSignal,
+        throwOnTimeoutRetry: true,
+      });
+    } catch (error) {
+      // A failed execution keeps its own error; the observation failure only
+      // replaces a successful result.
+      if (!failedExecution) throw error;
+      snapshot = mirror.getSnapshot();
+    }
     if (snapshot.disabled && !failedExecution) {
       throw new DurableRunEventPersistenceError("Project run observation sink is disabled");
     }

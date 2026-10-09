@@ -18,6 +18,14 @@ import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
 
+// Mandatory project-run observers stamp timing after project code may have
+// replaced these globals, so the timing path uses load-time captures.
+const ObjectHasOwn = Object.hasOwn;
+const MathMax = Math.max;
+const MathRound = Math.round;
+const NumberIsFinite = Number.isFinite;
+const NumberIsInteger = Number.isInteger;
+
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
@@ -821,18 +829,18 @@ export function stampAgUiEventTiming(
   // emittedAt`. Both are stamped because wall clocks can step backwards and
   // the monotonic reading cannot.
   for (const { payload } of primordialArrayValues(events)) {
-    if (Object.hasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
-    if (Object.hasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
+    if (ObjectHasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
+    if (ObjectHasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
   }
 
   const needsElapsedMs =
-    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "elapsedMs")).length > 0;
+    primordialArrayFilter(events, ({ payload }) => !ObjectHasOwn(payload, "elapsedMs")).length > 0;
   const needsEmittedAt =
-    primordialArrayFilter(events, ({ payload }) => !Object.hasOwn(payload, "emittedAt")).length > 0;
+    primordialArrayFilter(events, ({ payload }) => !ObjectHasOwn(payload, "emittedAt")).length > 0;
   const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
-    ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
+    ? MathMax(0, MathRound(state.nowMs() - state.startedMs))
     : undefined;
-  const emittedAt = needsEmittedAt && state.epochMs ? Math.round(state.epochMs()) : undefined;
+  const emittedAt = needsEmittedAt && state.epochMs ? MathRound(state.epochMs()) : undefined;
   if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
   if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
   if (elapsedMs === undefined && emittedAt === undefined) {
@@ -843,10 +851,10 @@ export function stampAgUiEventTiming(
     ...entry,
     payload: {
       ...entry.payload,
-      ...(elapsedMs !== undefined && !Object.hasOwn(entry.payload, "elapsedMs")
+      ...(elapsedMs !== undefined && !ObjectHasOwn(entry.payload, "elapsedMs")
         ? { elapsedMs }
         : {}),
-      ...(emittedAt !== undefined && !Object.hasOwn(entry.payload, "emittedAt")
+      ...(emittedAt !== undefined && !ObjectHasOwn(entry.payload, "emittedAt")
         ? { emittedAt }
         : {}),
     },
@@ -854,13 +862,13 @@ export function stampAgUiEventTiming(
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== "number" || !NumberIsFinite(value) || value < 0) {
     throw new TypeError("elapsedMs must be a finite non-negative number");
   }
 }
 
 function assertValidEmittedAt(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !NumberIsInteger(value) || value < 0) {
     throw new TypeError("emittedAt must be a non-negative integer");
   }
 }

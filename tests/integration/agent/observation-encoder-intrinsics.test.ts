@@ -103,6 +103,25 @@ describe("observation encoder private intrinsics", () => {
     assertEquals(events.filter((event) => event.event === "ToolCallEnd").length, 1);
   });
 
+  it("stamps observation timing when project code replaces Object.hasOwn", () => {
+    const hasOwn = Object.hasOwn;
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    try {
+      Object.hasOwn = () => true;
+      events = mapRuntimeStreamEventToAgUiEvents(
+        createAgUiEncoderState({ nowMs: () => 25, epochMs: () => 1_000 }),
+        { type: "text-start", id: "text-observed", messageId: "message-observed" },
+      );
+    } finally {
+      Object.hasOwn = hasOwn;
+    }
+    assertEquals(events.length > 0, true);
+    for (const event of events) {
+      assertEquals(typeof event.payload.elapsedMs, "number");
+      assertEquals(event.payload.emittedAt, 1_000);
+    }
+  });
+
   it("preserves custom observations when project code replaces string methods", () => {
     const startsWith = String.prototype.startsWith;
     const slice = String.prototype.slice;
