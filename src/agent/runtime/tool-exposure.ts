@@ -44,6 +44,8 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
+/** The platform's own namespace, which models also use as an alias for local platform tools. */
+const PLATFORM_TOOL_NAMESPACE = "veryfront";
 /** Which field a query term matched on, strongest evidence first. */
 type ToolSearchMatchField = "exactName" | "name" | "description" | "parameterDescription";
 
@@ -548,12 +550,18 @@ function rankToolExposureMatches(input: {
         );
     });
     const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
-    if (namespaceMatches.length > 0 || canonicalName === null) return namespaceMatches;
+    if (
+      namespaceMatches.length > 0 || canonicalName === null ||
+      canonical.namespace !== PLATFORM_TOOL_NAMESPACE
+    ) {
+      return namespaceMatches;
+    }
 
-    // With no integration evidence at all, models often prefix a local tool with a
-    // product namespace (`veryfront__list_files`). Fall back to the exact local id
-    // only: the same-named canonical tool of another namespace is not a match, and
-    // a normalized phrase match would reintroduce `jira_list_projects`.
+    // With no integration evidence at all, models often prefix a platform tool with
+    // the platform namespace (`veryfront__list_files`). Only that reserved namespace
+    // aliases local tools: `github__list_files` must never load a project's own
+    // `list_files`. Match the exact local id only; a normalized phrase match would
+    // reintroduce `veryfront_list_files`.
     const localId = privateTextSlice(canonicalName, canonical.namespace.length + 2);
     return sortSearchItems(
       mapPrivateArray(

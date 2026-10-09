@@ -1131,6 +1131,32 @@ it("tool search falls back to the local id when a canonical query has no integra
   );
 });
 
+it("tool search never strips a non-platform namespace onto a local tool", () => {
+  // Only `veryfront__` aliases local platform tools. Another namespace with no
+  // integration evidence is a miss, not a project tool that happens to share the id.
+  for (const query of ["github__list_files", "jira__list_files", "GITHUB__LIST_FILES"]) {
+    const state = createToolExposureState();
+    const result = searchToolExposure({
+      query,
+      authorized: [definition("list_files", "List project files")],
+      available: [definition("read_file", "Read a project file")],
+      state,
+    });
+    assertEquals(result.miss, true, query);
+    assertEquals(result.matches, [], query);
+    assertEquals([...state.loadedToolNames], [], query);
+  }
+  assertEquals(
+    searchToolExposure({
+      query: "github__list_files",
+      authorized: [],
+      available: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).matches,
+    [],
+  );
+});
+
 it("tool search keeps integration evidence ahead of the local id fallback", () => {
   // A namespace with real evidence is discovery, not a mistyped local id.
   assertEquals(
@@ -1143,6 +1169,17 @@ it("tool search keeps integration evidence ahead of the local id fallback", () =
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
     ["jira__list_projects"],
+  );
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list_files",
+      authorized: [
+        definition("list_files", "List project files"),
+        definition("veryfront__list_projects", "List Veryfront projects"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["veryfront__list_projects"],
   );
   // A malformed canonical query has no local id to fall back to.
   assertEquals(
