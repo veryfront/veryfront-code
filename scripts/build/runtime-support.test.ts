@@ -96,7 +96,6 @@ describe("npm smoke Node support contract", () => {
     assertEquals(smokeJob.needs, [
       "npm-smoke-node-versions",
       "npm-compatibility-artifact",
-      "runner-trust",
     ]);
     assertEquals(
       record(

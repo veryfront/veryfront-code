@@ -946,7 +946,7 @@ jobs:
     ]);
     assertEquals(
       ciJob.needs,
-      ["tested-run", "runner-trust"],
+      ["tested-run"],
       "source checks must start in parallel after the tested-run decision",
     );
     assertMatch(
@@ -1185,7 +1185,7 @@ describe("parallel integration workflow contract", () => {
     );
     assertEquals(asRecord(strategy.matrix, "integration matrix").shard, [1, 2, 3]);
     assertEquals(job.name, "tests (integration shard ${{ matrix.shard }}/3)");
-    assertEquals(job.needs, ["tested-run", "runner-trust"]);
+    assertEquals(job.needs, ["tested-run"]);
     const steps = asSteps(job.steps, "integration steps");
     assert(!steps.some((step) => String(step.uses).includes("retry")));
     const runner = steps.find((step) => step.name === "Run integration shard");
@@ -1249,7 +1249,7 @@ describe("parallel integration workflow contract", () => {
     const jobs = asRecord(workflow.jobs, "jobs");
     const gate = asRecord(jobs.tests, "required integration gate");
     assertEquals(gate.name, "tests (integration)");
-    assertEquals(gate.needs, ["tested-run", "tests-integration", "runner-trust"]);
+    assertEquals(gate.needs, ["tested-run", "tests-integration"]);
     assertEquals(gate.if, "${{ always() }}");
     const step = asSteps(gate.steps, "gate steps")[0];
     assertEquals(

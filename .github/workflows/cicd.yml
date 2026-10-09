@@ -31,64 +31,14 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Test and gate jobs may use the optional pool only for pushes to main.
-# Merge groups and PRs use hosted runners. The variable stays unset until
-# server-side access restrictions are verified; see trusted-runner-pool.md.
-# tests/integration/ci/workflow-runners.test.ts pins the eligible job list.
+# Runner selection. Jobs that need no secrets, no write token, no root and no
+# Docker select the self-hosted `veryfront-public` pool when the repository
+# variable CI_RUNNER_PUBLIC is `veryfront-public` and the event is a push to
+# main, a merge group, or a same-repository pull request not authored by
+# Dependabot. Every other case, including an unset variable and fork pull
+# requests, selects `ubuntu-latest`. The contract is pinned by
+# tests/integration/ci/workflow-runners.test.ts.
 jobs:
-  # ============================================
-  # Runner pool eligibility for trusted runs
-  # Outputs trusted=true only for pushes to main in this repository.
-  # Queued changes never receive eligibility from this decision.
-  # The check loads scripts/ci/runner-trust.mjs from the default branch. Any
-  # error outputs false, which leaves the routed jobs on GitHub-hosted runners.
-  # The job succeeds on events whose repository code jobs are eligible.
-  # Fork code jobs remain skipped by their existing job-level guards.
-  # ============================================
-  runner-trust:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    name: runner trust
-    permissions:
-      contents: read
-    outputs:
-      trusted: ${{ steps.decide.outputs.result == 'true' && 'true' || 'false' }}
-    steps:
-      - name: Decide runner pool eligibility
-        id: decide
-        if: ${{ vars.CI_RUNNER_TRUSTED == 'veryfront-ci' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-        continue-on-error: true
-        timeout-minutes: 1
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          retries: 3
-          result-encoding: string
-          script: |
-            const response = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              path: "scripts/ci/runner-trust.mjs",
-              ref: context.payload.repository.default_branch,
-            });
-            const file = response.data;
-            if (
-              Array.isArray(file) || file?.type !== "file" ||
-              file?.encoding !== "base64" ||
-              typeof file?.content !== "string"
-            ) throw new Error("Runner trust check content is malformed");
-            const checkUrl = `data:text/javascript;base64,${
-              Buffer.from(file.content, "base64").toString("base64")
-            }`;
-            const { decideRunnerTrust } = await import(checkUrl);
-            const trusted = await decideRunnerTrust({
-              repository: `${context.repo.owner}/${context.repo.repo}`,
-              eventName: context.eventName,
-              ref: context.ref,
-            });
-            core.notice(`Runner pool eligibility: ${trusted === true}`);
-            return trusted === true ? "true" : "false";
-
   # ============================================
   # CD: Reuse the tested merge-queue run (main only)
   # The merge queue tests the exact commit that lands on main. When its run
@@ -189,9 +139,9 @@ jobs:
   # CI: Quality Checks
   # ============================================
   ci:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
@@ -280,9 +230,9 @@ jobs:
   # ============================================
 
   tests-integration:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 35
     name: "tests (integration shard ${{ matrix.shard }}/3)"
     strategy:
@@ -364,9 +314,9 @@ jobs:
   # already passed them on this commit.
   tests:
     name: tests (integration)
-    needs: [tested-run, tests-integration, runner-trust]
+    needs: [tested-run, tests-integration]
     if: ${{ always() }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
       - name: Require all integration shards
@@ -385,8 +335,8 @@ jobs:
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: [npm-compatibility-artifact, runner-trust]
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: "tests (node shard ${{ matrix.shard }}/4)"
     strategy:
@@ -418,8 +368,8 @@ jobs:
   # (veryfront-issue-inbox#751).
   tests-node-sandbox:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: [npm-compatibility-artifact, runner-trust]
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 15
     name: tests (node sandbox, minimum Node)
     steps:
@@ -447,8 +397,8 @@ jobs:
 
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: [npm-compatibility-artifact, runner-trust]
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: tests (bun)
     steps:
@@ -522,8 +472,8 @@ jobs:
 
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: [npm-compatibility-artifact, runner-trust]
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
@@ -594,9 +544,9 @@ jobs:
         run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 
   coverage-shards:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: coverage shard ${{ matrix.shard }}/16
     strategy:
@@ -651,9 +601,9 @@ jobs:
         run: echo "### Coverage shard ${{ matrix.shard }}/16 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
   coverage-node-executor:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: native executor coverage
     steps:
@@ -682,9 +632,9 @@ jobs:
           if-no-files-found: error
 
   coverage-integration-client:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: integration client coverage
     steps:
@@ -710,10 +660,10 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: coverage gate
-    needs: [coverage-shards, tested-run, runner-trust]
+    needs: [coverage-shards, tested-run]
     if: ${{ always() && (github.event_name != 'merge_group' || !cancelled()) && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require coverage shards
@@ -797,7 +747,7 @@ jobs:
   # runs repository code (`deno task coverage:ci:merge`), so it happens here,
   # in a job with no secrets, and hands the scan job only the finished report.
   sonar-coverage:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
     needs: [
@@ -806,7 +756,6 @@ jobs:
       coverage-shards,
       coverage-node-executor,
       coverage-integration-client,
-      runner-trust,
     ]
     if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
@@ -857,10 +806,10 @@ jobs:
           retention-days: 1
 
   sonar-coverage-main:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Reused main Sonar coverage report
-    needs: [tested-run, version-check, runner-trust]
+    needs: [tested-run, version-check]
     if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
@@ -983,9 +932,9 @@ jobs:
 
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
-    needs: [sonar, sonar-main, tested-run, version-check, runner-trust]
+    needs: [sonar, sonar-main, tested-run, version-check]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
@@ -998,9 +947,9 @@ jobs:
           fi
 
   tests-e2e-rsc-browser:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
@@ -1024,9 +973,9 @@ jobs:
   # ============================================
 
   tests-binary-e2e:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
@@ -1147,13 +1096,6 @@ jobs:
       actions: write
     uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64
 
-  cancel-after-runner-trust:
-    needs: [runner-trust]
-    if: ${{ failure() && github.event_name == 'merge_group' }}
-    permissions:
-      actions: write
-    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64
-
   cancel-after-tested-run:
     needs: [tested-run]
     if: ${{ failure() && github.event_name == 'merge_group' }}
@@ -1233,7 +1175,7 @@ jobs:
 
   quality-gate-merge:
     name: quality gate (merge)
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - ci
@@ -1246,7 +1188,6 @@ jobs:
       - tests-e2e-rsc-browser
       - sonar-quality-gate
       - tested-run
-      - runner-trust
     if: ${{ always() && github.event_name != 'push' }}
     steps:
       - name: Require merge correctness dependencies
@@ -1302,9 +1243,9 @@ jobs:
   # CLI startup, optional-peer metadata, extension package loading, and a real
   # starter dev-server render (see scripts/test/npm-install-smoke.ts).
   npm-smoke-node-versions:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: npm smoke Node version contract
     outputs:
@@ -1325,8 +1266,8 @@ jobs:
 
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: [npm-smoke-node-versions, npm-compatibility-artifact, runner-trust]
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    needs: [npm-smoke-node-versions, npm-compatibility-artifact]
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
@@ -1369,14 +1310,13 @@ jobs:
 
   quality-gate-artifact:
     name: quality gate (artifact)
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - npm-compatibility-artifact
       - tests-npm-install-smoke
       - tests-runtime-critical-flow
       - tested-run
-      - runner-trust
     if: ${{ always() }}
     steps:
       - name: Require canonical artifact compatibility
@@ -1448,9 +1388,9 @@ jobs:
           exit "$failed"
 
   tests-sentry-runtime-packages:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
     # Cold-cache runs take ~12-15min; 15 was cutting it too close.
     timeout-minutes: 20
     name: tests (sentry runtime packages)
@@ -1474,9 +1414,9 @@ jobs:
   # ============================================
 
   tests-split-mode:
-    needs: [tested-run, runner-trust]
+    needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true

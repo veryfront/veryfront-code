@@ -139,7 +139,7 @@ describe("cicd coverage workflow", () => {
 
     assertStringIncludes(workflow, "coverage:");
     assertStringIncludes(workflow, "name: coverage gate");
-    assertStringIncludes(workflow, "needs: [coverage-shards, tested-run, runner-trust]");
+    assertStringIncludes(workflow, "needs: [coverage-shards, tested-run]");
     // Main reuse skips the gate; only cancelled merge-group runs stop the heavy collector.
     assertStringIncludes(
       workflow,

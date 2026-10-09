@@ -49,8 +49,6 @@ const COVERAGE_GATE = "coverage";
 // Jobs that still run on a reused main run, or never run on main.
 const KEPT = [
   "tested-run",
-  // Runs on every event and only picks the runner pool for later jobs.
-  "runner-trust",
   // Required integration check; it accepts skipped shards on a reused run.
   "tests",
   "sonar-coverage",
@@ -345,11 +343,7 @@ describe("tested merge-queue run workflow", () => {
 
     for (const name of SKIPPED_ON_REUSE) {
       const value = job(jobs, name);
-      assertEquals(
-        needs(value).filter((dependency) => dependency !== "runner-trust"),
-        ["tested-run"],
-        `${name} must wait for tested-run`,
-      );
+      assertEquals(needs(value), ["tested-run"], `${name} must wait for tested-run`);
       assertStringIncludes(String(value.if), `\${{ ${SKIP_ON_REUSE} && ${TRUSTED}`);
     }
     for (const [name, dependency] of Object.entries(SKIPPED_WITH_DEPENDENCY)) {
@@ -438,7 +432,6 @@ describe("tested merge-queue run workflow", () => {
       "cancel-after-tests-e2e-rsc-browser",
       "cancel-after-sonar-quality-gate",
       "cancel-after-tested-run",
-      "cancel-after-runner-trust",
       "cancel-after-coverage-shards",
       "cancel-after-tests-integration",
       "cancel-after-npm-compatibility-artifact",

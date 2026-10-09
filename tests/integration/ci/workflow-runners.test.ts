@@ -1,53 +1,40 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
-import { decideRunnerTrust } from "../../../scripts/ci/runner-trust.mjs";
 
 // Use the standard GitHub-hosted pool for PR, main, and merge-queue jobs.
 // The organization has no ubuntu-latest-m runner, so selecting that label
 // leaves publication and merge-queue jobs without an assigned machine.
 const LINUX_RUNNER = "ubuntu-latest";
+const PUBLIC_POOL = "veryfront-public";
 const CANARY_RUNNER =
   "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}";
-const TRUSTED_RUNNER =
-  "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || (github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') && needs.runner-trust.outputs.trusted == 'true' && vars.CI_RUNNER_TRUSTED == 'veryfront-ci') && 'veryfront-ci' || 'ubuntu-latest' }}";
-const TRUST_JOB = "runner-trust";
-const OTHER_RUNNERS = ["windows-2022", "${{ matrix.os }}"];
-const REPOSITORY = "veryfront/veryfront-code";
-
-// Test and gate jobs that may use the self-hosted pool for pushes to main. Release, publish, and secret-holding jobs, and the job
-// that builds the published npm artifact, stay on GitHub-hosted runners.
-const TRUSTED_RUNNER_JOBS = [
+// Trusted events only: a push to main, a merge group, or a same-repository
+// pull request not authored by Dependabot. The repository variable is the
+// switch; while it is unset every job stays on the hosted runner.
+const PUBLIC_POOL_RUNNER =
+  "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}";
+// Jobs that hold no secrets and no write token and need no root or Docker.
+const PUBLIC_POOL_JOBS = [
   "ci",
   "coverage",
   "coverage-integration-client",
   "coverage-node-executor",
   "coverage-shards",
-  "npm-smoke-node-versions",
-  "quality-gate-artifact",
-  "quality-gate-merge",
-  "sonar-coverage",
-  "sonar-coverage-main",
-  "sonar-quality-gate",
-  "tests",
-  "tests-binary-e2e",
   "tests-bun",
-  "tests-e2e-rsc-browser",
-  "tests-integration",
   "tests-node",
   "tests-node-sandbox",
   "tests-npm-install-smoke",
   "tests-runtime-critical-flow",
   "tests-sentry-runtime-packages",
-  "tests-split-mode",
 ];
-
-function expressionBody(expression: string): string {
-  const match = /^\$\{\{\s*(.*?)\s*\}\}$/.exec(expression);
-  assert(match, "runner expression must use Actions interpolation");
-  assert(match[1] !== undefined, "runner expression must contain its captured body");
-  return match[1].replaceAll("needs.runner-trust", 'needs["runner-trust"]');
-}
+const OTHER_RUNNERS = ["windows-2022", "${{ matrix.os }}"];
+const REPOSITORY = "veryfront/veryfront-code";
+const WORKFLOWS_DIR = new URL("../../../.github/workflows/", import.meta.url);
+// Steps that need root, Docker, or browser system packages cannot run on the
+// unprivileged pool.
+const PRIVILEGED_STEP =
+  /\bsudo\b|\bapt(?:-get)?\b|\bdocker\b|--with-deps|install-chromium|\bpython3?\b/;
 
 function asRecord(value: unknown, context: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -56,13 +43,51 @@ function asRecord(value: unknown, context: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function cicdWorkflow(): Promise<Record<string, unknown>> {
+  return asRecord(
+    parse(await Deno.readTextFile(new URL("cicd.yml", WORKFLOWS_DIR))),
+    "cicd.yml",
+  );
+}
+
 async function cicdJobs(): Promise<Record<string, Record<string, unknown>>> {
-  const url = new URL("../../../.github/workflows/cicd.yml", import.meta.url);
-  const workflow = asRecord(parse(await Deno.readTextFile(url)), "cicd.yml");
-  const jobs = asRecord(workflow.jobs, "cicd.yml jobs");
+  const jobs = asRecord((await cicdWorkflow()).jobs, "cicd.yml jobs");
   return Object.fromEntries(
     Object.entries(jobs).map(([name, job]) => [name, asRecord(job, name)]),
   );
+}
+
+function compileRunner(expression: string) {
+  return new Function(
+    "github",
+    "inputs",
+    "vars",
+    `return ${expression.slice(4, -3)}`,
+  ) as (
+    github: Record<string, unknown>,
+    inputs: Record<string, unknown>,
+    vars: Record<string, unknown>,
+  ) => string;
+}
+
+function pullRequest(
+  headRepository: string,
+  author: string,
+  actor = author,
+): Record<string, unknown> {
+  return {
+    event_name: "pull_request",
+    ref: "refs/pull/1/merge",
+    repository: REPOSITORY,
+    actor,
+    event: {
+      pull_request: { head: { repo: { full_name: headRepository } }, user: { login: author } },
+    },
+  };
+}
+
+function event(eventName: string, ref = "refs/heads/main"): Record<string, unknown> {
+  return { event_name: eventName, ref, repository: REPOSITORY, actor: "octocat", event: {} };
 }
 
 describe("cicd.yml runner pools", () => {
@@ -72,164 +97,130 @@ describe("cicd.yml runner pools", () => {
       if ("uses" in job) continue;
       const runsOn = job["runs-on"];
       if (OTHER_RUNNERS.includes(String(runsOn))) continue;
-      if (name === TRUST_JOB) {
-        assertEquals(runsOn, LINUX_RUNNER, "runner-trust must use a GitHub-hosted runner");
-        continue;
-      }
       assertEquals(
         runsOn,
-        TRUSTED_RUNNER_JOBS.includes(name) ? TRUSTED_RUNNER : CANARY_RUNNER,
+        PUBLIC_POOL_JOBS.includes(name) ? PUBLIC_POOL_RUNNER : CANARY_RUNNER,
         `${name} must use an available standard Linux runner`,
       );
     }
   });
 
-  it("keeps default, PR, merge-queue and maintenance routing unchanged", () => {
-    const selectRunner = new Function(
-      "github",
-      "inputs",
-      `return ${expressionBody(CANARY_RUNNER)}`,
-    );
-    for (const event of ["push", "pull_request", "merge_group", "workflow_dispatch"]) {
-      for (const ref of ["refs/heads/main", "refs/heads/feature", "refs/heads/maintenance/rc.1"]) {
-        for (const enabled of [undefined, false, true]) {
-          assertEquals(
-            selectRunner({ event_name: event, ref }, { ubuntu26: enabled }),
-            event === "workflow_dispatch" && ref === "refs/heads/main" && enabled === true
-              ? "ubuntu-26.04"
-              : LINUX_RUNNER,
-          );
-        }
-      }
-    }
-  });
-
-  it("routes only listed jobs through the trusted runner switch", async () => {
-    const jobs = await cicdJobs();
-    const routed = Object.entries(jobs)
-      .filter(([, job]) => job["runs-on"] === TRUSTED_RUNNER)
+  it("routes exactly the allowlisted jobs to the public pool", async () => {
+    const routed = Object.entries(await cicdJobs())
+      .filter(([, job]) => String(job["runs-on"]).includes(PUBLIC_POOL))
       .map(([name]) => name)
       .sort();
-    assertEquals(routed, [...TRUSTED_RUNNER_JOBS].sort());
-    for (const name of TRUSTED_RUNNER_JOBS) {
-      const job = jobs[name];
-      assert(job, `${name} must exist`);
-      const text = JSON.stringify(job);
-      assert(!text.includes("secrets."), `${name} must not read secrets`);
-      assert(!("environment" in job), `${name} must not use a deployment environment`);
-      const permissions = job.permissions as Record<string, unknown> | undefined;
-      for (const [scope, level] of Object.entries(permissions ?? {})) {
-        assertEquals(level, "read", `${name} ${scope} permission must stay read-only`);
-      }
-      assert(
-        (job.needs as string[]).includes(TRUST_JOB),
-        `${name} must wait for the runner-trust decision`,
-      );
-      assert(
-        !String(job.if).includes(TRUST_JOB),
-        `${name} must not gate on the runner-trust result`,
-      );
-    }
+    assertEquals(routed, PUBLIC_POOL_JOBS);
   });
 
-  it("decides trust on a hosted, read-only job from default-branch code", async () => {
-    const job = (await cicdJobs())[TRUST_JOB];
-    assert(job, "runner-trust job must exist");
-    assertEquals(job["runs-on"], LINUX_RUNNER);
-    assertEquals(job["timeout-minutes"], 2);
-    assertEquals(job.permissions, { contents: "read" });
-    assert(!("needs" in job), "runner-trust must not wait for other jobs");
-    // Eligible code jobs have the same fork guard, so this dependency cannot
-    // suppress a code job that is otherwise permitted to run.
-    assertEquals(
-      job.if,
-      "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}",
-    );
-    assert(!("environment" in job), "runner-trust must not use a deployment environment");
-    assert(!JSON.stringify(job).includes("secrets."), "runner-trust must not read secrets");
-    assertEquals(
-      asRecord(job.outputs, "runner-trust outputs").trusted,
-      "${{ steps.decide.outputs.result == 'true' && 'true' || 'false' }}",
-    );
-    const steps = job.steps as Record<string, unknown>[];
-    assertEquals(steps.length, 1, "runner-trust must not check out the code under test");
-    const [step] = steps;
-    assert(step, "runner-trust must contain its decision step");
-    assertEquals(step.id, "decide");
-    assertEquals(
-      step.if,
-      "${{ vars.CI_RUNNER_TRUSTED == 'veryfront-ci' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'push' && github.ref == 'refs/heads/main') }}",
-    );
-    // A failed or skipped decision outputs false and never fails the job.
-    assertEquals(step["continue-on-error"], true);
-    assertEquals(step["timeout-minutes"], 1);
-    assert(String(step.uses).startsWith("actions/github-script@"));
-    const script = String(asRecord(step.with, "decide inputs").script);
-    assert(script.includes('path: "scripts/ci/runner-trust.mjs"'));
-    assert(script.includes("ref: context.payload.repository.default_branch"));
-  });
-
-  it("uses the self-hosted pool only for main push runs", () => {
-    const selectRunner = new Function(
-      "github",
-      "inputs",
-      "vars",
-      "needs",
-      `return ${expressionBody(TRUSTED_RUNNER)}`,
-    );
-    const events = [
-      "push",
-      "pull_request",
-      "pull_request_target",
-      "merge_group",
-      "workflow_dispatch",
-      "schedule",
-    ];
-    const refs = [
-      "refs/heads/main",
-      "refs/heads/feature",
-      "refs/heads/maintenance/rc.1",
-      "refs/heads/gh-readonly-queue/main/pr-1",
-    ];
-    for (const repository of [REPOSITORY, "someone/veryfront-code"]) {
-      for (const event of events) {
-        for (const ref of refs) {
-          for (const flag of [undefined, "", "ubuntu-latest", "veryfront-ci"]) {
-            for (const decision of [undefined, "", "false", "true"]) {
-              for (const enabled of [undefined, false, true]) {
-                const canary = event === "workflow_dispatch" && ref === "refs/heads/main" &&
-                  enabled === true;
-                const trusted = repository === REPOSITORY && flag === "veryfront-ci" &&
-                  decision === "true" &&
-                  (event === "push" && ref === "refs/heads/main");
-                assertEquals(
-                  selectRunner(
-                    { event_name: event, ref, repository },
-                    { ubuntu26: enabled },
-                    { CI_RUNNER_TRUSTED: flag },
-                    { "runner-trust": { outputs: { trusted: decision } } },
-                  ),
-                  canary ? "ubuntu-26.04" : trusted ? "veryfront-ci" : LINUX_RUNNER,
-                  `${repository} ${event} ${ref} flag=${flag} trusted=${decision} ubuntu26=${enabled}`,
-                );
-              }
-            }
+  it("keeps default, PR, merge-queue and maintenance routing unchanged", () => {
+    for (const expression of [CANARY_RUNNER, PUBLIC_POOL_RUNNER]) {
+      const selectRunner = compileRunner(expression);
+      for (const name of ["push", "pull_request", "merge_group", "workflow_dispatch"]) {
+        for (
+          const ref of ["refs/heads/main", "refs/heads/feature", "refs/heads/maintenance/rc.1"]
+        ) {
+          for (const enabled of [undefined, false, true]) {
+            const github = name === "pull_request"
+              ? { ...pullRequest(REPOSITORY, "octocat"), ref }
+              : event(name, ref);
+            assertEquals(
+              selectRunner(github, { ubuntu26: enabled }, {}),
+              name === "workflow_dispatch" && ref === "refs/heads/main" && enabled === true
+                ? "ubuntu-26.04"
+                : LINUX_RUNNER,
+            );
           }
         }
       }
     }
   });
 
+  it("selects the public pool only for trusted events with the switch on", () => {
+    const selectRunner = compileRunner(PUBLIC_POOL_RUNNER);
+    const on = { CI_RUNNER_PUBLIC: PUBLIC_POOL };
+    const cases: Array<[string, Record<string, unknown>, Record<string, unknown>, string]> = [
+      ["push to main", event("push"), on, PUBLIC_POOL],
+      [
+        "merge group",
+        event("merge_group", "refs/heads/gh-readonly-queue/main/pr-1"),
+        on,
+        PUBLIC_POOL,
+      ],
+      ["same-repository pull request", pullRequest(REPOSITORY, "octocat"), on, PUBLIC_POOL],
+      ["unset switch, push", event("push"), {}, LINUX_RUNNER],
+      ["unset switch, merge group", event("merge_group"), {}, LINUX_RUNNER],
+      ["unset switch, pull request", pullRequest(REPOSITORY, "octocat"), {}, LINUX_RUNNER],
+      ["other switch value", event("push"), { CI_RUNNER_PUBLIC: "true" }, LINUX_RUNNER],
+      ["push to another branch", event("push", "refs/heads/feature"), on, LINUX_RUNNER],
+      ["fork pull request", pullRequest("someone/veryfront-code", "someone"), on, LINUX_RUNNER],
+      ["Dependabot pull request", pullRequest(REPOSITORY, "dependabot[bot]"), on, LINUX_RUNNER],
+      [
+        "Dependabot-triggered pull request run",
+        pullRequest(REPOSITORY, "octocat", "dependabot[bot]"),
+        on,
+        LINUX_RUNNER,
+      ],
+      ["manual dispatch", event("workflow_dispatch"), on, LINUX_RUNNER],
+      ["pull_request_target", event("pull_request_target"), on, LINUX_RUNNER],
+      ["workflow_run", event("workflow_run"), on, LINUX_RUNNER],
+      ["issue_comment", event("issue_comment"), on, LINUX_RUNNER],
+      ["schedule", event("schedule"), on, LINUX_RUNNER],
+    ];
+    for (const [label, github, vars, expected] of cases) {
+      assertEquals(selectRunner(github, {}, vars), expected, label);
+    }
+  });
+
+  it("keeps secret, write, and privileged jobs off the public pool", async () => {
+    const workflow = await cicdWorkflow();
+    const workflowPermissions = asRecord(workflow.permissions, "cicd.yml permissions");
+    const jobs = await cicdJobs();
+    for (const name of PUBLIC_POOL_JOBS) {
+      const job = jobs[name]!;
+      const text = JSON.stringify(job);
+      assertEquals("environment" in job, false, `${name} must not use a deployment environment`);
+      assertEquals("services" in job, false, `${name} must not use service containers`);
+      assertEquals("container" in job, false, `${name} must not use a job container`);
+      for (const secret of text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)) {
+        assertEquals(secret[1], "GITHUB_TOKEN", `${name} must not read ${secret[0]}`);
+      }
+      const permissions = asRecord(
+        job.permissions ?? workflowPermissions,
+        `${name} permissions`,
+      );
+      for (const [scope, level] of Object.entries(permissions)) {
+        assert(level === "read" || level === "none", `${name} must not hold ${scope}: ${level}`);
+      }
+      assertEquals(PRIVILEGED_STEP.test(text), false, `${name} must not need root or Docker`);
+
+      for (const action of text.matchAll(/"uses":"\.\/(\.github\/actions\/[A-Za-z0-9_-]+)"/g)) {
+        const composite = await Deno.readTextFile(
+          new URL(`../../../${action[1]}/action.yml`, import.meta.url),
+        );
+        assertEquals(
+          PRIVILEGED_STEP.test(composite) || /secrets\./.test(composite),
+          false,
+          `${name} uses ${action[1]}, which needs root, Docker, or secrets`,
+        );
+      }
+    }
+  });
+
+  it("routes no other workflow to the public pool", async () => {
+    const triggers = asRecord((await cicdWorkflow()).on, "cicd.yml triggers");
+    for (const trigger of ["pull_request_target", "workflow_run", "issue_comment"]) {
+      assertEquals(trigger in triggers, false, `cicd.yml must not run on ${trigger}`);
+    }
+    for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
+      if (!entry.isFile || entry.name === "cicd.yml") continue;
+      const text = await Deno.readTextFile(new URL(entry.name, WORKFLOWS_DIR));
+      assertEquals(text.includes(PUBLIC_POOL), false, `${entry.name} must stay hosted`);
+    }
+  });
+
   it("declares an opt-in boolean canary input", async () => {
-    const workflow = asRecord(
-      parse(
-        await Deno.readTextFile(
-          new URL("../../../.github/workflows/cicd.yml", import.meta.url),
-        ),
-      ),
-      "cicd.yml",
-    );
-    const triggers = asRecord(workflow.on, "triggers");
+    const triggers = asRecord((await cicdWorkflow()).on, "triggers");
     const dispatch = asRecord(triggers.workflow_dispatch, "dispatch");
     const inputs = asRecord(dispatch.inputs, "inputs");
     const canary = asRecord(inputs.ubuntu26, "ubuntu26 input");
@@ -251,33 +242,6 @@ describe("cicd.yml runner pools", () => {
         if (!os.startsWith("ubuntu")) continue;
         assertEquals(os, CANARY_RUNNER, `${name} ${entry.name} runner`);
       }
-    }
-  });
-});
-
-describe("runner-trust decision", () => {
-  it("trusts only main pushes without inspecting queued authors or commits", async () => {
-    const github = new Proxy({}, {
-      get() {
-        throw new Error("runner eligibility must not read the queue API");
-      },
-    });
-    const decide = (eventName: string, ref: string, repository = REPOSITORY) =>
-      decideRunnerTrust(Object.assign({ repository, eventName, ref }, { github }));
-    assertEquals(await decide("push", "refs/heads/main"), true);
-    assertEquals(await decide("push", "refs/heads/feature"), false);
-    assertEquals(await decide("push", "refs/heads/main", "someone/veryfront-code"), false);
-    for (
-      const event of [
-        "merge_group",
-        "pull_request",
-        "pull_request_target",
-        "workflow_dispatch",
-        "schedule",
-      ]
-    ) {
-      assertEquals(await decide(event, "refs/heads/main"), false, event);
-      assertEquals(await decide(event, "refs/heads/gh-readonly-queue/main/pr-7"), false, event);
     }
   });
 });
