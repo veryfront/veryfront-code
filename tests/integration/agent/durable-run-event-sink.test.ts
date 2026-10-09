@@ -126,6 +126,26 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(target.isDisposed(), false);
   });
 
+  it("persists valid model-call contexts when project code replaces Number.isFinite", async () => {
+    const target = mirror();
+    const originalIsFinite = Number.isFinite;
+    try {
+      Number.isFinite = () => false;
+      await createDurableRunEventSink({ mirror: target.result })({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        messages: [{ role: "system", content: "record this context" }],
+      });
+    } finally {
+      Number.isFinite = originalIsFinite;
+    }
+
+    assertEquals(target.isDisposed(), false);
+    assertEquals(firstAppendedEvent(target.appended).messages, [{
+      role: "system",
+      content: "record this context",
+    }]);
+  });
+
   it("returns the exact capture receipt after flushing and never derives it from the cursor", async () => {
     const receipt = {
       eventId: "9007199254740993",

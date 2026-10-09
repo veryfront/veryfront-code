@@ -27,6 +27,8 @@ import {
   getModelCallCaptureReceiptSchema,
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
+const numberIsFinite = Number.isFinite;
+
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
 const persistenceTails = createPrivateWeakStore<
   ConversationRunChunkMirror,
@@ -233,7 +235,7 @@ type ResolvedRunEvent = {
 
 function resolvePersistableEvent(event: unknown): ResolvedRunEvent {
   const requestByteLength = getPrivateRunEventAppendRequestByteLength(event);
-  if (!Number.isFinite(requestByteLength)) {
+  if (!numberIsFinite(requestByteLength)) {
     throw new DurableRunEventPersistenceError("Run event is not serializable");
   }
   if (requestByteLength <= MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES) {

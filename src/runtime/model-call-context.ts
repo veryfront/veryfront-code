@@ -103,6 +103,7 @@ export interface AgentRunEventTimingOptions {
   startedMs?: number;
 }
 
+const numberIsFinite = Number.isFinite;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
@@ -169,7 +170,7 @@ function readOptionalTiming(
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsFinite(value) || value < 0) {
     throw new TypeError("elapsedMs must be a finite non-negative number");
   }
 }
