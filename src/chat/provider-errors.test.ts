@@ -15,7 +15,6 @@ import {
   markVeryfrontGatewayResponse,
   ProviderRequestError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
-
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 
 describe("chat/provider-errors", () => {

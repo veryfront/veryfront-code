@@ -16,7 +16,6 @@ import {
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
-
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { resolveConversationHostedStreamErrorState } from "#veryfront/agent/conversation/hosted-terminal.ts";
 
@@ -607,6 +606,7 @@ describe("executor hosted agent bridge", () => {
           }).stream({ messages, abortSignal: new AbortController().signal }), ExecutorAgentError);
         assert(error instanceof ExecutorAgentError);
         assertEquals(error.code, "agent-provider-auth-error");
+        // The executor code maps to a fixed 401 for both 401 and 403 native refusals.
         assertEquals(error.status, 401);
         assertEquals(error.message, "Agent provider authentication failed");
         assertEquals(error.title, "Agent provider authentication failed");
