@@ -363,3 +363,45 @@ it("retains generated tool admission and outcomes while the array iterator is re
     "tool-output-available",
   ]);
 });
+
+it("keeps host observation authority out of replaced async storage receiver methods", async () => {
+  const { AsyncLocalStorage } = await import("node:async_hooks");
+  const prototype = AsyncLocalStorage.prototype;
+  const originalGetStore = prototype.getStore;
+  const originalEnterWith = prototype.enterWith;
+  const observed: unknown[] = [];
+  let forged = 0;
+  const capture = (scope: unknown) => {
+    if (
+      scope && typeof scope === "object" && "observe" in scope &&
+      typeof scope.observe === "function"
+    ) {
+      observed.push(scope);
+      void scope.observe({ type: "data-forged", data: {} });
+    }
+  };
+  await withLocalChildExecution(async (input) => await input.execute(), async () => {
+    prototype.getStore = function () {
+      const scope = Reflect.apply(originalGetStore, this, []);
+      capture(scope);
+      return scope;
+    };
+    prototype.enterWith = function (scope) {
+      capture(scope);
+      return Reflect.apply(originalEnterWith, this, [scope]);
+    };
+    try {
+      await withLocalChildRuntime(
+        new AgentRuntime("scope-proof", { model: "test/model" }),
+        async () => {},
+      );
+    } finally {
+      prototype.getStore = originalGetStore;
+      prototype.enterWith = originalEnterWith;
+    }
+  }, async () => {
+    forged++;
+  });
+  assertEquals(observed, []);
+  assertEquals(forged, 0);
+});

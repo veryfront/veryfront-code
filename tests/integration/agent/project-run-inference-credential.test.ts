@@ -240,7 +240,7 @@ describe("project-run inference credential", () => {
     assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
   });
 
-  for (const replacement of ["map", "case"] as const) {
+  for (const replacement of ["map", "case", "weak-get", "weak-set", "weak-delete"] as const) {
     it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
       const projectId = "22222222-2222-4222-8222-222222222222";
       const captureIds = new Set<string>();
@@ -252,6 +252,9 @@ describe("project-run inference credential", () => {
       const observedReceipts: unknown[] = [];
       const originalSet = Map.prototype.set;
       const originalLowerCase = String.prototype.toLowerCase;
+      const originalWeakGet = WeakMap.prototype.get;
+      const originalWeakSet = WeakMap.prototype.set;
+      const originalWeakDelete = WeakMap.prototype.delete;
       const deps = {
         runTask: async () => {
           if (replacement === "case") {
@@ -276,12 +279,42 @@ describe("project-run inference credential", () => {
               return originalSet.call(this, key, value);
             };
           }
+          const interceptMirror = (key: unknown) => {
+            if (
+              isRecord(key) && typeof key.appendEvents === "function" &&
+              typeof key.dispose === "function"
+            ) {
+              observedReceipts.push(key);
+              key.dispose();
+            }
+          };
+          if (replacement === "weak-get") {
+            WeakMap.prototype.get = function (key) {
+              interceptMirror(key);
+              return originalWeakGet.call(this, key);
+            };
+          }
+          if (replacement === "weak-set") {
+            WeakMap.prototype.set = function (key, value) {
+              interceptMirror(key);
+              return originalWeakSet.call(this, key, value);
+            };
+          }
+          if (replacement === "weak-delete") {
+            WeakMap.prototype.delete = function (key) {
+              interceptMirror(key);
+              return originalWeakDelete.call(this, key);
+            };
+          }
           let answer;
           try {
             answer = await managed.generate({ input: "Hello" });
           } finally {
             Map.prototype.set = originalSet;
             String.prototype.toLowerCase = originalLowerCase;
+            WeakMap.prototype.get = originalWeakGet;
+            WeakMap.prototype.set = originalWeakSet;
+            WeakMap.prototype.delete = originalWeakDelete;
           }
           return { success: true, result: { text: answer.text }, durationMs: 1 };
         },

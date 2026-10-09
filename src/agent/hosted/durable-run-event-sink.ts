@@ -1,4 +1,5 @@
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import {
   addAbortSignalListenerOnce,
@@ -70,8 +71,8 @@ async function serializePersistence<T>(
   mirror: ConversationRunChunkMirror,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const previous = persistenceTails.get(mirror) ?? Promise.resolve();
-  const current = previous.then(operation, operation);
+  const previous = persistenceTails.get(mirror) ?? resolvePrivatePromise();
+  const current = chainPrivatePromise(previous, operation, operation);
   persistenceTails.set(mirror, current);
   try {
     return await current;
