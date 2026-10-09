@@ -160,6 +160,7 @@ import {
   createAgUiEncoderState,
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
+import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -2730,24 +2731,24 @@ async function withProjectRunRuntimeObservations<T>(
         const events = primordialArrayMap(
           mapRuntimeStreamEventToAgUiEvents(encoder, event),
           ({ event: type, payload }) => {
-            const candidate = coerceWireEvent(type, payload);
+            // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
+            // agent's streamed failure as a native, nonterminal runtime observation.
+            const candidate = type === "RunError"
+              ? buildRuntimeEventRecordedEvent({
+                runtime: "veryfront",
+                kind: "agent_error",
+                value: {
+                  ...payload,
+                  ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
+                },
+              }).durable
+              : coerceWireEvent(type, payload);
             if (typeof candidate.type !== "string") {
               throw new Error(
                 "Invalid encoded project run observation event",
               );
             }
-            const { type: observationType, ...failurePayload } = candidate;
-            // A failed agent call is evidence inside the parent execution, not its terminal state.
-            const observation = observationType === "RUN_ERROR"
-              ? {
-                type: "CUSTOM",
-                name: "veryfront.agent.stream_error",
-                value: {
-                  ...failurePayload,
-                  ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
-                },
-              }
-              : { ...candidate, type: candidate.type };
+            const observation = { ...candidate, type: candidate.type };
             // Mandatory evidence must serialize before public cycle-aware fallback.
             privateJsonStringify(
               observation,

@@ -9736,7 +9736,7 @@ describe("project run inference credential header", () => {
     }).find((event) => event?.type === "error");
     assertExists(wireError);
     const errors = appended.filter((event) =>
-      event.type === "CUSTOM" && event.name === "veryfront.agent.stream_error"
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
     );
     assertEquals(errors.length, 1);
     const value = errors[0].value as Record<string, unknown>;
@@ -9756,6 +9756,107 @@ describe("project run inference credential header", () => {
         .join(""),
       "Stream must persist.",
     );
+  });
+
+  it("records a streamed agent failure without failing a successful parent task", async () => {
+    const runId = "run_agent_stream_error";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "agent-stream-error",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Partial output." },
+            { type: "error", error: "Stream provider failed" },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("agent-stream-error", {
+            name: "Stream failure observation",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              delivered = await response.text();
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:agent-stream-error",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertStringIncludes(delivered, "Partial output.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Partial output.",
+    );
+    const failures = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(failures.length, 1);
+    assertEquals(failures[0]?.runtime, "veryfront");
+    const failure = failures[0]?.value;
+    assert(typeof failure === "object" && failure !== null && "message" in failure);
+    assertEquals(failure.message, "Provider stream failed");
+    assertStringIncludes(delivered, "Provider stream failed");
+    assertEquals(appended.some((event) => event.type === "RUN_ERROR"), false);
   });
 
   for (

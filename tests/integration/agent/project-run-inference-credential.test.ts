@@ -29,6 +29,7 @@ import {
 const INFERENCE_TOKEN = "project-run-inference-token";
 const BROADER_TOKEN = "broader-project-runtime-token";
 const encoder = new TextEncoder();
+const ArrayIsArray = Array.isArray;
 
 function createProjectRunEventToken(input: {
   runId: string;
@@ -53,7 +54,7 @@ function createProjectRunEventToken(input: {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 /** Answers every model call with one streamed completion and records its bearer. */
@@ -71,7 +72,7 @@ function captureModelAuthorizations(
       const runEventsPath = new URL(request.url).pathname.match(/^\/runs\/([0-9a-f-]+)\/events$/i);
       if (runEventsPath) {
         const payload: unknown = await request.json();
-        const events = isRecord(payload) && Array.isArray(payload.events) ? payload.events : [];
+        const events = isRecord(payload) && ArrayIsArray(payload.events) ? payload.events : [];
         const captures = events.filter(isRecord)
           .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
           .flatMap((event, index) =>
