@@ -45,7 +45,7 @@ describe("RC publication process", () => {
             'case "$1" in',
             'dist-tag) echo "rc: 0.1.0-rc.0";;',
             'view) echo "npm error code E404" >&2; exit 1;;',
-            'publish) printf "%s\\n" "$*" >> "$NPM_LOG"; case "$2" in *"/$FAILURE.tgz") [ -z "$FAILURE" ] || exit 37;; esac;;',
+            'publish) echo "fixture publish"; printf "%s\\n" "$*" >> "$NPM_LOG"; case "$2" in *"/$FAILURE.tgz") [ -z "$FAILURE" ] || exit 37;; esac;;',
             "*) exit 90;;",
             "esac",
           ].join("\n"),
@@ -73,6 +73,8 @@ describe("RC publication process", () => {
           stdout: "piped",
           stderr: "piped",
         }).output();
+        const stdout = new TextDecoder().decode(result.stdout);
+        assertEquals(stdout.includes("[@veryfront/ext-a] fixture publish"), true);
         assertEquals(result.success, failure === "", new TextDecoder().decode(result.stderr));
         const calls = (await Deno.readTextFile(log)).trim().split("\n");
         assertEquals(

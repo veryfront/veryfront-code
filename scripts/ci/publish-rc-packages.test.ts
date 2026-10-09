@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { publishPackages } from "./publish-rc-packages.ts";
+import { publishPackages, relayPackageOutput } from "./publish-rc-packages.ts";
 
 describe("bounded RC publication", () => {
   it("publishes independent extensions together, dependencies first and root last", async () => {
@@ -87,5 +87,35 @@ describe("bounded RC publication", () => {
         Error,
       );
     }
+  });
+});
+
+describe("package diagnostic attribution", () => {
+  it("preserves streamed lines, annotations, and non-diagnostic Actions commands", async () => {
+    const chunks = [
+      "first\nsec",
+      "ond\r\n::error file=x::failure\n::add-mask::secret\nlast",
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+    const lines: string[] = [];
+    await relayPackageOutput(
+      stream,
+      "@veryfront/ext-a",
+      (line) => lines.push(line),
+    );
+    assertEquals(lines, [
+      "[@veryfront/ext-a] first",
+      "[@veryfront/ext-a] second",
+      "::error file=x::[@veryfront/ext-a] failure",
+      "::add-mask::secret",
+      "[@veryfront/ext-a] last",
+    ]);
   });
 });

@@ -1,3 +1,33 @@
+/** Keep package diagnostics attributable while preserving Actions commands. */
+export async function relayPackageOutput(
+  stream: ReadableStream<Uint8Array>,
+  name: string,
+  report: (line: string) => void,
+): Promise<void> {
+  let pending = "";
+  const emit = (line: string) => {
+    const annotation = line.match(
+      /^(::(?:error|warning|notice|debug)(?: [^:]*)?::)(.*)$/,
+    );
+    report(
+      annotation
+        ? `${annotation[1]}[${name}] ${annotation[2]}`
+        : line.startsWith("::")
+        ? line
+        : `[${name}] ${line}`,
+    );
+  };
+  for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+    pending += chunk;
+    let end: number;
+    while ((end = pending.indexOf("\n")) !== -1) {
+      emit(pending.slice(0, end).replace(/\r$/, ""));
+      pending = pending.slice(end + 1);
+    }
+  }
+  if (pending) emit(pending);
+}
+
 export interface PackageEntry {
   name: string;
   directory: string;
@@ -39,6 +69,8 @@ export async function publishPackages(
     }
   }
   for (const batch of batches) {
+    // Already-started immutable publishes must drain on failure. A rerun uses
+    // the same tarball/commit guards to adopt packages already published.
     const results = await Promise.allSettled(batch.map(publish));
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -63,16 +95,23 @@ if (import.meta.main) {
       }),
     });
   }
-  const initialSpent = Number(Deno.env.get("NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS") ?? "0");
+  const initialSpent = Number(
+    Deno.env.get("NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS") ?? "0",
+  );
   if (!Number.isSafeInteger(initialSpent) || initialSpent < 0) {
     throw new Error("Invalid initial metadata budget");
   }
-  const budgetDirectory = await Deno.makeTempDir({ prefix: "veryfront-rc-budget-" });
+  const budgetDirectory = await Deno.makeTempDir({
+    prefix: "veryfront-rc-budget-",
+  });
   const budgetFile = `${budgetDirectory}/metadata.json`;
   try {
-    await Deno.writeTextFile(budgetFile, JSON.stringify({ spent: initialSpent }));
+    await Deno.writeTextFile(
+      budgetFile,
+      JSON.stringify({ spent: initialSpent }),
+    );
     await publishPackages(entries, async ({ name, directory }) => {
-      const status = await new Deno.Command("bash", {
+      const child = new Deno.Command("bash", {
         args: [
           "-euo",
           "pipefail",
@@ -83,9 +122,14 @@ if (import.meta.main) {
         ],
         env: { NPM_GIT_HEAD_SHARED_BUDGET_FILE: budgetFile },
         stdin: "null",
-        stdout: "inherit",
-        stderr: "inherit",
-      }).spawn().status;
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const [status] = await Promise.all([
+        child.status,
+        relayPackageOutput(child.stdout, name, console.log),
+        relayPackageOutput(child.stderr, name, console.error),
+      ]);
       if (!status.success) {
         throw new Error(
           `RC publication failed for ${name} (status ${status.code})`,
