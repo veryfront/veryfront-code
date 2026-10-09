@@ -93,6 +93,7 @@ function createHostedChatFinalizeResponseBuildState(
       recoveredFallbackParts,
     } = buildFinalizedMessageState({
       responseMessage: input.responseMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
       isAborted: input.isAborted,
       finalStep,
       incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
@@ -176,6 +177,7 @@ function createHostedChatFinalizeDetachedBuildState(
         };
       });
       const mirrored = buildFinalizedMessageState({
+        mirroredToolChunkState: input.mirroredToolChunkState,
         responseMessage: {
           ...input.mirroredMessage,
           parts: [
@@ -192,6 +194,27 @@ function createHostedChatFinalizeDetachedBuildState(
       });
       finalizedFallbackMessage = mirrored.sanitizedFinalizedMessage;
       hasIncompleteFallbackToolParts = mirrored.hasIncompleteFinalizedToolParts;
+    }
+    if (input.isAborted && !input.mirroredMessage?.parts.length) {
+      finalizedFallbackMessage = {
+        ...finalizedFallbackMessage,
+        parts: [
+          ...finalizedFallbackMessage.parts.filter((part) => !isToolUiPart(part)),
+          ...[...input.mirroredToolChunkState.startedToolCallIds].filter((toolCallId) =>
+            !!input.mirroredToolChunkState.toolCallNames.get(toolCallId) &&
+            !input.mirroredToolChunkState.outputAvailableToolCallIds.has(toolCallId) &&
+            !input.mirroredToolChunkState.outputErrorToolCallIds.has(toolCallId) &&
+            !input.mirroredToolChunkState.outputDeniedToolCallIds.has(toolCallId)
+          ).map((toolCallId) => ({
+            type: "dynamic-tool" as const,
+            toolCallId,
+            toolName: input.mirroredToolChunkState.toolCallNames.get(toolCallId) ?? "unknown",
+            state: "output-error" as const,
+            input: {},
+            errorText: "Stopped by user",
+          })),
+        ],
+      };
     }
     const fallbackParts = finalizedFallbackMessage.parts;
 
@@ -212,6 +235,7 @@ function createHostedChatFinalizeDetachedBuildState(
         return [
           ...primaryChunks,
           ...buildMissingToolOutputErrorChunksFromParts({
+            closeStartedInput: input.isAborted && !input.mirroredMessage?.parts.length,
             parts: fallbackParts,
             mirroredToolChunkState: input.mirroredToolChunkState,
             primaryChunks,
@@ -234,6 +258,7 @@ function createHostedChatFinalizeDetachedBuildState(
 }
 
 function buildMissingToolOutputErrorChunksFromParts(input: {
+  closeStartedInput?: boolean;
   parts: ChatUiMessage["parts"];
   mirroredToolChunkState: MirroredToolChunkState;
   primaryChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
@@ -271,11 +296,25 @@ function buildMissingToolOutputErrorChunksFromParts(input: {
       continue;
     }
 
-    chunks.push({
-      type: "tool-output-error",
-      toolCallId: part.toolCallId,
-      errorText: typeof part.errorText === "string" ? part.errorText : "Tool execution failed",
-    });
+    const errorText = typeof part.errorText === "string" ? part.errorText : "Tool execution failed";
+    if (
+      input.closeStartedInput &&
+      input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId) &&
+      !input.mirroredToolChunkState.inputAvailableToolCallIds.has(part.toolCallId) &&
+      !input.primaryChunks.some((chunk) =>
+        chunk.type === "tool-input-available" && chunk.toolCallId === part.toolCallId
+      )
+    ) {
+      chunks.push({
+        type: "tool-input-error",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName ?? "unknown",
+        input: part.input,
+        errorText,
+      });
+    } else {
+      chunks.push({ type: "tool-output-error", toolCallId: part.toolCallId, errorText });
+    }
     outputErrorToolCallIds.add(part.toolCallId);
   }
 

@@ -1,3 +1,4 @@
+import { bindReasoningPartIdentity } from "#veryfront/chat/reasoning-part-identity.ts";
 import type { ChatMessagePart, ChatToolPart } from "../types.ts";
 import type {
   OrderedMessagePart,
@@ -71,16 +72,20 @@ function addReasoningParts(
   orderedParts: OrderedPart[],
   reasoningBlocks: Iterable<OrderedReasoning>,
 ): void {
-  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks) {
+  for (const { id, order, text, signature, redactedData, isComplete } of reasoningBlocks) {
     orderedParts.push({
       order,
-      part: {
-        type: "reasoning",
-        text,
-        ...(typeof signature === "string" ? { signature } : {}),
-        ...(typeof redactedData === "string" ? { redactedData } : {}),
-        state: isComplete ? "done" : "streaming",
-      },
+      part: bindReasoningPartIdentity(
+        {
+          type: "reasoning",
+          text,
+          ...(typeof signature === "string" ? { signature } : {}),
+          ...(typeof redactedData === "string" ? { redactedData } : {}),
+          state: isComplete ? "done" : "streaming",
+        },
+        id,
+        !isComplete,
+      ),
     });
   }
 }

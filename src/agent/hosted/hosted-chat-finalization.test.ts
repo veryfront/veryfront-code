@@ -1,3 +1,5 @@
+import { prepareConversationRunChunkEvents } from "../conversation/run-event-preparation.ts";
+import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -12,6 +14,8 @@ import {
   type ConversationRunEvent,
   ConversationRunEventEncoder,
 } from "#veryfront/agent/conversation/run-events.ts";
+import { createLifecycleRunEventAdapter } from "#veryfront/agent/conversation/lifecycle-run-event-adapter.ts";
+import { type StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
 import { createChatStreamMessageProjection } from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
@@ -430,47 +434,90 @@ describe("agent/hosted-chat-finalization", () => {
   });
 
   it("never opens late detached fallback tools after abort", async () => {
-    for (const captured of [false, true]) {
-      const calls: string[] = [];
-      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
-      const terminalStates: HostedLifecycleTerminalState[] = [];
-      const state = createMirroredToolChunkState();
-      const encoder = new ConversationRunEventEncoder();
-      encoder.encode({ type: "start", messageId: "assistant-message-1" });
-      const events: ConversationRunEvent[] = [];
-      const mirror = createDurableRunMirror({ calls, chunks });
-      const handle = mirror.handleChunk;
-      mirror.handleChunk = async (chunk) => {
-        await handle(chunk);
-        if (chunk.type === "finish") throw new Error("Unexpected finish");
-        events.push(...encoder.encode(chunk));
-      };
-      await finalizeHostedChatRun({
-        kind: "detached",
-        isAborted: true,
-        mirroredDurableOutput: false,
-        ...(captured ? { mirroredMessage: createResponseMessage({ parts: [] }) } : {}),
-        streamResult: createStreamResult({
-          text: "Recovered text",
-          toolCalls: [{ toolCallId: "late", toolName: "web_fetch", input: {} }],
-        }),
-        lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
-        mirroredToolChunkState: state,
-        capturedMessageId: "assistant-message-1",
-        incompleteToolCallsPartErrorText: "incomplete",
-        cleanup: async () => {},
-        streamError: null,
-      });
-      assertEquals(terminalStates[0]?.status, "cancelled");
-      assertEquals(chunks.filter((chunk) => chunk.type.startsWith("tool-")), []);
-      assertEquals(
-        chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
-        ["Recovered text"],
-      );
-      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
-      assertEquals(replay.status, "ok");
-      if (replay.status === "ok") {
-        assertEquals(JSON.stringify(replay.frames).includes("late"), false);
+    for (const hasResult of [false, true]) {
+      for (const started of [false, true]) {
+        for (const captured of [false, true]) {
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const prior = {
+            type: "tool-input-start" as const,
+            toolCallId: "late",
+            toolName: "web_fetch",
+          };
+          if (started) recordMirroredToolChunkState(state, prior);
+          const events: ConversationRunEvent[] = started
+            ? prepareConversationRunChunkEvents([prior], encoder)
+            : [];
+          const mirror = createDurableRunMirror({ calls, chunks });
+          const handle = mirror.handleChunk;
+          mirror.handleChunk = async (chunk) => {
+            await handle(chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            events.push(...prepareConversationRunChunkEvents([chunk], encoder));
+          };
+          await finalizeHostedChatRun({
+            kind: "detached",
+            isAborted: true,
+            mirroredDurableOutput: false,
+            ...(captured ? { mirroredMessage: createResponseMessage({ parts: [] }) } : {}),
+            streamResult: createStreamResult({
+              text: "Recovered text",
+              toolCalls: [{ toolCallId: "late", toolName: "web_fetch", input: {} }],
+              ...(hasResult
+                ? {
+                  toolResults: [{
+                    toolCallId: "late",
+                    toolName: "web_fetch",
+                    output: "late output",
+                  }],
+                }
+                : {}),
+            }),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          });
+          assertEquals(terminalStates[0]?.status, "cancelled");
+          assertEquals(
+            chunks.filter((chunk) => chunk.type.startsWith("tool-")),
+            started
+              ? [{
+                type: "tool-input-error",
+                toolCallId: "late",
+                toolName: "web_fetch",
+                input: {},
+                errorText: "Stopped by user",
+              }]
+              : [],
+          );
+          assertEquals(
+            chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
+            ["Recovered text"],
+          );
+          const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+          assertEquals(
+            replay.status,
+            "ok",
+            JSON.stringify({ started, captured, hasResult, replay }),
+          );
+          if (replay.status === "ok") {
+            assertEquals(JSON.stringify(replay.frames).includes("late"), started);
+            assertEquals(
+              replay.frames.some((frame) =>
+                frame.class === "semantic" &&
+                (frame.event.type === "provider_tool_result" && !frame.event.isError)
+              ),
+              false,
+            );
+          }
+        }
       }
     }
   });
@@ -674,6 +721,199 @@ describe("agent/hosted-chat-finalization", () => {
               ).length,
               promoted ? 1 : 0,
             );
+          }
+        }
+      }
+    }
+  });
+
+  it("completes only the currently open reasoning block with its missing suffix and end metadata", async () => {
+    for (const kind of ["response", "detached"] as const) {
+      for (const producer of ["projection", "framework"] as const) {
+        for (const prefix of ["Thi", "Thinking", ""]) {
+          if (producer === "framework" && prefix === "") continue;
+          const finalText = prefix === "" ? "" : "Thinking";
+          const calls: string[] = [];
+          const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+          const terminalStates: HostedLifecycleTerminalState[] = [];
+          const state = createMirroredToolChunkState();
+          const projection = createChatStreamMessageProjection("assistant-message-1");
+          const encoder = new ConversationRunEventEncoder();
+          encoder.encode({ type: "start", messageId: "assistant-message-1" });
+          const canonicalEvents: ConversationRunEvent[] = [];
+          const writer = createLifecycleRunEventAdapter({
+            runId: "run-r",
+            attemptId: "attempt-r",
+            attemptIndex: 0,
+            messageId: "assistant-message-1",
+            onEvents: (events) => canonicalEvents.push(...events),
+            setTimer: () => 1,
+            clearTimer: () => {},
+          });
+          let sequence = 0;
+          const projectCanonical = (chunk: ChatUiMessageChunk<MessageMetadata>) => {
+            if (
+              chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
+              chunk.type !== "reasoning-end"
+            ) return;
+            const event: StreamLifecycleFrame["event"] = chunk.type === "reasoning-start"
+              ? { type: "reasoning_start", id: chunk.id }
+              : chunk.type === "reasoning-delta"
+              ? { type: "reasoning_content", id: chunk.id, delta: chunk.delta }
+              : {
+                type: "reasoning_end",
+                id: chunk.id,
+                signature: chunk.signature,
+                redactedData: chunk.redactedData,
+              };
+            writer.handleFrame({ class: "semantic", event, sequence: ++sequence, elapsedMs: 0 });
+          };
+          const prior: ChatUiMessageChunk<MessageMetadata>[] = [
+            { type: "reasoning-start", id: "closed-r" },
+            { type: "reasoning-delta", id: "closed-r", delta: "Thi" },
+            { type: "reasoning-end", id: "closed-r" },
+            { type: "reasoning-start", id: "live-r" },
+            ...(prefix ? [{ type: "reasoning-delta" as const, id: "live-r", delta: prefix }] : []),
+          ];
+          const events: ConversationRunEvent[] = prior.flatMap((chunk) => {
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            projection.append(chunk);
+            projectCanonical(chunk);
+            recordMirroredToolChunkState(state, chunk);
+            return encoder.encode(chunk);
+          });
+          let original: ChatUiMessage = createResponseMessage({
+            parts: projection.snapshot().parts.filter((part) => part.type === "reasoning"),
+          });
+          if (producer === "framework") {
+            const inputEvents = [
+              { type: "message-start", messageId: "assistant-message-1" },
+              ...prior,
+              { type: "message-finish" },
+            ];
+            const stream = new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const event of inputEvents) {
+                  controller.enqueue(
+                    new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
+                  );
+                }
+                controller.close();
+              },
+            });
+            for await (
+              const _chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+                sendReasoning: true,
+                generateMessageId: () => "assistant-message-1",
+                onFinish: (finish) => {
+                  original = finish.responseMessage;
+                },
+              })
+            ) { /* Consume the actual framework producer before finalization. */ }
+          }
+          const mirror = createDurableRunMirror({ calls, chunks });
+          const append = mirror.handleChunk;
+          mirror.handleChunk = async (chunk) => {
+            await append(chunk);
+            if (chunk.type === "finish") throw new Error("Unexpected finish");
+            projection.append(chunk);
+            projectCanonical(chunk);
+            events.push(...encoder.encode(chunk));
+          };
+          const finalStep = {
+            response: {
+              messages: [{
+                role: "assistant",
+                content: [
+                  { type: "reasoning", text: "Thi" },
+                  {
+                    type: "reasoning",
+                    text: finalText,
+                    signature: "private-final",
+                    redactedData: "private-redacted",
+                  },
+                ],
+              }],
+            },
+          };
+          const common = {
+            isAborted: false,
+            streamResult: createStreamResult(finalStep),
+            lifecycleAdapter: createLifecycleAdapter({ calls, terminalStates, mirror }),
+            mirroredToolChunkState: state,
+            capturedMessageId: "assistant-message-1",
+            incompleteToolCallsPartErrorText: "incomplete",
+            cleanup: async () => {},
+            streamError: null,
+          };
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: original }
+              : { ...common, kind, mirroredMessage: original, mirroredDurableOutput: true },
+          );
+          const expected = [
+            { type: "reasoning", text: "Thi", state: "done" },
+            {
+              type: "reasoning",
+              text: finalText,
+              signature: "private-final",
+              redactedData: "private-redacted",
+              state: "done",
+            },
+          ] as const;
+          assertEquals(
+            (terminalStates[0]!.output as ChatUiMessage).parts,
+            producer === "projection"
+              ? [...expected]
+              : expected.map(({ state: _state, ...part }) => part),
+          );
+          assertEquals(projection.snapshot().parts, [...expected]);
+          const expectedChunks: ChatUiMessageChunk<MessageMetadata>[] = [
+            ...(prefix === "Thi"
+              ? [{ type: "reasoning-delta" as const, id: "live-r", delta: "nking" }]
+              : []),
+            {
+              type: "reasoning-end",
+              id: "live-r",
+              signature: "private-final",
+              redactedData: "private-redacted",
+            },
+          ];
+          assertEquals(chunks, expectedChunks);
+          const count = chunks.length;
+          const completed = createResponseMessage({
+            parts: projection.snapshot().parts.filter((part) => part.type === "reasoning"),
+          });
+          await finalizeHostedChatRun(
+            kind === "response"
+              ? { ...common, kind, responseMessage: completed }
+              : { ...common, kind, mirroredMessage: completed, mirroredDurableOutput: true },
+          );
+          assertEquals(chunks.length, count);
+          writer.dispose();
+          for (const version of [1, 2] as const) {
+            const replay = readConversationRunLifecycleFrames({
+              streamProtocolVersion: version,
+              events: version === 1 ? events : canonicalEvents,
+            });
+            assertEquals(replay.status, "ok", JSON.stringify({ version, replay, canonicalEvents }));
+            if (replay.status === "ok") {
+              assertEquals(
+                replay.frames.filter((frame) =>
+                  frame.class === "semantic" && frame.event.type === "reasoning_start"
+                ).length,
+                2,
+              );
+              assertEquals(
+                replay.frames.filter((frame) =>
+                  frame.class === "semantic" && frame.event.type === "reasoning_content"
+                )
+                  .map((frame) => frame.event.type === "reasoning_content" ? frame.event.delta : "")
+                  .join(""),
+                `Thi${finalText}`,
+              );
+              assertEquals(JSON.stringify(replay.frames).includes("private-"), false);
+            }
           }
         }
       }

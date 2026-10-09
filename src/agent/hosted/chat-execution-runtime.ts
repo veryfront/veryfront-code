@@ -596,6 +596,7 @@ export function createHostedChatFinalizeResponseBuildState(input: {
       recoveredFallbackParts,
     } = buildFinalizedMessageState({
       responseMessage: input.responseMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
       isAborted: input.isAborted,
       finalStep,
       incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,

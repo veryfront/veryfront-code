@@ -1,3 +1,7 @@
+import {
+  bindReasoningPartIdentity,
+  readReasoningPartIdentity,
+} from "#veryfront/chat/reasoning-part-identity.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "../conversation/tool-result-ownership.ts";
@@ -61,6 +65,32 @@ function isSubstantiveReasoningPart(part: ReasoningPart): boolean {
 function hasSameReasoningContent(left: ReasoningPart, right: ReasoningPart): boolean {
   return left.text.trim() === right.text.trim() && left.signature === right.signature &&
     left.redactedData === right.redactedData;
+}
+
+const reasoningCompletions = createPrivateWeakStore<
+  ReasoningPart,
+  { id: string; prefix: string }
+>();
+
+function openReasoningId(part: ReasoningPart, state?: MirroredToolChunkState): string | undefined {
+  if (!state?.openReasoningParts) return undefined;
+  const identity = readReasoningPartIdentity(part);
+  if (identity) {
+    return identity.open && state.openReasoningParts.get(identity.id) === part.text
+      ? identity.id
+      : undefined;
+  }
+  if (!("state" in part) || part.state !== "streaming") return undefined;
+  const matches = [...state.openReasoningParts].filter(([, text]) => text === part.text);
+  return matches.length === 1 ? matches[0]![0] : undefined;
+}
+
+function compatibleReasoningCompletion(part: ReasoningPart, fallback: ReasoningPart): boolean {
+  return fallback.text.startsWith(part.text) &&
+    (part.signature === undefined || fallback.signature === undefined ||
+      part.signature === fallback.signature) &&
+    (part.redactedData === undefined || fallback.redactedData === undefined ||
+      part.redactedData === fallback.redactedData);
 }
 
 type TextMatch = { indexes: number[]; length: number };
@@ -195,6 +225,7 @@ function assignFallbackTextOccurrences(
 
 /** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
+  mirroredToolChunkState?: MirroredToolChunkState;
   responseMessage: ChatUiMessage;
   isAborted: boolean;
   finalStep: unknown;
@@ -323,7 +354,10 @@ export function buildFinalizedMessageState(
   const finalStepStart = persistedMessage.parts.findLastIndex((part) => part.type === "step-start");
   const persistedFinalStepParts = persistedMessage.parts.slice(finalStepStart + 1);
   const unmatchedPersistedReasoningParts = persistedFinalStepParts.filter(
-    (part): part is ReasoningPart => part.type === "reasoning" && isSubstantiveReasoningPart(part),
+    (part): part is ReasoningPart =>
+      part.type === "reasoning" &&
+      (isSubstantiveReasoningPart(part) ||
+        openReasoningId(part, input.mirroredToolChunkState) !== undefined),
   );
   const persistedTextParts = persistedFinalStepParts.filter((part) => part.type === "text")
     .filter((part) => part.text.trim().length > 0);
@@ -400,14 +434,42 @@ export function buildFinalizedMessageState(
       return missingTextParts;
     }
     if (fallbackPart.type === "reasoning") {
-      const matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
+      let matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
         hasSameReasoningContent(part, fallbackPart)
       );
+      if (matchingIndex < 0) {
+        const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
+          openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
+            compatibleReasoningCompletion(part, fallbackPart)
+            ? [index]
+            : []
+        );
+        if (compatible.length === 1) matchingIndex = compatible[0]!;
+      }
       if (matchingIndex < 0) {
         recoveredFallbackParts.push(fallbackPart);
         return [fallbackPart];
       }
-      unmatchedPersistedReasoningParts.splice(matchingIndex, 1);
+      const original = unmatchedPersistedReasoningParts.splice(matchingIndex, 1)[0]!;
+      const id = openReasoningId(original, input.mirroredToolChunkState);
+      if (id !== undefined && compatibleReasoningCompletion(original, fallbackPart)) {
+        const updated: ReasoningPart = bindReasoningPartIdentity(
+          {
+            ...original,
+            text: fallbackPart.text,
+            ...("state" in original ? { state: "done" as const } : {}),
+            ...(fallbackPart.signature === undefined ? {} : { signature: fallbackPart.signature }),
+            ...(fallbackPart.redactedData === undefined
+              ? {}
+              : { redactedData: fallbackPart.redactedData }),
+          },
+          id,
+          true,
+        );
+        completedParts[completedParts.indexOf(original)] = updated;
+        reasoningCompletions.set(updated, { id, prefix: original.text });
+        recoveredFallbackParts.push(updated);
+      }
       return [];
     }
     if (isToolUiPart(fallbackPart)) {
@@ -495,21 +557,41 @@ function buildOrderedFallbackChunks(
 ): ChatUiMessageChunk<MessageMetadata>[] {
   const usedIds = new Set(state.reasoningContentIds);
   const replacements = new Map<string, string>();
-  return buildFallbackUiMessageChunksFromParts(parts, messageId, state).map((chunk) => {
-    if (
-      chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
-      chunk.type !== "reasoning-end"
-    ) return chunk;
-    let id = replacements.get(chunk.id);
-    if (id === undefined) {
-      id = chunk.id;
-      let suffix = 2;
-      while (usedIds.has(id)) id = `${chunk.id}:recovered:${suffix++}`;
-      replacements.set(chunk.id, id);
-      usedIds.add(id);
-    }
-    return id === chunk.id ? chunk : { ...chunk, id };
-  });
+  const reasoningParts = parts.filter((part): part is ReasoningPart => part.type === "reasoning");
+  let reasoningIndex = 0;
+  const completions = new Map<string, { id: string; prefix: string }>();
+  return buildFallbackUiMessageChunksFromParts(parts, messageId, state).flatMap(
+    (chunk): ChatUiMessageChunk<MessageMetadata>[] => {
+      if (chunk.type === "reasoning-start") {
+        const completion = reasoningCompletions.get(reasoningParts[reasoningIndex++]!);
+        if (completion && state.openReasoningParts?.get(completion.id) === completion.prefix) {
+          completions.set(chunk.id, completion);
+          return [];
+        }
+      }
+      if (chunk.type === "reasoning-delta" || chunk.type === "reasoning-end") {
+        const completion = completions.get(chunk.id);
+        if (completion) {
+          if (chunk.type === "reasoning-end") return [{ ...chunk, id: completion.id }];
+          const delta = chunk.delta.slice(completion.prefix.length);
+          return delta ? [{ ...chunk, id: completion.id, delta }] : [];
+        }
+      }
+      if (
+        chunk.type !== "reasoning-start" && chunk.type !== "reasoning-delta" &&
+        chunk.type !== "reasoning-end"
+      ) return [chunk];
+      let id = replacements.get(chunk.id);
+      if (id === undefined) {
+        id = chunk.id;
+        let suffix = 2;
+        while (usedIds.has(id)) id = `${chunk.id}:recovered:${suffix++}`;
+        replacements.set(chunk.id, id);
+        usedIds.add(id);
+      }
+      return [id === chunk.id ? chunk : { ...chunk, id }];
+    },
+  );
 }
 
 /** Builds finalized message fallback chunks. */
@@ -542,6 +624,7 @@ export function buildFinalizedMessageFallbackChunks(
   // text suffixes that may also occur in an already streamed earlier block.
   const recoveryOrder = input.recoveredFallbackParts ?? buildFinalizedMessageState({
     responseMessage: input.persistedMessage,
+    mirroredToolChunkState: input.mirroredToolChunkState,
     isAborted: input.isAborted,
     finalStep: input.finalStep,
     incompleteToolCallsPartErrorText: "",
@@ -614,7 +697,8 @@ export function buildDetachedFallbackChunks(
   const orderedParts = input.fallbackParts.filter((part) => {
     if (
       input.isAborted && isToolUiPart(part) &&
-      !input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId)
+      (!input.mirroredParts?.length ||
+        !input.mirroredToolChunkState.startedToolCallIds.has(part.toolCallId))
     ) return false;
     if (part.type === "reasoning" || part.type === "text") {
       return input.mirroredParts !== undefined

@@ -1,3 +1,4 @@
+import { bindReasoningPartIdentity } from "#veryfront/chat/reasoning-part-identity.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
   bindObservedToolResultStart,
@@ -94,6 +95,7 @@ export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
 };
 
 type OrderedTextBlock = {
+  isComplete?: boolean;
   id: string;
   order: number;
   text: string;
@@ -276,6 +278,11 @@ function observeChatStreamEvent(input: {
         text: event.delta,
       });
       state.nextOrder += 1;
+      return;
+    }
+    case "reasoning-end": {
+      const block = state.reasoningBlocks.get(event.id);
+      if (block) block.isComplete = true;
       return;
     }
     case "tool-input-start": {
@@ -500,10 +507,14 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
 
     orderedParts.push({
       order: reasoningBlock.order,
-      part: {
-        type: "reasoning",
-        text: reasoningBlock.text,
-      },
+      part: bindReasoningPartIdentity(
+        {
+          type: "reasoning",
+          text: reasoningBlock.text,
+        },
+        reasoningBlock.id,
+        !reasoningBlock.isComplete,
+      ),
     });
   }
 
