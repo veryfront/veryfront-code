@@ -21,7 +21,10 @@ import type {
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -33,6 +36,7 @@ import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
+  scopeHostedRuntimeToolResults,
   scopeHostedRuntimeTools,
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
@@ -105,6 +109,12 @@ Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes projec
       serviceLayer: "cloud",
     },
   });
+
+  const resultScoped = scopeHostedRuntimeToolResults(tools);
+  for (const wrapped of [resultScoped, scoped]) {
+    assertEquals(hasTrustedHostToolProvenance(wrapped.trusted_failure), true);
+    assertEquals(hasTrustedHostToolProvenance(wrapped.project_failure), false);
+  }
 
   let caughtTrustedError: unknown;
   try {
