@@ -1351,7 +1351,10 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state, abortSignal);
         throwIfAborted(abortSignal);
         if (next === "timeout") {
-          if (wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state)) {
+          if (
+            wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
+            !somePrivateArray(state.reasoningParts, (part) => part.text.length > 0)
+          ) {
             throw createRuntimeProviderStreamFailure(
               new Error("Provider stream timed out before producing output"),
             );

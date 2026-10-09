@@ -818,6 +818,7 @@ function buildProviderErrorFromBody(
 ): ProviderError {
   const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
 
+  // Preserve platform admission failures before generic provider overload classification.
   if (
     isVeryfrontGatewayResponse(response) && !context.truncated && context.status === 503 &&
     context.parsedBody?.code === "ai_provider_spend_check_unavailable"
