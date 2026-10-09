@@ -128,7 +128,9 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 
 // Prototype chains a transport-created Response or body stream resolves through,
 // captured while every link is still an ordinary object.
-function captureSettlementChain(prototype: object): readonly object[] {
+function captureSettlementChain(
+  prototype: typeof NativeResponse.prototype | typeof NativeReadableStream.prototype,
+): readonly object[] {
   const chain: object[] = [];
   let current: object | null = prototype;
   while (current !== null) {
@@ -661,8 +663,11 @@ function createOriginBoundFetchWithTransport(
       );
       return settled;
     };
+    // Authenticated downloads must seal the native Response before promise
+    // resolution. Plain fetch cannot guarantee that after a mid-flight
+    // prototype change, so retained settlement uses the sealing transport.
     const pinnedFetch = transport.pinnedFetch ??
-      ((isNode || isBun) ? fetchWithPinnedAddresses : undefined);
+      ((retainTransportSettlement || isNode || isBun) ? fetchWithPinnedAddresses : undefined);
     const requestTransport = retainTransportSettlement
       ? {
         ...transport,

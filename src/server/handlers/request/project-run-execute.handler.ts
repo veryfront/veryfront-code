@@ -209,6 +209,9 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
@@ -2999,11 +3002,17 @@ function createRuntimeApiClient(
           headers: { Authorization: `Bearer ${token}`, Accept: "application/octet-stream" },
         }),
       );
-      if (
-        !response.ok || !response.body ||
-        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
-          "application/octet-stream"
-      ) {
+      const contentType = response.headers.get("content-type");
+      let mimeType: string | undefined;
+      if (contentType !== null) {
+        const separator = ReflectApply(StringPrototypeIndexOf, contentType, [";"]) as number;
+        const bareType = separator < 0
+          ? contentType
+          : ReflectApply(StringPrototypeSlice, contentType, [0, separator]) as string;
+        const trimmedType = ReflectApply(StringPrototypeTrim, bareType, []) as string;
+        mimeType = ReflectApply(StringPrototypeToLowerCase, trimmedType, []) as string;
+      }
+      if (!response.ok || !response.body || mimeType !== "application/octet-stream") {
         await response.body?.cancel();
         throw API_CLIENT_ERROR.create({
           detail: `Veryfront API upload download failed: ${response.status}`,

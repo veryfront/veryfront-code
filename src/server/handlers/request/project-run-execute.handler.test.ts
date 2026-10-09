@@ -2243,40 +2243,72 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     );
     const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
 
-    const result = await withMockFetch(
-      (async (input, init) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof Request
-          ? input.url
-          : input.toString();
-        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
-          const observed = observeFetchRequestInit(init);
-          assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
-          assertEquals(new Headers(observed.headers).get("accept"), "application/octet-stream");
-          assertEquals(
-            observed.redirect,
-            "manual",
-            "the guard inspects redirects before following",
-          );
-          return new Response("# Guide\n\nCancellation-safe knowledge.", {
-            headers: { "Content-Type": "Application/Octet-Stream ; charset=binary" },
+    const originalSplit = String.prototype.split;
+    const originalTrim = String.prototype.trim;
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let interceptedMime = false;
+    let result;
+    try {
+      result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            const observed = observeFetchRequestInit(init);
+            assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+            assertEquals(new Headers(observed.headers).get("accept"), "application/octet-stream");
+            assertEquals(
+              observed.redirect,
+              "manual",
+              "the guard inspects redirects before following",
+            );
+            String.prototype.split = function (...args) {
+              if (String(this) === "Application/Octet-Stream ; charset=binary") {
+                interceptedMime = true;
+                throw new Error("tenant MIME hook");
+              }
+              return Reflect.apply(originalSplit, this, args);
+            };
+            String.prototype.trim = function () {
+              if (String(this) === "Application/Octet-Stream ") {
+                interceptedMime = true;
+                throw new Error("tenant MIME trim hook");
+              }
+              return Reflect.apply(originalTrim, this, []);
+            };
+            String.prototype.toLowerCase = function () {
+              if (String(this) === "Application/Octet-Stream") {
+                interceptedMime = true;
+                throw new Error("tenant MIME case hook");
+              }
+              return Reflect.apply(originalToLowerCase, this, []);
+            };
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              headers: { "Content-Type": "Application/Octet-Stream ; charset=binary" },
+            });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
           });
-        }
-        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
-        uploads.push({ url, body: requestJsonBody(init) ?? {} });
-        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch,
-      async () =>
-        await new ProjectRunExecuteHandler().handle(
-          signed.request,
-          createCtx(signed.publicKeyPem),
-        ),
-    );
-
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+    } finally {
+      String.prototype.split = originalSplit;
+      String.prototype.trim = originalTrim;
+      String.prototype.toLowerCase = originalToLowerCase;
+    }
+    assertEquals(interceptedMime, false);
     assertExists(result.response);
     const payload = await result.response.json();
     assertEquals(payload.success, true, JSON.stringify(payload));

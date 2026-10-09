@@ -18,6 +18,7 @@ import type { ConnectionOptions, TLSSocket } from "node:tls";
 import type { Readable } from "node:stream";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { isErrorAcrossRealms } from "../error-introspection.ts";
+import { isDeno } from "../runtime.ts";
 import {
   assertNativeRequestProcessing,
   assertObjectPrototypeUnchanged,
@@ -70,6 +71,11 @@ interface NodeTransportIntrinsics {
   readonly capturedIncomingMessageDestroy: IncomingMessage["destroy"];
   readonly capturedNetCreateConnection: NodeNetModule["createConnection"];
   readonly capturedTlsConnect: NodeTlsModule["connect"];
+  readonly capturedHttpsAgentConstructor: NodeHttpsModule["Agent"];
+  readonly capturedPrivateHttpsAgentCreateConnection: (
+    options: ConnectionOptions,
+    callback?: () => void,
+  ) => Socket;
   readonly capturedReadableToWeb: typeof Readable.toWeb;
   readonly capturedReadablePipe: Readable["pipe"];
   readonly capturedCreateGunzip: NodeZlibModule["createGunzip"];
@@ -129,6 +135,18 @@ function createNodeTransportIntrinsics(
   let intrinsics!: NodeTransportIntrinsics;
   const privateHttpAgent = new nodeHttp.Agent(copyAgentOptions(nodeHttp.globalAgent));
   const privateHttpsAgent = new nodeHttps.Agent(copyAgentOptions(nodeHttps.globalAgent));
+  const capturedHttpsAgentConstructor = nodeHttps.Agent;
+  const capturedHttpsAgentCreateConnection = privateHttpsAgent.createConnection;
+  const capturedPrivateHttpsAgentCreateConnection = (
+    options: ConnectionOptions,
+    callback?: () => void,
+  ): Socket => {
+    return IntrinsicReflectApply(
+      capturedHttpsAgentCreateConnection,
+      privateHttpsAgent,
+      callback === undefined ? [options] : [options, callback],
+    ) as Socket;
+  };
   IntrinsicReflectApply(ObjectDefineProperty, Object, [
     privateHttpAgent,
     "createConnection",
@@ -139,16 +157,18 @@ function createNodeTransportIntrinsics(
         createPinnedPlainSocket(intrinsics, options, callback),
     },
   ]);
-  IntrinsicReflectApply(ObjectDefineProperty, Object, [
-    privateHttpsAgent,
-    "createConnection",
-    {
-      configurable: false,
-      writable: false,
-      value: (options: ConnectionOptions, callback?: () => void) =>
-        createPinnedTlsSocket(intrinsics, options, callback),
-    },
-  ]);
+  if (!isDeno) {
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [
+      privateHttpsAgent,
+      "createConnection",
+      {
+        configurable: false,
+        writable: false,
+        value: (options: ConnectionOptions, callback?: () => void) =>
+          createPinnedTlsSocket(intrinsics, options, callback),
+      },
+    ]);
+  }
 
   const nodeRequestMembers: MemberSnapshot[] = [];
   intrinsics = {
@@ -162,6 +182,8 @@ function createNodeTransportIntrinsics(
     capturedIncomingMessageDestroy,
     capturedNetCreateConnection,
     capturedTlsConnect,
+    capturedHttpsAgentConstructor,
+    capturedPrivateHttpsAgentCreateConnection,
     capturedReadableToWeb,
     capturedReadablePipe,
     capturedCreateGunzip,
@@ -260,7 +282,10 @@ function nodeRequestFor(
  */
 // `options` is a runtime field node:http's typings do not declare.
 function copyAgentOptions(agent: Agent): AgentOptions | undefined {
-  const options: unknown = Reflect.get(agent, "options");
+  const descriptor = ObjectGetOwnPropertyDescriptor(agent, "options");
+  const options: unknown = descriptor === undefined
+    ? undefined
+    : descriptorField(descriptor, "value");
   if (typeof options !== "object" || options === null) return undefined;
   return { ...options } as AgentOptions;
 }
@@ -560,6 +585,47 @@ function createPinnedTlsSocket(
     : intrinsics.capturedTlsConnect(options, lockedCallback);
   lockCredentialSocketInstance(intrinsics, socket);
   return socket;
+}
+
+function createPinnedDenoHttpsSocket(
+  intrinsics: NodeTransportIntrinsics,
+  options: ConnectionOptions,
+  address: string,
+  callback?: () => void,
+): Socket {
+  const pinnedOptions = ObjectAssign(ObjectCreate(null), options, {
+    host: address,
+    hostname: address,
+  }) as ConnectionOptions;
+  const lockedCallback = callback === undefined ? undefined : () => {
+    lockCredentialSocketInstance(intrinsics, socket);
+    callback();
+  };
+  const socket = lockedCallback === undefined
+    ? intrinsics.capturedPrivateHttpsAgentCreateConnection(pinnedOptions)
+    : intrinsics.capturedPrivateHttpsAgentCreateConnection(pinnedOptions, lockedCallback);
+  lockCredentialSocketInstance(intrinsics, socket);
+  return socket;
+}
+
+function createPinnedDenoHttpsAgent(
+  intrinsics: NodeTransportIntrinsics,
+  address: string,
+): Agent {
+  const agent = new intrinsics.capturedHttpsAgentConstructor(
+    copyAgentOptions(intrinsics.privateHttpsAgent),
+  );
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [
+    agent,
+    "createConnection",
+    {
+      configurable: false,
+      writable: false,
+      value: (options: ConnectionOptions, callback?: () => void) =>
+        createPinnedDenoHttpsSocket(intrinsics, options, address, callback),
+    },
+  ]);
+  return agent;
 }
 
 function isInstance(value: unknown, constructor: unknown): boolean {
@@ -1098,23 +1164,27 @@ export async function fetchWithPinnedAddresses(
       ca?: string[];
     } = ObjectAssign(ObjectCreate(null), {
       protocol: url.protocol,
-      // Connect straight to the validated address. Overriding DNS through a
-      // custom `lookup` is the documented way to pin and Node honours it, but
-      // Bun's node:https ignores the address it returns and fails with
-      // ECONNREFUSED even for a reachable one, so the pin was inert there.
-      // Dialling the address directly needs no runtime cooperation; identity
-      // travels in the Host header and the TLS SNI name instead.
-      hostname: attempts[attemptIndex]![0]!,
+      // Node/Bun connect straight to the validated address: Bun's node:https
+      // ignores a custom lookup and fails against a reachable address. Deno's
+      // node:https validates the certificate against `hostname`, so keep the
+      // original host there and pin the TCP address inside createConnection.
+      hostname: isDeno && url.protocol === "https:" ? url.hostname : attempts[attemptIndex]![0]!,
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: `${url.pathname}${url.search}`,
       method,
       headers: outgoingHeaders,
-      agent: url.protocol === "https:" ? intrinsics.privateHttpsAgent : intrinsics.privateHttpAgent,
-      createConnection: url.protocol === "https:"
-        ? (options: ConnectionOptions, callback?: () => void) =>
-          createPinnedTlsSocket(intrinsics, options, callback)
-        : (options: NetConnectOpts, callback?: () => void) =>
-          createPinnedPlainSocket(intrinsics, options, callback),
+      agent: url.protocol === "https:"
+        ? isDeno
+          ? createPinnedDenoHttpsAgent(intrinsics, attempts[attemptIndex]![0]!)
+          : intrinsics.privateHttpsAgent
+        : intrinsics.privateHttpAgent,
+      ...(isDeno && url.protocol === "https:" ? {} : {
+        createConnection: url.protocol === "https:"
+          ? (options: ConnectionOptions, callback?: () => void) =>
+            createPinnedTlsSocket(intrinsics, options, callback)
+          : (options: NetConnectOpts, callback?: () => void) =>
+            createPinnedPlainSocket(intrinsics, options, callback),
+      }),
 
       ...(url.protocol === "https:"
         ? {
