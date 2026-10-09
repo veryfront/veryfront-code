@@ -419,8 +419,13 @@ function applyHostedHostToolPolicy(
   return recordFromEntries(
     filterValues(ownEntries(tools), (entry) => {
       const shortName = ownDataValue(entry[1], "shortName");
-      return allowed.has(entry[0]) ||
-        (typeof shortName === "string" && allowed.has(shortName));
+      if (allowed.has(entry[0]) || (typeof shortName === "string" && allowed.has(shortName))) {
+        return true;
+      }
+      return entry[0] === CANONICAL_FORM_INPUT_TOOL_ID &&
+        allowed.has(FORM_INPUT_TOOL_ID) &&
+        hasTrustedHostToolProvenance(entry[1]) &&
+        !isProjectOwnedLocalToolName(tools, FORM_INPUT_TOOL_ID);
     }),
   );
 }

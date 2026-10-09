@@ -661,6 +661,11 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
             const baseInstructions = buildHostedChildForkInstructions({
               ...scopedOptions.context,
               availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
+              skillLoaderToolName: runtimeOptions.childConfig?.toolNames?.includes(
+                  "veryfront__load_skill",
+                )
+                ? "veryfront__load_skill"
+                : "load_skill",
             });
             const childSystem = runtimeOptions.childConfig?.system;
             if (childSystem === undefined) {

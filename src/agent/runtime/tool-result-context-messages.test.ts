@@ -155,17 +155,22 @@ describe("agent runtime tool result context message adapter", () => {
   it("skips framework disclosure tools that must return their own instruction payloads", () => {
     const context = createToolResultContext({ limits: { maxInlineBytes: 1 } });
     const loadSkill = toolMessage("long skill instructions", "load_skill");
+    const canonicalLoadSkill = toolMessage(
+      "long canonical skill instructions",
+      "veryfront__load_skill",
+    );
     const toolSearch = toolMessage("long schema catalog", "tool_search");
     const getToolResult = toolMessage("long retrieved section", "get_tool_result");
 
     const transformed = createModelToolResultContextMessages(
-      [loadSkill, toolSearch, getToolResult],
+      [loadSkill, canonicalLoadSkill, toolSearch, getToolResult],
       context,
     );
 
     assertStrictEquals(transformed[0], loadSkill);
-    assertStrictEquals(transformed[1], toolSearch);
-    assertStrictEquals(transformed[2], getToolResult);
+    assertStrictEquals(transformed[1], canonicalLoadSkill);
+    assertStrictEquals(transformed[2], toolSearch);
+    assertStrictEquals(transformed[3], getToolResult);
     assertEquals(context.size, 0);
   });
 

@@ -8,7 +8,11 @@ import type { Message, ToolResultPart } from "../types.ts";
 import { AgentRuntime } from "./index.ts";
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
-import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import {
+  hydrateActiveSkillStateFromMessages,
+  markTrustedPlatformPolicyToolResultPart,
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory,
+} from "./skill-policy-enforcement.ts";
 
 for (const trusted of [true, false]) {
   it(`preserves only live trusted replay ownership through serializing memory (trusted=${trusted})`, async () => {
@@ -64,3 +68,67 @@ for (const trusted of [true, false]) {
     );
   });
 }
+
+it("persists live trusted legacy load_skill results with durable replay ownership", async () => {
+  let step = 0;
+  const model = scriptedModel([
+    () => {
+      step++;
+      return {
+        toolCalls: [{ id: "load-plan", name: "load_skill", input: { skillId: "plan" } }],
+      };
+    },
+    { text: "continued" },
+  ], { only: "generate" });
+  const runtime = new AgentRuntime("durable-load-skill-replay", {
+    model: "veryfront-cloud/openai/durable-load-skill-replay",
+    system: "Load the plan skill.",
+    security: false,
+    maxSteps: 2,
+    tools: {
+      load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+        execute: ({ skillId }) => ({
+          skillId,
+          instructions: "# Plan",
+          references: ["references/guide.md"],
+          scripts: [],
+        }),
+      }))),
+    },
+  }, { resolveModelRuntime: () => model });
+  let saved: Message[] = [];
+  Reflect.set(runtime, "memory", {
+    add: (message: Message) => {
+      saved.push(JSON.parse(JSON.stringify(message)));
+      return Promise.resolve();
+    },
+    getMessages: () => Promise.resolve(saved),
+    clear: () => {
+      saved = [];
+      return Promise.resolve();
+    },
+  });
+
+  await runtime.generate("Load plan");
+
+  const savedToolResult = saved.find((message) => message.role === "tool");
+  assertEquals(savedToolResult?.parts[0]?.type, "tool-result");
+  assertEquals(
+    savedToolResult?.parts[0]?.type === "tool-result"
+      ? savedToolResult.parts[0].toolName
+      : undefined,
+    "load_skill",
+  );
+  assertEquals(
+    savedToolResult?.metadata?.__veryfrontTrustedPlatformPolicyToolResultIds,
+    ["load-plan"],
+  );
+
+  const replayed: Message[] = JSON.parse(JSON.stringify(saved));
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
+  assertEquals(hydrateActiveSkillStateFromMessages(replayed).activeSkillId, "plan");
+  assertEquals(step, 1);
+});

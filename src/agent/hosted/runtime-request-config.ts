@@ -266,10 +266,16 @@ export function resolveHostedRuntimeAllowedTools(input: {
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
     if (deniedToolNames.has(toolName)) continue;
+    if (configuredToolNames.has(toolName)) {
+      selectedToolNames.add(toolName);
+      continue;
+    }
     if (
-      configuredToolNames.has(toolName) ||
-      (isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation)
-    ) selectedToolNames.add(toolName);
+      isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation &&
+      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID)
+    ) {
+      selectedToolNames.add(CANONICAL_INVOKE_AGENT_TOOL_ID);
+    }
   }
   return [...selectedToolNames];
 }

@@ -350,6 +350,62 @@ describe("filterHostedChatRuntimeLocalTools", () => {
 
     assertEquals(Object.keys(result), []);
   });
+
+  it("keeps a trusted canonical form when a host policy names the legacy selector", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { veryfront__form_input: canonicalForm },
+      hostToolPolicy: { allow: ["form_input"] },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["form_input"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.localToolNames, ["veryfront__form_input"]);
+    assertEquals(await toolAssembly.runtimeTools.veryfront__form_input?.execute({}), { ok: true });
+  });
+
+  it("does not let a legacy host policy select canonical form over a project collision", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+    const projectForm = localTool("Project form input");
+    const canonicalForm = markTrustedHostToolSet({
+      veryfront__form_input: localTool("Canonical platform form input"),
+    }).veryfront__form_input;
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { form_input: projectForm, veryfront__form_input: canonicalForm },
+      hostToolPolicy: { allow: ["form_input"] },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["form_input"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.localToolNames, ["form_input"]);
+    assertEquals(await toolAssembly.runtimeTools.form_input?.execute({}), { ok: true });
+    assertEquals(toolAssembly.runtimeTools.veryfront__form_input, undefined);
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without widening delegation", async () => {
@@ -467,6 +523,123 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps canonical platform essenti
   ]);
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), {
     owner: "platform-load",
+  });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__invoke_agent?.execute({}), {
+    owner: "platform-invoke",
+  });
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly selects resolved canonical delegation over a project collision", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const projectInvokeAgent = {
+    ...localTool("Project invoke"),
+    execute: () => ({ owner: "project-invoke" }),
+  };
+  const platformInvokeAgent = {
+    ...localTool("Platform invoke"),
+    execute: () => ({ owner: "platform-invoke" }),
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ invoke_agent: platformInvokeAgent }),
+      { invoke_agent: projectInvokeAgent },
+    ),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["veryfront__invoke_agent"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["veryfront__invoke_agent"]);
+  assertEquals(await toolAssembly.runtimeTools.veryfront__invoke_agent?.execute({}), {
+    owner: "platform-invoke",
+  });
+  assertEquals(toolAssembly.runtimeTools.invoke_agent, undefined);
+});
+
+Deno.test("prepareFacadedHostedChatRuntimeToolAssembly preserves explicitly authorized project invoke_agent", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    agentId: "writer",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const projectInvokeAgent = {
+    ...localTool("Project invoke"),
+    execute: () => ({ owner: "project-invoke" }),
+  };
+  const platformInvokeAgent = {
+    ...localTool("Platform invoke"),
+    execute: () => ({ owner: "platform-invoke" }),
+  };
+
+  const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    signal: new AbortController().signal,
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ invoke_agent: platformInvokeAgent }),
+      { invoke_agent: projectInvokeAgent },
+    ),
+    hostToolPolicy: { allow: ["invoke_agent"] },
+    allowedToolNames: ["invoke_agent"],
+    remoteToolSources: [],
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent"]);
+  assertEquals(await toolAssembly.runtimeTools.invoke_agent?.execute({}), {
+    owner: "project-invoke",
+  });
+  assertEquals(toolAssembly.runtimeTools.veryfront__invoke_agent, undefined);
+});
+
+Deno.test("prepareConfigDerivedHostedChatRuntimeToolAssembly preserves configured project invoke_agent collisions", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const projectInvokeAgent = {
+    ...localTool("Project invoke"),
+    execute: () => ({ owner: "project-invoke" }),
+  };
+  const platformInvokeAgent = {
+    ...localTool("Platform invoke"),
+    execute: () => ({ owner: "platform-invoke" }),
+  };
+
+  const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ invoke_agent: platformInvokeAgent }),
+      { invoke_agent: projectInvokeAgent },
+    ),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["invoke_agent"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "veryfront__invoke_agent"]);
+  assertEquals(await toolAssembly.runtimeTools.invoke_agent?.execute({}), {
+    owner: "project-invoke",
   });
   assertEquals(await toolAssembly.runtimeTools.veryfront__invoke_agent?.execute({}), {
     owner: "platform-invoke",
