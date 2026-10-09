@@ -235,9 +235,9 @@ metadata and command responses described in this guide. The API and SDK do
 not negotiate versions. A missing route or an incompatible response fails
 with a request or response-validation error.
 
-Before publishing the SDK, verify `checkReadiness()`, `getCapabilities()` and
-`runCommand("pwd")` against the deployed API in the target environment. Verify
-that `close()` preserves a persistent workspace by reconnecting with `get()`.
+Before publishing the SDK, verify `sandbox.checkReadiness()`, `Sandbox.capabilities()` and
+`sandbox.runCommand("pwd")` against the deployed API in the target environment. Verify
+that `close()` preserves a persistent workspace by reconnecting with `Sandbox.get(id)`.
 Keep the release blocked until these checks pass.
 
 Update callers to these names. This release removes the old names without aliases.
@@ -251,7 +251,13 @@ Update callers to these names. This release removes the old names without aliase
 | `ExecStreamEvent`                     | `CommandStreamEvent` |
 | `SandboxSession`                      | `SandboxDetails`     |
 | Creation option `projectId`           | `projectReference`   |
+| Command option `timeout_seconds`      | `timeoutSeconds`     |
 | Runtime resolver argument `sessionId` | `sandboxId`          |
+
+`createProjectScopedExecOptions()` is removed. Set `projectReference` when
+creating the sandbox; commands use the sandbox scope and do not accept a
+per-command project reference. Replace legacy JavaScript options explicitly,
+because an unrecognized option does not configure the command timeout.
 
 `SandboxDetails` uses camelCase metadata fields, including `shortId`,
 `createdAt`, `workspaceStorage` and `ttlMode`. Command IDs remain opaque strings.
