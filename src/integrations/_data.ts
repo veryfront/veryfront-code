@@ -16118,7 +16118,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__kill_sandbox",
       "name": "Kill Sandbox",
-      "description": "Kill sandbox",
+      "description": "Destroy sandbox and discard state",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -16127,7 +16127,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxID": {
             "type": "string",
             "in": "path",
-            "description": "Identifier of the sandbox to kill",
+            "description":
+              "Identifier of the sandbox to kill. Killing immediately terminates this sandbox and discards its active state. Use Pause Sandbox instead when you need to resume it.",
             "required": true,
           },
         },

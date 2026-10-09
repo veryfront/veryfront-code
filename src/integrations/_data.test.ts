@@ -56,6 +56,7 @@ describe("integration endpoint specs", () => {
   it("keeps asynchronous and conversation-window semantics in short summaries", () => {
     const expected: [string, string, string][] = [
       ["adyen", "create_refund", "Start payment refund"],
+      ["e2b", "kill_sandbox", "Destroy sandbox and discard state"],
       ["klarna", "cancel_order", "Cancel uncaptured order"],
       ["klarna", "refund_order", "Refund captured order amount"],
       ["wix", "query_contacts", "Query contacts (1000 maximum per request)"],
@@ -161,6 +162,13 @@ describe("integration endpoint specs", () => {
   });
   it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
     const expected: [string, string, "params" | "body", string, string][] = [
+      [
+        "e2b",
+        "kill_sandbox",
+        "params",
+        "sandboxID",
+        "Killing immediately terminates this sandbox and discards its active state. Use Pause Sandbox instead when you need to resume it.",
+      ],
       [
         "adyen",
         "create_refund",
