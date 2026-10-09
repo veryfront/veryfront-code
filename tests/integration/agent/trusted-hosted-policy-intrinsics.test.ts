@@ -1,3 +1,4 @@
+import { findSubmittedFormInputResult } from "#veryfront/agent/hosted/form-input-tool.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -186,4 +187,42 @@ describe("trusted platform policy intrinsics", () => {
       });
     }
   });
+});
+
+Deno.test("trusted form replay does not expose history to a mutable array iterator", () => {
+  const messages: ChatUiMessage[] = [{
+    id: "trusted-form",
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "veryfront__form_input",
+      toolCallId: "form-call",
+      input: {},
+      state: "output-available",
+      output: { submitted: true, values: { approved: true } },
+    }],
+  }];
+  const trustedIds = ["trusted-form"];
+  const original = Array.prototype[Symbol.iterator];
+  let iteratorCalls = 0;
+  let result;
+  try {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value() {
+        iteratorCalls++;
+        throw new Error("project iterator observed form history");
+      },
+    });
+    result = findSubmittedFormInputResult(messages, { trustedHostedHistoryMessageIds: trustedIds });
+  } finally {
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+  assertEquals(iteratorCalls, 0);
+  assertEquals(result, { values: { approved: true }, inputRequestId: "form-call" });
 });

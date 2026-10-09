@@ -1,3 +1,6 @@
+import { prepareFacadedHostedChatRuntimeToolAssembly } from "./chat-runtime-tool-assembly.ts";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -3419,5 +3422,128 @@ for (const attack of ["inherited metadata", "inherited sidecar", "metadata gette
     });
     assertEquals(hydrateActiveSkillStateFromMessages(restored).activeSkillId, undefined);
     assertEquals(getterCalls, 0);
+  });
+}
+
+for (const mode of ["untrusted name", "untrusted named part", "trusted history"]) {
+  Deno.test(`prepareHostedChatExecution canonical form replay requires trusted history: ${mode}`, async () => {
+    const submittedPart = {
+      toolCallId: "platform-form-call",
+      state: "output-available" as const,
+      input: { title: "Platform form" },
+      output: {
+        submitted: true,
+        values: { brief: "platform-owned result" },
+        inputRequestId: "platform-input-request",
+      },
+    };
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Use the platform form" }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          mode === "untrusted named part"
+            ? { ...submittedPart, type: "tool-veryfront__form_input" }
+            : { ...submittedPart, type: "dynamic-tool", toolName: "veryfront__form_input" },
+        ],
+      },
+    ];
+    let toolNames: string[] = [];
+    let runtimeOptions:
+      | { submittedFormInputResult?: unknown }
+      | undefined;
+
+    await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        ...(mode === "trusted history"
+          ? {
+            serverEnvelopeVerified: true,
+            serverResolvedTrustedHostedHistoryMessageIds: ["assistant-1"],
+          }
+          : {}),
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        durableRootRun: {
+          runId: "run-new",
+          messageId: "message-new",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "configured-model",
+        maxSteps: 25,
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      legacyFormInputReplayAllowed: true,
+      fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
+      buildInstructions: (input) => [{
+        role: "system",
+        content: `${input.agentConfig.id}:${input.instructions}`,
+      }],
+      createRuntime: async (options) => {
+        runtimeOptions = options;
+        const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+          signal: new AbortController().signal,
+          taskContext: {
+            projectId: "project-1",
+            model: "configured-model",
+            submittedFormInputResult: options.submittedFormInputResult,
+          },
+          instructions: "Platform intake",
+          localTools: markTrustedHostToolSet({
+            veryfront__form_input: {
+              description: "Form",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => ({}),
+            },
+            veryfront__load_skill: {
+              description: "Skill",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => ({}),
+            },
+          }),
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          allowedToolNames: ["veryfront__form_input", "veryfront__load_skill"],
+          remoteToolSources: [],
+        });
+        toolNames = assembly.localToolNames;
+        return Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        });
+      },
+    });
+
+    assertEquals(
+      runtimeOptions?.submittedFormInputResult,
+      mode === "trusted history"
+        ? {
+          values: { brief: "platform-owned result" },
+          inputRequestId: "platform-input-request",
+        }
+        : undefined,
+    );
+    assertEquals(
+      toolNames,
+      mode === "trusted history" ? [] : ["veryfront__form_input", "veryfront__load_skill"],
+    );
   });
 }
