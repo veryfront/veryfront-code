@@ -1,3 +1,4 @@
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import {
   readOwnDataProperty,
@@ -108,6 +109,7 @@ function allowsVerifiedLegacySkillReplay(
     if (!somePrivateArray(ids, (id) => typeof id === "string" && id.length > 0)) return false;
     let collision = false;
     apply(mapForEach, apply(getScopedTools, toolRegistry, []), [(definition: Tool, id: string) => {
+      if (hasTrustedHostToolProvenance(definition)) return;
       const owner = readOwnDataProperty(definition, "ownerAgentId", "Project tool", false);
       if (owner !== undefined && owner !== agentId) return;
       const shortName = readOwnDataProperty(definition, "shortName", "Project tool", false);

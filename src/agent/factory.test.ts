@@ -924,6 +924,64 @@ description: Excluded skill
     assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
   });
 
+  it("advertises only platform-owned loader bindings when canonical project tools collide", async () => {
+    for (let index = 0; index < 128; index++) {
+      registerSkill(
+        `canonical-owner-${index}-${"x".repeat(220)}`,
+        createSkill(`canonical-owner-${index}-${"x".repeat(220)}`, "Owned skills"),
+      );
+    }
+    for (
+      const mode of [
+        "legacy fallback",
+        "legacy denied",
+        "trusted canonical",
+        "unrestricted trusted",
+        "unrestricted project",
+      ]
+    ) {
+      const canonical = markRuntimeLocalTool(tool({
+        id: "veryfront__load_skill",
+        description: "Canonical loader",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ owner: "project" }),
+      }));
+      if (mode === "trusted canonical") markTrustedHostToolProvenance(canonical);
+      if (mode === "unrestricted project") {
+        toolRegistry.register(
+          "load_skill",
+          tool({
+            id: "load_skill",
+            description: "Project loader",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({}),
+          }),
+        );
+      }
+      if (mode === "unrestricted trusted") {
+        assertEquals(hasTrustedHostToolProvenance(toolRegistry.get("load_skill")), true);
+      }
+      const assistant = agent({
+        id: `canonical-owner-${mode}`,
+        system: "Use skills.",
+        tools: mode.startsWith("unrestricted") ? true : {
+          veryfront__load_skill: canonical,
+          ...(mode !== "legacy fallback" ? { load_skill: false } : {}),
+        },
+      });
+      const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+      assertEquals(
+        prompt.includes("Call veryfront__load_skill({ inventory:"),
+        mode === "trusted canonical",
+      );
+      assertEquals(
+        prompt.includes("Call load_skill({ inventory:"),
+        mode === "legacy fallback" || mode === "unrestricted trusted",
+      );
+      if (mode === "unrestricted project") toolRegistry.delete("load_skill");
+    }
+  });
+
   it("retains canonical skill loaders for replacement generate calls", async () => {
     for (let index = 0; index < 128; index++) {
       const id = `canonical-replacement-${index.toString().padStart(2, "0")}-${"x".repeat(220)}`;

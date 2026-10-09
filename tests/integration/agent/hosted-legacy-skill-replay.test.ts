@@ -1,3 +1,5 @@
+import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { tool } from "#veryfront/tool";
@@ -43,12 +45,17 @@ Deno.test("production cloud preparation restores only verified noncolliding lega
   for (
     const mode of [
       "verified",
+      "trusted registry",
       "ordinary",
       "direct collision",
       "qualified collision",
       "hidden owner",
     ]
   ) {
+    if (mode === "trusted registry") {
+      createEphemeralAgent({ id: "platform-registry-bootstrap", system: "Base", skills: true });
+      assertEquals(hasTrustedHostToolProvenance(toolRegistryInternal.get("load_skill")), true);
+    }
     const id = mode === "direct collision" ? "load_skill" : "agent-1--load_skill";
     const previous = toolRegistryInternal.getOwn(id);
     const collision = mode.includes("collision") || mode === "hidden owner";
@@ -103,7 +110,9 @@ Deno.test("production cloud preparation restores only verified noncolliding lega
       });
       assertEquals(
         hydrateActiveSkillStateFromMessages(result.finalMessages).activeSkillId,
-        mode === "verified" || mode === "hidden owner" ? "plan" : undefined,
+        mode === "verified" || mode === "trusted registry" || mode === "hidden owner"
+          ? "plan"
+          : undefined,
       );
     } finally {
       if (collision) {
