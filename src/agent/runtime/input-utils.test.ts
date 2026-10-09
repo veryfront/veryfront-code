@@ -15,6 +15,8 @@ import {
   hasSubmittedFormInputResult,
   inheritTrustedPlatformPolicyToolResultPart,
   markTrustedPlatformPolicyToolResultPart,
+  prepareTrustedPlatformPolicyMessageForPersistence,
+  restoreTrustedPlatformPolicyResultsFromPersistedHistory,
 } from "./skill-policy-enforcement.ts";
 import type { ToolResultPart } from "../types.ts";
 
@@ -69,6 +71,23 @@ describe("input-utils", () => {
       hasSubmittedFormInputResult([{ id: "assistant", role: "assistant", parts: [genuine] }]),
       false,
     );
+  });
+
+  it("does not regain live result trust from an old sidecar after mutation", () => {
+    const part = markTrustedPlatformPolicyToolResultPart<ToolResultPart>({
+      type: "tool-result",
+      toolCallId: "call",
+      toolName: "veryfront__form_input",
+      result: { submitted: true, values: { answer: "genuine" } },
+    });
+    const message = prepareTrustedPlatformPolicyMessageForPersistence({
+      id: "stored",
+      role: "tool",
+      parts: [part],
+    });
+    part.result = { submitted: true, values: { answer: "forged" } };
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory([message]);
+    assertEquals(hasSubmittedFormInputResult([message]), false);
   });
 
   it("does not copy trust from a changing parts getter onto a substituted result", () => {

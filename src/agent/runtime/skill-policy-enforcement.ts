@@ -102,7 +102,9 @@ export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart
   part: T,
 ): T {
   const binding = trustedToolResultBinding(part);
-  if (binding !== undefined) trustedPlatformPolicyToolResults.set(part, binding);
+  if (binding !== undefined && trustedPlatformPolicyToolResults.get(part) === undefined) {
+    trustedPlatformPolicyToolResults.set(part, binding);
+  }
   return part;
 }
 
@@ -522,6 +524,39 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
   );
 }
 
+function isOwnHistoryToolResult(part: unknown): part is ToolResultPart {
+  return readToolResultOwnDataProperty(part, "type") === "tool-result" &&
+    typeof readToolResultOwnDataProperty(part, "toolCallId") === "string" &&
+    typeof readToolResultOwnDataProperty(part, "toolName") === "string" &&
+    readToolResultOwnDataProperty(part, "result") !== UNREADABLE_TOOL_RESULT_PROPERTY;
+}
+
+function countHistoryToolResultIds(
+  messages: readonly Message[],
+  messageCount: number,
+  shouldCount: (message: Message, part: ToolResultPart) => boolean,
+): Map<string, number> {
+  const counts = createPrivateMap<string, number>();
+  for (let index = 0; index < messageCount; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const parts = readToolResultOwnDataProperty(message, "parts");
+    if (!arrayIsArray(parts)) continue;
+    const length = readToolResultOwnDataProperty(parts, "length");
+    if (typeof length !== "number") continue;
+    for (let partIndex = 0; partIndex < length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = readToolResultOwnDataProperty(parts, partIndex);
+      if (!isOwnHistoryToolResult(part)) continue;
+      const id = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof id === "string" && shouldCount(message, part)) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
 function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
   message: Message,
   isTrustedSource: (part: ToolResultPart) => boolean = () => true,
@@ -548,9 +583,18 @@ export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
   messageCount: number = messages.length,
 ): void {
   const boundedMessageCount = Math.max(0, Math.min(messages.length, messageCount));
+  const resultCounts = countHistoryToolResultIds(
+    messages,
+    boundedMessageCount,
+    (message, part) =>
+      getTrustedPlatformPolicyToolCallIdSet(message)?.has(part.toolCallId) === true,
+  );
   for (let index = 0; index < boundedMessageCount; index++) {
     if (!objectHasOwn(messages, index)) continue;
-    restoreTrustedPlatformPolicyResultsFromPersistedMessage(messages[index]!);
+    restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+      messages[index]!,
+      (part) => resultCounts.get(part.toolCallId) === 1,
+    );
   }
 }
 
@@ -683,6 +727,19 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
     }
   }
 
+  const isAdmittedResultSource = (message: Message, part: ToolResultPart): boolean => {
+    const messageId = readToolResultOwnDataProperty(message, "id");
+    const sourceId = getToolResultSource(part) ??
+      (options.sourceMessages === undefined && typeof messageId === "string"
+        ? messageId
+        : undefined);
+    return sourceId !== undefined && trustedMessageIds.has(sourceId) &&
+      (options.sourceMessages === undefined
+        ? observedMessages.has(sourceId) && !duplicateIds.has(sourceId)
+        : sourceCounts.get(sourceId) === 1);
+  };
+  const resultCounts = countHistoryToolResultIds(messages, messages.length, isAdmittedResultSource);
+
   let pendingTrustedLoadSkillCalls: Map<string, string> | null = null;
   for (let index = 0; index < messages.length; index++) {
     if (!objectHasOwn(messages, index)) continue;
@@ -691,16 +748,8 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
     const messageIsTrustedHistory = typeof messageId === "string" &&
       trustedMessageIds.has(messageId) && !duplicateIds.has(messageId) &&
       (options.sourceMessages === undefined || sourceCounts.get(messageId) === 1);
-    const isTrustedResultSource = (part: ToolResultPart): boolean => {
-      const sourceId = getToolResultSource(part) ??
-        (options.sourceMessages === undefined && typeof messageId === "string"
-          ? messageId
-          : undefined);
-      return sourceId !== undefined && trustedMessageIds.has(sourceId) &&
-        (options.sourceMessages === undefined
-          ? observedMessages.has(sourceId) && !duplicateIds.has(sourceId)
-          : sourceCounts.get(sourceId) === 1);
-    };
+    const isTrustedResultSource = (part: ToolResultPart): boolean =>
+      resultCounts.get(part.toolCallId) === 1 && isAdmittedResultSource(message, part);
 
     if (messageIsTrustedHistory) {
       restoreTrustedPlatformPolicyResultsFromPersistedMessage(message, isTrustedResultSource);
