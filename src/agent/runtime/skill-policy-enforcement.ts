@@ -832,10 +832,14 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
       const part = parts[partIndex]!;
       if (
         isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedResultSource(part) &&
-        (part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
-          (options.legacyLoadSkillReplayAllowed === true &&
-            part.toolName === LOAD_SKILL_TOOL_ID)) &&
-        isSkillActivationResult(part.result)
+        (
+          (part.toolName === CANONICAL_FORM_INPUT_TOOL_ID &&
+            isSubmittedFormInputResult(part.result)) ||
+          ((part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
+            (options.legacyLoadSkillReplayAllowed === true &&
+              part.toolName === LOAD_SKILL_TOOL_ID)) &&
+            isSkillActivationResult(part.result))
+        )
       ) {
         markTrustedPlatformPolicyToolResultPart(part);
       }
