@@ -1,7 +1,10 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "../conversation/tool-result-ownership.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
+  isRecord,
   isToolUiPart,
   markIncompleteToolPartsAsErrored,
   markIncompleteToolPartsAsStopped,
@@ -662,4 +665,42 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
       },
     }];
   });
+}
+
+const ownershipAppends = createPrivateWeakStore<
+  MirroredToolChunkState,
+  Promise<void> | undefined
+>();
+
+/** Internal persistence seam shared by hosted entrypoints; never exported by veryfront/agent. */
+export async function persistToolResultOwnershipCorrections(
+  events: readonly ConversationRunEvent[],
+  mirror: Pick<ConversationRunChunkMirror, "appendEvents"> | null,
+  state: MirroredToolChunkState,
+): Promise<void> {
+  if (!mirror || events.length === 0) return;
+  let inFlight: Promise<void> | undefined;
+  while ((inFlight = ownershipAppends.get(state)) !== undefined) {
+    await inFlight;
+  }
+  const remaining = events.filter((event) =>
+    isRecord(event.value) && typeof event.value.toolCallId === "string" &&
+    !state.ownershipCorrectedToolCallIds?.has(event.value.toolCallId)
+  );
+  if (remaining.length === 0) return;
+  const append = (async () => {
+    await mirror.appendEvents(remaining);
+    const corrected = state.ownershipCorrectedToolCallIds ??= new Set<string>();
+    for (const event of remaining) {
+      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
+        corrected.add(event.value.toolCallId);
+      }
+    }
+  })();
+  ownershipAppends.set(state, append);
+  try {
+    await append;
+  } finally {
+    if (ownershipAppends.get(state) === append) ownershipAppends.set(state, undefined);
+  }
 }

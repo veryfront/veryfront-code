@@ -21,6 +21,8 @@ export interface HostedResponseFinalizationState<TMessage, TChunk> {
   persistedMessage: TMessage;
   finalizedMessage: TMessage;
   fallbackChunks: readonly TChunk[];
+  /** Persist payload-free recovery metadata after chunks and before mirror flush. */
+  persistFallbackMetadata?: () => Promise<void> | void;
   hasIncompleteToolParts: boolean;
   metadata?: HostedLifecycleTerminalState["metadata"];
 }
@@ -199,6 +201,7 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
   }
 
   await appendFallbackChunks(state.fallbackChunks, options.appendFallbackChunk);
+  await state.persistFallbackMetadata?.();
   await options.flushMirror();
   if (
     shouldFailStreamError({

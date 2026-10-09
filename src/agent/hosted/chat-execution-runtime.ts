@@ -34,6 +34,8 @@ import {
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
+  buildToolResultOwnershipCorrectionEvents,
+  persistToolResultOwnershipCorrections,
 } from "./finalized-message.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -602,6 +604,17 @@ export function createHostedChatFinalizeResponseBuildState(input: {
     return {
       persistedMessage,
       finalizedMessage: sanitizedFinalizedMessage,
+      persistFallbackMetadata: () =>
+        persistToolResultOwnershipCorrections(
+          buildToolResultOwnershipCorrectionEvents({
+            persistedMessage,
+            finalizedMessage: sanitizedFinalizedMessage,
+            mirroredToolChunkState: input.mirroredToolChunkState,
+            isAborted: input.isAborted,
+          }),
+          input.lifecycleAdapter.durableRunMirror,
+          input.mirroredToolChunkState,
+        ),
       fallbackChunks:
         sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
           ? buildFinalizedMessageFallbackChunks({

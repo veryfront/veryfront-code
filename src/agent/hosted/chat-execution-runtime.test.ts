@@ -42,6 +42,14 @@ import {
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
+import {
+  type ConversationRunEvent,
+  ConversationRunEventEncoder,
+} from "../conversation/run-events.ts";
+import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
+import { recordMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import { finalizeHostedResponse } from "./stream-finalization.ts";
+import { shouldFailEmptyHostedFinalizedMessage } from "./stream-terminal-error.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 
 function createRootStreamWatchdog(input?: {
@@ -1318,6 +1326,108 @@ describe("agent/hosted-chat-execution-runtime", () => {
 
     assertEquals(chunks, [chunk]);
     assertEquals(flushes, ["flush"]);
+  });
+
+  it("persists exported response ownership recovery once through the compatibility composition", async () => {
+    for (const mode of ["normal", "retry", "aborted", "explicit-false"] as const) {
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const flushes: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const state = createMirroredToolChunkState();
+      const encoder = new ConversationRunEventEncoder();
+      encoder.encode({ type: "start", messageId: "assistant-message-1" });
+      const output = { privatePayload: "must-not-copy" };
+      const originalChunks: ChatUiMessageChunk<MessageMetadata>[] = [
+        { type: "tool-input-start", toolCallId: "completed", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "completed", toolName: "web_fetch", input: {} },
+        {
+          type: "tool-output-available",
+          toolCallId: "completed",
+          output,
+          ...(mode === "explicit-false" ? { providerExecuted: false } : {}),
+        },
+      ];
+      const events: ConversationRunEvent[] = originalChunks.flatMap((chunk) => {
+        recordMirroredToolChunkState(state, chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish in tool fixture");
+        return encoder.encode(chunk);
+      });
+      let attempts = 0;
+      const mirror = createDurableRunMirror({ chunks, flushes });
+      mirror.appendEvents = async (corrections) => {
+        attempts++;
+        if (mode === "retry" && attempts === 1) throw new Error("append failed");
+        assertEquals(JSON.stringify(corrections).includes("must-not-copy"), false);
+        events.push(...corrections);
+      };
+      const lifecycleAdapter = createLifecycleAdapter({ durableRunMirror: mirror, terminalStates });
+      const buildState = createHostedChatFinalizeResponseBuildState({
+        responseMessage: createResponseMessage({
+          parts: [{
+            type: "tool-web_fetch",
+            toolCallId: "completed",
+            state: "output-available",
+            input: {},
+            output,
+            ...(mode === "explicit-false" ? { providerExecuted: false } : {}),
+          }],
+        }),
+        isAborted: mode === "aborted",
+        lifecycleAdapter,
+        mirroredToolChunkState: state,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "incomplete",
+      });
+      const hooks = createHostedChatStreamFinalizationHooks({
+        lifecycleAdapter,
+        cleanup: async () => {},
+        streamError: null,
+      });
+      const finalize = () =>
+        finalizeHostedResponse({
+          ...hooks,
+          isAborted: mode === "aborted",
+          buildState,
+          getFinalStep: () =>
+            Promise.resolve({
+              toolCalls: [{
+                toolCallId: "completed",
+                toolName: "web_fetch",
+                input: {},
+                providerExecuted: true,
+              }],
+            }),
+          shouldFailEmptyMessage: shouldFailEmptyHostedFinalizedMessage,
+        });
+      if (mode === "retry") {
+        await assertRejects(finalize, Error, "append failed");
+        assertEquals(state.ownershipCorrectedToolCallIds?.has("completed"), false);
+        assertEquals(terminalStates, []);
+        assertEquals(flushes, []);
+      }
+      await finalize();
+      await finalize();
+      const corrected = mode !== "aborted" && mode !== "explicit-false";
+      assertEquals(attempts, corrected ? mode === "retry" ? 2 : 1 : 0);
+      assertEquals(chunks, []);
+      assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+      assertEquals(
+        events.filter((event) => event.name === "veryfront.tool_result_ownership").length,
+        corrected ? 1 : 0,
+      );
+      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "provider_tool_result"
+          ).length,
+          corrected ? 1 : 0,
+        );
+      }
+      assertEquals(terminalStates[0]?.status, mode === "aborted" ? "cancelled" : "completed");
+    }
   });
 
   it("does not emit local tool inputs through the exported aborted response builder", async () => {

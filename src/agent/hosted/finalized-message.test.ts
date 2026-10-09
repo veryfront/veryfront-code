@@ -12,6 +12,7 @@ import {
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
+  persistToolResultOwnershipCorrections,
 } from "./finalized-message.ts";
 
 Deno.test("buildFinalizedMessageState builds fallback parts for an empty finalized assistant message", () => {
@@ -1795,3 +1796,49 @@ for (const state of ["output-error", "output-denied", "completed", "error"] as c
     );
   });
 }
+
+Deno.test("ownership metadata appends serialize three contenders without duplicate corrections", async () => {
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
+  const secondStarted = Promise.withResolvers<void>();
+  const appended: unknown[] = [];
+  const state = createMirroredToolChunkState();
+  const correction = (id: string) => [{
+    type: "CUSTOM",
+    name: "veryfront.tool_result_ownership",
+    value: {
+      schemaVersion: 1,
+      toolCallId: id,
+      toolName: "web_fetch",
+      parentMessageId: "m",
+      providerExecuted: true,
+    },
+  }];
+  const mirror = {
+    appendEvents: async (events: readonly unknown[]) => {
+      appended.push(...events);
+      if (appended.length === 1) await first.promise;
+      else {
+        secondStarted.resolve();
+        await second.promise;
+      }
+    },
+  };
+  const initial = persistToolResultOwnershipCorrections(correction("x"), mirror, state);
+  const following = [
+    persistToolResultOwnershipCorrections(correction("y"), mirror, state),
+    persistToolResultOwnershipCorrections(correction("y"), mirror, state),
+  ];
+  first.resolve();
+  await secondStarted.promise;
+  // Give the other first-append waiter a chance to contend for the second append.
+  for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+  try {
+    assertEquals(appended, [...correction("x"), ...correction("y")]);
+  } finally {
+    second.resolve();
+    await Promise.all([initial, ...following]);
+  }
+  assertEquals(appended, [...correction("x"), ...correction("y")]);
+  assertEquals([...state.ownershipCorrectedToolCallIds!].sort(), ["x", "y"]);
+});

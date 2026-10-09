@@ -5,7 +5,7 @@ import {
   recordHostedAgentPauseMirrorSnapshot,
 } from "./manual-pause-settlement.ts";
 import { extractChatMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
-import { isRecord, isToolUiPart } from "../../chat/conversation.ts";
+import { isToolUiPart } from "../../chat/conversation.ts";
 import { buildFallbackUiMessageParts, getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import {
@@ -28,6 +28,7 @@ import {
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
+  persistToolResultOwnershipCorrections,
 } from "./finalized-message.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
@@ -516,17 +517,11 @@ export async function finalizeHostedChatRun(
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
   });
-  if (ownershipCorrections.length > 0 && input.lifecycleAdapter.durableRunMirror) {
-    await input.lifecycleAdapter.durableRunMirror.appendEvents(ownershipCorrections);
-    const corrected = input.mirroredToolChunkState.ownershipCorrectedToolCallIds ??= new Set<
-      string
-    >();
-    for (const event of ownershipCorrections) {
-      if (isRecord(event.value) && typeof event.value.toolCallId === "string") {
-        corrected.add(event.value.toolCallId);
-      }
-    }
-  }
+  await persistToolResultOwnershipCorrections(
+    ownershipCorrections,
+    input.lifecycleAdapter.durableRunMirror,
+    input.mirroredToolChunkState,
+  );
   const mirrorDrained = await flushMirror(input.lifecycleAdapter);
 
   if (!input.isAborted && !mirrorDrained) {
