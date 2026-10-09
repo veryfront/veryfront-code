@@ -1,6 +1,6 @@
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
-import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -62,7 +62,7 @@ const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
 const arrayIsArray = Array.isArray;
 const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
-const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, true>();
+const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, string>();
 const trustedHostedSourceIdentities = createPrivateWeakStore<object, object>();
 const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
   "__veryfrontTrustedPlatformPolicyToolResultIds";
@@ -101,12 +101,37 @@ export function hasTrustedPlatformPolicyToolDefinition(definition: unknown): boo
 export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
   part: T,
 ): T {
-  trustedPlatformPolicyToolResults.set(part, true);
+  const binding = trustedToolResultBinding(part);
+  if (binding !== undefined) trustedPlatformPolicyToolResults.set(part, binding);
   return part;
 }
 
+function trustedToolResultBinding(part: ToolResultPart): string | undefined {
+  try {
+    const type = readToolResultOwnDataProperty(part, "type");
+    const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+    const toolName = readToolResultOwnDataProperty(part, "toolName");
+    const result = readToolResultOwnDataProperty(part, "result");
+    if (
+      type !== "tool-result" || typeof toolCallId !== "string" ||
+      typeof toolName !== "string" || result === UNREADABLE_TOOL_RESULT_PROPERTY
+    ) {
+      return undefined;
+    }
+    return privateJsonStringify({
+      toolCallId,
+      toolName,
+      providerExecuted: readToolResultOwnDataProperty(part, "providerExecuted"),
+      result: normalizeToolResultPayload(result),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
-  return trustedPlatformPolicyToolResults.get(part) === true;
+  const binding = trustedPlatformPolicyToolResults.get(part);
+  return binding !== undefined && binding === trustedToolResultBinding(part);
 }
 
 /** Preserve trusted runtime-created form-result provenance across internal clones. */
@@ -114,7 +139,10 @@ export function inheritTrustedPlatformPolicyToolResultPart<T extends ToolResultP
   source: ToolResultPart,
   target: T,
 ): T {
-  if (isToolResultPart(source) && hasTrustedPlatformPolicyToolResultPart(source)) {
+  if (
+    isToolResultPart(source) && hasTrustedPlatformPolicyToolResultPart(source) &&
+    trustedPlatformPolicyToolResults.get(source) === trustedToolResultBinding(target)
+  ) {
     markTrustedPlatformPolicyToolResultPart(target);
   }
   return target;
