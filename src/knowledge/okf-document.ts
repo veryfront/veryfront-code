@@ -67,7 +67,12 @@ function decodeOkfMetadata(frontMatter: string): Record<string, unknown> {
     throw new InvalidOkfMetadataError("Expected a YAML mapping");
   }
   try {
-    JSON.stringify(decoded);
+    JSON.stringify(decoded, (_key, value) => {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        throw new InvalidOkfMetadataError("Expected finite YAML numbers");
+      }
+      return value;
+    });
   } catch (cause) {
     throw new InvalidOkfMetadataError("Expected JSON-safe YAML metadata", { cause });
   }

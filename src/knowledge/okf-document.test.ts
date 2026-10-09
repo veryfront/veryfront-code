@@ -243,6 +243,25 @@ it("classifies Windows reserved paths before validating their envelopes", () => 
   );
 });
 
+it("rejects non-finite YAML numbers at every nesting level without changing source", () => {
+  for (
+    const metadata of [
+      "value: 1e999",
+      "value: -1e999",
+      "extension:\n  value: 1e999",
+      "extension: [1, {value: -1e999}]",
+    ]
+  ) {
+    const source = `---\ntype: Topic\n${metadata}\n---\nBody`;
+    const value = inspectOkfDocument("topic.md", source);
+    assertEquals(value.source, source);
+    assertEquals(value.body, "Body");
+    assertEquals(value.metadata, {});
+    assertEquals(value.envelopeConforms, false);
+    assertEquals(value.diagnostics.map((diagnostic) => diagnostic.code), ["invalid_frontmatter"]);
+  }
+});
+
 it("rejects recursive YAML before it enters JSON results", () => {
   const source = "---\ntype: Topic\nextra: &loop\n  self: *loop\n---\nBody";
   const value = inspectOkfDocument("topic.md", source);
