@@ -33,7 +33,7 @@ const VALID_KEY = "vf-runtime-critical-flow-key";
 const FLOW_TEST_PATH = "scripts/test/runtime-inference-critical-flow.test.ts";
 const FLOW_HARNESS_PATH = "scripts/test/runtime-inference-critical-flow.ts";
 const PUSH_MERGE_GROUP_UBUNTU_RUNNER =
-  "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}";
+  "${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}";
 const REPO_ROOT = new URL("../../", import.meta.url);
 
 function anthropicRequest(overrides: {
