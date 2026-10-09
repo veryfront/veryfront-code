@@ -6,6 +6,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
   error: Error & { issues: unknown[] };
 };
 import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
+
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
@@ -15,6 +16,9 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
+
+const privateDownloadFileSystem = createFileSystem();
+const writePrivateDownload = privateDownloadFileSystem.writeFileStreamAtomic;
 
 export interface UploadItem {
   type: "file" | "folder";
@@ -263,29 +267,24 @@ export async function downloadUploadToFile(
   outputDir: string,
   signal?: AbortSignal,
 ): Promise<{ uploadPath: string; localPath: string; bytes: number }> {
-  const fs = createFileSystem();
+  const fs = privateDownloadFileSystem;
   signal?.throwIfAborted();
-  const signedUrl = await client.get<SignedUrlResponse>(
-    buildUploadSignedUrlPath(projectSlug, uploadPath),
-    undefined,
+  if (!client.getStream) throw new Error("API client does not support upload downloads");
+  const localPath = resolveUploadOutputPath(uploadPath, outputDir);
+  const response = await client.getStream(
+    `${buildUploadsListUrl(projectSlug)}/${encodeURIComponent(normalizeUploadPath(uploadPath))}`,
     { signal },
   );
-  signal?.throwIfAborted();
-  const response = await fetch(signedUrl.signed_url, { signal });
-
-  if (!response.ok) {
-    throw new Error(`Failed to download upload: ${uploadPath}`);
+  try {
+    await fs.mkdir(dirname(localPath), { recursive: true });
+    if (!writePrivateDownload) {
+      throw new Error("Filesystem does not support atomic streaming upload downloads");
+    }
+    const bytes = await writePrivateDownload(localPath, response, signal);
+    return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes };
+  } finally {
+    await response.cancel().catch(() => {});
   }
-
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  signal?.throwIfAborted();
-  const localPath = resolveUploadOutputPath(uploadPath, outputDir);
-  await fs.mkdir(dirname(localPath), { recursive: true });
-  signal?.throwIfAborted();
-  await fs.writeFile(localPath, bytes);
-  signal?.throwIfAborted();
-
-  return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes: bytes.byteLength };
 }
 
 export async function uploadLocalFileToUploads(
