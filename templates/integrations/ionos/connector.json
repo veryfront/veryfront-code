@@ -176,7 +176,7 @@
     {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Hard poweroff server releases unreserved IPs",
+      "description": "Force server shutdown; release unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

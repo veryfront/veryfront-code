@@ -311,7 +311,7 @@
     {
       "id": "drive__download_file",
       "name": "Download File",
-      "description": "Download non-Workspace file",
+      "description": "Download file (excludes Docs/Sheets/Slides)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

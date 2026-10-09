@@ -15910,7 +15910,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__download_file",
       "name": "Download File",
-      "description": "Download non-Workspace file",
+      "description": "Download file (excludes Docs/Sheets/Slides)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29970,7 +29970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description": "Hard poweroff server releases unreserved IPs",
+      "description": "Force server shutdown; release unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
