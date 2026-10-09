@@ -8,6 +8,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "../../../scripts/ci/registry-release-integrity.ts";
 import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
@@ -142,7 +143,7 @@ async function readJobs(): Promise<YamlRecord> {
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "CI workflow",
   );
-  return asRecord(workflow.jobs, "CI workflow jobs");
+  return await inlinePublicPoolJobs(workflow);
 }
 
 async function canonicalPublisherBody(): Promise<string> {
