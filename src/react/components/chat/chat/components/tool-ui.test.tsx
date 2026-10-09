@@ -85,6 +85,30 @@ function installDom(): { host: HTMLElement; restore: () => void } {
 }
 
 describe("ToolCall", () => {
+  it("renders canonical delegation and streamed child content in the child-agent card", () => {
+    const tool: ChatDynamicToolPart = { ...invokeAgentTool, toolName: "veryfront__invoke_agent" };
+    const message = {
+      ...runningInvokeAgentMessage,
+      parts: [tool, {
+        type: "data-veryfront.invoke_agent.stream" as const,
+        data: {
+          toolCallId: tool.toolCallId,
+          agentId: "case-ingest",
+          event: { type: "text-delta", delta: "Canonical child work in progress." },
+        },
+      }],
+    };
+    const html = renderToString(
+      <Message.Root message={message} isStreaming>
+        <ToolCall tool={tool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Case Ingest");
+    assertStringIncludes(html, "Running");
+    assertStringIncludes(html, "Canonical child work in progress.");
+    assertEquals(html.includes("Parameters"), false);
+  });
+
   it("renders invoke_agent as a child-agent card by default", () => {
     const html = renderToString(<ToolCall tool={invokeAgentTool} className="custom-card" />);
 

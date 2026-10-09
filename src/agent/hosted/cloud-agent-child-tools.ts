@@ -67,6 +67,7 @@ import {
 
 const HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES = new Set([
   "execute_skill_script",
+  "veryfront__execute_skill_script",
   LOAD_SKILL_TOOL_ID,
   CANONICAL_LOAD_SKILL_TOOL_ID,
   "load_skill_reference",
