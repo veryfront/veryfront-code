@@ -95,14 +95,29 @@ describe("repositories/cache/cache-repository", () => {
     });
 
     it("preserves the L3 entry's remaining TTL when backfilling L1", async () => {
-      const { backend, repo } = makeRepo();
-      await backend.set("proj:production:v1:short", "value", 0.05);
+      const originalDateNow = Date.now;
+      let now = originalDateNow();
+      Date.now = () => now;
+      try {
+        const { backend, repo } = makeRepo();
+        const key = "proj:production:v1:short";
+        await backend.set(key, "value", 0.05);
 
-      assertEquals(await repo.get("short"), "value");
-      await flush();
-      await new Promise((resolve) => setTimeout(resolve, 80));
+        // Backfill after part of the source lifetime has elapsed.
+        now += 20;
+        assertEquals(await repo.get("short"), "value");
+        await flush();
+        await backend.del(key);
 
-      assertEquals(await repo.get("short"), null);
+        // With L3 removed, this hit proves L1 was backfilled.
+        now += 29;
+        assertEquals(await repo.get("short"), "value");
+        // L1 expires at the original source deadline, not 50 ms after backfill.
+        now += 2;
+        assertEquals(await repo.get("short"), null);
+      } finally {
+        Date.now = originalDateNow;
+      }
     });
 
     it("backfills L1 when the L3 backend cannot report its TTL", async () => {
