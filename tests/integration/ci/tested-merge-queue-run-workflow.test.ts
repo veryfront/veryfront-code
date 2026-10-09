@@ -69,6 +69,8 @@ const KEPT = [
   "registry-validation-rc",
   "quality-gate-registry",
   "update-homebrew",
+  // Runs only on pull requests and the merge queue.
+  "queue-tree-observation",
 ] as const;
 
 function asRecord(value: unknown, context: string): YamlRecord {
@@ -156,27 +158,45 @@ async function runReleaseGate(env: Record<string, string>): Promise<Deno.Command
 }
 
 describe("tested merge-queue run workflow", () => {
-  it("measures PR tree reuse on the queue without exposing a reuse output", async () => {
-    const tested = job(await readJobs(), "tested-run");
-    const record = namedStep(tested, "Record the tested PR tree");
+  it("measures PR tree reuse in an observer that no gate depends on", async () => {
+    const jobs = await readJobs();
+    const observer = job(jobs, "queue-tree-observation");
+    assertEquals(
+      observer.if,
+      "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+    );
+    assertEquals(observer.needs, undefined, "the observer waits for no gate");
+    assertEquals(observer["continue-on-error"], true, "a broken observer cannot fail the run");
+    assertEquals(observer["timeout-minutes"], 10);
+    assertEquals(observer.permissions, { actions: "read", contents: "read" });
+    for (const [name, other] of Object.entries(jobs)) {
+      const needs = asRecord(other, name).needs;
+      assertEquals(
+        [needs].flat().includes("queue-tree-observation"),
+        false,
+        `${name} must not depend on the observer`,
+      );
+    }
+    const record = namedStep(observer, "Record the tested PR tree");
     assertEquals(record.if, "github.event_name == 'pull_request'");
     assertStringIncludes(String(record.run), "git rev-parse HEAD^{tree}");
-    const artifact = namedStep(tested, "Upload the tested PR tree");
+    const artifact = namedStep(observer, "Upload the tested PR tree");
     assertEquals(artifact.if, "github.event_name == 'pull_request'");
     assertEquals(
       asRecord(artifact.with, "tree artifact").name,
       "tested-tree-${{ steps.pr-tree.outputs.tree }}",
     );
     assertEquals(asRecord(artifact.with, "tree artifact")["retention-days"], 14);
-    const dryRun = namedStep(tested, "Measure identical queue tree (dry run)");
+    const dryRun = namedStep(observer, "Measure identical queue tree (dry run)");
     assertEquals(dryRun.if, "github.event_name == 'merge_group'");
+    assertEquals(dryRun["timeout-minutes"], 3, "a hung lookup must not hold the queue entry");
     assertStringIncludes(String(dryRun.run), "scripts/ci/queue-tree-dry-run.ts");
     assertEquals(asRecord(dryRun.env, "queue env").QUEUE_HEAD_REF, "${{ github.ref_name }}");
     assertEquals(dryRun.id, undefined, "dry-run decisions cannot drive gate conditions");
-    for (const step of [record, artifact, dryRun]) {
-      assertEquals(step["continue-on-error"], true, "a measurement failure must not gate a merge");
-    }
-    assertEquals(dryRun["timeout-minutes"], 3, "a hung lookup must not hold the queue entry");
+
+    const tested = job(jobs, "tested-run");
+    const names = steps(tested, "tested-run").map((step) => step.name);
+    assertEquals(names.includes("Measure identical queue tree (dry run)"), false);
     assertEquals(
       asRecord(tested.outputs, "tested outputs").reuse,
       "${{ steps.decide.outputs.reuse || 'false' }}",
