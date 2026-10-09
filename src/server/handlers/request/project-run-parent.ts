@@ -6,6 +6,7 @@ const decode = atob;
 const indexOf = String.prototype.indexOf;
 const slice = String.prototype.slice;
 const apply = Reflect.apply;
+const regexpTest = RegExp.prototype.test;
 const uuid = new RegExp(`^(?:${UUID_PATTERN.source})$`, UUID_PATTERN.flags);
 
 /** Routing hints only: the API validates the unchanged issuer token and its current execution lease. */
@@ -30,7 +31,7 @@ export function readProjectExecutionParent(
       value.tokenUse !== "run_event_writer" || value.runId !== runId ||
       value.projectId !== projectId ||
       typeof value.projectExecutionAttempt?.canonicalRunId !== "string" ||
-      !uuid.test(value.projectExecutionAttempt.canonicalRunId) ||
+      !apply(regexpTest, uuid, [value.projectExecutionAttempt.canonicalRunId]) ||
       typeof value.projectExecutionAttempt?.attemptId !== "string" ||
       !value.projectExecutionAttempt.attemptId ||
       typeof value.projectExecutionAttempt?.workerId !== "string" ||

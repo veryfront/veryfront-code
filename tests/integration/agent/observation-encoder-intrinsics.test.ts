@@ -1,3 +1,5 @@
+import { readProjectExecutionParent } from "#veryfront/server/handlers/request/project-run-parent.ts";
+import { getPrivateRunEventAppendRequestByteLength } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   appendConversationRunEvents,
   createConversationRunEventQueueController,
@@ -525,4 +527,46 @@ it("rejects an array descriptor that changes to an accessor at the summary copy 
   }
   assertEquals(failure instanceof TypeError, true);
   assertEquals(inheritedReads, 0);
+});
+
+describe("private observation authority and sizing", () => {
+  it("validates parent UUID authority after project code replaces RegExp test", () => {
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const token = `test.${
+      btoa(JSON.stringify({
+        tokenUse: "run_event_writer",
+        runId: "parent-run",
+        projectId: "parent-project",
+        projectExecutionAttempt: { canonicalRunId, attemptId: "attempt", workerId: "worker" },
+      }))
+    }.signature`;
+    const original = RegExp.prototype.test;
+    let parent;
+    try {
+      RegExp.prototype.test = () => {
+        throw new Error("project test replacement");
+      };
+      parent = readProjectExecutionParent(token, "parent-run", "parent-project");
+    } finally {
+      RegExp.prototype.test = original;
+    }
+    assertEquals(parent, { canonicalRunId, attemptId: "attempt" });
+  });
+
+  it("sizes private model-call events after project code replaces TextEncoder encode", () => {
+    const event = { type: "MODEL_CALL_CONTEXT", context: "private input 🚀" };
+    const expected = getPrivateRunEventAppendRequestByteLength(event);
+    const original = TextEncoder.prototype.encode;
+    let actual;
+    try {
+      TextEncoder.prototype.encode = () => {
+        throw new Error("project encode replacement");
+      };
+      actual = getPrivateRunEventAppendRequestByteLength(event);
+    } finally {
+      TextEncoder.prototype.encode = original;
+    }
+    assertEquals(Number.isFinite(expected), true);
+    assertEquals(actual, expected);
+  });
 });

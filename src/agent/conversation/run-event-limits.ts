@@ -20,12 +20,10 @@ export const MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES = 10 * 1024 * 1024;
 /** Maximum root writer credential size, including configured integration grants. */
 export const MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES = 32 * 1024;
 
-const encoder = new TextEncoder();
-
 /** Return the conservative append-request size for one private durable event. */
 export function getPrivateRunEventAppendRequestByteLength(event: unknown): number {
   try {
-    return encoder.encode(privateJsonStringify(
+    return privateByteLength(encodePrivateText(privateJsonStringify(
       {
         expected_previous_event_id: Number.MAX_SAFE_INTEGER,
         events: [event],
@@ -33,7 +31,7 @@ export function getPrivateRunEventAppendRequestByteLength(event: unknown): numbe
       null,
       undefined,
       MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
-    )).byteLength;
+    )));
   } catch {
     return Number.POSITIVE_INFINITY;
   }
