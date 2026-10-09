@@ -28,6 +28,7 @@ import {
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { isProjectInDependencyPinningCohort } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
@@ -391,6 +392,12 @@ async function validateRequestedDependencySnapshot(
   return null;
 }
 
+function dependencyPinningSourceProjectId(
+  source: DependencyPinningSourceInput,
+): string | null | undefined {
+  return typeof source === "object" && source !== null ? source.projectId : undefined;
+}
+
 function unknownDependencySnapshotResponse(): Response {
   return new Response("Unknown dependency snapshot", {
     status: HttpStatus.CONFLICT,
@@ -449,7 +456,16 @@ async function handleModuleEndpoint({
     (requestedPinKeys.length === 1 &&
       !isCanonicalDependencyPinningCacheKey(requestedPinKeys[0] ?? ""));
   const requestedPinKey = requestedPinKeys[0];
-  if (hasMalformedPinKey || (requestedPinKeys.length === 0 && isDependencyPinningEnabled())) {
+  if (
+    hasMalformedPinKey ||
+    // The flag arms the rollout; the cohort decides who is in it. An
+    // out-of-cohort document renders with the flag-off snapshot and emits no
+    // key, so gating on the flag alone rejected every isolated client page of
+    // those projects. Bucket on the pinning source's project id: it is the
+    // identity getDependencyPinningSnapshot used for the document.
+    (requestedPinKeys.length === 0 && isDependencyPinningEnabled() &&
+      isProjectInDependencyPinningCohort(dependencyPinningSourceProjectId(dependencyPinningSource)))
+  ) {
     return new Response("Unknown dependency snapshot", {
       status: HttpStatus.CONFLICT,
       headers: { "cache-control": "no-store" },

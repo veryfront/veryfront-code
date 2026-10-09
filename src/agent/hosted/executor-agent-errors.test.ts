@@ -63,6 +63,15 @@ function durableRequest(): ParsedHostedChatRequest {
 }
 
 describe("executor errors at hosted setup response boundaries", () => {
+  it("preserves fixed protocol failure wording through hosted error snapshots", () => {
+    const error = new ExecutorAgentError("PROVIDER_STREAM_PROTOCOL_ERROR");
+    const message =
+      "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.";
+    assertEquals(error.message, message);
+    assertEquals(error.toRFC9457().title, message);
+    assertEquals(serializeLogError(error)?.message, message);
+  });
+
   it("serializes fixed authentication diagnostics across logger boundaries", () => {
     const error = new ExecutorAgentError("agent-provider-auth-error");
     assertEquals(serializeLogError(error)?.message, "Agent provider authentication failed");
