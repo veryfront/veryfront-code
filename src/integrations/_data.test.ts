@@ -56,6 +56,7 @@ describe("integration endpoint specs", () => {
   it("keeps asynchronous and conversation-window semantics in short summaries", () => {
     const expected: [string, string, string][] = [
       ["adyen", "create_refund", "Start payment refund"],
+      ["daytona", "delete_sandbox", "Delete sandbox and its filesystem"],
       ["e2b", "kill_sandbox", "Destroy sandbox and discard state"],
       ["klarna", "cancel_order", "Cancel uncaptured order"],
       ["klarna", "refund_order", "Refund captured order amount"],
@@ -85,7 +86,7 @@ describe("integration endpoint specs", () => {
       ["openrouter", "get_credits", "Get credits (requires management key)"],
       ["apify", "run_actor_sync", "Run actor synchronously (consumes credits)"],
       ["daytona", "create_sandbox", "Create billable sandbox"],
-      ["daytona", "stop_sandbox", "Pause billable compute; retain sandbox state"],
+      ["daytona", "stop_sandbox", "Stop sandbox; clear memory"],
       ["digitalocean", "create_droplet", "Create billable droplet"],
       ["e2b", "create_sandbox", "Create billable sandbox"],
       ["hetzner", "create_server", "Create billable server"],
@@ -162,6 +163,20 @@ describe("integration endpoint specs", () => {
   });
   it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
     const expected: [string, string, "params" | "body", string, string][] = [
+      [
+        "daytona",
+        "stop_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "Stopping clears memory and running processes. Regular container and VM files are retained for restart, but GPU and ephemeral sandboxes lose their local filesystem on stop. Compute charges continue during stopping and end once stopped or deleted; reserved disk remains billed while stopped. Pause is a separate operation that preserves VM memory; containers do not support pause.",
+      ],
+      [
+        "daytona",
+        "delete_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "Deleting removes this sandbox and its local filesystem; unsnapshotted local state is lost. Save needed files or create a snapshot first. Independent snapshots are preserved and remain billed for storage.",
+      ],
       [
         "e2b",
         "kill_sandbox",

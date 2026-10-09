@@ -13651,7 +13651,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__delete_sandbox",
       "name": "Delete Sandbox",
-      "description": "Delete sandbox",
+      "description": "Delete sandbox and its filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -13660,7 +13660,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "ID or name of the sandbox to delete",
+            "description":
+              "ID or name of the sandbox to delete. Deleting removes this sandbox and its local filesystem; unsnapshotted local state is lost. Save needed files or create a snapshot first. Independent snapshots are preserved and remain billed for storage.",
             "required": true,
           },
         },
@@ -13711,7 +13712,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description": "Pause billable compute; retain sandbox state",
+      "description": "Stop sandbox; clear memory",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13720,7 +13721,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description":
+              "Sandbox ID or name. Stopping clears memory and running processes. Regular container and VM files are retained for restart, but GPU and ephemeral sandboxes lose their local filesystem on stop. Compute charges continue during stopping and end once stopped or deleted; reserved disk remains billed while stopped. Pause is a separate operation that preserves VM memory; containers do not support pause.",
             "required": true,
           },
         },
