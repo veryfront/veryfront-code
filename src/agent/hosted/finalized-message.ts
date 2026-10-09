@@ -404,7 +404,7 @@ export function buildFinalizedMessageState(
   });
   // Durable content is append-only; recovery cannot move an already emitted part.
   const fallbackParts = persistedMessage.parts.length === 0
-    ? finalStepFallbackParts
+    ? finalStepFallbackParts.filter((part) => !input.isAborted || !isToolUiPart(part))
     : hasPlacedMissingText
     ? [...completedParts, ...missingFallbackParts]
     : appendMissingFallbackTextPart([...completedParts, ...missingFallbackParts], input.finalStep);

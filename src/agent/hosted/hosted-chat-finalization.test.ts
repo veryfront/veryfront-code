@@ -2746,6 +2746,51 @@ describe("agent/hosted-chat-finalization", () => {
     );
   });
 
+  it("never opens final-step tools in durable history after an empty response abort", async () => {
+    for (const text of ["", "Recovered text"]) {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({ parts: [] }),
+        isAborted: true,
+        streamResult: createStreamResult({
+          text,
+          toolCalls: [{ toolCallId: "not-started", toolName: "web_fetch", input: {} }],
+        }),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {},
+        streamError: new Error("aborted"),
+      });
+      assertEquals(terminalStates[0]?.status, "cancelled");
+      assertEquals(chunks.filter((chunk) => chunk.type.startsWith("tool-")), []);
+      const encoder = new ConversationRunEventEncoder();
+      const replay = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 1,
+        events: chunks.flatMap((chunk) => {
+          if (chunk.type === "finish") throw new Error("Unexpected finish in recovered content");
+          return encoder.encode(chunk);
+        }),
+      });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(JSON.stringify(replay.frames).includes("not-started"), false);
+      }
+      assertEquals(
+        chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.delta),
+        text ? [text] : [],
+      );
+    }
+  });
+
   it("resolves an aborted empty detached run to cancelled instead of a failure", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
