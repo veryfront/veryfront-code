@@ -43,7 +43,15 @@ describe("registry watchdog workflow contract", () => {
       const setup = steps.find((step) => step.uses === "./.github/actions/setup-deno")!;
       assertEquals(setup["timeout-minutes"], 5);
     }
+    const contract = record(jobs.contract);
+    assertStringIncludes(String(contract.if), "github.event_name == 'push'");
+    assertStringIncludes(String(contract.if), "github.event_name == 'pull_request'");
+    assertEquals(String(contract.if).includes("github.event_name == 'schedule'"), false);
     const watchdog = record(jobs.watchdog);
+    assertStringIncludes(String(watchdog.if), "always()");
+    assertStringIncludes(String(watchdog.if), "needs.contract.result == 'success'");
+    assertStringIncludes(String(watchdog.if), "needs.contract.result == 'skipped'");
+    assertStringIncludes(String(watchdog.if), "vars.REGISTRY_WATCHDOG_DISABLED != 'true'");
     assertEquals(watchdog.needs, "contract");
     assertStringIncludes(
       String(watchdog.if),

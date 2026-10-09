@@ -24,7 +24,14 @@ resumed.
 
 Use **Registry gate watchdog** in Actions with `dry_run: true` and a run id to
 inspect a live run. An empty run id scans active main runs. Scheduled runs
-enable recovery. Manual recovery runs only from `main`.
+enable recovery. Manual recovery runs only from `main`. Set the repository
+Actions variable `REGISTRY_WATCHDOG_DISABLED` to `true` to stop scheduled and
+manual recovery immediately; remove it or set it to `false` to resume.
+
+Source contracts run on relevant pull requests and main pushes. Scheduled and
+manual scans use the checked-in main implementation without repeating those
+source checks on every tick. A failed source contract never permits recovery in
+the same run.
 
 For a local live dry-run, supply a read-only GitHub token through `GH_TOKEN`:
 
