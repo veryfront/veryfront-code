@@ -5,6 +5,11 @@
  * helper preserves header-time completion for non-SSE responses.
  */
 
+import {
+  primordialPromiseCatch,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
+
 type ResponseBodyOutcome = "completed" | "canceled" | "error";
 
 export function isEventStreamResponse(response: Response): boolean {
@@ -84,7 +89,8 @@ export function completeOnResponseBodyConsumption(
     if (options.cancellationTimeoutMs !== undefined) {
       cancellationTimer = setTimeout(() => complete("canceled"), options.cancellationTimeoutMs);
     }
-    cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
+    cancellationPromise = primordialPromiseThen(
+      runDeferredOperation(() => reader.cancel(reason)),
       () => complete("canceled"),
       (error) => {
         complete("canceled");
@@ -95,7 +101,7 @@ export function completeOnResponseBodyConsumption(
   };
   abortBody = (): void => {
     if (errorOnAbort) bodyController?.error(signal?.reason);
-    void cancelBody(signal?.reason).catch(() => undefined);
+    void primordialPromiseCatch(cancelBody(signal?.reason), () => undefined);
   };
 
   if (completeOnSourceClose) {
@@ -112,7 +118,7 @@ export function completeOnResponseBodyConsumption(
   } else {
     // Source errors are still surfaced through terminal reads, but disabling
     // source-close completion must not leave reader.closed unobserved.
-    void reader.closed.catch(() => undefined);
+    void primordialPromiseCatch(reader.closed, () => undefined);
   }
 
   if (signal?.aborted) {
@@ -153,7 +159,7 @@ export function completeOnResponseBodyConsumption(
       headers: response.headers,
     });
   } catch (error) {
-    void cancelBody(error).catch(() => undefined);
+    void primordialPromiseCatch(cancelBody(error), () => undefined);
     complete("error");
     throw error;
   }
