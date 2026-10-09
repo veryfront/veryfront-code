@@ -1,5 +1,8 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { summarizeErrorCausesForLog } from "#veryfront/observability/telemetry-error.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { ProviderRequestError } from "veryfront/provider/shared";
 import {
   createOpenAIRawResponseMetadata,
   MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
@@ -48,6 +51,30 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-openai/openai-web-search", () => {
+  it("logs the delegated action classification without retaining the provider payload", () => {
+    const error = assertThrows(
+      () =>
+        normalizeOpenAIWebSearchCall({
+          id: "synthetic-web-search-call",
+          type: "web_search_call",
+          status: "completed",
+          action: "synthetic-secret",
+        }, (issue) =>
+          new ProviderRequestError({
+            provider: "openai",
+            status: 200,
+            retryable: false,
+            message: `openai request failed: invalid successful stream (${issue})`,
+          })),
+      ProviderRequestError,
+    );
+    const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+    assert(causes !== undefined);
+    assertEquals(causes[0]?.streamIssue, "web-search action was malformed");
+    assertEquals(causes[0]?.messageRedacted, true);
+    assertEquals(JSON.stringify(causes).includes("synthetic-secret"), false);
+  });
+
   it("maps the four supported provider tool revisions and preserves the runtime name", () => {
     for (
       const providerType of [
