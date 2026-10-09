@@ -451,6 +451,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const timeoutSeconds = Math.ceil(timeoutMs / 1000);
       const polling = new AbortController();
       let backgroundCommandId: string | undefined;
+      const commandDeadline = performance.now() + timeoutMs;
       const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
         ? sandbox.runCommand(cmdString, { timeoutSeconds })
         : (async () => {
@@ -474,6 +475,10 @@ class CloudScriptExecutor implements SkillScriptExecutor {
               output.status === "canceled"
             ) {
               if (output.exitCode === null) {
+                // A server deadline can cancel the command before our timer callback runs.
+                if (output.status === "canceled" && performance.now() >= commandDeadline) {
+                  return timeoutResult(timeoutMs);
+                }
                 throw REQUEST_ERROR.create({
                   detail: "Sandbox background command did not report an exit code",
                 });

@@ -1,4 +1,5 @@
 import { FakeTime } from "#std/testing/time";
+import { stub } from "#std/testing/mock";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -531,6 +532,60 @@ describe("src/skill/executor", () => {
           assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
         });
       }
+    }
+
+    for (
+      const [status, elapsedMs, timedOut] of [
+        ["canceled", 60_000, true],
+        ["canceled", 1_000, false],
+        ["completed", 60_000, false],
+        ["failed", 60_000, false],
+      ] as const
+    ) {
+      it(`classifies ${status} without an exit code at ${elapsedMs}ms`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        let elapsed = 0;
+        using _clock = stub(Performance.prototype, "now", () => elapsed);
+        mockFetch([
+          jsonResponse({
+            id: "deadline-race",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          () => {
+            // The response arrives at the deadline before the timer callback runs.
+            elapsed = elapsedMs;
+            return backgroundCommandResponse(status, "partial", null);
+          },
+          textResponse(""),
+        ]);
+        const execute = () =>
+          getSkillScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "sleep 60",
+            timeoutMs: 60_000,
+          });
+        if (timedOut) {
+          const result = await execute();
+          assertEquals(result.exitCode, 124);
+          assertStringIncludes(result.stderr, "60000ms");
+        } else {
+          await assertRejects(execute, Error, "did not report an exit code");
+        }
+        assertEquals(fetchCalls.at(-1)!.init?.method, "DELETE");
+      });
     }
 
     for (const timeoutSeconds of [60, 300]) {

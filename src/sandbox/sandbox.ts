@@ -83,6 +83,7 @@ interface SandboxPrivateState {
   apiUrl: string;
   deleteOnClose: boolean;
   createdByClient: boolean;
+  lifetimeUpdates: Promise<void>;
 }
 
 const sandboxPrivateStates = new WeakMap<object, SandboxPrivateState>();
@@ -119,6 +120,7 @@ export class Sandbox {
       apiUrl,
       deleteOnClose,
       createdByClient,
+      lifetimeUpdates: Promise.resolve(),
     }]);
   }
 
@@ -226,18 +228,25 @@ export class Sandbox {
     const state = getSandboxPrivateState(this);
     // An always-on update can commit even if its response is lost. Preserve the workspace until a temporary policy is confirmed.
     if (policy.ttl_mode === "always_on") state.deleteOnClose = false;
-    const details = parseSandboxDetails(
-      await this.#requestControlPlane("", {
-        method: "PATCH",
-        body: JSON.stringify({
-          ttl_mode: policy.ttl_mode,
-          ...(policy.ttl_hours !== undefined ? { ttl_hours: policy.ttl_hours } : {}),
+    const update = state.lifetimeUpdates.then(async () => {
+      // Earlier queued responses may have restored cleanup before this update starts.
+      if (policy.ttl_mode === "always_on") state.deleteOnClose = false;
+      const details = parseSandboxDetails(
+        await this.#requestControlPlane("", {
+          method: "PATCH",
+          body: JSON.stringify({
+            ttl_mode: policy.ttl_mode,
+            ...(policy.ttl_hours !== undefined ? { ttl_hours: policy.ttl_hours } : {}),
+          }),
         }),
-      }),
-    );
-    state.deleteOnClose = state.createdByClient && details.workspaceStorage !== "persistent" &&
-      details.ttlMode !== "always_on";
-    return details;
+      );
+      state.deleteOnClose = state.createdByClient && details.workspaceStorage !== "persistent" &&
+        details.ttlMode !== "always_on";
+      return details;
+    });
+    // Keep later updates usable after failure; the caller receives the original rejection.
+    state.lifetimeUpdates = update.then(() => undefined, () => undefined);
+    return await update;
   }
 
   #requestControlPlane(path: string, init?: RequestInit): Promise<unknown> {
@@ -534,7 +543,13 @@ export class Sandbox {
 
   /** Close this client. Persistent and always-on workspaces remain available. */
   async close(): Promise<void> {
-    if (getSandboxPrivateState(this).deleteOnClose) await this.delete();
+    const state = getSandboxPrivateState(this);
+    let updates: Promise<void>;
+    do {
+      updates = state.lifetimeUpdates;
+      await updates;
+    } while (updates !== state.lifetimeUpdates);
+    if (state.deleteOnClose) await this.delete();
   }
 
   /** Delete the sandbox and its workspace files. */

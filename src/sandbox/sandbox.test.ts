@@ -283,6 +283,90 @@ describe("Sandbox", () => {
     });
   }
 
+  for (const closeBeforeAlwaysOn of [false, true]) {
+    it(`serializes lifetime updates and protects cleanup when close starts first=${closeBeforeAlwaysOn}`, async () => {
+      const details = {
+        id: "ordered-lifetime",
+        short_id: "ordered",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+        access_scope: "project",
+        project_id: null,
+        created_at: "2026-10-08T00:00:00Z",
+        ttl_mode: "default",
+        ttl_hours: null,
+        expires_at: null,
+        last_activity_at: null,
+      };
+      let releaseDefault!: (response: Response) => void;
+      const delayedDefault = new Promise<Response>((resolve) => releaseDefault = resolve);
+      let notifyDefault!: () => void;
+      const defaultStarted = new Promise<void>((resolve) => notifyDefault = resolve);
+      mockFetch([
+        jsonResponse(details),
+        () => {
+          notifyDefault();
+          return delayedDefault;
+        },
+        jsonResponse({ ...details, ttl_mode: "always_on" }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const temporary = sandbox.updateLifetime({ ttlMode: "default" });
+      await defaultStarted;
+      let closeSettled = false;
+      const close = () =>
+        sandbox.close().then(() => {
+          closeSettled = true;
+        });
+      const closingEarly = closeBeforeAlwaysOn ? close() : undefined;
+      const retained = sandbox.updateLifetime({ ttlMode: "always_on" });
+      const closing = closingEarly ?? close();
+      const outcomes = Promise.allSettled([temporary, retained, closing]);
+      // Yield one event-loop turn so all mocked request microtasks can settle.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const issuedBeforeFirstResponse = fetchCalls.filter((call) =>
+        call.init?.method === "PATCH"
+      ).length;
+      const closedBeforeFirstResponse = closeSettled;
+      releaseDefault(jsonResponse(details));
+      const results = await outcomes;
+      await sandbox.close();
+      assertEquals(issuedBeforeFirstResponse, 1);
+      assertEquals(closedBeforeFirstResponse, false);
+      for (const result of results) assertEquals(result.status, "fulfilled");
+      assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 0);
+    });
+  }
+
+  it("keeps lifetime updates usable after a rejected request", async () => {
+    const details = {
+      id: "retry-lifetime",
+      short_id: "retry",
+      endpoint: "https://sb.test",
+      status: "running",
+      workspace_storage: "ephemeral",
+      access_scope: "project",
+      project_id: null,
+      created_at: "2026-10-08T00:00:00Z",
+      ttl_mode: "always_on",
+      ttl_hours: null,
+      expires_at: null,
+      last_activity_at: null,
+    };
+    mockFetch([jsonResponse({ ...details, ttl_mode: "default" }), () => {
+      throw new Error("Network unavailable");
+    }, jsonResponse(details)]);
+    const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+    const failed = sandbox.updateLifetime({ ttlMode: "default" });
+    const retained = sandbox.updateLifetime({ ttlMode: "always_on" });
+    await assertRejects(() => failed, Error, "Network unavailable");
+    assertEquals((await retained).ttlMode, "always_on");
+    await sandbox.close();
+    assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 0);
+  });
+
   for (const ttlMode of ["default", "duration"] as const) {
     for (
       const [owned, storage] of [[true, "ephemeral"], [true, "persistent"], [
