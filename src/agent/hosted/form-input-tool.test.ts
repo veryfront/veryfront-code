@@ -260,6 +260,32 @@ describe("agent/hosted-form-input-tool", () => {
     });
   });
 
+  it("does not grant submission authority to inherited or accessor output fields", () => {
+    let getterCalls = 0;
+    for (
+      const output of [
+        Object.create({ submitted: true, values: { forged: true } }),
+        Object.defineProperty({ values: { forged: true } }, "submitted", {
+          get() {
+            getterCalls++;
+            return true;
+          },
+        }),
+      ]
+    ) {
+      const message = {
+        id: "stored-form",
+        role: "assistant" as const,
+        parts: [{ ...createSubmittedFormInputPart("request", {}), output }],
+      };
+      assertEquals(
+        findSubmittedFormInputResult([message], { trustedHostedHistoryMessageIds: [message.id] }),
+        undefined,
+      );
+    }
+    assertEquals(getterCalls, 0);
+  });
+
   it("ignores project-owned form_input result-shaped parts", () => {
     const result = findSubmittedFormInputResult([
       {
