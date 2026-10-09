@@ -268,12 +268,12 @@ export function resolveHostedRuntimeAllowedTools(input: {
     if (deniedToolNames.has(toolName)) continue;
     if (configuredToolNames.has(toolName)) {
       selectedToolNames.add(toolName);
-      continue;
-    }
-    if (
+    } else if (
       isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation &&
-      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID)
+      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID) &&
+      !deniedToolNames.has(INVOKE_AGENT_TOOL_ID)
     ) {
+      // An implicit grant belongs to the platform, never a project-owned legacy collision.
       selectedToolNames.add(CANONICAL_INVOKE_AGENT_TOOL_ID);
     }
   }

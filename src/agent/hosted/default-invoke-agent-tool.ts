@@ -1,3 +1,4 @@
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   hasTrustedHostToolProvenance,
@@ -661,11 +662,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
             const baseInstructions = buildHostedChildForkInstructions({
               ...scopedOptions.context,
               availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
-              skillLoaderToolName: runtimeOptions.childConfig?.toolNames?.includes(
-                  "veryfront__load_skill",
-                )
-                ? "veryfront__load_skill"
-                : "load_skill",
+              skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(
+                runtimeOptions.childConfig?.toolNames,
+              ),
             });
             const childSystem = runtimeOptions.childConfig?.system;
             if (childSystem === undefined) {
