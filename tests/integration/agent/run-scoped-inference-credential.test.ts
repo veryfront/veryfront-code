@@ -1,5 +1,4 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { agent as createAgent } from "#veryfront/agent";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
@@ -39,10 +38,7 @@ import {
   withMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
 import { createRunScopedVeryfrontCloudContextSummaryGenerator } from "#veryfront/agent/hosted/context-summary-generator.ts";
-import {
-  getCurrentVeryfrontCloudContext,
-  runWithVeryfrontCloudContext,
-} from "#veryfront/provider/veryfront-cloud/context.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createVeryfrontCloudFetch,
   requireVeryfrontCloudBootstrap,
@@ -84,7 +80,10 @@ function runtimeAgentInvocation(inferenceAuthToken: string): Record<string, unkn
 }
 
 async function captureInternalAgentInferenceRequests(
-  install: () => () => void,
+  install: () => {
+    run?: <T>(operation: () => Promise<T>) => Promise<T>;
+    uninstall: () => void;
+  },
 ): Promise<Array<{ url: string; authorization: string | null }>> {
   const requests: Array<{ url: string; authorization: string | null }> = [];
   const encoder = new TextEncoder();
@@ -120,14 +119,17 @@ async function captureInternalAgentInferenceRequests(
   } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
   registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
 
-  const uninstall = install();
+  const installed = install();
+  const run = installed.run ?? ((operation) => operation());
   try {
-    const response = await createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
-      sessionManager: new AgentRunSessionManager(),
-    });
+    const response = await run(() =>
+      createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+        sessionManager: new AgentRunSessionManager(),
+      })
+    );
     await response.text();
   } finally {
-    uninstall();
+    installed.uninstall();
   }
   return requests;
 }
@@ -1270,29 +1272,48 @@ describe("run-scoped inference credential", () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
     setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
-    const requests = await captureInternalAgentInferenceRequests(() => {
-      // Project code in the same process can patch AsyncLocalStorage and find
-      // the cloud-context store the same way.
-      const sentinel = {};
-      const originalGetStore = AsyncLocalStorage.prototype.getStore;
-      let cloudContextStorage: unknown;
-      AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
-        const store = Reflect.apply(originalGetStore, this, []);
-        if (store === sentinel) cloudContextStorage = this;
-        return store;
-      };
-      runWithVeryfrontCloudContext(sentinel, () => getCurrentVeryfrontCloudContext());
-      AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
-        return this === cloudContextStorage
-          ? { apiBaseUrl: "https://evil.example" }
-          : Reflect.apply(originalGetStore, this, []);
-      };
-      if (!cloudContextStorage) throw new TypeError("Expected to find the cloud context store");
-      return () => {
+    const originalGetStore = AsyncLocalStorage.prototype.getStore;
+    const attackerStorage = new AsyncLocalStorage<Record<string, string>>();
+    let forgedStoreReads = 0;
+    const requests = await captureInternalAgentInferenceRequests(() => ({
+      run: async (operation) => {
+        AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
+          const store = Reflect.apply(originalGetStore, this, []) as unknown;
+          if (
+            store !== null && typeof store === "object" &&
+            ("apiBaseUrl" in store || "apiToken" in store || "projectSlug" in store)
+          ) {
+            forgedStoreReads += 1;
+            return {
+              apiBaseUrl: "https://evil.example",
+              apiToken: "evil-token",
+              projectSlug: "evil-project",
+            };
+          }
+          return store;
+        };
+        assertEquals(
+          attackerStorage.run(
+            { apiBaseUrl: "https://sentinel.example", apiToken: "sentinel-token" },
+            () => attackerStorage.getStore(),
+          ),
+          {
+            apiBaseUrl: "https://evil.example",
+            apiToken: "evil-token",
+            projectSlug: "evil-project",
+          },
+        );
+        return await runWithVeryfrontCloudContext(
+          { apiBaseUrl: "https://context-evil.example", apiToken: "context-evil-token" },
+          operation,
+        );
+      },
+      uninstall: () => {
         AsyncLocalStorage.prototype.getStore = originalGetStore;
-      };
-    });
+      },
+    }));
 
+    assertEquals(forgedStoreReads > 0, true);
     assertEquals(requests.length > 0, true);
     for (const request of requests) {
       assertEquals(new URL(request.url).origin, "https://trusted-api.example.test");
@@ -1307,7 +1328,7 @@ describe("run-scoped inference credential", () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
     setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
-    const requests = await captureInternalAgentInferenceRequests(() => () => {});
+    const requests = await captureInternalAgentInferenceRequests(() => ({ uninstall: () => {} }));
 
     assertEquals(
       requests.filter((request) => request.authorization === "Bearer run-scoped-inference-token")
@@ -1425,7 +1446,7 @@ describe("run-scoped inference credential", () => {
     setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
     setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
     markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
-    const requests = await captureInternalAgentInferenceRequests(() => () => {});
+    const requests = await captureInternalAgentInferenceRequests(() => ({ uninstall: () => {} }));
 
     assertEquals(requests.length > 0, true);
     for (const request of requests) {
