@@ -1,4 +1,7 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { measureQueueTree } from "./queue-tree-dry-run.ts";
 
@@ -21,7 +24,10 @@ function fixture(
     fetch: (url: URL, init?: RequestInit) => {
       paths.push(url.pathname + url.search);
       assertEquals(url.origin, "https://api.github.com");
-      assertEquals(new Headers(init?.headers).get("authorization"), "Bearer test-token");
+      assertEquals(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer test-token",
+      );
       const body = url.pathname.endsWith("/pulls/123")
         ? { head: { sha: HEAD } }
         : url.pathname.endsWith("/artifacts")
@@ -29,17 +35,20 @@ function fixture(
           artifacts: overrides.artifacts ??
             [{ name: `tested-tree-${overrides.tree ?? TREE}`, expired: false }],
         }
-        : {
+        : url.pathname.endsWith("/actions/workflows/cicd.yml/runs")
+        ? {
           workflow_runs: [{
             id: 456,
             event: "pull_request",
             head_sha: HEAD,
             status: "completed",
             conclusion: "success",
+            run_attempt: 1,
             pull_requests: [{ number: 123 }],
             ...overrides.run,
           }],
-        };
+        }
+        : {};
       return Promise.resolve(
         new Response(JSON.stringify(body), { status: overrides.status ?? 200 }),
       );
@@ -57,7 +66,7 @@ describe("queue tree dry run", () => {
     );
     assertEquals(paths, [
       "/repos/veryfront/veryfront-code/pulls/123",
-      `/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=pull_request&status=success&head_sha=${HEAD}&per_page=1`,
+      `/repos/veryfront/veryfront-code/actions/workflows/cicd.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=1`,
       "/repos/veryfront/veryfront-code/actions/runs/456/artifacts?per_page=100",
     ]);
   });
@@ -70,7 +79,10 @@ describe("queue tree dry run", () => {
   for (
     const run of [
       { status: "in_progress", conclusion: null },
+      // The newest run on the head failed: an older green run cannot vouch for it.
       { conclusion: "failure" },
+      // Green only after a re-run hides a failed first attempt.
+      { run_attempt: 2 },
       { event: "merge_group" },
       { head_sha: "c".repeat(40) },
       { pull_requests: [] },
@@ -78,7 +90,10 @@ describe("queue tree dry run", () => {
   ) {
     it(`does not use an ineligible latest PR run: ${JSON.stringify(run)}`, async () => {
       const { options, paths } = fixture({ run });
-      assertStringIncludes(await measureQueueTree(options), "latest PR run is not eligible");
+      assertStringIncludes(
+        await measureQueueTree(options),
+        "latest PR run is not eligible",
+      );
       assertEquals(paths.length, 2);
     });
   }
@@ -101,11 +116,15 @@ describe("queue tree dry run", () => {
   it("fails to a measurement miss on API errors", async () => {
     assertStringIncludes(
       await measureQueueTree(fixture({ status: 403 }).options),
-      "GitHub lookup unavailable",
+      "GitHub lookup unavailable (HTTP 403)",
     );
   });
   it("rejects malformed repository, queue ref and tree before any request", async () => {
-    for (const change of [{ repository: "../other" }, { headRef: "main" }, { tree: "bad" }]) {
+    for (
+      const change of [{ repository: "../other" }, { headRef: "main" }, {
+        tree: "bad",
+      }]
+    ) {
       const { options, paths } = fixture();
       assertStringIncludes(
         await measureQueueTree({ ...options, ...change }),
@@ -117,7 +136,12 @@ describe("queue tree dry run", () => {
   it("does not use an empty run list", async () => {
     const { options } = fixture();
     options.fetch = () =>
-      Promise.resolve(Response.json({ head: { sha: HEAD }, workflow_runs: [] }));
-    assertStringIncludes(await measureQueueTree(options), "latest PR run is not eligible");
+      Promise.resolve(
+        Response.json({ head: { sha: HEAD }, workflow_runs: [] }),
+      );
+    assertStringIncludes(
+      await measureQueueTree(options),
+      "latest PR run is not eligible",
+    );
   });
 });

@@ -168,7 +168,11 @@ describe("tested merge-queue run workflow", () => {
     assertEquals(observer.needs, undefined, "the observer waits for no gate");
     assertEquals(observer["continue-on-error"], true, "a broken observer cannot fail the run");
     assertEquals(observer["timeout-minutes"], 10);
-    assertEquals(observer.permissions, { actions: "read", contents: "read" });
+    assertEquals(observer.permissions, {
+      actions: "read",
+      contents: "read",
+      "pull-requests": "read",
+    });
     for (const [name, other] of Object.entries(jobs)) {
       const needs = asRecord(other, name).needs;
       assertEquals(

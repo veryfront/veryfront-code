@@ -13,17 +13,24 @@ interface PullRequestRun {
   readonly head_sha: string;
   readonly status: string;
   readonly conclusion: string | null;
+  readonly run_attempt: number;
   readonly pull_requests: readonly { readonly number: number }[];
 }
 
 /** A miss always retains the full pipeline, including lookup failures. */
-export async function measureQueueTree(options: DryRunOptions): Promise<string> {
+export async function measureQueueTree(
+  options: DryRunOptions,
+): Promise<string> {
   const miss = (reason: string) =>
     `would not reuse (tree ${options.tree}): ${reason}; full pipeline retained`;
-  const queued = /^gh-readonly-queue\/main\/pr-([1-9]\d*)-[a-f0-9]{40}$/.exec(options.headRef);
+  const queued = /^gh-readonly-queue\/main\/pr-([1-9]\d*)-[a-f0-9]{40}$/.exec(
+    options.headRef,
+  );
   if (
     !queued || !/^[a-f0-9]{40}$/.test(options.tree) ||
-    !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.repository)
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(
+      options.repository,
+    )
   ) {
     return miss("unsupported queue identity");
   }
@@ -40,25 +47,32 @@ export async function measureQueueTree(options: DryRunOptions): Promise<string> 
         },
       },
     );
-    if (!response.ok) throw new Error("GitHub lookup unavailable");
+    if (!response.ok) {
+      throw new Error(`GitHub lookup unavailable (HTTP ${response.status})`);
+    }
     return await response.json() as T;
   }
   try {
     const pull = await get<{ head: { sha: string } }>(`/pulls/${pr}`);
+    // The newest run of any outcome: an older green run cannot vouch for a newer failure.
     const runs = await get<{ workflow_runs: PullRequestRun[] }>(
-      `/actions/workflows/cicd.yml/runs?event=pull_request&status=success&head_sha=${
+      `/actions/workflows/cicd.yml/runs?event=pull_request&head_sha=${
         encodeURIComponent(pull.head.sha)
       }&per_page=1`,
     );
     const latest = runs.workflow_runs[0];
     if (
-      !latest || latest.event !== "pull_request" || latest.head_sha !== pull.head.sha ||
+      !latest || latest.event !== "pull_request" ||
+      latest.head_sha !== pull.head.sha ||
       latest.status !== "completed" || latest.conclusion !== "success" ||
+      latest.run_attempt !== 1 ||
       !latest.pull_requests.some((candidate) => candidate.number === pr)
     ) {
       return miss("latest PR run is not eligible");
     }
-    const artifacts = await get<{ artifacts: { name: string; expired: boolean }[] }>(
+    const artifacts = await get<
+      { artifacts: { name: string; expired: boolean }[] }
+    >(
       `/actions/runs/${latest.id}/artifacts?per_page=100`,
     );
     const trees = artifacts.artifacts.filter((artifact) =>
@@ -70,10 +84,17 @@ export async function measureQueueTree(options: DryRunOptions): Promise<string> 
     ) {
       return miss("missing or ambiguous tested tree");
     }
-    if (trees[0]!.name !== `tested-tree-${options.tree}`) return miss("tree differs");
+    if (trees[0]!.name !== `tested-tree-${options.tree}`) {
+      return miss("tree differs");
+    }
     return `would reuse run ${latest.id} (tree ${options.tree}); dry run, full pipeline retained`;
-  } catch {
-    return miss("GitHub lookup unavailable");
+  } catch (error) {
+    return miss(
+      error instanceof Error &&
+        error.message.startsWith("GitHub lookup unavailable")
+        ? error.message
+        : "GitHub lookup unavailable",
+    );
   }
 }
 
@@ -84,7 +105,7 @@ if (import.meta.main) {
     tree: Deno.env.get("QUEUE_TREE") ?? "",
     token: Deno.env.get("GH_TOKEN") ?? "",
   });
-  console.log(message);
+  console.log(`::notice title=Queue tree dry run::${message}`);
   await Deno.writeTextFile(
     Deno.env.get("GITHUB_STEP_SUMMARY")!,
     `## Queue tree dry run\n\n${message}\n`,
