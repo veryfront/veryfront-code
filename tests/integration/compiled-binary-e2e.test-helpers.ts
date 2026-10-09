@@ -54,7 +54,15 @@ export interface BrowserPageSession {
   diagnostics: BrowserDiagnostics;
 }
 
-export async function ensureBinaryCompiled(): Promise<void> {
+let binaryCompiled: Promise<void> | undefined;
+
+/** Compile the binary at most once per test process, shared by every suite in the file. */
+export function ensureBinaryCompiled(): Promise<void> {
+  binaryCompiled ??= compileBinary();
+  return binaryCompiled;
+}
+
+async function compileBinary(): Promise<void> {
   const forceFresh = Deno.env.get("VERYFRONT_BINARY_FRESH") === "1";
   const binaryExists = await exists(BINARY_PATH);
   const currentHash = await computeSourceHash();
@@ -146,8 +154,9 @@ async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
       await resp.text();
       if (resp.status === 200) return;
     } catch {
-      await new Promise((r) => setTimeout(r, 500));
+      // Not listening yet.
     }
+    await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error(`Server failed to start on port ${port}`);
 }
@@ -204,9 +213,6 @@ async function startBinaryServer(
       );
     }
 
-    // Give the server a moment to stabilize after first request
-    await new Promise((r) => setTimeout(r, 500));
-
     return {
       process,
       port,
@@ -218,7 +224,6 @@ async function startBinaryServer(
         } catch {
           // already dead
         }
-        await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
       },
     };
   }

@@ -57,6 +57,18 @@ try {
 }
 for (const key of PROVIDER_ENV_KEYS) Deno.env.delete(key);
 
+// Every suite in this file shares one compiled binary. Remove it once, when the
+// test process exits, so a later suite does not recompile it.
+globalThis.addEventListener("unload", () => {
+  for (const path of [BINARY_PATH, BINARY_HASH_PATH]) {
+    try {
+      Deno.removeSync(path);
+    } catch {
+      // The binary may not exist or may already be cleaned up.
+    }
+  }
+});
+
 const COMPILED_BINARY_E2E_OPTIONS = {
   sanitizeOps: false,
   sanitizeResources: false,
@@ -123,16 +135,7 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     await ensureBinaryCompiled();
   });
 
-  afterAll(async () => {
-    // Clean up the test binary after all tests complete
-    try {
-      await cleanupBinaryTestCache();
-      await Deno.remove(BINARY_PATH);
-      await Deno.remove(BINARY_HASH_PATH);
-    } catch {
-      // Ignore errors - binary may not exist or may already be cleaned up
-    }
-  });
+  afterAll(cleanupBinaryTestCache);
 
   it("emits only JSON events when compiled build initialization runs", async () => {
     const projectDir = await makeTempDir({ prefix: "compiled-build-json-" });
@@ -3446,11 +3449,7 @@ export default function Home() {
 // Separate suite lets the native lifecycle regression run without browser fixtures.
 describe("Compiled Binary Memory Recycle", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(ensureBinaryCompiled);
-  afterAll(async () => {
-    await cleanupBinaryTestCache();
-    await Deno.remove(BINARY_PATH);
-    await Deno.remove(BINARY_HASH_PATH);
-  });
+  afterAll(cleanupBinaryTestCache);
   it("should recycle compiled production serve after sustained RSS pressure", async () => {
     const projectDir = await createTestProject(
       "memory-recycle",
