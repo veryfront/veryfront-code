@@ -144,6 +144,26 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage ignores stream framing beside r
   );
 });
 
+Deno.test("shouldFailEmptyHostedFinalizedMessage treats completed step markers as framing", () => {
+  for (
+    const framing of [{ type: "step-end", stepIndex: 0 }, { type: "step-start", stepIndex: 0 }]
+  ) {
+    assertEquals(
+      shouldFailEmptyHostedFinalizedMessage({
+        isAborted: false,
+        message: {
+          parts: [
+            { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-09" } },
+            framing,
+          ],
+        },
+      }),
+      true,
+      framing.type,
+    );
+  }
+});
+
 Deno.test("blank streamed text shells do not make an empty response successful", () => {
   for (const text of ["", " \n\t"]) {
     const message = {
