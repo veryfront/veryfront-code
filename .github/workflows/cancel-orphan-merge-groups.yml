@@ -82,6 +82,12 @@ jobs:
                   } catch (error) {
                     if (error.status !== 404) throw error;
                   }
+                  // Landing advances main before its queue ref is deleted, so after this 404 a landed
+                  // group is already on main. Ancestry is therefore the last check before cancelling.
+                  const { data: landedCheck } = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: `main...${run.head_sha}`,
+                  });
+                  if (!["ahead", "diverged"].includes(landedCheck.status)) continue;
                   try {
                     // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
                     // These ignored gates must stop too; live groups never reach this endpoint.

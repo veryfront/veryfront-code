@@ -49,6 +49,7 @@ function fixture() {
     recreateRefOnCompare: false,
     recreateRefOnCompareCall: 0,
     landOnRefCheck: false,
+    landOnRefCall: 0,
     compareErrorOnCall: 0,
     compareErrorSha: "",
     refErrorOnCall: 0,
@@ -111,6 +112,9 @@ async function execute(f: ReturnType<typeof fixture>) {
         getRef: ({ ref }: { ref: string }) => {
           f.inspectedRefs.push(ref);
           if (f.landOnRefCheck) f.comparison = "identical";
+          if (f.landOnRefCall && f.inspectedRefs.length === f.landOnRefCall) {
+            f.comparison = "identical";
+          }
           if (f.refErrorOnCall && f.inspectedRefs.length === f.refErrorOnCall) {
             throw Object.assign(new Error("ref API failure"), { status: f.refError });
           }
@@ -234,6 +238,16 @@ describe("orphan merge-group cancellation", () => {
     f.comparison = "ahead";
     f.landOnRefCheck = true;
     await execute(f);
+    assertEquals(f.cancelled, []);
+  });
+
+  it("preserves a group landing during the final ref lookup", async () => {
+    const f = fixture();
+    f.comparison = "ahead";
+    f.landOnRefCall = 2;
+    await execute(f);
+    assertEquals(f.inspectedRefs, [`heads/${BRANCH}`, `heads/${BRANCH}`]);
+    assertEquals(f.compared, [`main...${SHA}`, `main...${SHA}`, `main...${SHA}`]);
     assertEquals(f.cancelled, []);
   });
 
