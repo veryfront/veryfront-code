@@ -566,6 +566,20 @@ export function hasFinished(run: ParsedRun): boolean {
 }
 
 /** Contains skill load helper. */
+function readOwnDataField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return descriptor.value;
+}
+
+function readLoadedSkillId(input: unknown): string | null {
+  const skillId = readOwnDataField(input, "skillId");
+  if (typeof skillId === "string") return skillId;
+  const nestedSkillId = readOwnDataField(readOwnDataField(input, "load"), "skillId");
+  return typeof nestedSkillId === "string" ? nestedSkillId : null;
+}
+
 export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
   const names = new Map<string, string>();
   const args = new Map<string, string>();
@@ -583,7 +597,7 @@ export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
   for (const [id, name] of names) {
     if (name !== "load_skill" && name !== "veryfront__load_skill") continue;
     try {
-      if (JSON.parse(args.get(id) ?? "").skillId === skillId) return true;
+      if (readLoadedSkillId(JSON.parse(args.get(id) ?? "")) === skillId) return true;
     } catch { /* An incomplete argument stream is not a completed skill load. */ }
   }
   return false;
