@@ -1,3 +1,4 @@
+import { inheritToolResultSource } from "./tool-result-source.ts";
 import { cleanContent, hasValidContent } from "./provider-message-content.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import {
@@ -1408,7 +1409,10 @@ export function maskOldToolOutputs(
         }
       }
 
-      return { ...part, output: wrapToolResultOutput(part.output, masked) };
+      return inheritToolResultSource(part, {
+        ...part,
+        output: wrapToolResultOutput(part.output, masked),
+      });
     });
 
     return copyProviderModelMessageSourceId(msg, { ...msg, content: newContent });

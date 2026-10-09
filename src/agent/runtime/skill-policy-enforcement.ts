@@ -1,3 +1,5 @@
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   JSON_VALUE_MAX_SERIALIZED_BYTES,
@@ -111,6 +113,11 @@ function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefi
   ) return undefined;
   const isSkillLoad = toolName === "load_skill" || toolName === "veryfront__load_skill";
   const resultValue = readToolResultOwnDataProperty(part, "result");
+  const providerExecuted = readToolResultOwnDataProperty(part, "providerExecuted");
+  if (
+    resultValue === UNREADABLE_TOOL_RESULT_PROPERTY ||
+    providerExecuted === UNREADABLE_TOOL_RESULT_PROPERTY
+  ) return undefined;
   // Match admitted payload sizes, including the small platform-result envelope.
   // A valid UTF-16 skill character uses at most three UTF-8 bytes, or six JSON
   // escape bytes. Include the existing bounded reference/script path inventory.
@@ -134,7 +141,12 @@ function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefi
   );
   if (!result.success) return undefined;
   try {
-    return privateJsonStringify({ toolCallId, toolName, result: result.value });
+    return privateJsonStringify({
+      toolCallId,
+      toolName,
+      providerExecuted,
+      result: normalizeToolResultPayload(result.value),
+    });
   } catch {
     return undefined;
   }
@@ -543,7 +555,10 @@ export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Mes
   );
 }
 
-function restoreTrustedPlatformPolicyResultsFromPersistedMessage(message: Message): void {
+function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+  message: Message,
+  isTrustedSource: (part: ToolResultPart) => boolean = () => true,
+): void {
   const trustedToolCallIdSet = getTrustedPlatformPolicyToolCallIdSet(message);
   if (!trustedToolCallIdSet) return;
   const parts = message.parts;
@@ -551,7 +566,7 @@ function restoreTrustedPlatformPolicyResultsFromPersistedMessage(message: Messag
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
     if (
-      isToolResultPart(part) &&
+      isToolResultPart(part) && isTrustedSource(part) &&
       trustedToolCallIdSet.has(part.toolCallId) &&
       ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
         (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
@@ -608,13 +623,17 @@ function getTrustedHostedLoadSkillCallMapFromAssistant(
 function restoreAdjacentTrustedHostedLoadSkillResults(
   message: Message,
   pendingTrustedLoadSkillCalls: Map<string, string>,
+  isTrustedSource: (part: ToolResultPart) => boolean,
 ): void {
   if (message.role !== "tool") return;
   const parts = message.parts;
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     if (!objectHasOwn(parts, partIndex)) continue;
     const part = parts[partIndex]!;
-    if (!isToolResultPart(part) || !pendingTrustedLoadSkillCalls.has(part.toolCallId)) continue;
+    if (
+      !isToolResultPart(part) || !isTrustedSource(part) ||
+      !pendingTrustedLoadSkillCalls.has(part.toolCallId)
+    ) continue;
     const expectedToolName = pendingTrustedLoadSkillCalls.get(part.toolCallId);
     pendingTrustedLoadSkillCalls.delete(part.toolCallId);
     if (
@@ -641,41 +660,59 @@ function createTrustedHostedHistoryMessageIdSet(
 }
 
 /** @internal Bind a converted runtime message to its unique server-loaded UI source. */
-export function inheritTrustedHostedHistorySourceIdentity<TMessage extends Message>(
-  source: object,
+export function inheritTrustedHostedHistorySourceIdentity<
+  TSource extends object,
+  TMessage extends Message,
+>(
+  source: TSource,
   message: TMessage,
 ): TMessage {
   trustedHostedSourceIdentities.set(message, source);
   return message;
 }
 
-/** Restore platform control provenance for trusted hosted server conversation history. */
+/**
+ * Restore platform provenance only from unique admitted history sources.
+ * UI projections require an opaque per-result origin. Direct runtime callers
+ * explicitly admit unique IDs or host-bound splits sharing a private source.
+ */
+
 export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
   messages: readonly Message[],
   options: {
     legacyLoadSkillReplayAllowed?: boolean;
     trustedMessageIds?: readonly string[];
+    /** Original UI sources, before one source can project into assistant and tool messages. */
+    sourceMessages?: readonly Pick<ChatUiMessage, "id">[];
   } = {},
 ): void {
   const trustedMessageIds = createTrustedHostedHistoryMessageIdSet(options.trustedMessageIds);
   if (!trustedMessageIds) return;
+  const sourceCounts = createPrivateMap<string, number>();
+  const sources = options.sourceMessages ?? messages;
+  for (let index = 0; index < sources.length; index++) {
+    if (!objectHasOwn(sources, index)) continue;
+    const id = readToolResultOwnDataProperty(sources[index], "id");
+    if (typeof id === "string") sourceCounts.set(id, (sourceCounts.get(id) ?? 0) + 1);
+  }
 
   const observedMessages = createPrivateMap<string, Message>();
   const duplicateIds = createPrivateSet<string>();
   for (let index = 0; index < messages.length; index++) {
     if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
-    if (!trustedMessageIds.has(message.id)) continue;
-    const previous = observedMessages.get(message.id);
+    const id = readToolResultOwnDataProperty(message, "id");
+    if (typeof id !== "string" || !trustedMessageIds.has(id)) continue;
+    const previous = observedMessages.get(id);
     if (!previous) {
-      observedMessages.set(message.id, message);
+      observedMessages.set(id, message);
       continue;
     }
     // One UI tool result becomes an assistant call and a tool response with the same source ID.
     // Permit that host-produced split only when both messages have the same private source identity.
     const source = trustedHostedSourceIdentities.get(previous);
     if (!source || source !== trustedHostedSourceIdentities.get(message)) {
-      duplicateIds.add(message.id);
+      duplicateIds.add(id);
     }
   }
 
@@ -683,16 +720,33 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
   for (let index = 0; index < messages.length; index++) {
     if (!objectHasOwn(messages, index)) continue;
     const message = messages[index]!;
-    const messageIsTrustedHistory = trustedMessageIds.has(message.id) &&
-      !duplicateIds.has(message.id);
+    const messageId = readToolResultOwnDataProperty(message, "id");
+    const messageIsTrustedHistory = typeof messageId === "string" &&
+      trustedMessageIds.has(messageId) && !duplicateIds.has(messageId) &&
+      (options.sourceMessages === undefined || sourceCounts.get(messageId) === 1);
+    const isTrustedResultSource = (part: ToolResultPart): boolean => {
+      const sourceId = getToolResultSource(part) ??
+        (options.sourceMessages === undefined && typeof messageId === "string"
+          ? messageId
+          : undefined);
+      return sourceId !== undefined && trustedMessageIds.has(sourceId) &&
+        (options.sourceMessages === undefined
+          ? observedMessages.has(sourceId) && !duplicateIds.has(sourceId)
+          : sourceCounts.get(sourceId) === 1);
+    };
+
     if (messageIsTrustedHistory) {
-      restoreTrustedPlatformPolicyResultsFromPersistedMessage(message);
+      restoreTrustedPlatformPolicyResultsFromPersistedMessage(message, isTrustedResultSource);
     }
     if (message.role === "assistant" && messageIsTrustedHistory) {
       pendingTrustedLoadSkillCalls = getTrustedHostedLoadSkillCallMapFromAssistant(message);
     } else if (message.role === "tool") {
-      if (pendingTrustedLoadSkillCalls && messageIsTrustedHistory) {
-        restoreAdjacentTrustedHostedLoadSkillResults(message, pendingTrustedLoadSkillCalls);
+      if (pendingTrustedLoadSkillCalls) {
+        restoreAdjacentTrustedHostedLoadSkillResults(
+          message,
+          pendingTrustedLoadSkillCalls,
+          isTrustedResultSource,
+        );
         if (pendingTrustedLoadSkillCalls.size === 0) pendingTrustedLoadSkillCalls = null;
       } else {
         pendingTrustedLoadSkillCalls = null;
@@ -701,13 +755,12 @@ export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
       pendingTrustedLoadSkillCalls = null;
     }
 
-    if (!messageIsTrustedHistory) continue;
     const parts = message.parts;
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) &&
+        isToolResultPart(part) && isTrustedResultSource(part) &&
         (part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
           (options.legacyLoadSkillReplayAllowed === true &&
             part.toolName === LOAD_SKILL_TOOL_ID)) &&
