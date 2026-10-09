@@ -45,6 +45,7 @@ function fixture() {
     workflow: { id: 100, path: ".github/workflows/cicd.yml" },
     comparison: "diverged" as string,
     compareError: 0,
+    recreateRefOnCompare: false,
     compared: [] as string[],
     cancelError: 0,
     finishedOnCancel: false,
@@ -83,6 +84,7 @@ async function execute(f: ReturnType<typeof fixture>) {
           if (f.compareError) {
             throw Object.assign(new Error("compare API failure"), { status: f.compareError });
           }
+          if (f.recreateRefOnCompare) f.refExists = true;
           return { data: { status: f.comparison } };
         },
       },
@@ -195,6 +197,16 @@ describe("orphan merge-group cancellation", () => {
       assertEquals(f.cancelled, []);
     });
   }
+
+  it("preserves a ref recreated while the ancestry comparison is pending", async () => {
+    const f = fixture();
+    f.comparison = "ahead";
+    f.recreateRefOnCompare = true;
+    await execute(f);
+    assertEquals(f.compared, [`main...${SHA}`]);
+    assertEquals(f.inspectedRefs, [`heads/${BRANCH}`]);
+    assertEquals(f.cancelled, []);
+  });
 
   it("cancels unmerged ahead queue commits", async () => {
     const f = fixture();

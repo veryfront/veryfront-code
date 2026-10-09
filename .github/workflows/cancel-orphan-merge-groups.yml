@@ -52,6 +52,12 @@ jobs:
                 const { data: latest } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
                 if (!active(latest) || latest.id !== run.id || latest.head_sha !== run.head_sha ||
                     latest.head_branch !== run.head_branch || latest.run_attempt !== run.run_attempt) continue;
+                // Landed groups also delete their queue ref; main may still reuse their run.
+                // Only a queue commit that is not on main is an orphan. API errors fail closed.
+                const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                  owner, repo, basehead: `main...${run.head_sha}`,
+                });
+                if (!["ahead", "diverged"].includes(comparison.status)) continue;
                 // A stale snapshot is never sufficient: only an authoritative 404 permits cancellation.
                 try {
                   await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
@@ -59,12 +65,6 @@ jobs:
                 } catch (error) {
                   if (error.status !== 404) throw error;
                 }
-                // Landed groups also delete their queue ref; main may still reuse their run.
-                // Only a queue commit that is not on main is an orphan. API errors fail closed.
-                const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
-                  owner, repo, basehead: `main...${run.head_sha}`,
-                });
-                if (!["ahead", "diverged"].includes(comparison.status)) continue;
                 try {
                   // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
                   // These ignored gates must stop too; live groups never reach this endpoint.
