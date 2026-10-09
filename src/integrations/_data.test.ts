@@ -73,6 +73,7 @@ describe("integration endpoint specs", () => {
       ["wix", "create_fulfillment", "Mark order items as fulfilled"],
       ["daytona", "delete_sandbox", "Delete sandbox and its filesystem"],
       ["e2b", "kill_sandbox", "Destroy sandbox and discard state"],
+      ["klarna", "capture_order", "Capture fulfilled order"],
       ["klarna", "cancel_order", "Cancel uncaptured order"],
       ["klarna", "refund_order", "Refund captured order amount"],
       ["wix", "query_contacts", "Query contacts (1000 maximum per request)"],
@@ -471,6 +472,13 @@ describe("integration endpoint specs", () => {
         "params",
         "orderId",
         "Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
+      ],
+      [
+        "klarna",
+        "capture_order",
+        "params",
+        "orderId",
+        "Capture only after the corresponding goods or services have been fulfilled; capture triggers the customer charge and merchant payout.",
       ],
       [
         "klarna",

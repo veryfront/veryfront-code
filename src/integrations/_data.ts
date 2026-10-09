@@ -30968,7 +30968,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__capture_order",
       "name": "Capture Order",
-      "description": "Capture order",
+      "description": "Capture fulfilled order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30977,7 +30977,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Capture only after the corresponding goods or services have been fulfilled; capture triggers the customer charge and merchant payout.",
             "required": true,
           },
         },
