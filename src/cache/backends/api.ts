@@ -244,7 +244,7 @@ export class ApiCacheBackend implements CacheBackend {
    */
   private async prefixKey(key: string): Promise<string | null> {
     const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
-    if (hasDotOnlySegment(key) || hasDotOnlySegment(prefixed)) {
+    if (hasDotOnlySegment(prefixed)) {
       if (!this.warnedDotOnlySegmentKey) {
         this.warnedDotOnlySegmentKey = true;
         // Do not log the key: keys can embed identifiers.

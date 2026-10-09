@@ -1556,7 +1556,7 @@ it("ApiCacheBackend maps null and malformed read envelopes to misses", async () 
   }
 });
 
-it("ApiCacheBackend sends no request for keys with a dot-only segment", async () => {
+it("ApiCacheBackend validates dot-only segments after applying the key prefix", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
@@ -1591,7 +1591,10 @@ it("ApiCacheBackend sends no request for keys with a dot-only segment", async ()
         circuitBreakerName: `api-cache-dot-segment-keys-test-${keyPrefix}`,
       });
 
-      for (const key of [".", "..", "a/./b", "a/../b", "./a", "a/.."]) {
+      const rejectedKeys = keyPrefix
+        ? ["a/./b", "a/../b", "a/.."]
+        : [".", "..", "a/./b", "a/../b", "./a", "a/.."];
+      for (const key of rejectedKeys) {
         assertEquals(await cache.get(key), null);
         assertEquals(await cache.getWithinLimit(key, 1024), null);
         await cache.set(key, "v");
@@ -1603,8 +1606,8 @@ it("ApiCacheBackend sends no request for keys with a dot-only segment", async ()
       assertEquals(requests, []);
 
       // Batches skip only the dot-segment keys.
-      const batch = await cache.getBatch(["..", "ok"]);
-      assertEquals(batch.get(".."), null);
+      const batch = await cache.getBatch(["a/..", "ok"]);
+      assertEquals(batch.get("a/.."), null);
       assertEquals(batch.get("ok"), "hit");
       await cache.setBatch([{ key: "a/./b", value: "v" }, { key: "ok", value: "v" }]);
       const okKey = keyPrefix ? `${keyPrefix}:ok` : "ok";
@@ -1613,6 +1616,30 @@ it("ApiCacheBackend sends no request for keys with a dot-only segment", async ()
         { entries: [{ key: okKey, value: "v" }] },
       ]);
       requests.length = 0;
+
+      if (keyPrefix) {
+        for (const key of [".", "..", "./a"]) {
+          const prefixed = `${keyPrefix}:${key}`;
+          const path = `/projects/project-slug/cache/entries/${encodeURIComponent(prefixed)}`;
+          assertEquals(await cache.get(key), "hit");
+          assertEquals(await cache.getWithinLimit(key, 1024), "hit");
+          await cache.set(key, "v");
+          await cache.del(key);
+          assertEquals((await cache.getBatch([key])).get(key), "hit");
+          await cache.setBatch([{ key, value: "v" }]);
+          assertEquals(requests.slice(0, 4).map((request) => request.path), [
+            path,
+            path,
+            path,
+            path,
+          ]);
+          assertEquals(JSON.parse(requests[4]!.body!), { keys: [prefixed] });
+          assertEquals(JSON.parse(requests[5]!.body!), {
+            entries: [{ key: prefixed, value: "v" }],
+          });
+          requests.length = 0;
+        }
+      }
     }
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
