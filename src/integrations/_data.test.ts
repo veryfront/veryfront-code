@@ -64,7 +64,7 @@ describe("integration endpoint specs", () => {
       ["openrouter", "get_credits", "Get credits (requires management key)"],
       ["apify", "run_actor_sync", "Run actor synchronously (consumes credits)"],
       ["daytona", "create_sandbox", "Create billable sandbox"],
-      ["daytona", "stop_sandbox", "Stop sandbox; pause billing, preserve state"],
+      ["daytona", "stop_sandbox", "Pause billable compute; retain sandbox state"],
       ["digitalocean", "create_droplet", "Create billable droplet"],
       ["e2b", "create_sandbox", "Create billable sandbox"],
       ["hetzner", "create_server", "Create billable server"],

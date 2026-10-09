@@ -13706,7 +13706,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description": "Stop sandbox; pause billing, preserve state",
+      "description": "Pause billable compute; retain sandbox state",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
