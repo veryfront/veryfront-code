@@ -85,6 +85,22 @@ function installDom(): { host: HTMLElement; restore: () => void } {
 }
 
 describe("ToolCall", () => {
+  for (const name of ["load_skill", "load_skill_reference", "execute_skill_script"]) {
+    for (const prefix of ["", "veryfront__"]) {
+      it(`renders ${prefix}${name} as a compact skill row`, () => {
+        const tool: ChatDynamicToolPart = {
+          ...skillTool,
+          toolName: `${prefix}${name}`,
+          input: { skillId: "review", reference: "assets/spec.md", script: "build.sh" },
+        };
+        const html = renderToString(<ToolCall tool={tool} defaultExpanded />);
+        assertEquals(html.includes("Parameters"), false);
+        assertEquals(html.includes('aria-expanded="true"'), false);
+        assertStringIncludes(html, "review");
+      });
+    }
+  }
+
   it("renders canonical delegation and streamed child content in the child-agent card", () => {
     const tool: ChatDynamicToolPart = { ...invokeAgentTool, toolName: "veryfront__invoke_agent" };
     const message = {
