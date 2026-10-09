@@ -18,7 +18,13 @@ import { buildNativeRunEventFrame } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
 
+// Project code can replace globals before runtime observations are stamped.
+// Keep the timing path on load-time captures.
 const objectHasOwn = Object.hasOwn;
+const mathMax = Math.max;
+const mathRound = Math.round;
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -832,9 +838,9 @@ export function stampAgUiEventTiming(
   const needsEmittedAt =
     primordialArrayFilter(events, ({ payload }) => !objectHasOwn(payload, "emittedAt")).length > 0;
   const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
-    ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
+    ? mathMax(0, mathRound(state.nowMs() - state.startedMs))
     : undefined;
-  const emittedAt = needsEmittedAt && state.epochMs ? Math.round(state.epochMs()) : undefined;
+  const emittedAt = needsEmittedAt && state.epochMs ? mathRound(state.epochMs()) : undefined;
   if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
   if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
   if (elapsedMs === undefined && emittedAt === undefined) {
@@ -856,13 +862,13 @@ export function stampAgUiEventTiming(
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsFinite(value) || value < 0) {
     throw new TypeError("elapsedMs must be a finite non-negative number");
   }
 }
 
 function assertValidEmittedAt(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsInteger(value) || value < 0) {
     throw new TypeError("emittedAt must be a non-negative integer");
   }
 }

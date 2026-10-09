@@ -250,8 +250,24 @@ describe("agent/ag-ui-encoder", () => {
       let stamped;
       let supplied;
       let invalidError: unknown;
+      const originalMathMax = Math.max;
+      const originalMathRound = Math.round;
+      const originalNumberIsFinite = Number.isFinite;
+      const originalNumberIsInteger = Number.isInteger;
       try {
         Object.hasOwn = replacement;
+        Math.max = () => {
+          throw new Error("mutable Math.max");
+        };
+        Math.round = () => {
+          throw new Error("mutable Math.round");
+        };
+        Number.isFinite = () => {
+          throw new Error("mutable Number.isFinite");
+        };
+        Number.isInteger = () => {
+          throw new Error("mutable Number.isInteger");
+        };
         stamped = stampAgUiEventTiming(state, [{ event: "Custom", payload: {} }]);
         supplied = stampAgUiEventTiming(state, [{
           event: "Custom",
@@ -264,6 +280,10 @@ describe("agent/ag-ui-encoder", () => {
         }
       } finally {
         Object.hasOwn = original;
+        Math.max = originalMathMax;
+        Math.round = originalMathRound;
+        Number.isFinite = originalNumberIsFinite;
+        Number.isInteger = originalNumberIsInteger;
       }
       assertEquals(stamped?.[0]?.payload.elapsedMs, 0);
       assertEquals(stamped?.[0]?.payload.emittedAt, 1_786_866_357_364);

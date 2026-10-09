@@ -8571,6 +8571,8 @@ describe("project run inference credential header", () => {
             const originalFlatMap = Array.prototype.flatMap;
             const originalSlice = Array.prototype.slice;
             const originalIterator = Array.prototype[Symbol.iterator];
+            const originalSpecies = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+            let scheduledBatchSpeciesReads = 0;
             Array.prototype.map = () => [];
             Array.prototype.filter = () => [];
             Array.prototype.flatMap = () => [];
@@ -8579,7 +8581,22 @@ describe("project run inference credential header", () => {
               return originalIterator.call([]);
             };
             try {
-              await control.onEvent({ type: "text-delta", id: "message", delta: text });
+              Object.defineProperty(Array, Symbol.species, {
+                configurable: true,
+                get() {
+                  if (new Error().stack?.includes("schedulePendingBatches")) {
+                    scheduledBatchSpeciesReads++;
+                  }
+                  return Array;
+                },
+              });
+              try {
+                await control.onEvent({ type: "text-delta", id: "message", delta: text });
+                assertEquals(scheduledBatchSpeciesReads, 0);
+              } finally {
+                if (originalSpecies) Object.defineProperty(Array, Symbol.species, originalSpecies);
+                else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+              }
               await control.onEvent({
                 type: "tool-output-available",
                 toolCallId: "lookup",
@@ -8597,6 +8614,8 @@ describe("project run inference credential header", () => {
               Array.prototype.flatMap = originalFlatMap;
               Array.prototype.slice = originalSlice;
               Array.prototype[Symbol.iterator] = originalIterator;
+              if (originalSpecies) Object.defineProperty(Array, Symbol.species, originalSpecies);
+              else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
             }
             return { text, toolCalls: 1, status: "completed" };
           },

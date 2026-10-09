@@ -47,6 +47,7 @@ import {
 import {
   primordialArrayFilter,
   primordialArrayMap,
+  primordialArraySlice,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
@@ -247,7 +248,6 @@ const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
-const ArrayPrototypeSlice = Array.prototype.slice;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
@@ -2661,11 +2661,7 @@ function createProjectRunObservationMirror(input: {
       scheduledEventCount += batch.length;
     }
     if (scheduledEventCount > 0) {
-      pendingEvents = IntrinsicReflectApply(
-        ArrayPrototypeSlice,
-        pendingEvents,
-        [scheduledEventCount],
-      ) as Record<string, unknown>[];
+      pendingEvents = primordialArraySlice(pendingEvents, scheduledEventCount);
     }
     if (!flushAll) startFlushTimer();
   };
