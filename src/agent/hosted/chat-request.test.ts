@@ -32,6 +32,7 @@ import {
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
@@ -2474,7 +2475,7 @@ describe("agent/hosted-chat-request", () => {
   });
 
   it("binds ordinary-chat tool exposure to the signed checkpoint digest contract", async () => {
-    const checkpoint = toolExposureDigestContract.checkpoint;
+    const checkpoint = toolExposureDigestContract.checkpoint as ToolExposureCheckpoint;
     assertEquals(
       await computeHash(toolExposureDigestContract.serialized),
       toolExposureDigestContract.sha256,

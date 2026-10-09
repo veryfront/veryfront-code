@@ -18,6 +18,7 @@ import {
 } from "./managed-broker.ts";
 import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
 import { computeToolExposureCheckpointSha256 } from "../hosted/chat-request-parser.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
 import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts";
 
@@ -423,7 +424,7 @@ describe("managed durable broker handler", () => {
   });
 
   it("restores a signed tool exposure checkpoint only when the start grants checkpoint persistence", async () => {
-    const checkpoint = { version: 2, loadedToolNames: ["create_file"] };
+    const checkpoint: ToolExposureCheckpoint = { version: 2, loadedToolNames: ["create_file"] };
     for (const granted of [true, false]) {
       const fixture = runtimeFixture();
       const execution = new AbortController();

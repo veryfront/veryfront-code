@@ -1344,7 +1344,7 @@ it("durable-chat resume after a form restores tools discovered before the form",
 });
 
 it("durable-chat rejects a tool exposure checkpoint that does not match its signed digest", async () => {
-  const checkpoint = { version: 2, loadedToolNames: ["create_file"] };
+  const checkpoint: ToolExposureCheckpoint = { version: 2, loadedToolNames: ["create_file"] };
   for (
     const forwardedProps of [
       { serverResolvedToolExposureCheckpoint: { version: 2, loadedToolNames: ["delete_project"] } },

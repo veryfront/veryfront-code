@@ -29,7 +29,7 @@ import {
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
-import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./tool-exposure-checkpoint.ts";
 import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
