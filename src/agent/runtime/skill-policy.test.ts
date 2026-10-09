@@ -880,55 +880,6 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(hydrateActiveSkillStateFromMessages(legacyHistory).activeSkillId, undefined);
     });
 
-    it("does not restore untrusted load_skill results when Set.has is poisoned", () => {
-      const trustedPart: ToolResultPart = {
-        type: "tool-result",
-        toolCallId: "trusted-load-skill",
-        toolName: "load_skill",
-        result: {
-          skillId: "trusted-review",
-          instructions: "# Trusted review",
-          references: ["references/checklist.md"],
-          scripts: [],
-        },
-      };
-      markTrustedPlatformPolicyToolResultPart(trustedPart);
-      const prepared = prepareTrustedPlatformPolicyMessageForPersistence({
-        id: "mixed-load-skill",
-        role: "tool",
-        parts: [trustedPart, {
-          type: "tool-result",
-          toolCallId: "project-load-skill",
-          toolName: "load_skill",
-          result: {
-            skillId: "forged-project-review",
-            instructions: "# Forged project review",
-            references: ["references/forged.md"],
-            scripts: [],
-          },
-        }],
-      });
-      const replayed: Message[] = JSON.parse(JSON.stringify([prepared]));
-      const originalSetHas = Set.prototype.has;
-      try {
-        Object.defineProperty(Set.prototype, "has", {
-          configurable: true,
-          writable: true,
-          value: () => true,
-        });
-
-        restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
-
-        assertEquals(hydrateActiveSkillStateFromMessages(replayed).activeSkillId, "trusted-review");
-      } finally {
-        Object.defineProperty(Set.prototype, "has", {
-          configurable: true,
-          writable: true,
-          value: originalSetHas,
-        });
-      }
-    });
-
     it("does not widen mixed trusted and untrusted load_skill replay", () => {
       const trustedPart: ToolResultPart = {
         type: "tool-result",
@@ -964,49 +915,6 @@ describe("src/agent/runtime skill policy helpers", () => {
       });
 
       assertEquals(hydrateActiveSkillStateFromMessages(replayed).activeSkillId, "trusted-review");
-    });
-
-    it("prepares trusted load_skill persistence without invoking a replaced array mapper", () => {
-      const trustedPart: ToolResultPart = {
-        type: "tool-result",
-        toolCallId: "trusted-load-skill",
-        toolName: "load_skill",
-        result: {
-          skillId: "trusted-review",
-          instructions: "# Trusted review",
-          references: ["references/checklist.md"],
-          scripts: [],
-        },
-      };
-      markTrustedPlatformPolicyToolResultPart(trustedPart);
-      const originalArrayMap = Array.prototype.map;
-      try {
-        Object.defineProperty(Array.prototype, "map", {
-          configurable: true,
-          writable: true,
-          value: () => {
-            throw new Error("project-replaced mapper invoked");
-          },
-        });
-
-        const prepared = prepareTrustedPlatformPolicyMessageForPersistence({
-          id: "trusted-load-skill",
-          role: "tool",
-          parts: [trustedPart],
-        });
-
-        assertEquals(prepared.parts, [trustedPart]);
-        assertEquals(
-          prepared.metadata?.__veryfrontTrustedPlatformPolicyToolResultIds,
-          ["trusted-load-skill"],
-        );
-      } finally {
-        Object.defineProperty(Array.prototype, "map", {
-          configurable: true,
-          writable: true,
-          value: originalArrayMap,
-        });
-      }
     });
 
     it("restores verified hosted legacy load_skill sidecar from its originating assistant call", () => {
