@@ -1,7 +1,10 @@
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
-import { withPlatformMcpPolicyAliases } from "../platform-mcp-tool-source.ts";
+import {
+  platformMcpLegacyName,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
 import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
@@ -350,22 +353,27 @@ function withoutDeniedHostTools(
   tools: HostToolSet,
   deniedToolNames: readonly string[] | undefined,
   projectToolNames: ReadonlySet<string>,
+  explicitAllowedToolNames: ReadonlySet<string> | null,
 ): HostToolSet {
   if (!deniedToolNames?.length) {
     return tools;
   }
   const denied = createPrivateSet(deniedToolNames);
   const platformDenied = createPrivateSet(
-    withPlatformMcpPolicyAliases({
-      deny: filterValues(deniedToolNames, (name) => !projectToolNames.has(name)),
-    })?.deny ?? [],
+    filterValues(
+      withPlatformMcpPolicyAliases({
+        deny: filterValues(deniedToolNames, (name) => !projectToolNames.has(name)),
+      })?.deny ?? [],
+      (name) => denied.has(name) || !explicitAllowedToolNames?.has(name),
+    ),
   );
   return recordFromEntries(
     filterValues(ownEntries(tools), (entry) => {
       const shortName = ownDataValue(entry[1], "shortName");
       return !denied.has(entry[0]) &&
         (!hasTrustedHostToolProvenance(entry[1]) || !platformDenied.has(entry[0])) &&
-        (typeof shortName !== "string" || !denied.has(shortName));
+        (typeof shortName !== "string" || !denied.has(shortName) ||
+          (hasTrustedHostToolProvenance(entry[1]) && explicitAllowedToolNames?.has(entry[0])));
     }),
   );
 }
@@ -381,14 +389,26 @@ function withoutDeniedRemoteTool(
   projectToolNames?: ReadonlySet<string>,
   platformSource = hasTrustedPlatformSource(source),
   innerBoundary = false,
+  explicitAllowedToolNames: ReadonlySet<string> | null = null,
 ): RemoteToolSource {
   if (!deniedToolNames?.length) {
     return source;
   }
   const exactDeny = mapValues(deniedToolNames, (name) => name);
-  const platformDeny = withPlatformMcpPolicyAliases({
-    deny: filterValues(exactDeny, (name) => !projectToolNames?.has(name)),
-  })?.deny ?? [];
+  const exactDenied = createPrivateSet(exactDeny);
+  const platformDeny = filterValues(
+    withPlatformMcpPolicyAliases({
+      deny: filterValues(exactDeny, (name) => !projectToolNames?.has(name)),
+    })?.deny ?? [],
+    (name) => {
+      const canonicalName = `veryfront__${platformMcpLegacyName(name)}`;
+      if (
+        innerBoundary && explicitAllowedToolNames?.has(canonicalName) &&
+        !exactDenied.has(canonicalName)
+      ) return false;
+      return exactDenied.has(name) || !explicitAllowedToolNames?.has(name);
+    },
+  );
   const deny = platformSource
     ? (innerBoundary ? platformDeny : [...exactDeny, ...platformDeny])
     : exactDeny;
@@ -401,10 +421,19 @@ function withoutDeniedRemoteTools(
   sources: RemoteToolSource[],
   deniedToolNames: readonly string[] | undefined,
   projectToolNames: ReadonlySet<string>,
+  explicitAllowedToolNames: ReadonlySet<string> | null,
 ): RemoteToolSource[] {
   return mapValues(
     sources,
-    (source) => withoutDeniedRemoteTool(source, deniedToolNames, projectToolNames),
+    (source) =>
+      withoutDeniedRemoteTool(
+        source,
+        deniedToolNames,
+        projectToolNames,
+        undefined,
+        false,
+        explicitAllowedToolNames,
+      ),
   );
 }
 
@@ -714,10 +743,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       apiUrl: input.apiUrl,
     }));
   }
+  const explicitAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
     input.deniedToolNames,
     projectToolNames,
+    explicitAllowedToolNames,
   );
   const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
     toolNames: input.allowedToolNames,
@@ -794,6 +825,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
           ),
           input.deniedToolNames,
           projectToolNames,
+          undefined,
+          false,
+          explicitAllowedToolNames,
         ),
         defaultProjectId: () => activeProjectId(input.taskContext),
         getActiveBranchId: () => activeBranchId(input.taskContext),
@@ -826,6 +860,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
           projectToolNames,
           server?.kind === "veryfront-api",
           true,
+          explicitAllowedToolNames,
         ),
       defaultProjectId: () => activeProjectId(input.taskContext),
       getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
@@ -845,6 +880,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     configuredRemoteToolSources,
     input.deniedToolNames,
     projectToolNames,
+    explicitAllowedToolNames,
   );
   const knowledgeRemoteToolSources = knowledgeSource === undefined ? [] : withoutDeniedRemoteTools(
     [
@@ -868,6 +904,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ],
     input.deniedToolNames,
     projectToolNames,
+    explicitAllowedToolNames,
   );
   const researchArtifactRemoteToolSource =
     filteredConfiguredRemoteToolSources.find(hasTrustedPlatformSource) ??
