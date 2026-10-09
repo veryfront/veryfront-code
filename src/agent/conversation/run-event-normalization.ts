@@ -1,5 +1,10 @@
+import {
+  isPrivateJsonCircularError,
+  privateJsonStringify,
+  validatePrivateJsonDataWithCycles,
+} from "#veryfront/security/private-json.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import {
   encodePrivateText,
@@ -10,7 +15,6 @@ import {
   primordialArrayFlatMap,
   primordialArrayMap,
   primordialArrayPush,
-  primordialArraySlice,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
 import {
@@ -37,9 +41,15 @@ const MAX_SUMMARY_OBJECT_KEYS = 24;
 const MAX_SUMMARY_STRING_BYTES = 8 * 1024;
 
 const encoder = new PrivateTextEncoder();
-const objectEntries = Object.entries;
-const objectFromEntries = Object.fromEntries;
-const isArray = Array.isArray;
+const ArrayIsArray = Array.isArray;
+const MathFloor = Math.floor;
+const MathMax = Math.max;
+const MathMin = Math.min;
+const ObjectCreate = Object.create;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ReflectOwnKeys = Reflect.ownKeys;
+const NativeTypeError = TypeError;
 
 type ConversationRunEventRecord = Record<string, unknown> & { type: string };
 
@@ -68,6 +78,18 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
     return measureConversationRunEventJsonByteLength(value);
   } catch {
     return Number.POSITIVE_INFINITY;
+  }
+}
+
+function measurePublicConversationRunEventJsonByteLength(value: unknown): number {
+  try {
+    return measureConversationRunEventJsonByteLength(value);
+  } catch (error) {
+    if (isPrivateJsonCircularError(error)) {
+      validatePrivateJsonDataWithCycles(value, MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES);
+      return Number.POSITIVE_INFINITY;
+    }
+    throw error;
   }
 }
 
@@ -111,10 +133,11 @@ export function normalizeConversationRunEvent(
     return [event];
   }
   event = normalizeChildRunLifecycleEvent(event);
-  // Public events retain cycle-aware summarization. Mandatory observations
-  // validate serialization at their host boundary before normalization.
+  // Invalid private serialization must fail the mandatory observation sink;
+  // only valid oversized data may become a bounded omission or summary.
   if (
-    getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+    measurePublicConversationRunEventJsonByteLength(event) <=
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
   ) {
     return [event];
   }
@@ -300,7 +323,7 @@ function truncateEventStringFieldToLimit(
   let high = value.length;
   let best = 0;
   while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
+    const mid = MathFloor((low + high) / 2);
     if (
       getConversationRunEventJsonByteLength(buildCandidate(mid)) <=
         MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
@@ -389,7 +412,7 @@ function splitStringFieldEvent<TField extends "delta" | "content">(
     let bestEndIndex = -1;
 
     while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
+      const mid = MathFloor((low + high) / 2);
       if (
         getConversationRunEventJsonByteLength(
           buildPart(privateTextSlice(value, startIndex, mid)),
@@ -430,7 +453,7 @@ function splitUtf8String(value: string, maxBytes: number): string[] {
     let bestEndIndex = startIndex + 1;
 
     while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
+      const mid = MathFloor((low + high) / 2);
       const slice = privateTextSlice(value, startIndex, mid);
       if (privateByteLength(encodePrivateText(slice, encoder)) <= maxBytes) {
         bestEndIndex = mid;
@@ -454,7 +477,7 @@ function truncateUtf8String(value: string, maxBytes: number, suffix: string): st
 
   const suffixBytes = privateByteLength(encodePrivateText(suffix, encoder));
   if (suffixBytes >= maxBytes) {
-    return privateTextSlice(suffix, 0, Math.max(1, maxBytes));
+    return privateTextSlice(suffix, 0, MathMax(1, maxBytes));
   }
 
   const prefixBudget = maxBytes - suffixBytes;
@@ -475,7 +498,7 @@ function summarizeValue(
     return value;
   }
 
-  if (seen.get(value)) {
+  if (seen.get(value) === true) {
     return "[circular]";
   }
 
@@ -485,39 +508,90 @@ function summarizeValue(
 
   seen.set(value, true);
 
-  if (isArray(value)) {
-    const items = primordialArrayMap(
-      primordialArraySlice(value, 0, MAX_SUMMARY_ARRAY_ITEMS),
-      (item) => summarizeValue(item, depth + 1, seen),
-    );
-    if (value.length > MAX_SUMMARY_ARRAY_ITEMS) {
+  if (ArrayIsArray(value)) {
+    const lengthDescriptor = ObjectGetOwnPropertyDescriptor(value, "length");
+    const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
+    const keys = ReflectOwnKeys(value);
+    for (let index = 0; index < keys.length; index++) {
+      if (!ObjectHasOwn(keys, index)) continue;
+      const key = keys[index];
+      if (typeof key !== "string" || key === "length") continue;
+      const property = ObjectGetOwnPropertyDescriptor(value, key);
+      if (property?.enumerable === true && !ObjectHasOwn(property, "value")) {
+        throw new NativeTypeError("Private JSON requires data properties");
+      }
+    }
+    const itemCount = MathMin(length, MAX_SUMMARY_ARRAY_ITEMS);
+    const items: unknown[] = [];
+    defineOwnDataProperty(items, "length", itemCount, {
+      enumerable: false,
+      writable: true,
+      configurable: false,
+    });
+    for (let index = 0; index < itemCount; index++) {
+      const property = ObjectGetOwnPropertyDescriptor(value, `${index}`);
+      if (property?.enumerable === true) {
+        defineOwnDataProperty(items, `${index}`, summarizeValue(property.value, depth + 1, seen), {
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+    }
+    if (length > MAX_SUMMARY_ARRAY_ITEMS) {
       primordialArrayPush(
         items,
-        `[truncated ${value.length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
+        `[truncated ${length - MAX_SUMMARY_ARRAY_ITEMS} more items]`,
       );
     }
     return items;
   }
 
-  const entries = objectEntries(value);
-  const summarizedEntries = primordialArrayMap(
-    primordialArraySlice(entries, 0, MAX_SUMMARY_OBJECT_KEYS),
-    (entry) => [entry[0], summarizeValue(entry[1], depth + 1, seen)] as const,
-  );
-  const summarizedObject = objectFromEntries(primordialArrayValues(summarizedEntries));
+  const keys = ReflectOwnKeys(value);
+  const summarizedObject = ObjectCreate(null) as Record<string, unknown>;
+  let entryCount = 0;
+  for (let index = 0; index < keys.length; index++) {
+    if (!ObjectHasOwn(keys, index)) continue;
+    const key = keys[index];
+    if (typeof key !== "string") continue;
+    const property = ObjectGetOwnPropertyDescriptor(value, key);
+    if (property?.enumerable !== true) continue;
+    if (!ObjectHasOwn(property, "value")) {
+      throw new NativeTypeError("Private JSON requires data properties");
+    }
+    if (entryCount < MAX_SUMMARY_OBJECT_KEYS) {
+      defineOwnDataProperty(
+        summarizedObject,
+        key,
+        summarizeValue(property.value, depth + 1, seen),
+        {
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        },
+      );
+    }
+    entryCount++;
+  }
 
-  if (entries.length > MAX_SUMMARY_OBJECT_KEYS) {
-    return {
-      ...summarizedObject,
-      _truncatedKeys: entries.length - MAX_SUMMARY_OBJECT_KEYS,
-    };
+  if (entryCount > MAX_SUMMARY_OBJECT_KEYS) {
+    defineOwnDataProperty(
+      summarizedObject,
+      "_truncatedKeys",
+      entryCount - MAX_SUMMARY_OBJECT_KEYS,
+      {
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      },
+    );
   }
 
   return summarizedObject;
 }
 
 function describeValueType(value: unknown): string {
-  if (isArray(value)) {
+  if (ArrayIsArray(value)) {
     return "array";
   }
 

@@ -202,7 +202,10 @@ for (
           );
         }
         assertEquals(String(input), `https://api.example.test/runs/${childId}/heartbeats`);
-        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer child-renewal");
+        assertEquals(
+          new Headers(init && "headers" in init ? init.headers : undefined).get("Authorization"),
+          "Bearer child-renewal",
+        );
         if (hangs) return new Promise<Response>(() => {});
         if (mode === "retry-expired") return Promise.resolve(Response.json({}, { status: 503 }));
         return Promise.resolve(Response.json({ detail: "generation fenced" }, { status: 403 }));

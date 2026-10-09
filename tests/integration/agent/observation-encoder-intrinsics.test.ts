@@ -1,4 +1,7 @@
-import { appendConversationRunEvents } from "#veryfront/agent/conversation/durable.ts";
+import {
+  appendConversationRunEvents,
+  createConversationRunEventQueueController,
+} from "#veryfront/agent/conversation/durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -10,6 +13,7 @@ import {
 import {
   getConversationRunEventJsonByteLength,
   MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+  normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "#veryfront/agent/conversation/run-event-normalization.ts";
 
@@ -250,4 +254,160 @@ describe("observation append serialization", () => {
       getConversationRunEventJsonByteLength(event),
     );
   });
+});
+
+it("summarizes cyclic public tool results without invoking patched summarizer intrinsics", () => {
+  const originalWeakSetHas = WeakSet.prototype.has;
+  const originalWeakSetAdd = WeakSet.prototype.add;
+  const originalObjectEntries = Object.entries;
+  const originalObjectFromEntries = Object.fromEntries;
+  const content: Record<string, unknown> = { text: "kept", blob: "x".repeat(300 * 1024) };
+  content.self = content;
+  let patchedCalls = 0;
+  WeakSet.prototype.has = function () {
+    patchedCalls++;
+    return true;
+  };
+  WeakSet.prototype.add = function () {
+    patchedCalls++;
+    return this;
+  };
+  Object.entries = function () {
+    patchedCalls++;
+    return [];
+  };
+  Object.fromEntries = function () {
+    patchedCalls++;
+    return {};
+  };
+  try {
+    const [result] = normalizeConversationRunEvent({
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "tc_cyclic_result",
+      content,
+    });
+    assertEquals(patchedCalls, 0);
+    assertEquals(result?.type, "TOOL_CALL_RESULT");
+    assertEquals((result?.content as Record<string, unknown>).text, "kept");
+    assertEquals((result?.content as Record<string, unknown>).self, "[circular]");
+    assertEquals(
+      getConversationRunEventJsonByteLength(result) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
+  } finally {
+    WeakSet.prototype.has = originalWeakSetHas;
+    WeakSet.prototype.add = originalWeakSetAdd;
+    Object.entries = originalObjectEntries;
+    Object.fromEntries = originalObjectFromEntries;
+  }
+});
+
+it("keeps queue capture receipt storage private when Map and string casing methods are patched", async () => {
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  const conversationId = "22222222-2222-4222-8222-222222222222";
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  const modelCallId = "44444444-4444-4444-8444-444444444444";
+  const exactReceiptEventId = "9007199254740993";
+  const queue = createConversationRunEventQueueController({
+    authToken: "writer",
+    apiUrl: "https://api.example.test",
+    runId: "runtime-run-id",
+    canonicalRunId,
+    conversationId,
+    latestEventId: 1,
+    latestExternalEventSequence: 4,
+    maxEventsPerBatch: 100,
+    fetch: () =>
+      Promise.resolve(
+        Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 42,
+          latest_external_event_sequence: 5,
+          appended_count: 1,
+          model_call_captures: [{
+            event_id: exactReceiptEventId,
+            model_call_id: modelCallId,
+            run_id: canonicalRunId,
+            project_id: projectId,
+          }],
+        }),
+      ),
+  });
+  const receiptKey = modelCallId.toLowerCase();
+  const isSensitiveString = (value: string) => {
+    const normalized = originalToLowerCase.call(value);
+    return normalized === receiptKey || normalized === canonicalRunId || normalized === projectId;
+  };
+  const originalMapSet = Map.prototype.set;
+  const originalMapGet = Map.prototype.get;
+  const originalMapDelete = Map.prototype.delete;
+  const originalSetAdd = Set.prototype.add;
+  const originalSetHas = Set.prototype.has;
+  const originalToLowerCase = String.prototype.toLowerCase;
+  let patchedMapCalls = 0;
+  let patchedSetCalls = 0;
+  let patchedLowerCalls = 0;
+  Map.prototype.set = function (this: Map<unknown, unknown>, key, value) {
+    if (key === receiptKey) {
+      patchedMapCalls++;
+      return this;
+    }
+    return originalMapSet.call(this, key, value);
+  };
+  Map.prototype.get = function (this: Map<unknown, unknown>, key) {
+    if (key === receiptKey) {
+      patchedMapCalls++;
+      return undefined;
+    }
+    return originalMapGet.call(this, key);
+  };
+  Map.prototype.delete = function (this: Map<unknown, unknown>, key) {
+    if (key === receiptKey) {
+      patchedMapCalls++;
+      return false;
+    }
+    return originalMapDelete.call(this, key);
+  };
+  Set.prototype.add = function (this: Set<unknown>, value) {
+    if (typeof value === "string" && isSensitiveString(value)) {
+      patchedSetCalls++;
+      return this;
+    }
+    return originalSetAdd.call(this, value);
+  };
+  Set.prototype.has = function (this: Set<unknown>, value) {
+    if (typeof value === "string" && isSensitiveString(value)) {
+      patchedSetCalls++;
+      return false;
+    }
+    return originalSetHas.call(this, value);
+  };
+  String.prototype.toLowerCase = function () {
+    const value = String(this);
+    if (isSensitiveString(value)) {
+      patchedLowerCalls++;
+      return "poisoned";
+    }
+    return originalToLowerCase.call(this);
+  };
+  try {
+    queue.enqueue([{ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", modelCallId, messages: [] }]);
+    await queue.flush();
+    assertEquals(queue.takeModelCallCaptureReceipt?.(modelCallId), {
+      eventId: exactReceiptEventId,
+      modelCallId,
+      runId: canonicalRunId,
+      projectId,
+    });
+  } finally {
+    Map.prototype.set = originalMapSet;
+    Map.prototype.get = originalMapGet;
+    Map.prototype.delete = originalMapDelete;
+    Set.prototype.add = originalSetAdd;
+    Set.prototype.has = originalSetHas;
+    String.prototype.toLowerCase = originalToLowerCase;
+  }
+  assertEquals(patchedMapCalls, 0);
+  assertEquals(patchedSetCalls, 0);
+  assertEquals(patchedLowerCalls, 0);
 });

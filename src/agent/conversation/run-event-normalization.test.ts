@@ -27,12 +27,41 @@ describe("agent/conversation-run-event-normalization", () => {
     const content: Record<string, unknown> = { answer: "preserved" };
     content.self = content;
     const [event] = normalizeConversationRunEvent({ type: "TOOL_CALL_RESULT", content });
-    assertEquals(event.content, { answer: "preserved", self: "[circular]" });
+    assertEquals(event?.content, { answer: "preserved", self: "[circular]" });
   });
 
   it("returns small events unchanged", () => {
     const event = { type: "TEXT_MESSAGE_CONTENT", delta: "Hello" };
     assertEquals(normalizeConversationRunEvent(event), [event]);
+  });
+
+  it("rejects an accessor anywhere after a cycle without executing the public envelope getter", () => {
+    const content: Record<string, unknown> = {};
+    content.self = content;
+    let getterCalls = 0;
+    const event = { type: "TOOL_CALL_RESULT", content };
+    Object.defineProperty(event, "extra", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "unsafe metadata";
+      },
+    });
+    assertThrows(() => normalizeConversationRunEvent(event));
+    assertEquals(getterCalls, 0);
+  });
+
+  it("retains the structural limit when a public cycle precedes an excessively nested branch", () => {
+    const content: Record<string, unknown> = {};
+    content.self = content;
+    const deep: Record<string, unknown> = {};
+    let node = deep;
+    for (let index = 0; index < 140; index++) {
+      const child: Record<string, unknown> = {};
+      node.next = child;
+      node = child;
+    }
+    assertThrows(() => normalizeConversationRunEvent({ type: "TOOL_CALL_RESULT", content, deep }));
   });
 
   it("rewrites a pre-rename private event spelling to the canonical past-tense type", () => {
@@ -121,6 +150,86 @@ describe("agent/conversation-run-event-normalization", () => {
     assertEquals(
       String(result?.content ?? "").includes("[tool result truncated in conversation-run event]"),
       true,
+    );
+  });
+
+  it("summarizes cyclic public arrays without treating unrelated errors as circular data", () => {
+    const content: unknown[] = ["kept"];
+    content.push(content);
+    const [result] = normalizeConversationRunEvent({
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "tc_cyclic_array",
+      content,
+    });
+    assertEquals(result?.type, "TOOL_CALL_RESULT");
+    assertEquals(result?.content, ["kept", "[circular]"]);
+
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "TOOL_CALL_RESULT",
+          content: {
+            get value() {
+              return "not data";
+            },
+          },
+        }),
+      TypeError,
+      "Private JSON requires data properties",
+    );
+
+    const cyclicWithAccessor: Record<string, unknown> = {};
+    cyclicWithAccessor.self = cyclicWithAccessor;
+    let getterReads = 0;
+    Object.defineProperty(cyclicWithAccessor, "value", {
+      enumerable: true,
+      get() {
+        getterReads++;
+        return "not data";
+      },
+    });
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "TOOL_CALL_RESULT",
+          content: cyclicWithAccessor,
+        }),
+      TypeError,
+      "Private JSON requires data properties",
+    );
+    assertEquals(getterReads, 0);
+
+    const arrayWithLateAccessor: unknown[] = Array.from({ length: 10 }, (_value, index) => index);
+    arrayWithLateAccessor[0] = arrayWithLateAccessor;
+    Object.defineProperty(arrayWithLateAccessor, "9", {
+      enumerable: true,
+      get() {
+        throw new Error("must not execute");
+      },
+    });
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "TOOL_CALL_RESULT",
+          content: arrayWithLateAccessor,
+        }),
+      TypeError,
+      "Array input cannot be safely copied",
+    );
+
+    const fakeCircularMessage = new Proxy({ content: "not circular" }, {
+      getPrototypeOf() {
+        throw new TypeError("Cannot serialize circular data");
+      },
+    });
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "TOOL_CALL_RESULT",
+          content: fakeCircularMessage,
+        }),
+      TypeError,
+      "Cannot serialize circular data",
     );
   });
 

@@ -1144,7 +1144,7 @@ describe("managed broker handler", () => {
           signal: sessionController.signal,
           settlementSignal: controller.signal,
           fetch: (_url, init) => {
-            if (JSON.parse(String(init?.body)).settled) {
+            if (JSON.parse(String(init && "body" in init ? init.body : undefined)).settled) {
               receipts++;
               assertEquals(sessionController.signal.aborted, true);
               assertEquals(controller.signal.aborted, false);
@@ -1211,7 +1211,9 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(init?.body)).settled) receipts++;
+          if (JSON.parse(String(init && "body" in init ? init.body : undefined)).settled) {
+            receipts++;
+          }
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -1257,7 +1259,7 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (!JSON.parse(String(init?.body)).settled) {
+          if (!JSON.parse(String(init && "body" in init ? init.body : undefined)).settled) {
             return Promise.resolve(Response.json({ stop: true }));
           }
           assertEquals(f.managed.active, 0);

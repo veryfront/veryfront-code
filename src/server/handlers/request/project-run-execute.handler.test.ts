@@ -9110,6 +9110,156 @@ describe("project run inference credential header", () => {
     );
   });
 
+  it("keeps model-call capture receipts private when project code patches Map methods", async () => {
+    const runId = "run_inline_generate_private_receipts";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    let patchedMapSetCalls = 0;
+    const capturedValues: unknown[] = [];
+    const gatewayCaptures: Array<{ modelCallId: string | null; captureEventId: string | null }> =
+      [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("private-receipts", {
+          name: "Private receipts",
+          run: async () => {
+            const assistant = agent({
+              id: "managed-private-receipts",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say OK.",
+              skills: false,
+            });
+            const originalMapSet = Map.prototype.set;
+            Map.prototype.set = function (this: Map<unknown, unknown>, key, value) {
+              if (
+                key === "model-call-private-receipts" ||
+                (
+                  value !== null && typeof value === "object" &&
+                  "eventId" in value && "projectId" in value && "runId" in value &&
+                  "modelCallId" in value
+                )
+              ) {
+                patchedMapSetCalls++;
+                capturedValues.push(value);
+              }
+              return originalMapSet.call(this, key, value);
+            };
+            try {
+              const response = await assistant.generate({ input: "Say OK." });
+              return { text: response.text };
+            } finally {
+              Map.prototype.set = originalMapSet;
+            }
+          },
+        });
+        return discovery;
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, canonicalRunId, kind: "task", target: "task:private-receipts", projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+    let cursor = 0;
+    const encoder = new TextEncoder();
+    const sse = (chunks: readonly Record<string, unknown>[]) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const upstream = new Request(input, init);
+          if (upstream.url === "https://api.veryfront.com/ai/models") {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (upstream.url === "https://api.veryfront.com/ai/v1/chat/completions") {
+            gatewayCaptures.push({
+              modelCallId: upstream.headers.get("x-veryfront-model-call-id"),
+              captureEventId: upstream.headers.get("x-veryfront-model-call-capture-event-id"),
+            });
+            return sse([
+              {
+                id: "chatcmpl-private-receipts",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: { role: "assistant", content: "OK." } }],
+              },
+              {
+                id: "chatcmpl-private-receipts",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+              },
+            ]);
+          }
+          assertEquals(
+            upstream.url,
+            `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+          );
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          cursor += events.length;
+          const captures = (events as Record<string, unknown>[])
+            .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+            .map((event, index) => ({
+              event_id: String(9007199254740993n + BigInt(cursor - events.length + index)),
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: cursor,
+            appended_count: events.length,
+            ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "OK." });
+    assertEquals(patchedMapSetCalls, 0);
+    assertEquals(capturedValues, []);
+    assertEquals(gatewayCaptures.length, 1);
+    assertEquals(typeof gatewayCaptures[0]?.modelCallId, "string");
+    assertEquals(typeof gatewayCaptures[0]?.captureEventId, "string");
+  });
+
   it("captures hosted invoke_agent child and nested child stream observations", async () => {
     const runId = "run_delegated_agent_observed";
     const canonicalRunId = "11111111-1111-4111-8111-111111111111";

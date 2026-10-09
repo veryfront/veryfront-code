@@ -43,7 +43,9 @@ describe("hosted pause settlement transport", () => {
         token: "pause-test-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(init?.body)).settled) confirmations++;
+          if (JSON.parse(String(init && "body" in init ? init.body : undefined)).settled) {
+            confirmations++;
+          }
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -125,7 +127,7 @@ describe("hosted pause settlement transport", () => {
         token: "pause-test-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          const body = JSON.parse(String(init?.body));
+          const body = JSON.parse(String(init && "body" in init ? init.body : undefined));
           bodies.push(body);
           if (!body.settled) return Promise.resolve(Response.json({ stop: true }));
           const reply = replies[confirmations++];

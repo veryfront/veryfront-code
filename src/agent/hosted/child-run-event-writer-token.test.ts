@@ -234,7 +234,9 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
   const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
     [];
   const trustedFetch: typeof fetch = (input, init) => {
-    const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
+    const headers = (init && "headers" in init ? init.headers : undefined) instanceof Headers
+      ? (init && "headers" in init ? init.headers : undefined)
+      : new Headers(init && "headers" in init ? init.headers : undefined);
     trusted.push({
       url: String(input),
       authorization: nativeApply(nativeHeadersGet, headers, ["Authorization"]) as string | null,
@@ -1034,7 +1036,8 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
-      const count = JSON.parse(String(init?.body)).events.length;
+      const count =
+        JSON.parse(String(init && "body" in init ? init.body : undefined)).events.length;
       cursor += count;
       return Response.json({
         run_id: runId,

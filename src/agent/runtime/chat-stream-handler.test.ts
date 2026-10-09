@@ -3463,7 +3463,8 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       latestExternalEventSequence: 0,
       maxEventsPerBatch: 100,
       fetch: (_input, init) => {
-        const bodyText = typeof init?.body === "string" ? init.body : "{}";
+        const requestBody = init && "body" in init ? init.body : undefined;
+        const bodyText = typeof requestBody === "string" ? requestBody : "{}";
         const body = JSON.parse(bodyText);
         appendBodies.push(body);
         return Promise.resolve(Response.json({
