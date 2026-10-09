@@ -2666,7 +2666,8 @@ function requireProjectRunObservationParent(
   );
   if (
     request.canonicalRunId !== undefined &&
-    request.canonicalRunId.toLowerCase() !== parent.canonicalRunId.toLowerCase()
+    (IntrinsicReflectApply(StringToLowerCase, request.canonicalRunId, []) as string) !==
+      (IntrinsicReflectApply(StringToLowerCase, parent.canonicalRunId, []) as string)
   ) {
     throw ORCHESTRATION_ERROR.create({ detail: "Project run observation authority mismatch" });
   }

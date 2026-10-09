@@ -1,5 +1,5 @@
 import { primordialArrayValues } from "#veryfront/platform/compat/primordials/array.ts";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import type { Message } from "../types.ts";
@@ -43,9 +43,9 @@ type Scope = {
   automaticStreamObservation?: boolean;
   admitTool?: (id: string, name: string, input: unknown) => Promise<void>;
 };
-const scopes = new AsyncLocalStorage<Scope>();
-const run = AsyncLocalStorage.prototype.run;
-const getStore = AsyncLocalStorage.prototype.getStore;
+const scopes = createPrivateAsyncLocalStorage<Scope>();
+const run = scopes.run;
+const getStore = scopes.getStore;
 const apply = Reflect.apply;
 
 /** Private host boundary for the existing local delegation operation. */
