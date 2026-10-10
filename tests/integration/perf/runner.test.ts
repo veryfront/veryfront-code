@@ -3,6 +3,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { resolve } from "node:path";
 
+const repositoryRoot = new URL("../../../", import.meta.url);
+
 describe("framework profiling command", () => {
   it("distinguishes compatible baseline metadata, dependency changes, and read errors", async () => {
     await Deno.mkdir(".cache/perf", { recursive: true });
@@ -21,7 +23,7 @@ describe("framework profiling command", () => {
       }
     };
     let checkStderr = "";
-    const check = async (cwd?: string) => {
+    const check = async (cwd: string | URL = repositoryRoot) => {
       const result = await new Deno.Command("deno", {
         args: [
           "run",
@@ -177,6 +179,7 @@ describe("framework profiling command", () => {
     try {
       const result = await new Deno.Command("deno", {
         args: ["task", "perf", ...args],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -202,6 +205,7 @@ describe("framework profiling command", () => {
           "tests/integration/perf/viewer.test-helpers.ts",
           `${directory}/index.html`,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -224,6 +228,7 @@ describe("framework profiling command", () => {
           "--no-profile",
           `--baseline=${directory}/results.json`,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -236,6 +241,7 @@ describe("framework profiling command", () => {
       await Deno.writeTextFile(`${directory}/results.json`, invalidBaselineText);
       const invalidLatency = await new Deno.Command("deno", {
         args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -245,6 +251,7 @@ describe("framework profiling command", () => {
 
       const rerun = await new Deno.Command("deno", {
         args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -273,6 +280,7 @@ describe("framework profiling command", () => {
           "scripts/perf/run.ts",
           ...args,
         ],
+        cwd: repositoryRoot,
         stdout: "piped",
         stderr: "piped",
       }).output();
