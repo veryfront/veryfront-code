@@ -31,6 +31,8 @@ const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
+/** Bound on the startup read of the allocator trust root. */
+const HOST_FILE_READ_TIMEOUT_MS = 5_000;
 /** Bound on one broker token read, below the allocator client's 5 s request deadline. */
 const TOKEN_READ_TIMEOUT_MS = 2_000;
 /** Bound on one read of the source records file, below the resolver's 10 s deadline. */
@@ -83,6 +85,8 @@ interface HostedHttpCompositionDependencies {
   ) => Promise<Uint8Array>;
   /** @internal Host override check; replaced in hermetic tests. */
   isOverrideEnabled?: () => boolean;
+  /** @internal Startup host file read bound; replaced in hermetic tests. */
+  hostFileReadTimeoutMs?: number;
   /** @internal Runtime support check; replaced in hermetic tests. */
   runtime?: () => HostedHttpRuntimeSupport;
   /** @internal Monotonic clock for the source records refresh; replaced in hermetic tests. */
@@ -190,7 +194,10 @@ export async function settleWithin<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const stopped = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error("Host file read timed out")), timeoutMs);
+    timer = setTimeout(
+      () => reject(new DOMException("Host file read timed out", "TimeoutError")),
+      timeoutMs,
+    );
     onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -347,14 +354,32 @@ export async function createHostedHttpComposition(
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }
   const read = dependencies.readFile ?? readHostFilePrefix;
-  const ca = config.allocatorCaFile
-    ? await readBoundedText(
-      read,
-      "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
-      config.allocatorCaFile,
-      MAX_CA_BYTES,
-    )
-    : undefined;
+  let ca: string | undefined;
+  if (config.allocatorCaFile) {
+    const startup = new AbortController();
+    try {
+      ca = await settleWithin(
+        readBoundedText(
+          read,
+          "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
+          config.allocatorCaFile,
+          MAX_CA_BYTES,
+          startup.signal,
+        ),
+        startup.signal,
+        dependencies.hostFileReadTimeoutMs ?? HOST_FILE_READ_TIMEOUT_MS,
+      );
+    } catch (error) {
+      startup.abort();
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        throw CONFIG_INVALID.create({
+          detail:
+            "The file named by VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE could not be read in time",
+        });
+      }
+      throw error;
+    }
+  }
   const lookupSourceImage = await createRefreshingSourceRecordLookup({
     readText: (signal) =>
       readBoundedText(

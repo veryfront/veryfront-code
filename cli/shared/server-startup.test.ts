@@ -285,6 +285,25 @@ describe("startCliProductionServer hosted HTTP composition", () => {
     assertEquals(events, ["broker.shutdown"]);
   });
 
+  it("starts broker shutdown while a failed start's listener stop is pending", async () => {
+    const events: string[] = [];
+    const listenerStopped = Promise.withResolvers<void>();
+    const starting = startCliProductionServer(baseOptions, {
+      ...hostedOn(fakeComposition(events)),
+      ensureContentProcessor: () => Promise.reject(new Error("content processor failed")),
+      startServer: () =>
+        server(() => {
+          events.push("server.stop");
+          return listenerStopped.promise;
+        }),
+    });
+    starting.catch(() => {});
+    for (let turn = 0; turn < 10 && events.length < 2; turn++) await Promise.resolve();
+    assertEquals(events.toSorted(), ["broker.shutdown", "server.stop"]);
+    listenerStopped.resolve();
+    await assertRejects(() => starting, Error, "content processor failed");
+  });
+
   it("stops the listener and the broker when startup fails after listening", async () => {
     const events: string[] = [];
     await assertRejects(
@@ -301,7 +320,8 @@ describe("startCliProductionServer hosted HTTP composition", () => {
       Error,
       "content processor failed",
     );
-    assertEquals(events, ["server.stop", "broker.shutdown"]);
+    // Composition shutdown is idempotent; the outer cleanup may call it again.
+    assertEquals([...new Set(events)].toSorted(), ["broker.shutdown", "server.stop"]);
   });
 
   it("fails startup on an invalid host configuration before starting the server", async () => {
