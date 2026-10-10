@@ -35,9 +35,7 @@ type ModelCallRequestSource =
   };
 
 const ReflectApply = Reflect.apply;
-const ReflectGet = Reflect.get;
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectEntries = Object.entries;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
@@ -55,16 +53,8 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
 }
 
-function objectEntries(value: Record<string, unknown>): Array<[string, unknown]> {
-  return ReflectApply(ObjectEntries, Object, [value]) as Array<[string, unknown]>;
-}
-
 function objectKeys<TValue extends object>(value: TValue): string[] {
   return ReflectApply(ObjectKeys, Object, [value]) as string[];
-}
-
-function reflectGet(target: Record<string, unknown>, key: string): unknown {
-  return ReflectApply(ReflectGet, Reflect, [target, key]);
 }
 
 function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
@@ -155,6 +145,26 @@ function readRequiredProviderDataBucket(
   if (!descriptor) return undefined;
   if (!ObjectHasOwn(descriptor, "value")) {
     throw new TypeError(`Provider options for "${providerName}" must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function readRequiredProviderOption(
+  providerName: string,
+  bucket: Record<string, unknown>,
+  key: string,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [bucket, key]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+  }
+  if (!descriptor?.enumerable) return undefined;
+  if (!ObjectHasOwn(descriptor, "value")) {
+    throw new TypeError(`Provider options for "${providerName}" must contain data properties`);
   }
   return descriptor.value;
 }
@@ -280,25 +290,17 @@ function readModelCallProviderOptions(
   if (!providerOptions) return output;
 
   forEachPrivateArray(providerNames, (providerName) => {
-    let ownsKey: boolean;
-    let value: unknown;
-    try {
-      ownsKey = ObjectHasOwn(providerOptions, providerName);
-      if (!ownsKey) return;
-      value = reflectGet(providerOptions, providerName);
-    } catch {
-      throw new TypeError(`Provider options for "${providerName}" could not be read`);
-    }
+    const value = readRequiredProviderDataBucket(providerOptions, providerName);
     if (!isProviderOptionsBucket(value)) return;
 
-    let entries: Array<[string, unknown]>;
+    let keys: string[];
     try {
-      entries = objectEntries(value);
+      keys = objectKeys(value);
     } catch {
       throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
     }
-    forEachPrivateArray(entries, (entry) => {
-      defineOwnDataProperty(output, entry[0], entry[1]);
+    forEachPrivateArray(keys, (key) => {
+      defineOwnDataProperty(output, key, readRequiredProviderOption(providerName, value, key));
     });
   });
 

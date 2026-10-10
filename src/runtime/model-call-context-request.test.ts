@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
@@ -1224,6 +1224,216 @@ describe("model call request projection", () => {
       'Provider options for "google" must be a data property',
     );
     assertEquals(getterCalls, 0);
+  });
+
+  it("rejects OpenAI accessor provider buckets before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          max_tokens: 777,
+          max_output_tokens: 888,
+          reasoning: { effort: "high" },
+          reasoning_effort: "low",
+        };
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      reasoning: { enabled: true, effort: "medium" },
+      providerOptions,
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "openai",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          openAITransport: "chat-completions",
+        }, options),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("uses OpenAI provider bucket descriptors instead of proxy get traps", () => {
+    let getTrapCalls = 0;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: { max_tokens: 111, reasoning_effort: "low" },
+          writable: true,
+        };
+      },
+      get(_target, key) {
+        if (key === "openai") {
+          getTrapCalls += 1;
+          return { max_tokens: 777, reasoning_effort: "high" };
+        }
+        return undefined;
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    }) as Record<string, unknown>;
+    const options: ModelRuntimeCallOptions = { prompt, providerOptions };
+
+    const projected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, options);
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    const responseBody = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(projected?.maxOutputTokens, 111);
+    assertEquals(projected?.reasoning, { enabled: true, effort: "low" });
+    assertEquals(chatBody.max_completion_tokens, 111);
+    assertEquals(chatBody.reasoning_effort, "low");
+    assertEquals(responseBody.max_tokens, 111);
+    assertEquals(responseBody.reasoning_effort, "low");
+    assertEquals(getTrapCalls, 0);
+  });
+
+  it("rejects OpenAI native option accessors before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const openai = Object.defineProperty({}, "max_tokens", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 777;
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      providerOptions: { openai },
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "openai",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          openAITransport: "chat-completions",
+        }, options),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("sanitizes OpenAI provider option enumeration failures before capture and dispatch", () => {
+    const privateFailure = "private-provider-enumeration-sentinel";
+    const buckets = [
+      new Proxy({}, {
+        ownKeys() {
+          throw new Error(privateFailure);
+        },
+      }),
+      new Proxy({ max_tokens: 111 }, {
+        getOwnPropertyDescriptor() {
+          throw new Error(privateFailure);
+        },
+      }),
+    ];
+    for (const openai of buckets) {
+      const options: ModelRuntimeCallOptions = { prompt, providerOptions: { openai } };
+      const calls = [
+        () =>
+          buildModelCallContextRequest({
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          }, options),
+        () => buildOpenAIChatRequest("gpt-4o", "openai", options, false, createWarningCollector()),
+        () =>
+          buildOpenAIResponsesRequest(
+            "gpt-5.4-mini",
+            "openai",
+            options,
+            false,
+            createWarningCollector(),
+          ),
+      ];
+      for (const call of calls) {
+        const message = 'Provider options for "openai" could not be enumerated';
+        const error = assertThrows(call, TypeError, message);
+        assert(error instanceof TypeError);
+        assertEquals(error.message, message);
+        assertEquals(error.cause, undefined);
+      }
+    }
   });
 
   it("uses Google's replacement generationConfig for controls and representable thinking", () => {

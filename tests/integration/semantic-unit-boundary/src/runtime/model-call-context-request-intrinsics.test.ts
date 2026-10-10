@@ -7,6 +7,7 @@ import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { buildGoogleGenerateContentRequest } from "../../../../../extensions/ext-llm-google/src/google-request-builder.ts";
 import { buildOpenAIChatRequest } from "../../../../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
+import { buildOpenAIResponsesRequest } from "../../../../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 
 const prompt: ModelRuntimeCallOptions["prompt"] = [{
   role: "user",
@@ -173,6 +174,86 @@ describe("model call request projection intrinsic boundaries", () => {
     }
 
     assertEquals(projectedMaxOutputTokens, 333);
+  });
+
+  it("preserves OpenAI request builder buckets when descriptor intrinsics are replaced", () => {
+    let getTrapCalls = 0;
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: { max_tokens: 111, max_output_tokens: 222 },
+          writable: true,
+        };
+      },
+      get(_target, key) {
+        if (key === "openai") {
+          getTrapCalls += 1;
+          return { max_tokens: 777, max_output_tokens: 888 };
+        }
+        return undefined;
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    }) as Record<string, unknown>;
+    const options: ModelRuntimeCallOptions = { prompt, providerOptions };
+    const nativeDescriptor = Object.getOwnPropertyDescriptor;
+    const nativeHasOwn = Object.hasOwn;
+    let chatMaxOutputTokens: number | undefined;
+    let responsesMaxOutputTokens: number | undefined;
+    Object.getOwnPropertyDescriptor = function (): never {
+      throw new Error("patched descriptor");
+    };
+    Object.hasOwn = () => false;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        const values = Array.isArray(this) ? this : [];
+        if (
+          values[0] === "openai-compatible" ||
+          values[0] === "openai" ||
+          values[0] === "max_tokens" ||
+          values[0] === "max_output_tokens"
+        ) {
+          throw new Error("patched OpenAI provider option iterator");
+        }
+        return originalArrayIterator.call(this);
+      },
+    });
+    try {
+      const chatBody = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      chatMaxOutputTokens = chatBody.max_completion_tokens;
+      const responsesBody = buildOpenAIResponsesRequest(
+        "gpt-5.4-mini",
+        "openai",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      responsesMaxOutputTokens = responsesBody.max_output_tokens;
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+      Object.hasOwn = nativeHasOwn;
+      Object.getOwnPropertyDescriptor = nativeDescriptor;
+    }
+
+    assertEquals(chatMaxOutputTokens, 111);
+    assertEquals(responsesMaxOutputTokens, 222);
+    assertEquals(getTrapCalls, 0);
   });
 
   it("preserves native Anthropic controls when Array iteration is replaced before dispatch", () => {

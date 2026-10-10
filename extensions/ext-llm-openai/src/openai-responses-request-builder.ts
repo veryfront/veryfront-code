@@ -1,6 +1,5 @@
 import {
   jsonValuesEqual,
-  readProviderOptions,
   stringifyToolArguments,
   stringifyToolResultValue,
   unwrapToolInputSchema,
@@ -15,7 +14,10 @@ import {
   resolveOpenAIReasoningConfig,
   shouldRequestOpenAIReasoningSummary,
 } from "./openai-reasoning-models.ts";
-import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
+import {
+  defineOpenAIProviderOptions,
+  readOpenAIProviderOptions,
+} from "./openai-provider-options.ts";
 import {
   isBoundedOpenAIStreamString,
   MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
@@ -557,14 +559,12 @@ export function buildOpenAIResponsesRequest(
 
   // Env-BYOK users historically registered options under "openai-compatible";
   // keep merging that bucket at the lowest precedence.
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
   defineOpenAIProviderOptions(
     body as Record<string, unknown>,
-    readProviderOptions(
-      options.providerOptions,
-      ...(providerName === "openai" ? ["openai-compatible"] : []),
-      "openai",
-      providerName,
-    ),
+    readOpenAIProviderOptions(options.providerOptions, bucketNames),
   );
   // Keep provider-native tuning extensible without allowing raw options to
   // replace the runtime-owned transport, prompt, model, or privacy contract.

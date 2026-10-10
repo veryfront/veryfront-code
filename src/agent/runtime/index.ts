@@ -1061,7 +1061,7 @@ function hasRuntimeVisibleStreamProgress(state: ChatStreamState): boolean {
   return state.accumulatedText.length > 0 || state.reasoningParts.length > 0 ||
     state.toolCalls.size > 0 || state.toolResults.length > 0 ||
     state.suppressedToolCalls.length > 0 || state.finishReason !== null ||
-    ObjectValues(state.usage).some((value) => value !== undefined && value !== 0);
+    intrinsicArraySome(ObjectValues(state.usage), (value) => value !== undefined && value !== 0);
 }
 
 function shouldRetryRuntimeProviderStreamFailure(input: {
