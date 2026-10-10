@@ -1138,7 +1138,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
       model: input.taskContext.model,
-      requiredToolNames: providerVisibleLocalToolNames,
+      requiredToolNames: [...eagerBootstrapToolNames, ...providerVisibleLocalToolNames],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
     toolNames: availableToolNames,
