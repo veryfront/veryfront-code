@@ -1,7 +1,7 @@
 {
   "version": "0.5.19",
   "licenseSHA256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985",
-  "imports": "import plugin from \"npm:tailwindcss@4.2.2/plugin\";\nimport colors from \"npm:tailwindcss@4.2.2/colors\";\nimport parser from \"npm:postcss-selector-parser@7.1.6\";\n",
+  "imports": "import plugin from \"tailwindcss/plugin\";\nimport colors from \"tailwindcss/colors\";\nimport parser from \"postcss-selector-parser\";\n",
   "files": {
     "utils.js": {
       "sha256": "d6eef872ef76e56bdff51ebd0350818040d7bd53ad0ea96431f08d02cb2ea295",
@@ -78,7 +78,7 @@
         },
         {
           "before": "module.exports = plugin.withOptions(",
-          "after": "export default plugin.withOptions("
+          "after": "/** @type {unknown} */\nconst typography = plugin.withOptions("
         },
         {
           "before": "let prefixedNot ",
@@ -110,7 +110,7 @@
         }
       ],
       "prefix": "",
-      "suffix": "\n"
+      "suffix": "\nexport default typography;\n"
     }
   }
 }

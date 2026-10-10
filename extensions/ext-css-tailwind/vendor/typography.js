@@ -21,9 +21,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-import plugin from "npm:tailwindcss@4.2.2/plugin";
-import colors from "npm:tailwindcss@4.2.2/colors";
-import parser from "npm:postcss-selector-parser@7.1.6";
+import plugin from "tailwindcss/plugin";
+import colors from "tailwindcss/colors";
+import parser from "postcss-selector-parser";
 // BEGIN UPSTREAM utils.js
 const typographyUtils = (() => {
 const parseSelector = parser()
@@ -1856,7 +1856,8 @@ function configToCss(config = {}, { target, className, modifier, prefix }) {
   )
 }
 
-export default plugin.withOptions(
+/** @type {unknown} */
+const typography = plugin.withOptions(
   ({ className = 'prose', target = 'modern' } = {}) => {
     return function ({ addVariant, addComponents, theme, prefix }) {
       const modifiers = theme('typography')
@@ -1931,4 +1932,5 @@ export default plugin.withOptions(
   }
 )
 
+export default typography;
 // END UPSTREAM index.js

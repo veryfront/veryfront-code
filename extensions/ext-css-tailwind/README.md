@@ -90,3 +90,10 @@ for SBOMs. The engine cache identity binds this inventory and its source digest;
 fixtures retain exact CSS hashes produced by the original pinned plugin for eight
 supported stylesheet/theme inputs. Other native and deployed release findings
 remain separately qualified.
+
+
+The vendored module uses extension-declared exact aliases for the compiler plugin,
+colors and selector parser. This preserves npm subpaths in supported Node source
+loaders. Its private default export has an explicit opaque type, matching the
+existing plugin loader contract and keeping generated declarations independent
+of Tailwind's private declaration filenames.

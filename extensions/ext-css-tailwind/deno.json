@@ -33,7 +33,9 @@
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/css": "../../src/extensions/css/index.ts",
     "veryfront/errors": "../../src/errors/index.ts",
-    "postcss-selector-parser": "npm:postcss-selector-parser@7.1.6"
+    "postcss-selector-parser": "npm:postcss-selector-parser@7.1.6",
+    "tailwindcss/plugin": "npm:tailwindcss@4.2.2/plugin",
+    "tailwindcss/colors": "npm:tailwindcss@4.2.2/colors"
   },
   "tasks": {
     "test": "deno test --frozen --allow-read src/"
