@@ -28,6 +28,8 @@ const EXECUTE_SKILL_SCRIPT_TOOL_ID = "execute_skill_script";
 const PLATFORM_TOOL_PREFIX = "veryfront__";
 const apply = Reflect.apply;
 const arrayFilter = Array.prototype.filter;
+const stringStartsWith = String.prototype.startsWith;
+const stringSlice = String.prototype.slice;
 
 function isSkillInfrastructureToolAllowed(
   toolName: string,
@@ -37,8 +39,8 @@ function isSkillInfrastructureToolAllowed(
     return undefined;
   }
 
-  const skillToolName = toolName.startsWith(PLATFORM_TOOL_PREFIX)
-    ? toolName.slice(PLATFORM_TOOL_PREFIX.length)
+  const skillToolName = apply(stringStartsWith, toolName, [PLATFORM_TOOL_PREFIX])
+    ? apply(stringSlice, toolName, [PLATFORM_TOOL_PREFIX.length])
     : toolName;
 
   if (skillToolName === LOAD_SKILL_TOOL_ID) {

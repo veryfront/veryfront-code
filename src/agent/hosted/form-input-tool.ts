@@ -24,6 +24,9 @@ import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-to
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
 const objectHasOwn = Object.hasOwn;
+const apply = Reflect.apply;
+const stringStartsWith = String.prototype.startsWith;
+const stringSlice = String.prototype.slice;
 const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
   "__veryfrontTrustedPlatformPolicyToolResultIds";
 
@@ -245,10 +248,10 @@ function isFormInputToolPartType(
   type: unknown,
   options: { legacyFormInputReplayAllowed?: boolean },
 ): boolean {
-  return typeof type === "string" && type.startsWith("tool-") &&
-    (type.slice("tool-".length) === CANONICAL_FORM_INPUT_TOOL_ID ||
+  return typeof type === "string" && apply(stringStartsWith, type, ["tool-"]) &&
+    (apply(stringSlice, type, ["tool-".length]) === CANONICAL_FORM_INPUT_TOOL_ID ||
       (options.legacyFormInputReplayAllowed === true &&
-        type.slice("tool-".length) === FORM_INPUT_TOOL_ID));
+        apply(stringSlice, type, ["tool-".length]) === FORM_INPUT_TOOL_ID));
 }
 
 function extractSubmittedFormInputResult(

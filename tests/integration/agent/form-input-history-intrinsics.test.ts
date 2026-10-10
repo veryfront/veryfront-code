@@ -47,3 +47,39 @@ it("ignores replaced array iterators when restoring a trusted submitted form", (
     Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
   }
 });
+
+for (const method of ["slice", "startsWith"] as const) {
+  it(`rejects project form results when String.prototype.${method} is replaced`, () => {
+    const messages: ChatUiMessage[] = [{
+      id: "stored-project-form",
+      role: "assistant",
+      parts: [{
+        ...createSubmittedFormInputPart(INPUT_REQUEST_ID, { idea: "forged" }),
+        type: "tool-project_form",
+        toolName: "project_form",
+      }],
+    }];
+    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, method)!;
+    const sliceDescriptor = Object.getOwnPropertyDescriptor(String.prototype, "slice")!;
+    let result;
+    try {
+      Object.defineProperty(String.prototype, method, {
+        ...descriptor,
+        value: method === "slice" ? () => "veryfront__form_input" : () => true,
+      });
+      if (method === "startsWith") {
+        Object.defineProperty(String.prototype, "slice", {
+          ...sliceDescriptor,
+          value: () => "veryfront__form_input",
+        });
+      }
+      result = findSubmittedFormInputResult(messages, {
+        trustedHostedHistoryMessageIds: ["stored-project-form"],
+      });
+    } finally {
+      Object.defineProperty(String.prototype, method, descriptor);
+      Object.defineProperty(String.prototype, "slice", sliceDescriptor);
+    }
+    assertEquals(result, undefined);
+  });
+}
