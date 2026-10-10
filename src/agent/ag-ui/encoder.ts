@@ -692,9 +692,8 @@ function truncateMessageFinishString(
   }
 
   let end = value.length;
-  let candidate = value;
   while (end > 0) {
-    candidate = `${
+    const candidate = `${
       privateTextSlice(value, 0, end)
     }${MESSAGE_FINISH_OBJECT_STRING_TRUNCATED_SUFFIX}`;
     if (

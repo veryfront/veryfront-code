@@ -1,5 +1,7 @@
 import { getJsonValueSchema, getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
 
+const isArray = Array.isArray;
+
 /**
  * Native run event vocabulary shared by every emission path.
  *
@@ -172,7 +174,7 @@ function readString(value: unknown): string | null {
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return typeof value === "object" && value !== null && !isArray(value)
     ? value as Record<string, unknown>
     : null;
 }

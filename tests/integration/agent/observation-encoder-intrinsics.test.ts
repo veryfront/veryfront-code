@@ -301,6 +301,27 @@ describe("observation encoder private intrinsics", () => {
     });
   }
 
+  it("preserves native data observations when project code replaces the array check", () => {
+    const original = Array.isArray;
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+    try {
+      Array.isArray = () => {
+        throw new Error("project array check must not route native observations");
+      };
+      events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "data-source-url",
+        data: { sourceId: "source-1", url: "https://example.com/evidence" },
+      });
+    } finally {
+      Array.isArray = original;
+    }
+    assertEquals(events, [{
+      event: "UrlCited",
+      payload: { sourceId: "source-1", url: "https://example.com/evidence" },
+    }]);
+  });
+
   it("preserves custom observations when project code replaces string and array methods", () => {
     const startsWith = String.prototype.startsWith;
     const slice = String.prototype.slice;
