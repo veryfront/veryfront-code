@@ -6,10 +6,11 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { dynamicTool } from "#veryfront/tool";
+import { dynamicTool, tool } from "#veryfront/tool";
 import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 
 import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
@@ -749,6 +750,103 @@ describe("mcp/server", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+  });
+
+  it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const outputSchema: JsonSchema = {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+    };
+    registerTool(
+      "test:output",
+      tool({
+        id: "test:output",
+        description: "Returns a documented object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema,
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    registerTool(
+      "test:untyped",
+      dynamicTool({
+        id: "test:untyped",
+        description: "Has no output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(tools.find((entry) => entry.name === "test:output")?.outputSchema, outputSchema);
+    assertEquals(
+      Object.hasOwn(tools.find((entry) => entry.name === "test:untyped")!, "outputSchema"),
+      false,
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:output", arguments: {} },
+    });
+    assertEquals(called.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+    registerTool(
+      "test:invalid-output",
+      tool({
+        id: "test:invalid-output",
+        description: "Violates its declared output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema,
+        execute: async () => ({ ok: "wrong type" }),
+      }),
+    );
+    const invalid = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "test:invalid-output", arguments: {} },
+    });
+    assertEquals((invalid.result as { isError: boolean }).isError, true);
+    assertEquals(Object.hasOwn(invalid.result!, "structuredContent"), false);
+    for (
+      const [name, expected] of [["test:output", "completed"], ["test:invalid-output", "failed"]]
+    ) {
+      const started = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name, arguments: {}, task: {} },
+      });
+      const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+      await server.waitForPendingTasks();
+      const status = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tasks/get",
+        params: { taskId },
+      });
+      assertEquals((status.result as { status: string }).status, expected);
+      if (expected === "completed") {
+        const completed = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tasks/result",
+          params: { taskId },
+        });
+        assertEquals((completed.result as { structuredContent: unknown }).structuredContent, {
+          ok: true,
+        });
+      }
+    }
   });
 
   it("hides agent-owned tools from tools/list", async () => {

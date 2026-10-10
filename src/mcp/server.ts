@@ -1,6 +1,9 @@
 import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
+import type { Tool } from "#veryfront/tool/types.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { resourcePatternToUriTemplate } from "#veryfront/resource/pattern.ts";
@@ -19,6 +22,27 @@ const MAX_CONTEXT_HEADER_LENGTH = 255;
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
+
+async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
+  const outputSchema = tool.outputSchemaJson ??
+    (tool.outputSchema === undefined ? undefined : zodToJsonSchema(tool.outputSchema));
+  const content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
+  if (outputSchema === undefined) return { content, isError: false };
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
+  }
+  const validator = resolve<SchemaValidator>("SchemaValidator");
+  if (!validator.compileJsonSchema) {
+    throw new Error(
+      "MCP output contracts require a SchemaValidator with compileJsonSchema support",
+    );
+  }
+  const validation = await validator.compileJsonSchema(outputSchema)(result);
+  if (!validation.success) {
+    throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+  }
+  return { content, structuredContent: result, isError: false };
+}
 
 class JsonRpcError extends Error {
   readonly code: number;
@@ -346,6 +370,11 @@ export class MCPServer {
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
+      if (tool.outputSchemaJson !== undefined) {
+        entry.outputSchema = tool.outputSchemaJson;
+      } else if (tool.outputSchema !== undefined) {
+        entry.outputSchema = zodToJsonSchema(tool.outputSchema);
+      }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
       tools.push(entry);
@@ -427,10 +456,7 @@ export class MCPServer {
         async () => {
           try {
             const result = await executeTool(toolName, args, taskToolContext);
-            this.taskStore.complete(task.taskId, {
-              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-              isError: false,
-            });
+            this.taskStore.complete(task.taskId, await formatToolResult(tool, result));
           } catch (error) {
             if (this.taskStore.get(task.taskId)?.status === "cancelled") {
               return;
@@ -477,10 +503,7 @@ export class MCPServer {
 
         try {
           const result = await executeTool(toolName, args, foregroundToolContext);
-          return {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            isError: false,
-          };
+          return await formatToolResult(tool, result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return {

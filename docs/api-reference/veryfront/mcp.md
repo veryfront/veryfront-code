@@ -1,6 +1,6 @@
 ---
 title: "veryfront/mcp"
-description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads."
+description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads. Declared tool output schemas are included in discovery. Calls to those tools validate output and return structured content alongside serialized text."
 order: 19
 ---
 
