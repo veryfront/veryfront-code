@@ -1,7 +1,11 @@
-import { acceptWorkflowInheritedRunAdmission } from "#veryfront/agent/hosted/terminal-credential.ts";
+import {
+  acceptInheritedRunAdmission,
+  acceptWorkflowInheritedRunAdmission,
+} from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
@@ -41,6 +45,13 @@ const json = (value: unknown, status = 200, headers = {}) =>
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
+function requestHeaders(init: Parameters<typeof globalThis.fetch>[1]) {
+  return new Headers(observeFetchRequestInit(init).headers);
+}
+function requestJsonBody(init: Parameters<typeof globalThis.fetch>[1]) {
+  const body = observeFetchRequestInit(init).body;
+  return body ? JSON.parse(String(body)) : {};
+}
 function admission(
   status = "running",
   output: unknown = null,
@@ -110,7 +121,7 @@ describe("workflow agent child protocol", () => {
         projectExecutionAttempt: { ...claims.projectExecutionAttempt, attemptId },
       });
       const send: typeof fetch = (url, init) => {
-        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         if (String(url).endsWith("/events")) {
           starts.push(key);
           return Promise.resolve(json({}));
@@ -137,8 +148,8 @@ describe("workflow agent child protocol", () => {
     const order: string[] = [];
     const send: typeof fetch = (_url, init) => {
       const url = String(_url);
-      const headers = new Headers(init?.headers);
-      const body = JSON.parse(String(init?.body));
+      const headers = requestHeaders(init);
+      const body = requestJsonBody(init);
       if (url.endsWith(`/runs/${parentId}/events`)) {
         order.push("start");
         assertEquals(headers.get("Authorization"), `Bearer ${eventToken}`);
@@ -147,6 +158,7 @@ describe("workflow agent child protocol", () => {
       }
       if (url.endsWith("/runs")) {
         order.push("admit");
+        assertEquals(headers.get("Accept"), "application/vnd.veryfront.inherited-run+json");
         assertEquals(headers.get("X-Veryfront-Run-Event-Token"), eventToken);
         assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
         assertEquals(body.parent_run_id, parentId);
@@ -216,14 +228,14 @@ describe("workflow agent child protocol", () => {
     const cursors = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) {
         starts.add(body.events[0].stepId);
         return Promise.resolve(json({}));
       }
       if (path === "/runs") {
         assertEquals(starts.has(body.node_id), true);
-        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         let record = records.get(key);
         if (!record) {
           const suffix = String(records.size + 1).padStart(12, "0");
@@ -323,14 +335,14 @@ describe("workflow agent child protocol", () => {
     const cursors = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) {
         starts.add(body.events[0].stepId);
         return Promise.resolve(json({}));
       }
       if (path === "/runs") {
         assertEquals(starts.has(body.node_id), true);
-        const key = new Headers(init?.headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         let record = records.get(key);
         if (!record) {
           const suffix = String(records.size + 1).padStart(12, "0");
@@ -409,7 +421,7 @@ describe("workflow agent child protocol", () => {
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path === "/runs") return Promise.resolve(admission());
       assertEquals(path, `/runs/${childId}/finalize`);
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       assertEquals(body.status, "failed");
       persisted = body.error;
       return Promise.resolve(json({ id: childId, status: "failed" }));
@@ -448,7 +460,7 @@ describe("workflow agent child protocol", () => {
         if (path === "/runs") return Promise.resolve(admission());
         assertEquals(path, `/runs/${childId}/cancel`);
         assertEquals(stopped, true, "terminal write must follow actual local settlement");
-        const headers = new Headers(init?.headers);
+        const headers = requestHeaders(init);
         assertEquals(headers.get("Authorization"), "Bearer child-invocation");
         assertEquals(headers.get("X-Veryfront-Run-Terminal-Token"), terminalToken);
         terminals++;
@@ -488,14 +500,14 @@ describe("workflow agent child protocol", () => {
     const keys: string[] = [];
     let started = "";
     const send: typeof fetch = (url, init) => {
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       if (String(url).endsWith("/events")) {
         started = body.events[0].stepId;
         return Promise.resolve(json({}));
       }
       assertEquals(body.node_id, started);
       identities.push(body.node_id);
-      keys.push(new Headers(init?.headers).get("Idempotency-Key")!);
+      keys.push(requestHeaders(init).get("Idempotency-Key")!);
       return Promise.resolve(admission("completed", "stored"));
     };
     const execute = () => {
@@ -579,7 +591,7 @@ describe("workflow agent child protocol", () => {
     });
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path === "/runs") return Promise.resolve(admission());
       if (path.endsWith("/events")) {
@@ -631,7 +643,7 @@ describe("workflow agent child protocol", () => {
     const counts = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path.endsWith("/events")) {
         const id = path.split("/")[2]!;
@@ -724,7 +736,7 @@ describe("workflow agent child protocol", () => {
       let stopped = false;
       const send: typeof fetch = (url, init) => {
         const path = new URL(String(url)).pathname;
-        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const body = requestJsonBody(init);
         if (path === "/runs") {
           states.set(body.node_id ? childId : grandchildId, "running");
           return Promise.resolve(
@@ -815,110 +827,117 @@ describe("workflow agent child protocol", () => {
     });
   }
 
-  it("keeps concurrent workflow children and their tool-call authority isolated", async () => {
-    const parentB = "55555555-5555-4555-8555-555555555555";
-    const childB = "66666666-6666-4666-8666-666666666666";
-    const leafA = "77777777-7777-4777-8777-777777777777";
-    const leafB = "88888888-8888-4888-8888-888888888888";
-    const seen: string[] = [];
-    const cursors = new Map<string, number>();
-    let entered = 0;
-    let release!: () => void;
-    const together = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const send: typeof fetch = (url, init) => {
-      const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(init?.body));
-      const headers = new Headers(init?.headers);
-      if (path.endsWith("/events")) {
-        const id = path.split("/")[2]!;
-        const cursor = (cursors.get(id) ?? 0) + body.events.length;
-        cursors.set(id, cursor);
-        return Promise.resolve(
-          json({
-            run_id: id,
-            latest_event_id: cursor,
-            latest_external_event_sequence: cursor,
-            appended_count: body.events.length,
-          }),
-        );
-      }
-      if (path === "/runs") {
-        if (body.node_id) {
-          const second = body.parent_run_id === parentB;
-          assertEquals(
-            headers.get("Authorization"),
-            second ? "Bearer parent-b" : "Bearer parent-invocation",
+  for (const delegationTool of ["invoke_agent", "veryfront__invoke_agent"]) {
+    it(`keeps concurrent ${delegationTool} children and their tool-call authority isolated`, async () => {
+      const parentB = "55555555-5555-4555-8555-555555555555";
+      const childB = "66666666-6666-4666-8666-666666666666";
+      const leafA = "77777777-7777-4777-8777-777777777777";
+      const leafB = "88888888-8888-4888-8888-888888888888";
+      const seen: string[] = [];
+      const cursors = new Map<string, number>();
+      let entered = 0;
+      let release!: () => void;
+      const together = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = requestJsonBody(init);
+        const headers = requestHeaders(init);
+        if (path.endsWith("/events")) {
+          const id = path.split("/")[2]!;
+          const cursor = (cursors.get(id) ?? 0) + body.events.length;
+          cursors.set(id, cursor);
+          return Promise.resolve(
+            json({
+              run_id: id,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
           );
+        }
+        if (path === "/runs") {
+          if (body.node_id) {
+            const second = body.parent_run_id === parentB;
+            assertEquals(
+              headers.get("Authorization"),
+              second ? "Bearer parent-b" : "Bearer parent-invocation",
+            );
+            return Promise.resolve(
+              admission(
+                "running",
+                null,
+                second ? childB : childId,
+                second ? "run_child_b" : "run_child",
+              ),
+            );
+          }
+          seen.push(`${body.parent_run_id}:${body.tool_call_id}:${body.target.id}`);
+          const second = body.target.id === "leaf-b";
+          assertEquals(body.parent_run_id, second ? childB : childId);
+          const token = headers.get("X-Veryfront-Run-Terminal-Token")!;
+          assertEquals(JSON.parse(atob(token.split(".")[1]!)).canonicalRunId, body.parent_run_id);
           return Promise.resolve(
             admission(
               "running",
               null,
-              second ? childB : childId,
-              second ? "run_child_b" : "run_child",
+              second ? leafB : leafA,
+              second ? "run_leaf_b" : "run_leaf_a",
             ),
           );
         }
-        seen.push(`${body.parent_run_id}:${body.tool_call_id}:${body.target.id}`);
-        const second = body.target.id === "leaf-b";
-        assertEquals(body.parent_run_id, second ? childB : childId);
-        const token = headers.get("X-Veryfront-Run-Terminal-Token")!;
-        assertEquals(JSON.parse(atob(token.split(".")[1]!)).canonicalRunId, body.parent_run_id);
-        return Promise.resolve(
-          admission("running", null, second ? leafB : leafA, second ? "run_leaf_b" : "run_leaf_a"),
-        );
-      }
-      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
-    };
-    const execute = (target: string) => async () => {
-      if (++entered === 2) release();
-      await together;
-      await observeGeneratedAgentTurn(`message-${target}`, {
-        text: "",
-        toolCalls: [{
-          toolCallId: "same-tool-id",
-          toolName: "invoke_agent",
-          input: { agent_id: target },
-        }],
-      });
-      const output = await executeLocalChild({
-        agentId: target,
-        input: target,
-        toolName: "invoke_agent",
-        toolInput: { agent_id: target },
-        context: { toolCallId: "same-tool-id" },
-        execute: () => Promise.resolve({ text: target, status: "completed", toolCalls: 0 }),
-      });
-      return { success: true, output, executionTime: 0 };
-    };
-    const second = createWorkflowAgentNodeRunner({
-      runId: "run_parent_b",
-      projectId: "project",
-      apiUrl: "https://api.example.test",
-      fetch: send,
-      authToken: "parent-b",
-      eventToken: encode({
-        tokenUse: "run_event_writer",
+        return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
+      };
+      const execute = (target: string) => async () => {
+        if (++entered === 2) release();
+        await together;
+        await observeGeneratedAgentTurn(`message-${target}`, {
+          text: "",
+          toolCalls: [{
+            toolCallId: "same-tool-id",
+            toolName: delegationTool,
+            input: { agent_id: target },
+          }],
+        });
+        const output = await executeLocalChild({
+          agentId: target,
+          input: target,
+          toolName: delegationTool,
+          toolInput: { agent_id: target },
+          context: { toolCallId: "same-tool-id" },
+          execute: () => Promise.resolve({ text: target, status: "completed", toolCalls: 0 }),
+        });
+        return { success: true, output, executionTime: 0 };
+      };
+      const second = createWorkflowAgentNodeRunner({
         runId: "run_parent_b",
         projectId: "project",
-        projectExecutionAttempt: {
-          canonicalRunId: parentB,
-          workerId: "worker-b",
-          attemptId: "attempt-b",
-        },
-      }),
+        apiUrl: "https://api.example.test",
+        fetch: send,
+        authToken: "parent-b",
+        eventToken: encode({
+          tokenUse: "run_event_writer",
+          runId: "run_parent_b",
+          projectId: "project",
+          projectExecutionAttempt: {
+            canonicalRunId: parentB,
+            workerId: "worker-b",
+            attemptId: "attempt-b",
+          },
+        }),
+      });
+      const results = await Promise.all([
+        runner(send)({ ...invocation, execute: execute("leaf-a") }),
+        second({ ...invocation, runId: "run_parent_b", execute: execute("leaf-b") }),
+      ]);
+      assertEquals(results.map((value) => value.success), [true, true]);
+      assertEquals(
+        seen.sort(),
+        [`${childId}:same-tool-id:leaf-a`, `${childB}:same-tool-id:leaf-b`].sort(),
+      );
     });
-    const results = await Promise.all([
-      runner(send)({ ...invocation, execute: execute("leaf-a") }),
-      second({ ...invocation, runId: "run_parent_b", execute: execute("leaf-b") }),
-    ]);
-    assertEquals(results.map((value) => value.success), [true, true]);
-    assertEquals(
-      seen.sort(),
-      [`${childId}:same-tool-id:leaf-a`, `${childB}:same-tool-id:leaf-b`].sort(),
-    );
-  });
+  }
 
   it("refuses invented and mismatched tool invocations before child admission", async () => {
     for (const declared of [undefined, "different-agent"]) {
@@ -927,7 +946,7 @@ describe("workflow agent child protocol", () => {
       let cursor = 0;
       const send: typeof fetch = (url, init) => {
         const path = new URL(String(url)).pathname;
-        const body = JSON.parse(String(init?.body));
+        const body = requestJsonBody(init);
         if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
         if (path === "/runs") {
           admissions++;
@@ -1059,7 +1078,7 @@ describe("workflow agent child protocol", () => {
           assertEquals(new URL(String(url)).pathname, `/runs/${id}/events`);
           return Promise.resolve(json({}));
         }
-        assertEquals(JSON.parse(String(init?.body)).parent_run_id, id);
+        assertEquals(requestJsonBody(init).parent_run_id, id);
         return Promise.resolve(admission("completed", "stored", childId, "run_child", id));
       };
       const result = await runner(send, token)({
@@ -1126,6 +1145,143 @@ describe("workflow agent child protocol", () => {
         "current run authority",
       );
     }
+  });
+});
+
+describe("private workflow inherited execution response", () => {
+  const binding = {
+    projectId: "project",
+    parentRunId: parentId,
+    agentId: "coordinator",
+    apiUrl: "https://api.example.test",
+    fetch,
+  };
+  const projection = {
+    version: 1,
+    canonicalRunId: childId,
+    parentRunId: parentId,
+    projectId: "project",
+    agentId: "coordinator",
+    status: "running",
+    conversationId,
+    outputMessageId: "44444444-4444-4444-8444-444444444444",
+    dispatchNonce: "nonce",
+  };
+  const privateResponse = (body: unknown) => {
+    const headers = new Headers(admission().headers);
+    headers.set("Content-Type", "application/vnd.veryfront.inherited-run+json");
+    return new Response(JSON.stringify(body), { status: 202, headers });
+  };
+  it("binds private routing without requiring a public resource", async () => {
+    const run = await acceptWorkflowInheritedRunAdmission(privateResponse(projection), binding);
+    assertEquals("canonicalRunId" in run && run.canonicalRunId, childId);
+    assertEquals("conversationId" in run && run.conversationId, conversationId);
+  });
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    it(`retains private ${status} result without restoring execution`, async () => {
+      const error = { code: "CHILD_FAILED", message: "Stored failure" };
+      const result = await acceptWorkflowInheritedRunAdmission(
+        privateResponse({
+          ...projection,
+          status,
+          output: { text: "stored result" },
+          ...(status === "failed" ? { error } : {}),
+        }),
+        binding,
+      );
+      assertEquals(result, {
+        terminalReceipt: {
+          status,
+          output: { text: "stored result" },
+          ...(status === "failed" ? { error } : {}),
+        },
+      });
+    });
+  }
+  it("treats a null private error as absent", async () => {
+    const run = await acceptWorkflowInheritedRunAdmission(
+      privateResponse({ ...projection, error: null }),
+      binding,
+    );
+    assertEquals("canonicalRunId" in run && run.canonicalRunId, childId);
+    const result = await acceptWorkflowInheritedRunAdmission(
+      privateResponse({ ...projection, status: "completed", output: "done", error: null }),
+      binding,
+    );
+    assertEquals(result, { terminalReceipt: { status: "completed", output: "done" } });
+  });
+  it("rejects terminal projection without its durable result", async () => {
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(
+          privateResponse({ ...projection, status: "completed" }),
+          binding,
+        ),
+      Error,
+      "binding mismatch",
+    );
+  });
+  for (
+    const change of [
+      { version: 2 },
+      { canonicalRunId: parentId },
+      { parentRunId: childId },
+      { projectId: "foreign" },
+      { agentId: "foreign" },
+      { dispatchNonce: "stale" },
+      { conversationId: "bad" },
+      { outputMessageId: "bad" },
+      { error: { code: 1, message: "bad" } },
+      { error: { code: "CHILD_FAILED" } },
+    ]
+  ) {
+    it(`rejects private binding ${JSON.stringify(change)}`, async () => {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(
+            privateResponse({ ...projection, ...change }),
+            binding,
+          ),
+        Error,
+        "binding mismatch",
+      );
+    });
+  }
+  const privateVariant = (
+    body: string,
+    init: { status?: number; drop?: string[] } = {},
+  ) => {
+    const headers = new Headers(privateResponse(projection).headers);
+    for (const name of init.drop ?? []) headers.delete(name);
+    return new Response(body, { status: init.status ?? 202, headers });
+  };
+  for (
+    const [name, response] of [
+      ["a failed status", () => privateVariant(JSON.stringify(projection), { status: 409 })],
+      [
+        "missing no-store",
+        () => privateVariant(JSON.stringify(projection), { drop: ["Cache-Control"] }),
+      ],
+      [
+        "missing terminal token",
+        () =>
+          privateVariant(JSON.stringify(projection), { drop: ["X-Veryfront-Run-Terminal-Token"] }),
+      ],
+      ["a malformed body", () => privateVariant("{not json")],
+    ] as const
+  ) {
+    it(`rejects private response with ${name}`, async () => {
+      await assertRejects(
+        () => acceptWorkflowInheritedRunAdmission(response(), binding),
+        Error,
+        "binding mismatch",
+      );
+    });
+  }
+  it("admits a private non-terminal response through the direct admission path", async () => {
+    const run = await acceptInheritedRunAdmission(privateResponse(projection), binding);
+    assertEquals(run.canonicalRunId, childId);
+    assertEquals(run.conversationId, conversationId);
   });
 });
 

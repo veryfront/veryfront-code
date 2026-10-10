@@ -109,7 +109,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "childCanonicalRunId",
       "EVENT_SCHEMA_BY_TYPE",
       "EVENT_TYPES",
-      "deno task generate",
+      "npm install veryfront @veryfront/ext-schema-zod",
+      "deno add npm:veryfront npm:@veryfront/ext-schema-zod",
+      "node verify-events.mjs",
+      "bun verify-events.mjs",
+      "deno run verify-events.mjs",
+      "assert.equal(invalid.success, false)",
+      "Event parsing verified.",
     ],
   },
   "guides/agents.md": {
@@ -1019,7 +1025,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/sandbox.md",
       "../api-reference/veryfront/fs.md",
     ],
-    snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
+    snippets: ["Sandbox.create", "runCommand", "sandbox.close"],
   },
   "guides/security-headers.md": {
     references: [],

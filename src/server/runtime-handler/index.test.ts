@@ -849,7 +849,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("allows automatic OPTIONS snapshot failures to retry before middleware", () => {
-    const error = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({ detail: "snapshot changed" });
+    const error = createSourceSnapshotChangedError("snapshot changed");
 
     assertEquals(
       shouldRetrySourceSnapshotFreshness(
@@ -885,11 +885,11 @@ describe("server/runtime-handler/index", () => {
       },
       {
         name: "bounds replay when the document snapshot keeps changing",
-        failures: 2,
+        failures: 3,
         middleware: false,
         method: "GET",
         status: 503,
-        calls: 2,
+        calls: 3,
       },
       {
         name: "does not replay a document after project middleware starts",
@@ -955,6 +955,16 @@ describe("server/runtime-handler/index", () => {
       }
     });
   }
+
+  it("does not retry missing source snapshot capabilities", () => {
+    const error = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail: "Snapshot identity unavailable",
+    });
+    assertEquals(
+      shouldRetrySourceSnapshotFreshness(new Request("http://localhost/"), error, 0, false),
+      false,
+    );
+  });
 
   it("retains an unmatched OPTIONS admission snapshot through middleware dispatch", async () => {
     let sourceVersion = 1;

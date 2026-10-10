@@ -68,7 +68,7 @@ describe("sandbox/shell-tools", () => {
   it("creates sandbox shell tools with an injected bash-tool factory", async () => {
     const tools = await createSandboxShellTools(
       {
-        executeCommand: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        runCommand: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
         readFile: async () => "content",
         writeFiles: async () => undefined,
       },

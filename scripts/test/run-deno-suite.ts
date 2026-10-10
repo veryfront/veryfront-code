@@ -109,7 +109,11 @@ export const DENO_SUITE_PROFILES: Readonly<
     // Belt and braces: the planner already excludes these, and the ignore
     // keeps a stray positional path from pulling them back in.
     extraFlags: [
-      "--ignore=tests/bun,tests/e2e,tests/integration/compiled-binary-e2e.test.ts",
+      "--ignore=tests/bun,tests/e2e," +
+      "tests/integration/compiled-binary-e2e.memory-recycle.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-1.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-2.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-3.test.ts",
     ],
   },
   "integration:cli": {
@@ -161,19 +165,54 @@ export const DENO_SUITE_PROFILES: Readonly<
   // shared test prefix stays off. VERYFRONT_BINARY* passthrough still works
   // because the spawned `deno test` inherits the parent env. The preload and
   // deny-net apply to the harness process only, never to the binary.
+  // The shard files run in parallel against one compiled binary; see
+  // DENO_SUITE_DEFAULT_ENV for the worker count.
   "e2e:binary": {
     env: {},
     network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
-    parallel: false,
+    parallel: true,
     heap: false,
     coverage: false,
     maxFilesPerProcess: null,
     extraFlags: [],
   },
 });
+
+/**
+ * Env defaults a caller's own environment may override, unlike a profile's
+ * `env`. e2e:binary runs its four files (three shards sized for the 4 vCPU CI
+ * runner, see COMPILED_BINARY_E2E_SHARD_COUNT, plus the memory-recycle file)
+ * at once; a caller-set DENO_JOBS still bounds that, and the files then share
+ * the one compiled binary one after another.
+ */
+const DENO_SUITE_DEFAULT_ENV: Readonly<
+  Partial<Record<DenoSuitePlanId, Readonly<Record<string, string>>>>
+> = Object.freeze({
+  "e2e:binary": { DENO_JOBS: "4" },
+});
+
+/**
+ * The child env for a suite: defaults, then the caller's env, then the profile.
+ * e2e:binary also gets a new run id per invocation, which its files share to
+ * reuse the one binary compiled for this run (see ensureBinaryCompiled).
+ */
+export function buildDenoSuiteProcessEnv(
+  suite: DenoSuitePlanId,
+  parentEnv: Readonly<Record<string, string>>,
+): Record<string, string> {
+  return buildTestProcessEnv(
+    { ...DENO_SUITE_DEFAULT_ENV[suite], ...parentEnv },
+    suite === "e2e:binary"
+      ? {
+        ...DENO_SUITE_PROFILES[suite].env,
+        VERYFRONT_BINARY_E2E_RUN_ID: crypto.randomUUID(),
+      }
+      : DENO_SUITE_PROFILES[suite].env,
+  );
+}
 
 interface DenoSuiteCommandOptions {
   readonly coverageDir?: string;
@@ -305,7 +344,7 @@ if (import.meta.main) {
         passthroughArgs: flags.passthroughArgs,
       }),
       clearEnv: true,
-      env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+      env: buildDenoSuiteProcessEnv(suite, Deno.env.toObject()),
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",

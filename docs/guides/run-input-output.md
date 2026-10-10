@@ -72,8 +72,9 @@ tasks that read business data from `config` keep working. See
 
 An eval that targets an agent reads an object `input` as target hints, such as
 `branch_id`. Other evals, and other JSON values, store the input on the run
-without reading hints from it. The output is the eval
-report, and a failed eval run keeps its report as `output`.
+without reading hints from it. The output is the eval report. A failed evaluation
+keeps its report as `output`; input validation fails before evaluation and stores
+`output: null`.
 
 ## Runs without schemas
 
@@ -86,8 +87,9 @@ behaves as follows:
 - The run records no schema violation, and both schema identities are `null`.
 
 An agent without `outputSchema` stores its final text, or `null`. Veryfront
-never parses old assistant text into a structured value. Evals declare no
-schemas: their output is the eval report.
+never parses old assistant text into a structured value. An eval without
+`inputSchema` accepts any JSON input. Evals do not support `outputSchema`;
+their output is the eval report.
 
 ## Declared schemas
 
@@ -110,6 +112,7 @@ enforced as shown in every release.
 | Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs, with `error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in `error.detail`.                                                                     |
 | A workflow's final output violates `outputSchema`                                     | Fails before completion with `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in `error.detail.errors`. No output is stored, `onError` runs, and `onComplete` does not. |
 | An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                                                    |
+| Submitted eval `input` violates `inputSchema` | Fails before evaluation with `error.code: "INPUT_VALIDATION_FAILED"`, structured validation errors, and `output: null`. |
 
 An agent's raw JSON Schema `outputSchema` that the registered validator fails
 to compile fails the run before the model is called. When the registered

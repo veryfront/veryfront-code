@@ -1,0 +1,472 @@
+name: CI public pool
+
+# Test, lint and coverage jobs that CI/CD can run on the self-hosted
+# `veryfront-public` pool. Callers must use this workflow pinned to main:
+#
+#   uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+#
+# so the runner choice below always comes from main, never from the pull
+# request or merge-group revision under test. Each job checks out and tests
+# that revision, as before.
+#
+# A job selects `veryfront-public` only when the repository variable
+# CI_RUNNER_PUBLIC is `veryfront-public` and the event is a push to main, a
+# merge group, or a same-repository pull request not authored by Dependabot.
+# Every other case, including an unset variable and fork pull requests, selects
+# `ubuntu-latest`. These jobs hold no secrets and a read-only token, and need
+# no root or Docker. The contract is pinned by
+# tests/integration/ci/workflow-runners.test.ts.
+
+on:
+  workflow_call:
+    inputs:
+      job:
+        description: Job to run
+        required: true
+        type: string
+      check:
+        description: Source check for the `ci` job
+        required: false
+        type: string
+        default: ""
+      shard:
+        description: Shard number for sharded jobs
+        required: false
+        type: number
+        default: 0
+      runtime:
+        description: Runtime for the runtime critical-flow job
+        required: false
+        type: string
+        default: ""
+      node-version:
+        description: Node version for the npm install smoke job
+        required: false
+        type: string
+        default: ""
+      ubuntu26:
+        description: Select the Ubuntu 26.04 canary on a main dispatch
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  ci:
+    name: "source check (${{ inputs.check }})"
+    if: ${{ inputs.job == 'ci' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      # Fail closed on parameters the caller got wrong instead of skipping.
+      - name: Validate inputs
+        if: ${{ !(contains(fromJSON('["test-layout","format","lint","typecheck","test-typecheck"]'), inputs.check)) }}
+        run: |
+          echo "::error::Invalid inputs for ci"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure test migration baselines
+        if: ${{ inputs.check == 'test-layout' || inputs.check == 'lint' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          case "$EVENT_NAME" in
+            pull_request) fetch_ref="$PR_BASE_SHA"; base="$PR_BASE_SHA" ;;
+            merge_group) fetch_ref="$MERGE_GROUP_BASE_SHA"; base="$MERGE_GROUP_BASE_SHA" ;;
+            push) fetch_ref="$PUSH_BASE_SHA"; base="$PUSH_BASE_SHA" ;;
+            *) fetch_ref="main"; base="origin/main" ;;
+          esac
+
+          if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
+            fetch_ref="main"
+            base="origin/main"
+          fi
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            if [ "$base" = "origin/main" ]; then
+              git fetch --no-tags --unshallow origin "main:refs/remotes/origin/main"
+            else
+              git fetch --no-tags --unshallow origin "$fetch_ref"
+            fi
+          elif [ "$base" = "origin/main" ]; then
+            git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"
+          else
+            git fetch --no-tags --depth=1 origin "$fetch_ref"
+          fi
+
+          echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
+          echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      # docs:snippets:check runs the integrations guide's TypeScript first call
+      # under Node, which needs Node 22.18+ to run .ts files without flags.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        if: ${{ inputs.check == 'lint' }}
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Run ${{ inputs.check }}
+        env:
+          CHECK: ${{ inputs.check }}
+        run: |
+          case "${CHECK}" in
+            test-layout) deno task test:layout ;;
+            format) deno task fmt:check ;;
+            # Keep the local lint:ci task intact. CI runs its test typecheck
+            # concurrently, and fails closed if the task chain changes shape.
+            lint)
+              deno eval '
+                const chain = JSON.parse(Deno.readTextFileSync("deno.json"))
+                  .tasks["lint:ci"].split(" && ");
+                const check = "deno task lint:test-typecheck";
+                if (chain.filter((command) => command === check).length !== 1) {
+                  throw new Error("expected one test typecheck in lint:ci");
+                }
+                const status = await new Deno.Command("bash", {
+                  args: ["-e", "-o", "pipefail", "-c",
+                    chain.filter((command) => command !== check).join(" && ")],
+                  stdout: "inherit", stderr: "inherit",
+                }).spawn().status;
+                Deno.exit(status.code);
+              '
+              ;;
+            typecheck) deno task typecheck ;;
+            test-typecheck) deno task lint:test-typecheck ;;
+          esac
+      # test:scripts is a local task; CI needs this focused generator lane.
+      - name: Run Runs fixture generator regression tests
+        if: ${{ inputs.check == 'typecheck' }}
+        run: deno task test:file scripts/generate-runs-fixtures.test.ts
+
+  # ============================================
+  # CI: Tests
+  # ============================================
+
+  coverage-shards:
+    name: "coverage shard ${{ inputs.shard }}/16"
+    if: ${{ inputs.job == 'coverage-shards' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      # Fail closed on parameters the caller got wrong instead of skipping.
+      - name: Validate inputs
+        if: ${{ !(inputs.shard >= 1 && inputs.shard <= 16) }}
+        run: |
+          echo "::error::Invalid inputs for coverage-shards"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Run unit coverage shard
+        id: coverage
+        run: |
+          START=$(date +%s)
+          deno task coverage:ci:shard -- --shard=${{ inputs.shard }}/16 --coverage-dir=coverage-shard-${{ inputs.shard }}
+          echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
+      - name: Include CLI, dependency history, and runtime security integration coverage
+        if: inputs.shard == 1
+        run: |
+          rm -rf coverage-history coverage-cli
+          deno task test:file --coverage=coverage-history \
+            tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/config/host-api-base.test.ts \
+            tests/integration/platform/runtime-request-context.test.ts \
+            tests/integration/runtime/compat/esbuild-cleanup.test.ts \
+            tests/integration/server/shared-agent-bootstrap.test.ts \
+            tests/integration/observability/project-otlp-transport-policy.test.ts \
+            tests/integration/observability/project-provider.test.ts \
+            tests/integration/observability/project-http-lifecycle.test.ts
+          # The CLI regression changes cwd, so give it a separate process.
+          deno task test:file --coverage=coverage-cli \
+            tests/integration/cli/merge-preview.integration.test.ts \
+            tests/integration/cli/production-startup-cache.integration.test.ts
+          # Kept as separate reports: block ids are normalized only when every
+          # report is merged at once (coverage gate and Sonar), so an early
+          # merge here must not rewrite them.
+          mkdir -p coverage-shard-1/history coverage-shard-1/cli
+          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/history/lcov.info
+          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
+      - name: Upload unit coverage lcov
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-shard-${{ inputs.shard }}
+          path: coverage-shard-${{ inputs.shard }}/**/lcov.info
+          retention-days: 1
+      - name: Add coverage shard summary
+        run: echo "### Coverage shard ${{ inputs.shard }}/16 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+
+  coverage-node-executor:
+    name: "native executor coverage"
+    if: ${{ inputs.job == 'coverage-node-executor' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install Node resolver test dependencies
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p node_modules npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
+      - name: Collect mapped native executor coverage
+        run: deno task coverage:ci:node-executor
+      - name: Upload native executor coverage lcov
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-native-executor
+          path: coverage/node-executor/lcov.info
+          retention-days: 1
+          if-no-files-found: error
+
+  coverage-integration-client:
+    name: "integration client coverage"
+    if: ${{ inputs.job == 'coverage-integration-client' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Collect integration client and CLI coverage
+        run: deno task coverage:ci:integration-client
+      - name: Upload integration client coverage lcov
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-integration-client
+          path: coverage/integration-client/lcov.info
+          retention-days: 1
+          if-no-files-found: error
+
+  tests-node:
+    name: "tests (node shard ${{ inputs.shard }}/4)"
+    if: ${{ inputs.job == 'tests-node' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      # Fail closed on parameters the caller got wrong instead of skipping.
+      - name: Validate inputs
+        if: ${{ !(inputs.shard >= 1 && inputs.shard <= 4) }}
+        run: |
+          echo "::error::Invalid inputs for tests-node"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: ./.github/actions/restore-npm-workspace
+      - name: Run Node runtime shard
+        env:
+          VF_TEST_SHARD: ${{ inputs.shard }}/4
+        run: node ./tests/node/run-tests.mjs --suite=runtime:node
+
+  # Sandbox worker generation and prepared-module encoding on the minimum
+  # supported Node. Only Node 22/24 lack the Uint8Array proposal methods
+  # (toHex/toBase64) whose use shipped the #732 defect class; the full node
+  # suite above covers Node 24, this leg pins the floor
+  # (veryfront-issue-inbox#751).
+
+  tests-node-sandbox:
+    name: "tests (node sandbox, minimum Node)"
+    if: ${{ inputs.job == 'tests-node-sandbox' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - name: Read minimum supported Node version
+        id: node-version
+        run: |
+          deno eval '
+            import { MINIMUM_NODE_VERSION } from "./scripts/build/runtime-support.ts";
+            console.log(`version=${MINIMUM_NODE_VERSION}`);
+          ' >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ steps.node-version.outputs.version }}
+          package-manager-cache: false
+      - uses: ./.github/actions/restore-npm-workspace
+      - name: Run sandbox worker tests
+        run: node ./tests/node/run-tests.mjs --suite=runtime:node 'src/security/sandbox/'
+
+  tests-bun:
+    name: "tests (bun)"
+    if: ${{ inputs.job == 'tests-bun' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.6"
+      - uses: ./.github/actions/restore-npm-workspace
+      - name: Run Bun runtime suite
+        run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
+
+  tests-runtime-critical-flow:
+    name: "tests (runtime critical flow: ${{ inputs.runtime }})"
+    if: ${{ inputs.job == 'tests-runtime-critical-flow' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      # Fail closed on parameters the caller got wrong instead of skipping.
+      - name: Validate inputs
+        if: ${{ !(contains(fromJSON('["deno","node","bun"]'), inputs.runtime)) }}
+        run: |
+          echo "::error::Invalid inputs for tests-runtime-critical-flow"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: ${{ inputs.runtime == 'bun' }}
+        with:
+          bun-version: "1.3.6"
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+      - name: Run runtime critical flow
+        env:
+          RUNTIME: ${{ inputs.runtime }}
+        run: deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime="${RUNTIME}" --packed-dir=dist/npm-compatibility
+
+  tests-npm-install-smoke:
+    name: "tests (npm install smoke: Node ${{ inputs.node-version }})"
+    if: ${{ inputs.job == 'tests-npm-install-smoke' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      # Fail closed on parameters the caller got wrong instead of skipping.
+      - name: Validate inputs
+        if: ${{ !(inputs.node-version != '') }}
+        run: |
+          echo "::error::Invalid inputs for tests-npm-install-smoke"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager-cache: false
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+      - name: Materialize canonical npm output
+        run: |
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
+            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
+      - name: Install TypeScript toolchain
+        run: npm --prefix storybook ci --ignore-scripts
+      - name: Check published package types
+        run: deno task typecheck:consumer --skip-build
+      - name: Report npm package size
+        run: |
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Clean-room install/import smoke
+        env:
+          VF_NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
+        run: deno run -A scripts/test/npm-install-smoke.ts
+
+  tests-sentry-runtime-packages:
+    name: "tests (sentry runtime packages)"
+    if: ${{ inputs.job == 'tests-sentry-runtime-packages' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ inputs.ubuntu26 && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'ubuntu-26.04' || vars.CI_RUNNER_PUBLIC == 'veryfront-public' && github.repository == 'veryfront/veryfront-code' && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) && 'veryfront-public' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Check Sentry runtime package variants
+        run: deno task test:sentry-runtime-packages
+
+  # ============================================
+  # CI: Split Mode Test
+  # ============================================
+
+  # A caller that names no known job must fail rather than skip every job.
+  unknown-job:
+    if: ${{ !contains(fromJSON('["ci","coverage-shards","coverage-node-executor","coverage-integration-client","tests-node","tests-node-sandbox","tests-bun","tests-runtime-critical-flow","tests-npm-install-smoke","tests-sentry-runtime-packages"]'), inputs.job) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Reject unknown job
+        env:
+          JOB: ${{ inputs.job }}
+        run: |
+          echo "::error::Unknown public pool job: ${JOB}"
+          exit 1

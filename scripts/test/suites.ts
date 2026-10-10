@@ -177,6 +177,7 @@ export const UNIT_SERIAL_FILES: readonly string[] = Object.freeze([
 const PROCESS_ISOLATED_TEST_FILES = new Set([
   ...UNIT_CWD_FILES,
   ...UNIT_SERIAL_FILES,
+  "cli/commands/dev/dev-output.integration.test.ts",
   "tests/integration/adapters/shell-adapter.test.ts",
   "tests/integration/cli/merge-preview.integration.test.ts",
   "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",

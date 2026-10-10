@@ -15,6 +15,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import {
   buildDenoSuiteCommandArgs,
+  buildDenoSuiteProcessEnv,
   DENO_SUITE_PROFILES,
   handleDenoSuiteStatus,
   LOOPBACK_ALLOW_NET,
@@ -117,7 +118,12 @@ describe("suite planning parity", () => {
         "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
         "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
       ],
-      "e2e:binary": ["tests/integration/compiled-binary-e2e.test.ts"],
+      "e2e:binary": [
+        "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-3.test.ts",
+      ],
       "runtime:node": await legacyRuntimeFiles("node"),
       "runtime:bun": await legacyRuntimeFiles("bun"),
     };
@@ -491,9 +497,10 @@ describe("migration command surface", () => {
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
   });
 
-  it("gives cwd-mutating fixtures their own process without serializing peers", () => {
+  it("gives process-sensitive fixtures their own process without serializing peers", () => {
     const mutators = [
       ...UNIT_CWD_FILES,
+      "cli/commands/dev/dev-output.integration.test.ts",
       "tests/integration/adapters/shell-adapter.test.ts",
       "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
       "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
@@ -521,6 +528,32 @@ describe("migration command surface", () => {
       DENO_SUITE_PROFILES["unit:cwd-exclusion"].env.DENO_JOBS,
       "2",
       "the two-file exclusion probe must overlap even when the parent suite uses DENO_JOBS=1",
+    );
+  });
+
+  it("runs the binary e2e files together unless the caller bounds DENO_JOBS", () => {
+    assertEquals(buildDenoSuiteProcessEnv("e2e:binary", {}).DENO_JOBS, "4");
+    assertEquals(
+      buildDenoSuiteProcessEnv("e2e:binary", { DENO_JOBS: "1" }).DENO_JOBS,
+      "1",
+    );
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:cwd-exclusion", { DENO_JOBS: "1" })
+        .DENO_JOBS,
+      "2",
+    );
+  });
+
+  it("gives every binary e2e invocation its own run id", () => {
+    const first = buildDenoSuiteProcessEnv("e2e:binary", {
+      VERYFRONT_BINARY_E2E_RUN_ID: "inherited",
+    }).VERYFRONT_BINARY_E2E_RUN_ID;
+    const second = buildDenoSuiteProcessEnv("e2e:binary", {})
+      .VERYFRONT_BINARY_E2E_RUN_ID;
+    assert(first && second && first !== second && first !== "inherited");
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:serial", {}).VERYFRONT_BINARY_E2E_RUN_ID,
+      undefined,
     );
   });
 
@@ -884,7 +917,7 @@ async function legacyIntegrationRootFiles(): Promise<string[]> {
       .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !path.startsWith("tests/integration/compiled-binary-e2e.")
       ),
   );
 }

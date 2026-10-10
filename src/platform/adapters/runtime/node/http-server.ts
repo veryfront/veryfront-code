@@ -508,7 +508,12 @@ export function createNodeRequestListener(
       }
       const response = await handler(request);
 
-      if (requestAbort.signal.aborted || _res.destroyed) return;
+      if (requestAbort.signal.aborted || _res.destroyed) {
+        // Close may precede handler completion, before a response reader exists.
+        // Cancel the discarded body so producer cleanup and tracking can settle.
+        await response.body?.cancel(requestAbort.signal.reason ?? clientDisconnectedError());
+        return;
+      }
 
       if (isWebSocketUpgradeResponse(response)) {
         throw new Error(

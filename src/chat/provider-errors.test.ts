@@ -13,10 +13,37 @@ import {
 import {
   buildProviderError,
   markVeryfrontGatewayResponse,
+  ProviderRateLimitError,
   ProviderRequestError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 
 describe("chat/provider-errors", () => {
+  it("classifies a typed streaming rate limit without inspecting provider wording", () => {
+    const error = new ProviderRateLimitError({
+      provider: "openai",
+      status: 200,
+      retryable: true,
+      message: "private upstream text",
+    });
+    assertEquals(parseProviderError(error), {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    });
+  });
+
+  it("does not infer native authentication from untrusted private stream causes", () => {
+    for (const status of [401, 403]) {
+      const error = createRuntimeProviderStreamFailure({ status, retryable: false });
+      assertEquals(parseProviderError(error), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+      assertEquals(Object.keys(error).includes("cause"), false);
+    }
+  });
+
   it("preserves a gateway spend-check refusal through the stream failure cause", async () => {
     const response = markVeryfrontGatewayResponse(
       new Response(

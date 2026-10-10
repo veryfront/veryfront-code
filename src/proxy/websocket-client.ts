@@ -67,6 +67,12 @@ async function toChunk(
   return new Uint8Array(data as ArrayBuffer);
 }
 
+function isIdempotentClosedWebSocketWrite(error: unknown): boolean {
+  return error instanceof DOMException &&
+    error.name === "WebSocketError" &&
+    error.message === "Connection is closed";
+}
+
 /** A `WebSocket`-shaped client that presents request headers on connect. */
 export class UpstreamWebSocket {
   #stream: UpstreamWebSocketStream;
@@ -76,6 +82,7 @@ export class UpstreamWebSocket {
   #writes: Promise<void> = Promise.resolve();
   #opening: Promise<void>;
   #reading: Promise<void> = Promise.resolve();
+  #localCloseStarted = false;
   #settled = false;
 
   onopen: ((event: Event) => void) | null = null;
@@ -91,7 +98,7 @@ export class UpstreamWebSocket {
     ).catch((error: unknown) => this.#fail(error));
     this.#stream.closed.then(
       (info) => this.#close(info.closeCode ?? 1005, info.reason ?? "", true),
-      (error: unknown) => this.#fail(error),
+      (error: unknown) => this.#handleClosedRejection(error),
     );
   }
 
@@ -113,13 +120,16 @@ export class UpstreamWebSocket {
   close(code?: number, reason?: string): void {
     if (this.#readyState === WebSocket.CLOSING || this.#readyState === WebSocket.CLOSED) return;
     this.#readyState = WebSocket.CLOSING;
+    const closeInfo = code === undefined ? undefined : { closeCode: code, reason };
     try {
-      this.#stream.close(code === undefined ? undefined : { closeCode: code, reason });
+      this.#stream.close(closeInfo);
+      this.#localCloseStarted = true;
     } catch {
       // Codes such as 1011 are reserved for endpoints and rejected by the
       // client close API. The bridge only wants the connection torn down.
       try {
         this.#stream.close();
+        this.#localCloseStarted = true;
       } catch {
         // Already closed by the peer.
       }
@@ -163,6 +173,19 @@ export class UpstreamWebSocket {
     const message = error instanceof Error ? error.message : String(error);
     this.onerror?.(new ErrorEvent("error", { message }));
     void this.#close(1006, message, false);
+  }
+
+  #handleClosedRejection(error: unknown): void {
+    if (
+      this.#readyState === WebSocket.CLOSING &&
+      this.#localCloseStarted &&
+      isIdempotentClosedWebSocketWrite(error)
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      void this.#close(1006, message, false);
+      return;
+    }
+    this.#fail(error);
   }
 
   async #close(code: number, reason: string, wasClean: boolean): Promise<void> {

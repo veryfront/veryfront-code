@@ -28,6 +28,8 @@ import {
   safeParseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./tool-exposure-checkpoint.ts";
 import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
@@ -49,6 +51,7 @@ import {
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
+import { assertNativeBodyProcessing } from "#veryfront/security/http/native-body-processing.ts";
 import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
@@ -60,6 +63,7 @@ import {
 } from "../service/auth.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectCreate = Object.create;
 const JsonParse = JSON.parse;
 const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
@@ -157,8 +161,16 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
+  /** Grant only after replay contents match immutable run/input-response evidence or a pre-edit host-authored digest. Editable row IDs or parts alone do not prove origin; edited replacements lose the grant. */
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
+  /**
+   * Tool exposure checkpoint from forwardedProps whose exact value matches the
+   * digest carried by the verified run-event token. Set only on paths whose
+   * request body is otherwise untrusted.
+   */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /**
    * Integration tools the control plane resolved for this run, taken from the
    * verified run-event token rather than the request body. Absent unless a
@@ -216,10 +228,24 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
       | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
+/**
+ * A parsed body in a null-prototype record. Resolving a promise with the record
+ * reads `then` from the record only, not from the parsed value's prototypes.
+ */
+interface ParsedRequestJson {
+  readonly value: unknown;
+}
+
+function parsedRequestJson(value: unknown): ParsedRequestJson {
+  const record = ObjectCreate(null) as { value: unknown };
+  record.value = value;
+  return record;
+}
+
 async function parseRequestJson(
   request: Request,
   maxBodySizeBytes: number,
-): Promise<unknown | Response> {
+): Promise<ParsedRequestJson | Response> {
   let body: string;
   try {
     body = await readBodyWithLimit(request, maxBodySizeBytes);
@@ -233,18 +259,21 @@ async function parseRequestJson(
         { status: 413 },
       );
     }
-    return null;
+    return parsedRequestJson(null);
   }
   try {
-    return IntrinsicReflectApply(JsonParse, JSON, [body, (_key: string, value: unknown) => {
+    return parsedRequestJson(IntrinsicReflectApply(JsonParse, JSON, [body, (
+      _key: string,
+      value: unknown,
+    ) => {
       // JSON overflow must not authenticate as null when the replay digest is serialized.
       if (typeof value === "number" && !NumberIsFinite(value)) {
         throw new TypeError("JSON numbers must be finite");
       }
       return value;
-    }]);
+    }]));
   } catch {
-    return null;
+    return parsedRequestJson(null);
   }
 }
 
@@ -282,6 +311,7 @@ async function withVerifiedRunEventAppendToken(
     if (
       trustServerEnvelope &&
       (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds") ||
         hasLegacyReplayState)
     ) {
       return Response.json(
@@ -356,6 +386,35 @@ async function withVerifiedRunEventAppendToken(
     }
   }
 
+  let verifiedToolExposureCheckpoint: ToolExposureCheckpoint | undefined;
+  if (!trustServerEnvelope) {
+    let signedToolExposureCheckpointSha256: unknown;
+    try {
+      signedToolExposureCheckpointSha256 = readOwnDataProperty(
+        verification,
+        "toolExposureCheckpointSha256",
+        "Writer verification",
+        false,
+      );
+    } catch {
+      return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+    }
+    if (signedToolExposureCheckpointSha256 !== undefined) {
+      const checkpoint = getServerResolvedToolExposureCheckpoint(
+        parsedRequest.forwardedProps,
+        true,
+      );
+      const digest = checkpoint ? await computeToolExposureCheckpointSha256(checkpoint) : undefined;
+      if (
+        !digest || typeof signedToolExposureCheckpointSha256 !== "string" ||
+        digest !== signedToolExposureCheckpointSha256
+      ) {
+        return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+      }
+      verifiedToolExposureCheckpoint = checkpoint;
+    }
+  }
+
   const verifiedRequest: ParsedHostedChatRequest = {
     ...(trustServerEnvelope
       ? parsedRequest
@@ -367,7 +426,17 @@ async function withVerifiedRunEventAppendToken(
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
+    ...(trustServerEnvelope &&
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
+      }
+      : {}),
     ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
+    ...(verifiedToolExposureCheckpoint
+      ? { serverResolvedToolExposureCheckpoint: verifiedToolExposureCheckpoint }
+      : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
@@ -397,10 +466,25 @@ function stripUnverifiedServerResolvedRequestState(
 ): ParsedHostedChatRequest {
   const {
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
+    serverResolvedToolExposureCheckpoint: _serverResolvedToolExposureCheckpoint,
     ...publicParsedRequest
   } = parsedRequest;
   return publicParsedRequest;
+}
+
+/**
+ * SHA-256 of a tool exposure checkpoint as the run-event token binds it: the
+ * JSON text of `{ version, loadedToolNames }` in that key order.
+ */
+export function computeToolExposureCheckpointSha256(
+  checkpoint: ToolExposureCheckpoint,
+): Promise<string> {
+  return computeHash(privateJsonStringify({
+    version: checkpoint.version,
+    loadedToolNames: checkpoint.loadedToolNames,
+  }));
 }
 
 /**
@@ -651,6 +735,7 @@ async function buildParsedHostedChatRequestInternal(
     allowDelegation,
     forwardedProps,
     serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds,
     resumeToolCall,
     runtimeOverrides,
     durableRootRun,
@@ -719,6 +804,9 @@ async function buildParsedHostedChatRequestInternal(
     ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
       ? { serverResolvedProviderReplayCheckpoints }
       : {}),
+    ...(Object.hasOwn(input.chatRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? { serverResolvedTrustedHostedHistoryMessageIds }
+      : {}),
     ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
     runtimeOverrides,
     durableRootRun,
@@ -747,7 +835,7 @@ export async function parseHostedChatRequestFromRequest(
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
-  const parsed = hostedChatRequestSchema.safeParse(requestBody);
+  const parsed = hostedChatRequestSchema.safeParse(requestBody.value);
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
@@ -785,10 +873,13 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
+  // Validate native body processing before and after reading the body.
+  assertNativeBodyProcessing();
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+  assertNativeBodyProcessing();
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody);
+  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody.value);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",

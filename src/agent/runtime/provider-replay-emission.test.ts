@@ -14,6 +14,7 @@ import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import {
   captureProviderReplayCheckpoint,
   createProviderReplayCheckpointEmissionState,
@@ -61,7 +62,7 @@ function skillDelegationTools(callbacks: {
   onInvoke?: (task: string) => void;
 } = {}) {
   return {
-    load_skill: tool({
+    load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
@@ -78,7 +79,7 @@ function skillDelegationTools(callbacks: {
           maxSteps: 6,
         };
       },
-    }),
+    }))),
     invoke_agent: tool({
       id: "invoke_agent",
       description: "Invoke a child agent",
@@ -592,7 +593,7 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("publishes a completed same-turn streamed skill result in a parallel batch", async () => {
+  it("ignores unexecuted same-turn streamed skill results in a parallel batch", async () => {
     const operations: string[] = [];
     const executedInputs: unknown[] = [];
     let completedBatch: unknown;
@@ -665,21 +666,21 @@ describe("provider replay checkpoint emission", () => {
     await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
       .text();
 
-    const effectiveArgs = [
-      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
-      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    const untrustedArgs = [
+      { task: "first" },
+      { task: "second" },
     ];
-    assertEquals(executedInputs, effectiveArgs);
+    assertEquals(executedInputs, untrustedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[0]),
+        toolArgsJson: JSON.stringify(untrustedArgs[0]),
       },
       {
         toolCallId: "child-2",
         toolName: "invoke_agent",
-        toolArgsJson: JSON.stringify(effectiveArgs[1]),
+        toolArgsJson: JSON.stringify(untrustedArgs[1]),
       },
     ]);
     assertEquals(operations, ["turn:complete", "invoke:first", "invoke:second"]);
@@ -871,9 +872,12 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("uses the trusted aliased control-plane name for a parallel batch", async () => {
+  it("uses effective skill delegation args for the trusted aliased control-plane name", async () => {
     let completedBatch: unknown;
+    const executedInputs: unknown[] = [];
     const model = scriptedModel([{
+      toolCalls: [{ id: "load-1", name: "load_skill", input: { skillId: "delegate" } }],
+    }, {
       toolCalls: [
         { id: "child-1", name: "veryfront__invoke_agent", input: { task: "first" } },
         { id: "child-2", name: "veryfront__invoke_agent", input: { task: "second" } },
@@ -887,14 +891,18 @@ describe("provider replay checkpoint emission", () => {
       id: "aliased-parallel-invoke-agent-replay-boundary",
       model: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
       system: "Delegate twice.",
-      skills: false,
+      skills: true,
       tools: {
+        load_skill: skillDelegationTools().load_skill,
         veryfront__invoke_agent: markTrustedHostToolProvenance(
           invokeAgentTool(undefined, "veryfront__invoke_agent"),
         ),
       },
-      maxSteps: 1,
+      maxSteps: 2,
       resolveModelTransport: () => ({ model }),
+      onToolResult: (request: { toolName: string; input: unknown }) => {
+        if (request.toolName === "veryfront__invoke_agent") executedInputs.push(request.input);
+      },
       __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
       __vfProviderReplayInvokeAgentToolNames: ["veryfront__invoke_agent"],
       __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
@@ -906,17 +914,24 @@ describe("provider replay checkpoint emission", () => {
 
     await new AgentRuntime(config.id!, config).generate("Delegate both tasks");
 
-    assertEquals(model.toolNames(0).includes("veryfront__invoke_agent"), true);
+    const expectedArgs = [
+      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    ];
+    assertEquals(model.toolNames(1).includes("veryfront__invoke_agent"), true);
+    assertEquals(executedInputs, expectedArgs);
     assertEquals(completedBatch, [
       {
         toolCallId: "child-1",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"first"}',
+        toolArgsJson:
+          '{"task":"first","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
       {
         toolCallId: "child-2",
         toolName: "veryfront__invoke_agent",
-        toolArgsJson: '{"task":"second"}',
+        toolArgsJson:
+          '{"task":"second","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
       },
     ]);
   });

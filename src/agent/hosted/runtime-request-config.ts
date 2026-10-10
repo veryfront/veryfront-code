@@ -1,4 +1,9 @@
+import {
+  readOwnDataProperty,
+  snapshotOwnDataPropertyArray,
+} from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
 import { type HostedChatRequest, hostedChatRuntimeOverridesSchema } from "./chat-request.ts";
 import type {
@@ -11,10 +16,8 @@ import {
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";
-import {
-  isSupportedToolExposureCheckpointVersion,
-  type ToolExposureCheckpoint,
-} from "../runtime/tool-exposure.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./tool-exposure-checkpoint.ts";
 import {
   assertReconstructibleProviderReplayCheckpoint,
   parseServerResolvedProviderReplayCheckpoints,
@@ -22,6 +25,10 @@ import {
 } from "../runtime/provider-replay.ts";
 
 const arrayIsArray = Array.isArray;
+const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
+
+export { getServerResolvedToolExposureCheckpoint };
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -84,26 +91,20 @@ function hasConfiguredSkillsForLegacyDelegation(
   return Object.values(skills).some((enabled) => enabled === true);
 }
 
-/** Read the latest checkpoint overwritten by the authenticated server caller. */
-export function getServerResolvedToolExposureCheckpoint(
-  forwardedProps: Record<string, unknown> | undefined,
-  serverEnvelopeVerified: boolean,
-): ToolExposureCheckpoint | undefined {
-  if (!serverEnvelopeVerified) return undefined;
-  const value = forwardedProps?.serverResolvedToolExposureCheckpoint;
-  if (
-    !isRecord(value) ||
-    !isSupportedToolExposureCheckpointVersion(value.version) ||
-    !Array.isArray(value.loadedToolNames) ||
-    !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
-    createPrivateSet(value.loadedToolNames).size !== value.loadedToolNames.length
-  ) {
-    return undefined;
-  }
-  return {
-    version: value.version,
-    loadedToolNames: [...value.loadedToolNames],
-  };
+/**
+ * Resolve the tool exposure checkpoint a hosted request restores: the one bound
+ * to the verified run-event token's digest, else the verified envelope's.
+ */
+export function resolveHostedRequestToolExposureCheckpoint(request: {
+  forwardedProps?: Record<string, unknown>;
+  serverEnvelopeVerified?: true;
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+}): ToolExposureCheckpoint | undefined {
+  return request.serverResolvedToolExposureCheckpoint ??
+    getServerResolvedToolExposureCheckpoint(
+      request.forwardedProps,
+      request.serverEnvelopeVerified === true,
+    );
 }
 
 /**
@@ -218,6 +219,42 @@ export function resolveHostedRuntimeThinkingOverride(input: {
   };
 }
 
+function addConfiguredDelegateToolNames(
+  toolNames: Set<string>,
+  delegates: readonly string[],
+): void {
+  forEachPrivateArray(delegates, (id) => {
+    if (id !== undefined) toolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  });
+}
+
+function isLegacyDelegationToolName(toolName: string): boolean {
+  return toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID;
+}
+
+/** Check only an own concrete configured grant, never an inherited binding or accessor. */
+export function hasExplicitHostedToolName(
+  config: Pick<RuntimeAgentMarkdownDefinition, "tools">,
+  name: string,
+): boolean {
+  try {
+    const value = readOwnDataProperty(config, "tools", "Agent config", false);
+    if (!arrayIsArray(value)) return false;
+    const names = snapshotOwnDataPropertyArray(value, {
+      label: "Agent tools",
+      maximumEntries: 10_000,
+      mapValue: (entry) => entry,
+    });
+    let matched = false;
+    forEachPrivateArray(names, (entry) => {
+      if (entry === name) matched = true;
+    });
+    return matched;
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
@@ -235,12 +272,11 @@ export function resolveHostedRuntimeAllowedTools(input: {
   }
 
   const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
-  if (isKnowledgeEnabled(input.configuredKnowledge)) configuredToolNames.add("search_knowledge");
-  const delegates = input.configuredDelegates ?? [];
-  for (let index = 0; index < delegates.length; index++) {
-    const id = delegates[index];
-    if (id !== undefined) configuredToolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  const deniedToolNames = createPrivateSet(input.configuredDeniedTools ?? []);
+  if (isKnowledgeEnabled(input.configuredKnowledge) && !deniedToolNames.has("search_knowledge")) {
+    configuredToolNames.add("search_knowledge");
   }
+  addConfiguredDelegateToolNames(configuredToolNames, input.configuredDelegates ?? []);
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
@@ -250,10 +286,17 @@ export function resolveHostedRuntimeAllowedTools(input: {
   );
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
-    if (
-      configuredToolNames.has(toolName) ||
-      (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
-    ) selectedToolNames.add(toolName);
+    if (deniedToolNames.has(toolName)) continue;
+    if (configuredToolNames.has(toolName)) {
+      selectedToolNames.add(toolName);
+    } else if (
+      isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation &&
+      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID) &&
+      !deniedToolNames.has(INVOKE_AGENT_TOOL_ID)
+    ) {
+      // An implicit grant belongs to the platform, never a project-owned legacy collision.
+      selectedToolNames.add(CANONICAL_INVOKE_AGENT_TOOL_ID);
+    }
   }
   return [...selectedToolNames];
 }

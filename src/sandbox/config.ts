@@ -13,11 +13,12 @@ import {
   createOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import type { SandboxOptions } from "./types.ts";
+import type { SandboxClientOptions } from "./types.ts";
 
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
@@ -53,10 +54,10 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
   return createHostInternalOriginBoundOutboundFetch(url)(url, init);
 }
 
-export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
+export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string {
   const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
     getHostEnv("VERYFRONT_API_URL");
-  if (url) return url;
+  if (url) return applyIntrinsic(stringReplace, url, [/\/+$/, ""]) as string;
 
   // Fail closed: never silently default to the production API while attaching an
   // ambient auth token — a missing VERYFRONT_API_URL in staging/CI would
@@ -66,7 +67,7 @@ export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
   });
 }
 
-export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
+export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): string {
   const explicitToken = trimString(options.authToken);
   if (explicitToken) return explicitToken;
 
