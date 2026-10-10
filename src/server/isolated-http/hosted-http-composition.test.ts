@@ -191,7 +191,11 @@ describe("hosted HTTP host composition", () => {
     host.files.set("/host/token", " \n");
     await assertRejects(() => allocatorOptions!.readBrokerToken(signal));
     host.files.set("/host/token", "x".repeat(16 * 1024 + 1));
-    await assertRejects(() => allocatorOptions!.readBrokerToken(signal), TypeError, "too large");
+    await assertRejects(
+      () => allocatorOptions!.readBrokerToken(signal),
+      Error,
+      "The file named by VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE is too large",
+    );
     assert(composition.ingress.broker === broker.broker);
     assertEquals(composition.ingress.maxPreparing, 16);
     assertEquals(typeof composition.ingress.resolve, "function");
@@ -282,6 +286,7 @@ describe("hosted HTTP host composition", () => {
       },
       now: () => clock,
       refreshMs: 60_000,
+      readTimeoutMs: 5_000,
     });
     const signal = new AbortController().signal;
     const first = { projectId: record.project_id, releaseId: record.release_id };
@@ -315,6 +320,7 @@ describe("hosted HTTP host composition", () => {
       },
       now: () => clock,
       refreshMs: 1_000,
+      readTimeoutMs: 5_000,
     });
     clock = 5_000;
     const signal = new AbortController().signal;
@@ -341,5 +347,50 @@ describe("hosted HTTP host composition", () => {
       "VERYFRONT_HOSTED_HTTP_ISOLATION requires Node.js 22 or newer and is unsupported on the compiled Deno binary",
     );
     assertEquals(built, 0);
+  });
+
+  it("refuses releases while a source records read stalls, then retries", async () => {
+    let clock = 0;
+    let stall = false;
+    let aborts = 0;
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: (readSignal) => {
+        if (!stall) return Promise.resolve(JSON.stringify([record]));
+        readSignal.addEventListener("abort", () => aborts++, { once: true });
+        return new Promise(() => {}); // never settles, even after abort
+      },
+      now: () => clock,
+      refreshMs: 1_000,
+      readTimeoutMs: 20,
+    });
+    const signal = new AbortController().signal;
+    const request = { projectId: record.project_id, releaseId: record.release_id };
+    stall = true;
+    clock = 1_000;
+    await assertRejects(() => lookup(request, signal), Error, "Source records are unavailable");
+    assertEquals(aborts, 1);
+    stall = false;
+    clock = 2_000;
+    assertEquals(((await lookup(request, signal)) as { image: string }).image, record.image);
+  });
+
+  it("reports unreadable host files by setting name, never by path", async () => {
+    const error = await assertRejects(() =>
+      createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile: hostFiles({ "/host/records.json": JSON.stringify([record]) }).readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+      })
+    );
+    assert(error instanceof Error);
+    assertEquals(
+      error.message.includes("VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE could not be read"),
+      true,
+      error.message,
+    );
+    assertEquals(error.message.includes("/host/"), false);
+    assertEquals(String((error as { cause?: unknown }).cause ?? "").includes("/host/"), false);
   });
 });
