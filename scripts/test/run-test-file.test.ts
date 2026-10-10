@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 import {
   buildTestFileCommandArgGroups,
   buildTestFileCommandArgs,
+  hasDenoNoRun,
   LOOPBACK_ALLOW_NET,
+  mergeDenoJunitReports,
   PROVIDER_EGRESS_DENY_NET,
+  rewriteSplitJunitPathForCommandArgGroups,
   TEST_FILE_ENV,
   type TestTargetFileSystem,
 } from "./run-test-file.ts";
@@ -85,6 +88,114 @@ describe("test:file task command", () => {
       false,
     );
     assertEquals(groups[1]!.slice(-2), ["--filter", "audit"]);
+  });
+
+  it("uses distinct temporary JUnit reports for split mixed target runs", () => {
+    const groups = buildTestFileCommandArgGroups([
+      "src/config/cicd-coverage-workflow.test.ts",
+      "scripts/security/audit-npm.test.ts",
+      "--junit-path",
+      "reports/junit.xml",
+      "--filter",
+      "--junit-path=needle",
+    ]);
+
+    const rewritten = rewriteSplitJunitPathForCommandArgGroups(groups, [
+      "/tmp/source-junit.xml",
+      "/tmp/scripts-junit.xml",
+    ]);
+
+    assertEquals(rewritten.requestedJunitPath, "reports/junit.xml");
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("/tmp/source-junit.xml"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("reports/junit.xml"),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes("--junit-path=needle"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes(
+        "src/config/cicd-coverage-workflow.test.ts",
+      ),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[0]!.includes(
+        "scripts/security/audit-npm.test.ts",
+      ),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("/tmp/scripts-junit.xml"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("reports/junit.xml"),
+      false,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes("--junit-path=needle"),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes(
+        "scripts/security/audit-npm.test.ts",
+      ),
+      true,
+    );
+    assertEquals(
+      rewritten.commandArgGroups[1]!.includes(
+        "src/config/cicd-coverage-workflow.test.ts",
+      ),
+      false,
+    );
+  });
+
+  it("does not treat forwarded no-run text as cache-only mode", () => {
+    assertEquals(
+      hasDenoNoRun([
+        "src/config/cicd-coverage-workflow.test.ts",
+        "scripts/security/audit-npm.test.ts",
+        "--filter",
+        "--no-run",
+      ]),
+      false,
+    );
+    assertEquals(
+      hasDenoNoRun([
+        "src/config/cicd-coverage-workflow.test.ts",
+        "scripts/security/audit-npm.test.ts",
+        "--filter",
+        "--no-run",
+        "--no-run",
+      ]),
+      true,
+    );
+  });
+
+  it("merges split Deno JUnit reports without dropping either suite", () => {
+    const merged = mergeDenoJunitReports([
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="0.25"><testsuite name="source" tests="1" failures="0" errors="0" skipped="0" time="0.25"></testsuite></testsuites>
+`,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="1" errors="0" skipped="1" time="0.75"><testsuite name="scripts" tests="2" failures="1" errors="0" skipped="1" time="0.75"></testsuite></testsuites>
+`,
+    ]);
+
+    assertEquals(
+      merged.includes(
+        '<testsuites tests="3" failures="1" errors="0" skipped="1" time="1">',
+      ),
+      true,
+    );
+    assertEquals(merged.includes('name="source"'), true);
+    assertEquals(merged.includes('name="scripts"'), true);
   });
 
   it("keeps integration paths on the provider deny-list", () => {

@@ -103,6 +103,103 @@ function buildTestFileCommandArgsForRawArgs(
   ];
 }
 
+export function getJunitPath(rawArgs: readonly string[]): string | undefined {
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index]!;
+    if (arg === "--") return undefined;
+    if (arg === "--junit-path") return rawArgs[index + 1];
+    if (arg.startsWith("--junit-path=")) {
+      return arg.slice("--junit-path=".length);
+    }
+    if (arg.startsWith("-")) {
+      const option = arg.split("=", 1)[0]!;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        index += 1;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function hasDenoNoRun(rawArgs: readonly string[]): boolean {
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index]!;
+    if (arg === "--") return false;
+    if (arg === "--no-run" || arg.startsWith("--no-run=")) return true;
+    if (arg.startsWith("-")) {
+      const option = arg.split("=", 1)[0]!;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        index += 1;
+      }
+    }
+  }
+  return false;
+}
+
+function rewriteJunitPath(
+  rawArgs: readonly string[],
+  junitPath: string,
+): string[] {
+  const rewritten: string[] = [];
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index]!;
+    if (arg === "--") {
+      rewritten.push(...rawArgs.slice(index));
+      break;
+    }
+    if (arg === "--junit-path") {
+      rewritten.push(arg, junitPath);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--junit-path=")) {
+      rewritten.push(`--junit-path=${junitPath}`);
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      const option = arg.split("=", 1)[0]!;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        rewritten.push(arg);
+        if (index + 1 < rawArgs.length) {
+          rewritten.push(rawArgs[index + 1]!);
+          index += 1;
+        }
+        continue;
+      }
+    }
+    rewritten.push(arg);
+  }
+  return rewritten;
+}
+
+export interface SplitJunitRewriteResult {
+  commandArgGroups: string[][];
+  requestedJunitPath?: string;
+}
+
+export function rewriteSplitJunitPathForCommandArgGroups(
+  commandArgGroups: readonly string[][],
+  temporaryJunitPaths: readonly string[],
+): SplitJunitRewriteResult {
+  const requestedJunitPath = commandArgGroups.length > 1
+    ? getJunitPath(commandArgGroups[0] ?? [])
+    : undefined;
+  if (!requestedJunitPath) {
+    return { commandArgGroups: commandArgGroups.map((group) => [...group]) };
+  }
+  if (temporaryJunitPaths.length !== commandArgGroups.length) {
+    throw new Error(
+      "temporary JUnit path count must match test command groups",
+    );
+  }
+  return {
+    requestedJunitPath,
+    commandArgGroups: commandArgGroups.map((group, index) =>
+      rewriteJunitPath(group, temporaryJunitPaths[index]!)
+    ),
+  };
+}
+
 function filterRawArgsByTargetKind(
   rawArgs: string[],
   keepTarget: (target: string) => boolean,
@@ -212,6 +309,107 @@ function isIntegrationTarget(
   return false;
 }
 
+function readXmlNumberAttribute(attributes: string, name: string): number {
+  const match = new RegExp(`${name}="([^">]*)"`).exec(attributes);
+  if (!match?.[1]) return 0;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function formatXmlNumber(value: number): string {
+  return Number.isInteger(value)
+    ? String(value)
+    : String(Number(value.toFixed(6)));
+}
+
+export function mergeDenoJunitReports(reports: readonly string[]): string {
+  if (reports.length === 0) return "";
+  if (reports.length === 1) return reports[0]!;
+
+  const totals = { tests: 0, failures: 0, errors: 0, skipped: 0, time: 0 };
+  const bodies: string[] = [];
+  for (const report of reports) {
+    const withoutDeclaration = report.replace(/^<\?xml[^>]*>\s*/u, "").trim();
+    const suites = /^<testsuites\b([^>]*)>([\s\S]*)<\/testsuites>$/u.exec(
+      withoutDeclaration,
+    );
+    if (suites) {
+      const attributes = suites[1] ?? "";
+      totals.tests += readXmlNumberAttribute(attributes, "tests");
+      totals.failures += readXmlNumberAttribute(attributes, "failures");
+      totals.errors += readXmlNumberAttribute(attributes, "errors");
+      totals.skipped += readXmlNumberAttribute(attributes, "skipped");
+      totals.time += readXmlNumberAttribute(attributes, "time");
+      bodies.push((suites[2] ?? "").trim());
+      continue;
+    }
+
+    const suite = /^<testsuite\b([^>]*)>[\s\S]*<\/testsuite>$/u.exec(
+      withoutDeclaration,
+    );
+    if (suite) {
+      const attributes = suite[1] ?? "";
+      totals.tests += readXmlNumberAttribute(attributes, "tests");
+      totals.failures += readXmlNumberAttribute(attributes, "failures");
+      totals.errors += readXmlNumberAttribute(attributes, "errors");
+      totals.skipped += readXmlNumberAttribute(attributes, "skipped");
+      totals.time += readXmlNumberAttribute(attributes, "time");
+    }
+    bodies.push(withoutDeclaration);
+  }
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites tests="${totals.tests}" failures="${totals.failures}" errors="${totals.errors}" skipped="${totals.skipped}" time="${
+      formatXmlNumber(totals.time)
+    }">`,
+    ...bodies.filter((body) => body.length > 0),
+    "</testsuites>",
+    "",
+  ].join("\n");
+}
+
+async function mergeJunitReports(
+  paths: readonly string[],
+  outputPath: string,
+  { allowMissingReports = false }: { allowMissingReports?: boolean } = {},
+): Promise<number> {
+  const code = `
+const { mergeDenoJunitReports } = await import("./scripts/test/run-test-file.ts");
+const paths = ${JSON.stringify(paths)};
+const outputPath = ${JSON.stringify(outputPath)};
+const allowMissingReports = ${JSON.stringify(allowMissingReports)};
+const reports = [];
+for (const path of paths) {
+  try {
+    reports.push(await Deno.readTextFile(path));
+  } catch (error) {
+    if (!allowMissingReports || !(error instanceof Deno.errors.NotFound)) {
+      throw error;
+    }
+  }
+}
+if (reports.length > 0) {
+  const mergedReport = mergeDenoJunitReports(reports);
+  if (outputPath === "-") {
+    await Deno.stdout.write(new TextEncoder().encode(mergedReport));
+  } else {
+    await Deno.writeTextFile(outputPath, mergedReport);
+  }
+}
+await Promise.all(paths.map((path) => Deno.remove(path).catch(() => {})));
+`;
+  const command = new Deno.Command("deno", {
+    args: ["eval", code],
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject(), UNIT_DENO_TEST_ENV),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const status = await command.spawn().status;
+  return status.success ? 0 : status.code;
+}
+
 async function main(): Promise<void> {
   let targets: string[];
   let commandArgGroups: string[][];
@@ -223,23 +421,64 @@ async function main(): Promise<void> {
     console.error(error.message);
     Deno.exit(2);
   }
+  let junitMerge:
+    | { requestedPath: string; temporaryPaths: string[] }
+    | undefined;
+  const requestedJunitPath = getJunitPath(Deno.args);
+  if (
+    requestedJunitPath && commandArgGroups.length > 1 &&
+    !hasDenoNoRun(Deno.args)
+  ) {
+    const temporaryPaths = commandArgGroups.map((_, index) =>
+      `${requestedJunitPath}.part-${index}-${crypto.randomUUID()}.xml`
+    );
+    const rewritten = rewriteSplitJunitPathForCommandArgGroups(
+      commandArgGroups,
+      temporaryPaths,
+    );
+    commandArgGroups = rewritten.commandArgGroups;
+    junitMerge = { requestedPath: requestedJunitPath, temporaryPaths };
+  }
+
   const environment =
     targets.some((target) =>
         isIntegrationTarget(target, TEST_TARGET_FILE_SYSTEM)
       )
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
+  const redirectTestStdoutToStderr = junitMerge?.requestedPath === "-";
+  let failedExitCode: number | undefined;
   for (const commandArgs of commandArgGroups) {
     const command = new Deno.Command("deno", {
       args: commandArgs,
       clearEnv: true,
       env: buildTestProcessEnv(Deno.env.toObject(), environment),
-      stdout: "inherit",
+      stdout: redirectTestStdoutToStderr ? "piped" : "inherit",
       stderr: "inherit",
     });
-    const status = await command.spawn().status;
-    if (!status.success) Deno.exit(status.code);
+    const status = redirectTestStdoutToStderr
+      ? await (async () => {
+        const output = await command.output();
+        if (output.stdout.length > 0) await Deno.stderr.write(output.stdout);
+        return output;
+      })()
+      : await command.spawn().status;
+    if (!status.success) {
+      failedExitCode = status.code;
+      break;
+    }
   }
+  if (junitMerge) {
+    const mergeExitCode = await mergeJunitReports(
+      junitMerge.temporaryPaths,
+      junitMerge.requestedPath,
+      { allowMissingReports: failedExitCode !== undefined },
+    );
+    if (mergeExitCode !== 0 && failedExitCode === undefined) {
+      Deno.exit(mergeExitCode);
+    }
+  }
+  if (failedExitCode !== undefined) Deno.exit(failedExitCode);
 }
 
 if (import.meta.main) {
