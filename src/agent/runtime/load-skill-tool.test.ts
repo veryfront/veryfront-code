@@ -63,6 +63,26 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
       },
       additionalProperties: false,
     },
+    reference: {
+      type: "object",
+      description: "Read one advertised reference file inside a loaded skill.",
+      properties: {
+        skillId: {
+          type: "string",
+          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+          description: "The skillId returned when the parent skill was loaded.",
+        },
+        file: {
+          type: "string",
+          minLength: 1,
+          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+          description: "The exact relative file path from the loaded skill's references list.",
+        },
+      },
+      required: ["skillId", "file"],
+      additionalProperties: false,
+    },
     load: {
       type: "object",
       properties: {
@@ -78,7 +98,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
           minLength: 1,
           maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
           description:
-            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+            "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
         },
       },
       required: ["skillId"],
@@ -199,6 +219,40 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     instructions: "# Project plan",
     references: ["references/project.md"],
   });
+});
+
+it("reads advertised references through the explicit reference operation without expanding the skill inventory", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", {
+        instructions: "# Plan",
+        references: ["references/project.md"],
+      }]]),
+      references: new Map([["plan/references/project.md", "Plan reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ load: { skillId: "plan" } });
+  const reference = { reference: { skillId: "plan", file: "references/project.md" } };
+  assertEquals(await tool.execute(reference), {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "Plan reference",
+  });
+  const schema = tool.inputSchemaJson as { properties: Record<string, unknown> };
+  assertEquals((schema.properties.reference as { required: string[] }).required, [
+    "skillId",
+    "file",
+  ]);
+  await assertRejects(() =>
+    tool.execute({ reference: { skillId: "project", file: "references/project.md" } })
+  );
+  const denied = await tool.execute({
+    reference: { skillId: "plan", file: "references/private.md" },
+  });
+  assertEquals("error" in denied, true);
 });
 
 Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
@@ -516,10 +570,11 @@ it("keeps the static provider schema constraints after provider sanitization", (
     assertEquals(sanitized.dependentSchemas, undefined);
     assertEquals(sanitized.minProperties, 1);
     assertEquals(sanitized.maxProperties, 1);
-    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "load"]);
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "reference", "load"]);
     assertEquals(Object.keys(sanitized.properties?.inventory?.properties ?? {}), ["cursor"]);
     assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId", "file"]);
     assertEquals(sanitized.properties?.load?.required, ["skillId"]);
+    assertEquals(sanitized.properties?.reference?.required, ["skillId", "file"]);
   }
 });
 
@@ -622,7 +677,7 @@ Use form_input once, then produce the plan.`,
   );
   assertStringIncludes(
     secondResult.instructions,
-    'To read a listed reference file, use this same exposed skill-loader tool with skillId "write" and file.',
+    'To read a listed reference file, use load_skill with {"reference":{"skillId":"write","file":"<listed-relative-path>"}}.',
   );
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
   assertEquals(secondResult.maxSteps, 8);

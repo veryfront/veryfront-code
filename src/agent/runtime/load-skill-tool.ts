@@ -67,7 +67,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Add the optional \`file\` field only after the skill is loaded and only for a reference file listed by that loaded skill.`;
+  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -348,8 +348,18 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
           'The listed skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
         ),
       file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
       ),
+    }).strict(),
+    v.object({
+      reference: v.object({
+        skillId: v.string().max(SKILL_ID_MAX_LENGTH + ".md".length)
+          .regex(/^[a-zA-Z0-9_-]+(?:\.md)?$/)
+          .describe("The skillId returned when the parent skill was loaded."),
+        file: getRuntimeLoadSkillReferenceFileInputSchema().describe(
+          "The exact relative file path from the loaded skill's references list.",
+        ),
+      }).strict().describe("Read one advertised reference file inside a loaded skill."),
     }).strict(),
     v.object({
       inventory: v.object({
@@ -371,7 +381,7 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
             'The listed skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
           ),
         file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+          "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
         ),
       }).strict(),
     }).strict(),
@@ -398,6 +408,26 @@ function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
         },
         additionalProperties: false,
       },
+      reference: {
+        type: "object",
+        description: "Read one advertised reference file inside a loaded skill.",
+        properties: {
+          skillId: {
+            type: "string",
+            maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+            pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+            description: "The skillId returned when the parent skill was loaded.",
+          },
+          file: {
+            type: "string",
+            minLength: 1,
+            maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+            description: "The exact relative file path from the loaded skill's references list.",
+          },
+        },
+        required: ["skillId", "file"],
+        additionalProperties: false,
+      },
       load: {
         type: "object",
         properties: {
@@ -413,7 +443,7 @@ function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
             minLength: 1,
             maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
             description:
-              "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+              "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
           },
         },
         required: ["skillId"],
@@ -429,8 +459,9 @@ function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
 /**
  * Input payload for runtime load skill tool.
  *
- * Provider calls use `{ inventory: { cursor? } }` to list authorized IDs and
- * `{ load: { skillId, file? } }` to load content. The legacy flat forms remain
+ * Provider calls use `{ inventory: { cursor? } }` to list authorized IDs,
+ * `{ load: { skillId } }` to load instructions, and
+ * `{ reference: { skillId, file } }` to read a listed reference. The legacy flat forms remain
  * accepted for direct consumers. Start inventory paging with a prompt-provided
  * `cursor` when present, or omit `cursor` for the first page.
  */
@@ -447,6 +478,7 @@ function normalizeRuntimeLoadSkillToolInput(
 ): NormalizedRuntimeLoadSkillToolInput {
   if ("inventory" in input) return input.inventory;
   if ("load" in input) return input.load;
+  if ("reference" in input) return input.reference;
   return input;
 }
 
@@ -587,7 +619,7 @@ function buildAlreadyLoadedSkillResponse(
   const copied = copyLoadedSkillResponse(response);
   const references = copied.references;
   const referenceGuidance = references !== undefined && references.length > 0
-    ? `To read a listed reference file, use this same exposed skill-loader tool with skillId "${skillId}" and file. `
+    ? `To read a listed reference file, use load_skill with {"reference":{"skillId":"${skillId}","file":"<listed-relative-path>"}}. `
     : "";
   return {
     ...copied,
@@ -1487,7 +1519,7 @@ function buildRuntimeLoadSkillInputSchema(
             }`,
           ),
           file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+            "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
           ),
         }),
         v.object({
@@ -1512,7 +1544,7 @@ function buildRuntimeLoadSkillInputSchema(
         `Unloaded skill ID to load. Available unloaded skill IDs: ${enumValues.join(", ")}`,
       ),
       file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+        "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
       ),
     })
   )();
