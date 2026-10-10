@@ -31,8 +31,9 @@ function mcpOutputSchema(tool: Tool) {
 
 async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
   const outputSchema = mcpOutputSchema(tool);
-  const content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
-  if (outputSchema === undefined) return { content, isError: false };
+  if (outputSchema === undefined) {
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
+  }
   if (result === null || typeof result !== "object" || Array.isArray(result)) {
     throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
   }

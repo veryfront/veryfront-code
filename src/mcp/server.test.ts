@@ -970,6 +970,50 @@ describe("mcp/server", () => {
     }
   });
 
+  it("serializes native validated output instead of discarded non-JSON fields", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:stripped-output",
+      tool({
+        id: "test:stripped-output",
+        description: "Strips non-JSON fields before serialization",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        execute: async () => ({ ok: true, ignored: 1n }),
+      }),
+    );
+    const expected = {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    };
+    const direct = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:stripped-output", arguments: {} },
+    });
+    assertEquals(direct.result, expected);
+    const started = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:stripped-output", arguments: {}, task: {} },
+    });
+    const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const completed = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    assertEquals(completed.result, expected);
+  });
+
   it("hides agent-owned tools from tools/list", async () => {
     const server = createMCPServer({
       enabled: true,
