@@ -372,7 +372,10 @@ export function createRuntimeAgentSystemMessages(
       ? {}
       : { runtimeContextMarker: input.runtimeContextMarker }),
     ...(input.runtimeBlocks === undefined ? {} : { extraBlocks: input.runtimeBlocks }),
-    ...(input.skills === undefined ? {} : { skills: input.skills }),
+    ...(input.skills === undefined ||
+        (input.availableToolNames !== undefined && skillLoaderToolName === undefined)
+      ? {}
+      : { skills: input.skills }),
     ...(skillLoaderToolName === undefined ? {} : { skillLoaderToolName }),
     ...(input.environmentContext === undefined
       ? {}

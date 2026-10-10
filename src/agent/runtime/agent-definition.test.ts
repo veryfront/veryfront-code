@@ -295,6 +295,10 @@ describe("createRuntimeAgentSystemMessages", () => {
     assertEquals(both.includes("Call veryfront__load_skill({ inventory:"), true);
     assertEquals(both.includes("Call load_skill({ inventory:"), false);
 
+    const unavailable = render(["web_search"]);
+    assertEquals(unavailable.includes("load_skill"), false);
+    assertEquals(unavailable.includes("skill-0"), false);
+
     const legacy = render(["load_skill"]);
     assertEquals(legacy.includes("Call load_skill({ inventory:"), true);
     assertEquals(legacy.includes("Call veryfront__load_skill({ inventory:"), false);
