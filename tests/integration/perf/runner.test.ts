@@ -11,6 +11,9 @@ describe("framework profiling command", () => {
       await Deno.readTextFile(new URL("../../../deno.json", import.meta.url)),
     );
     const lock = await Deno.readTextFile(new URL("../../../deno.lock", import.meta.url));
+    const packageMetadata = await Deno.readTextFile(
+      new URL("../../../package.json", import.meta.url),
+    );
     const stageMembers = async (directory: string) => {
       for (const member of config.workspace) {
         await Deno.mkdir(`${directory}/${member}`, { recursive: true });
@@ -41,6 +44,7 @@ describe("framework profiling command", () => {
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, tasks: {} }));
       await Deno.writeTextFile(`${base}/deno.lock`, lock);
       await stageMembers(base);
+      await Deno.writeTextFile(`${base}/package.json`, packageMetadata);
       assertEquals(await check(), 0);
       for (const relative of ["deno.json", "react/deno.json"]) {
         const path = `${base}/${relative}`;
@@ -61,7 +65,7 @@ describe("framework profiling command", () => {
       await Deno.remove(`${base}/react/deno.jsonc`);
       await Deno.writeTextFile(`${base}/package.json`, "{/* invalid package JSON */}");
       assertEquals(await check(), 2, "Invalid package metadata must remain an error");
-      await Deno.remove(`${base}/package.json`);
+      await Deno.writeTextFile(`${base}/package.json`, packageMetadata);
       for (const member of ["react", "extensions/ext-css-tailwind"]) {
         const path = `${base}/${member}/deno.json`;
         const original = await Deno.readTextFile(path);
