@@ -41,6 +41,11 @@ import {
 const numberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 const ReflectApply = Reflect.apply;
+const MathMax = Math.max;
+const MathMin = Math.min;
+const MathCeil = Math.ceil;
+const MathFloor = Math.floor;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
 const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
@@ -119,6 +124,26 @@ function getUtf8ByteLength(value: string): number {
   return privateByteLength(encodePrivateText(value));
 }
 
+function mathMax(left: number, right: number): number {
+  return ReflectApply(MathMax, Math, [left, right]) as number;
+}
+
+function mathMin(left: number, right: number): number {
+  return ReflectApply(MathMin, Math, [left, right]) as number;
+}
+
+function mathCeil(value: number): number {
+  return ReflectApply(MathCeil, Math, [value]) as number;
+}
+
+function mathFloor(value: number): number {
+  return ReflectApply(MathFloor, Math, [value]) as number;
+}
+
+function numberToFixed(value: number, digits: number): string {
+  return ReflectApply(NumberPrototypeToFixed, value, [digits]) as string;
+}
+
 function stringCharCodeAt(value: string, index: number): number {
   return ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
 }
@@ -130,11 +155,11 @@ function stringSlice(value: string, start: number, end?: number): string {
 /** Clamp to a UTF-8 byte budget without splitting a surrogate pair. */
 function truncateTextToBytes(value: string, maxBytes: number): string {
   if (getUtf8ByteLength(value) <= maxBytes) return value;
-  const budget = Math.max(0, maxBytes - getUtf8ByteLength(TRUNCATED_TEXT_SUFFIX));
+  const budget = mathMax(0, maxBytes - getUtf8ByteLength(TRUNCATED_TEXT_SUFFIX));
   let low = 0;
   let high = value.length;
   while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
+    const mid = mathCeil((low + high) / 2);
     if (getUtf8ByteLength(stringSlice(value, 0, mid)) <= budget) low = mid;
     else high = mid - 1;
   }
@@ -225,7 +250,7 @@ function truncatePrivateRunEventToLimit(
   for (
     let maxTextBytes = 64 * 1024;
     maxTextBytes >= 256;
-    maxTextBytes = Math.floor(maxTextBytes / 4)
+    maxTextBytes = mathFloor(maxTextBytes / 4)
   ) {
     const candidate = build(
       mapPrivateArray(messages, (message) => truncateMessageTextParts(message, maxTextBytes)),
@@ -237,7 +262,7 @@ function truncatePrivateRunEventToLimit(
 
   // Still over: drop the oldest messages, keeping the most recent ones.
   const clamped = mapPrivateArray(messages, (message) => truncateMessageTextParts(message, 256));
-  for (let keep = Math.min(clamped.length, 8); keep >= 1; keep--) {
+  for (let keep = mathMin(clamped.length, 8); keep >= 1; keep--) {
     const candidate = build(slicePrivateArray(clamped, -keep), clamped.length - keep, true);
     if (fits(candidate)) return { event: candidate, omittedMessageCount: clamped.length - keep };
   }
@@ -253,7 +278,7 @@ function truncatePrivateRunEventToLimit(
 }
 
 function formatMebibytes(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${numberToFixed(bytes / (1024 * 1024), 1)} MiB`;
 }
 
 /**

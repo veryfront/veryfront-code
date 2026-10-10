@@ -601,6 +601,63 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(target.isDisposed(), false);
   });
 
+  it("truncates oversized context with captured sizing intrinsics", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "text",
+          text: "x".repeat(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+        }],
+      }],
+    } as unknown as Parameters<ReturnType<typeof createDurableRunEventSink>>[0];
+    const mathMax = Math.max;
+    const mathMin = Math.min;
+    const mathCeil = Math.ceil;
+    const mathFloor = Math.floor;
+    const numberToFixed = Number.prototype.toFixed;
+    try {
+      Math.max = function (): never {
+        throw new Error("patched Math.max");
+      };
+      Math.min = function (): never {
+        throw new Error("patched Math.min");
+      };
+      Math.ceil = function (): never {
+        throw new Error("patched Math.ceil");
+      };
+      Math.floor = function (): never {
+        throw new Error("patched Math.floor");
+      };
+      Number.prototype.toFixed = function (): never {
+        throw new Error("patched toFixed");
+      };
+      await assertRejects(
+        async () => await sink(event),
+        DurableRunEventPersistenceError,
+        "truncated",
+      );
+    } finally {
+      Math.max = mathMax;
+      Math.min = mathMin;
+      Math.ceil = mathCeil;
+      Math.floor = mathFloor;
+      Number.prototype.toFixed = numberToFixed;
+    }
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(isPrivateConversationRunEvent(persisted), true);
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+    );
+    assertEquals(target.isDisposed(), false);
+  });
+
   it("explains the refusal in terms an operator can act on", async () => {
     const target = mirror();
     const error = await assertRejects(

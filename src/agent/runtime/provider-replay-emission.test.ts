@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -10,7 +11,8 @@ import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
-import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
+import { agent, type AgentConfig, type AgentMessage, AgentRuntime } from "#veryfront/agent";
+import type { Memory } from "#veryfront/agent/memory/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
@@ -22,6 +24,7 @@ import {
 } from "./provider-replay.ts";
 import type { ProviderReplayTurnFailure, RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
 
 const MESSAGE_ID = "assistant-message-1";
 const SIGNATURE = "test-signature";
@@ -261,6 +264,255 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(String(error).includes("xxxxx"), false);
   });
 
+  it("observes an accepted generated turn before assistant message persistence rejection", async () => {
+    const observed: unknown[] = [];
+    const persistenceFailure = new Error("assistant message persistence rejected");
+    const model = scriptedModel([{
+      text: "accepted text",
+      finishReason: "stop",
+    }], {
+      modelId: "anthropic/message-persist-reject-after-accepted-turn",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const runtime = new AgentRuntime("message-persist-reject-after-accepted-turn", {
+      model: "anthropic/message-persist-reject-after-accepted-turn",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const memory: Memory<AgentMessage> = {
+      add(message) {
+        if (message.role === "assistant") return Promise.reject(persistenceFailure);
+        return Promise.resolve();
+      },
+      getMessages: () => Promise.resolve([]),
+      clear: () => Promise.resolve(),
+      getStats: () => Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "test" }),
+    };
+    Reflect.set(runtime, "memory", memory);
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Answer");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected assistant message persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, persistenceFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+  });
+
+  it("preserves the accepted replay checkpoint when provider-executed tool-result persistence rejects", async () => {
+    const observed: unknown[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const toolResultPersistenceFailure = new Error("tool-result persistence rejected");
+    const model = scriptedModel([{
+      content: [
+        { type: "text", text: "accepted text" },
+        {
+          type: "tool-result",
+          toolCallId: "server-1",
+          toolName: "server_search",
+          result: { value: "found" },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/provider-executed-tool-result-persist-reject",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const agentId = "provider-executed-tool-result-persist-reject";
+    const config = {
+      id: agentId,
+      model: "anthropic/provider-executed-tool-result-persist-reject",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+    const runtime = new AgentRuntime(agentId, config);
+    const memory: Memory<AgentMessage> = {
+      add(message) {
+        if (message.role === "tool") return Promise.reject(toolResultPersistenceFailure);
+        return Promise.resolve();
+      },
+      getMessages: () => Promise.resolve([]),
+      clear: () => Promise.resolve(),
+      getStats: () => Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "test" }),
+    };
+    Reflect.set(runtime, "memory", memory);
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Answer");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected tool-result persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, toolResultPersistenceFailure);
+    assertEquals(checkpoints.length, 1);
+    assertEquals(checkpoints[0]?.providerBlocks[0]?.block, {
+      type: "thinking",
+      thinking: "",
+      signature: SIGNATURE,
+    });
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+  });
+
+  it("observes provider-executed tool-result turns before mandatory checkpoint rejection", async () => {
+    const observed: unknown[] = [];
+    const checkpointFailure = new Error("checkpoint persistence rejected");
+    const model = scriptedModel([{
+      content: [
+        { type: "text", text: "accepted text" },
+        {
+          type: "tool-result",
+          toolCallId: "server-1",
+          toolName: "server_search",
+          result: { value: "found" },
+          providerExecuted: true,
+        },
+      ],
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/provider-executed-tool-result-checkpoint-reject",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "provider-executed-tool-result-checkpoint-reject",
+      model: "anthropic/provider-executed-tool-result-checkpoint-reject",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw checkpointFailure;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Answer" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected checkpoint persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, checkpointFailure);
+    const observedTypes = observed.map((event) => (event as { type?: string }).type);
+    assertEquals(observedTypes.includes("message-start"), true);
+    assertEquals(observedTypes.includes("text-start"), true);
+    assertEquals(observedTypes.includes("text-delta"), true);
+    assertEquals(observedTypes.includes("text-end"), true);
+    assertEquals(observedTypes.filter((type) => type === "message-finish").length, 1);
+  });
+
+  it("observes an accepted generated turn before a replay checkpoint rejection", async () => {
+    const observed: unknown[] = [];
+    const checkpointFailure = new Error("checkpoint persistence rejected");
+    const model = scriptedModel([{
+      text: "accepted text",
+      finishReason: "stop",
+      providerMetadata: metadata([{ type: "thinking", thinking: "", signature: SIGNATURE }]),
+    }], {
+      modelId: "anthropic/checkpoint-reject-after-accepted-turn",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "checkpoint-reject-after-accepted-turn",
+      model: "anthropic/checkpoint-reject-after-accepted-turn",
+      system: "Answer once.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw checkpointFailure;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Answer" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected checkpoint persistence failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, checkpointFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+  });
+
   for (const mode of ["generate", "stream"] as const) {
     it(`${mode} durably emits cumulative replay state before the next model step`, async () => {
       const operations: string[] = [];
@@ -337,6 +589,88 @@ describe("provider replay checkpoint emission", () => {
       ]);
     });
   }
+
+  it("persists replay checkpoints before generate empty-response recovery", async () => {
+    const operations: string[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const rawToolUse = {
+      type: "tool_use",
+      id: "lookup-1",
+      name: "lookup",
+      input: { query: "value" },
+    };
+    const emptyReasoning = {
+      type: "thinking",
+      thinking: "",
+      signature: "empty-response-signature",
+    };
+    const model = scriptedModel([
+      () => {
+        operations.push("model:1");
+        return {
+          toolCalls: [{ id: "lookup-1", name: "lookup", input: { query: "value" } }],
+          providerMetadata: metadata([{
+            type: "thinking",
+            thinking: "",
+            signature: SIGNATURE,
+          }, rawToolUse]),
+        };
+      },
+      () => {
+        operations.push("model:2");
+        return {
+          text: "",
+          finishReason: "stop",
+          providerMetadata: metadata([emptyReasoning]),
+        };
+      },
+      () => {
+        operations.push("model:3");
+        return {
+          text: "done",
+          providerMetadata: metadata([{ type: "text", text: "done" }]),
+        };
+      },
+    ], {
+      modelId: "anthropic/generate-provider-replay-empty-response-recovery",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "generate-provider-replay-empty-response-recovery",
+      model: "anthropic/generate-provider-replay-empty-response-recovery",
+      system: "Use tools.",
+      skills: false,
+      tools: { lookup: lookupTool(() => operations.push("tool")) },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+        operations.push("persist");
+      },
+      __vfProviderReplayCheckpointTurnComplete: () => {
+        operations.push("turn:complete");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const response = await agent(config).generate({ input: "Look it up" });
+
+    assertEquals(response.text, "done");
+    assertEquals(operations.filter((operation) => operation === "persist").length, 3);
+    assertEquals(operations.filter((operation) => operation === "turn:complete").length, 3);
+    assertEquals(
+      operations.indexOf("persist", operations.indexOf("model:2")) < operations.indexOf("model:3"),
+      true,
+    );
+    assertEquals(checkpoints.length, 3);
+    assertEquals(checkpoints[1]?.providerBlocks.map((entry) => entry.block), [
+      { type: "thinking", thinking: "", signature: SIGNATURE },
+      rawToolUse,
+      emptyReasoning,
+    ]);
+  });
 
   for (const mode of ["generate", "stream"] as const) {
     it(`does not publish hidden invoke_agent calls in the ${mode} delegation batch`, async () => {

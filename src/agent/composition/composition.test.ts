@@ -26,6 +26,7 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
 import { withLocalChildExecution } from "./local-child-execution.ts";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
@@ -707,6 +708,63 @@ describe("agentAsTool", () => {
       "text-end",
       "message-finish",
       "error",
+    ]);
+  });
+
+  it("propagates durable observation failures during outputSchema rejection handling", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-durable-rejects-invalid-structured",
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-durable-rejects-invalid-structured", {
+      model: "custom/generated-turn-observer-durable-rejects-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const durableFailure = new DurableRunEventPersistenceError(
+      "durable generated-turn observation failed",
+    );
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected durable observation failure");
+      },
+      (event) => {
+        observed.push(event);
+        if ((event as { type?: string }).type === "message-finish") {
+          return Promise.reject(durableFailure);
+        }
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, durableFailure);
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
     ]);
   });
 

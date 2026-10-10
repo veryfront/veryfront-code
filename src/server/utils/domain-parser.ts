@@ -23,7 +23,7 @@ type Environment = ParsedDomain["environment"];
 // "last two labels" split.
 const LOCAL_DEV_DOMAINS = "localhost";
 // Production domains
-const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
+const PROD_DOMAINS = ["veryfront.com", "veryfront.org"] as const;
 
 const MAX_PLATFORM_ROOTS = 8;
 const PUBLIC_LOOPBACK_WILDCARD_ROOTS = new Set(["sslip.io", "nip.io", "xip.io", "zip.io"]);
@@ -123,9 +123,6 @@ function toHostedEnvironmentName(name: string): HostedEnvironmentName | null {
 /** Alternation source for the hosted environment labels, e.g. `preview|staging|production`. */
 const HOSTED_ENVIRONMENTS = HOSTED_ENVIRONMENT_NAMES.join("|");
 
-/** All recognized veryfront domains */
-const ALL_DOMAINS = `${LOCAL_DEV_DOMAINS}|${PROD_DOMAINS}`;
-
 function stripPort(host: string): string {
   return host.replace(/:\d+$/, "");
 }
@@ -164,7 +161,8 @@ function createParsedDomain(
 }
 
 function matchDomain(domain: string, pattern: string): RegExpMatchArray | null {
-  return domain.match(new RegExp(pattern));
+  const match = domain.match(new RegExp(pattern));
+  return match?.[0] === domain ? match : null;
 }
 
 export function parseConfiguredProjectDomain(
@@ -176,7 +174,7 @@ export function parseConfiguredProjectDomain(
     if (!domain.toLowerCase().endsWith(suffix)) continue;
     const prefix = domain.slice(0, -suffix.length);
     const match = /^([A-Za-z0-9-]+)\.(preview|staging|production)$/i.exec(prefix);
-    if (!match) continue;
+    if (!match || match[0] !== prefix) continue;
     const environment = match[2]!.toLowerCase() as HostedEnvironmentName;
     if (environment === "preview") {
       const { slug, branch } = parseSlugAndBranch(match[1]!);
@@ -265,39 +263,24 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(slug, branch, "production", true, false);
   }
 
-  // Production preview: {slug}.preview.veryfront.{com|org}
-  const prodPreviewMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.preview\\.(${PROD_DOMAINS})$`,
-  );
-  if (prodPreviewMatch?.[1]) {
-    const { slug, branch } = parseSlugAndBranch(prodPreviewMatch[1]);
-    return createParsedDomain(slug, branch, "preview", true, true);
-  }
-
-  // Production staging: {slug}.staging.veryfront.{com|org}
-  const prodStagingMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.staging\\.(${PROD_DOMAINS})$`,
-  );
-  if (prodStagingMatch?.[1]) {
-    return createParsedDomain(prodStagingMatch[1], null, "staging", true, false);
-  }
-
-  // Production explicit: {slug}.production.veryfront.{com|org}
-  const prodExplicitMatch = matchDomain(
-    domain,
-    `^([A-Za-z0-9-]+)\\.production\\.(${PROD_DOMAINS})$`,
-  );
-  if (prodExplicitMatch?.[1]) {
-    return createParsedDomain(prodExplicitMatch[1], null, "production", true, false);
-  }
-
-  // Environment root domains (no slug): preview|staging|production.veryfront.{com|org}
-  const envRootMatch = matchDomain(domain, `^(${HOSTED_ENVIRONMENTS})\\.(${PROD_DOMAINS})$`);
-  if (envRootMatch?.[1]) {
-    const env = envRootMatch[1] as Environment;
-    return createParsedDomain(null, null, env, true, env === "preview");
+  // Match the literal hosted root at a label boundary before parsing its prefix.
+  // Keep hosted root spelling case-sensitive here, as in the existing routing contract.
+  const root = PROD_DOMAINS.find((root) => domain.endsWith(`.${root}`));
+  const prefix = root ? domain.slice(0, -(root.length + 1)) : null;
+  if (prefix !== null) {
+    const projectMatch = matchDomain(prefix, `^([A-Za-z0-9-]+)\\.(${HOSTED_ENVIRONMENTS})$`);
+    if (projectMatch?.[1] && projectMatch[2]) {
+      const environment = projectMatch[2] as HostedEnvironmentName;
+      if (environment === "preview") {
+        const { slug, branch } = parseSlugAndBranch(projectMatch[1]);
+        return createParsedDomain(slug, branch, environment, true, true);
+      }
+      return createParsedDomain(projectMatch[1], null, environment, true, false);
+    }
+    const environment = HOSTED_ENVIRONMENT_NAMES.find((name) => prefix === name);
+    if (environment) {
+      return createParsedDomain(null, null, environment, true, environment === "preview");
+    }
   }
 
   // Intentionally NOT supported: bare {slug}.veryfront.{com,org}. Projects must use the
@@ -316,7 +299,9 @@ export function parseProjectDomain(host: string): ParsedDomain {
  * no project at all and nothing can answer.
  */
 export function isHostedVeryfrontDomain(host: string): boolean {
-  return new RegExp(`^(?:.+\\.)?(${PROD_DOMAINS})$`, "i").test(stripPort(host));
+  const domain = stripPort(host).toLowerCase();
+  if (!matchDomain(domain, "^[a-z0-9-]+(?:\\.[a-z0-9-]+)*$")) return false;
+  return PROD_DOMAINS.some((root) => domain === root || domain.endsWith(`.${root}`));
 }
 
 /**
@@ -329,7 +314,11 @@ export function isVeryfrontDomain(host: string): boolean {
 
   if (parseConfiguredProjectDomain(domain, CONFIGURED_PLATFORM_ROOTS)) return true;
 
-  return new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`).test(domain);
+  return [LOCAL_DEV_DOMAINS, ...PROD_DOMAINS].some((root) => {
+    if (!domain.endsWith(`.${root}`)) return false;
+    const prefix = domain.slice(0, -(root.length + 1));
+    return matchDomain(prefix, "^[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)*$") !== null;
+  });
 }
 
 /**

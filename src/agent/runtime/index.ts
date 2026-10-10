@@ -88,6 +88,7 @@ import {
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -1235,6 +1236,9 @@ async function observeGeneratedAgentOutputSchemaRejection(
     await observeGeneratedAgentTurn(messageId, response);
     await observeGeneratedAgentOutputSchemaFailure();
   } catch (observationError) {
+    if (observationError instanceof DurableRunEventPersistenceError) {
+      throw observationError;
+    }
     logger.debug("Generated outputSchema failure observation rejected", {
       error: observationError,
     });
@@ -3775,17 +3779,34 @@ export class AgentRuntime {
           timestamp: Date.now(),
         });
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
+        let generatedTurnObserved = false;
+        const observeGeneratedProviderTurnOnce = async (
+          turn: RuntimeGenerateTextResult & { object?: unknown },
+        ): Promise<void> => {
+          if (generatedTurnObserved) return;
+          await observeGeneratedAgentTurn(assistantMessage.id, turn);
+          generatedTurnObserved = true;
+        };
+        let generatedProviderReplayCheckpointPersisted = false;
+        const persistGeneratedProviderReplayCheckpoint = async (): Promise<void> => {
+          if (generatedProviderReplayCheckpointPersisted) return;
+          await persistProviderReplayCheckpointAfterTurn({
+            emission: providerReplayCheckpointEmission,
+            providerMetadata: readAttachedProviderMetadata(assistantMessage),
+            invokeAgentToolCalls: generatedSkillDelegationOrder === "interleaved"
+              ? undefined
+              : generatedInvokeAgentBatch,
+            deferCompletion: generatedBatchCompletionDeferred,
+          });
+          generatedProviderReplayCheckpointPersisted = true;
+        };
         pushPrivateArray(currentMessages, assistantMessage);
-        await persistMessage(assistantMessage);
-        await persistProviderReplayCheckpointAfterTurn({
-          emission: providerReplayCheckpointEmission,
-          providerMetadata: readAttachedProviderMetadata(assistantMessage),
-          invokeAgentToolCalls: generatedSkillDelegationOrder === "interleaved"
-            ? undefined
-            : generatedInvokeAgentBatch,
-          deferCompletion: generatedBatchCompletionDeferred,
-        });
-        throwIfAborted(abortSignal);
+        try {
+          await persistMessage(assistantMessage);
+        } catch (error) {
+          await observeGeneratedProviderTurnOnce(response);
+          throw error;
+        }
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
@@ -3836,17 +3857,25 @@ export class AgentRuntime {
         };
 
         if (!response.toolCalls?.length) {
-          for (const generatedToolResult of generatedToolResults.values()) {
-            if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
-              continue;
+          try {
+            for (const generatedToolResult of generatedToolResults.values()) {
+              if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
+                continue;
+              }
+              await persistGeneratedToolResult(generatedToolResult);
             }
-            await persistGeneratedToolResult(generatedToolResult);
+          } catch (error) {
+            await observeGeneratedProviderTurnOnce(response);
+            await persistGeneratedProviderReplayCheckpoint();
+            throw error;
           }
           const stoppedEmptyAfterCompletedTool = response.finishReason === "stop" &&
             !hasSubstantiveAssistantText(response.text) &&
             generatedToolResults.size === 0 &&
             somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
           if (stoppedEmptyAfterCompletedTool) {
+            await persistGeneratedProviderReplayCheckpoint();
+            throwIfAborted(abortSignal);
             if (recoveredEmptyResponse || step + 1 >= maxSteps) {
               throw new RuntimeEmptyResponseError();
             }
@@ -3874,13 +3903,16 @@ export class AgentRuntime {
               parsedObject = await outputSchema.parseOutput(response.text);
             } catch (error) {
               await observeGeneratedAgentOutputSchemaRejection(assistantMessage.id, response);
+              await persistGeneratedProviderReplayCheckpoint();
               throw error;
             }
           }
-          await observeGeneratedAgentTurn(assistantMessage.id, {
+          await observeGeneratedProviderTurnOnce({
             ...response,
             ...(outputSchema ? { object: parsedObject } : {}),
           });
+          await persistGeneratedProviderReplayCheckpoint();
+          throwIfAborted(abortSignal);
           return attachOutputSchemaParser({
             text: response.text,
             ...(outputSchema ? { object: parsedObject } : {}),
@@ -3895,7 +3927,9 @@ export class AgentRuntime {
           }, outputSchema);
         }
 
-        await observeGeneratedAgentTurn(assistantMessage.id, response);
+        await observeGeneratedProviderTurnOnce(response);
+        await persistGeneratedProviderReplayCheckpoint();
+        throwIfAborted(abortSignal);
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 

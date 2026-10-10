@@ -878,7 +878,7 @@ describe("model call request projection", () => {
     }, "o3");
     const customProviderReasoningProjected = buildModelCallContextRequest(
       customProviderReasoningRuntime,
-      { prompt, temperature: 0.4 },
+      { temperature: 0.4 },
     );
     const customProviderReasoningBody = buildOpenAIChatRequest(
       "o3",

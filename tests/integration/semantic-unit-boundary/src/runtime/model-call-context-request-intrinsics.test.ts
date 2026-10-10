@@ -74,6 +74,93 @@ describe("model call request projection intrinsic boundaries", () => {
     }
   });
 
+  it("preserves native OpenAI provider options when Map is replaced before dispatch", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      seed: 42,
+      providerOptions: {
+        "openai-compatible": { max_tokens: 111 },
+        openai: {
+          max_tokens: 777,
+          seed: undefined,
+          ["__proto__"]: "literal-proto",
+        },
+      },
+    };
+    const nativeMap = globalThis.Map;
+    const nativeMapSet = Map.prototype.set;
+    const nativeMapForEach = Map.prototype.forEach;
+    let projected: ReturnType<typeof buildModelCallContextRequest>;
+    try {
+      globalThis.Map = function (): never {
+        throw new Error("patched Map constructor");
+      } as unknown as typeof Map;
+      nativeMap.prototype.set = function (): never {
+        throw new Error("patched Map.set");
+      };
+      nativeMap.prototype.forEach = function (): never {
+        throw new Error("patched Map.forEach");
+      };
+      projected = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        openAITransport: "chat-completions",
+      }, options);
+    } finally {
+      nativeMap.prototype.set = nativeMapSet;
+      nativeMap.prototype.forEach = nativeMapForEach;
+      globalThis.Map = nativeMap;
+    }
+
+    assertEquals(projected?.maxOutputTokens, 777);
+    assertEquals(projected?.seed, undefined);
+  });
+
+  it("preserves native OpenAI Chat token aliases when Array iteration is replaced before dispatch", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        "openai-compatible": { max_completion_tokens: 222 },
+        openai: { max_tokens: 333, max_output_tokens: 999 },
+      },
+    };
+    const warmup = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, options);
+    assertEquals(warmup?.maxOutputTokens, 333);
+
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    let projectedMaxOutputTokens: number | undefined;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("patched array iterator");
+      },
+    });
+    try {
+      projectedMaxOutputTokens = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        openAITransport: "chat-completions",
+      }, options)?.maxOutputTokens;
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+    }
+
+    assertEquals(projectedMaxOutputTokens, 333);
+  });
+
   it("preserves native OpenAI Chat token aliases when RegExp matching is replaced before dispatch", () => {
     const nativeRegExpExec = RegExp.prototype.exec;
     const nativeRegExpTest = RegExp.prototype.test;
@@ -136,7 +223,10 @@ describe("model call request projection intrinsic boundaries", () => {
         options,
         createWarningCollector(),
       );
-      assertEquals(body.generationConfig?.thinkingConfig?.thinkingBudget, 4096);
+      assertEquals(body.generationConfig?.thinkingConfig, {
+        thinkingBudget: 4096,
+        includeThoughts: true,
+      });
 
       for (const replacement of replacements) {
         Number.isSafeInteger = replacement;
@@ -170,7 +260,6 @@ describe("model call request projection intrinsic boundaries", () => {
           modelProvider: "anthropic",
           modelId: "claude-synthetic",
         }, {
-          prompt,
           ...sampling,
           providerOptions: {
             anthropic: {

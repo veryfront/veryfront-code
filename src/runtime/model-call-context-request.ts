@@ -8,7 +8,6 @@ import {
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
-import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
   readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
@@ -18,6 +17,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   everyPrivateArray,
+  forEachPrivateArray,
   slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
@@ -35,7 +35,9 @@ type ModelCallRequestSource =
   };
 
 const ReflectApply = Reflect.apply;
+const ReflectGet = Reflect.get;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectEntries = Object.entries;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
@@ -53,8 +55,16 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
 }
 
+function objectEntries(value: Record<string, unknown>): Array<[string, unknown]> {
+  return ReflectApply(ObjectEntries, Object, [value]) as Array<[string, unknown]>;
+}
+
 function objectKeys<TValue extends object>(value: TValue): string[] {
-  return ObjectKeys(value);
+  return ReflectApply(ObjectKeys, Object, [value]) as string[];
+}
+
+function reflectGet(target: Record<string, unknown>, key: string): unknown {
+  return ReflectApply(ReflectGet, Reflect, [target, key]);
 }
 
 function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
@@ -100,12 +110,13 @@ function readProviderControl(
   const provider = resolveModelCallProvider(model);
   let selected: PropertyDescriptor | undefined;
   // The protocol's bucket first, so a provider-named bucket still takes precedence.
-  for (const name of [resolveModelCallProtocol(model), provider, model.provider ?? provider]) {
-    if (!name) continue;
+  const bucketNames = [resolveModelCallProtocol(model), provider, model.provider ?? provider];
+  forEachPrivateArray(bucketNames, (name) => {
+    if (!name) return;
     const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
-    if (ArrayIsArray(bucket)) continue;
+    if (ArrayIsArray(bucket)) return;
     selected = readOwnEnumerableDataDescriptor(bucket, key) ?? selected;
-  }
+  });
   return selected;
 }
 
@@ -201,6 +212,43 @@ function openAIProviderName(model: ModelCallRuntimeMetadata): string {
   return resolveModelCallProvider(model) ?? "openai";
 }
 
+function isProviderOptionsBucket(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
+}
+
+function readModelCallProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+  providerNames: readonly string[],
+): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  if (!providerOptions) return output;
+
+  forEachPrivateArray(providerNames, (providerName) => {
+    let ownsKey: boolean;
+    let value: unknown;
+    try {
+      ownsKey = ObjectHasOwn(providerOptions, providerName);
+      if (!ownsKey) return;
+      value = reflectGet(providerOptions, providerName);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be read`);
+    }
+    if (!isProviderOptionsBucket(value)) return;
+
+    let entries: Array<[string, unknown]>;
+    try {
+      entries = objectEntries(value);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+    }
+    forEachPrivateArray(entries, (entry) => {
+      defineOwnDataProperty(output, entry[0], entry[1]);
+    });
+  });
+
+  return output;
+}
+
 function normalizeOpenAIProviderOptionsForChat(
   providerOptions: Record<string, unknown>,
   modelId: string | undefined,
@@ -209,9 +257,9 @@ function normalizeOpenAIProviderOptionsForChat(
     return providerOptions;
   }
   const normalized: Record<string, unknown> = {};
-  for (const key of objectKeys(providerOptions)) {
+  forEachPrivateArray(objectKeys(providerOptions), (key) => {
     if (key !== "max_tokens") defineOwnDataProperty(normalized, key, providerOptions[key]);
-  }
+  });
   if (!ObjectHasOwn(normalized, "max_completion_tokens")) {
     defineOwnDataProperty(normalized, "max_completion_tokens", providerOptions.max_tokens);
   }
@@ -223,12 +271,11 @@ function openAIProviderOptions(
   options: ModelCallRequestSource,
 ): Record<string, unknown> {
   const providerName = openAIProviderName(model);
-  return readProviderOptions(
-    options.providerOptions as Record<string, unknown> | undefined,
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  );
+  const providerOptions = options.providerOptions as Record<string, unknown> | undefined;
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
+  return readModelCallProviderOptions(providerOptions, bucketNames);
 }
 
 function openAIChatProviderOptions(
@@ -236,24 +283,20 @@ function openAIChatProviderOptions(
   options: ModelCallRequestSource,
 ): Record<string, unknown> {
   const providerName = openAIProviderName(model);
-  const bucketNames = [
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  ];
+  const providerOptionsSource = options.providerOptions as Record<string, unknown> | undefined;
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
   const providerOptions: Record<string, unknown> = {};
-  for (const bucketName of bucketNames) {
+  forEachPrivateArray(bucketNames, (bucketName) => {
     const normalized = normalizeOpenAIProviderOptionsForChat(
-      readProviderOptions(
-        options.providerOptions as Record<string, unknown> | undefined,
-        bucketName,
-      ),
+      readModelCallProviderOptions(providerOptionsSource, [bucketName]),
       model.modelId,
     );
-    for (const key of objectKeys(normalized)) {
+    forEachPrivateArray(objectKeys(normalized), (key) => {
       defineOwnDataProperty(providerOptions, key, normalized[key]);
-    }
-  }
+    });
+  });
   return providerOptions;
 }
 
@@ -264,11 +307,13 @@ function resolveOpenAIChatMaxOutputTokens(
   const keys = isNativeOpenAIChatModel(model.modelId)
     ? ["max_completion_tokens", "max_tokens"]
     : ["max_tokens"];
-  for (const key of keys) {
+  let selected: { present: boolean; value: number | undefined } | undefined;
+  forEachPrivateArray(keys, (key) => {
+    if (selected) return;
     const native = ownNumberControl(providerOptions, key);
-    if (native.present) return native;
-  }
-  return { present: false, value: undefined };
+    if (native.present) selected = native;
+  });
+  return selected ?? { present: false, value: undefined };
 }
 
 function resolveOpenAIMaxOutputTokens(
@@ -342,24 +387,27 @@ function resolvePersistedControls(
       ? options.stopSequences
       : undefined,
   };
-  for (
-    const [field, nativeField] of [
+  forEachPrivateArray(
+    [
       ["temperature", "temperature"],
       ["topP", "top_p"],
       ["presencePenalty", "presence_penalty"],
       ["frequencyPenalty", "frequency_penalty"],
-    ] as const
-  ) {
-    // Native options merge after neutral filtering in both OpenAI builders.
-    const value = ObjectHasOwn(providerOptions, nativeField)
-      ? providerOptions[nativeField]
-      : dropSampling ||
-          (transport === "responses" &&
-            (field === "presencePenalty" || field === "frequencyPenalty"))
-      ? undefined
-      : options[field];
-    effective[field] = typeof value === "number" ? value : undefined;
-  }
+    ] as const,
+    (fieldPair) => {
+      const field = fieldPair[0];
+      const nativeField = fieldPair[1];
+      // Native options merge after neutral filtering in both OpenAI builders.
+      const value = ObjectHasOwn(providerOptions, nativeField)
+        ? providerOptions[nativeField]
+        : dropSampling ||
+            (transport === "responses" &&
+              (field === "presencePenalty" || field === "frequencyPenalty"))
+        ? undefined
+        : options[field];
+      effective[field] = typeof value === "number" ? value : undefined;
+    },
+  );
   return effective;
 }
 
@@ -515,7 +563,9 @@ function suppressOpenAIFunctionToolReasoning(
   // The capability is recorded for OpenAI's own models. Another provider on the
   // same wire surface builds its request without it, so the recorded context
   // must not apply it either.
-  if (resolveModelCallProvider(model) !== "openai") return false;
+  if (resolveModelCallProvider(model) !== "openai" || model.provider !== "veryfront-cloud") {
+    return false;
+  }
   const catalogId = `openai/${model.modelId}`;
   const built = readVeryfrontCloudModelFacts(model);
   const openAITransport = built

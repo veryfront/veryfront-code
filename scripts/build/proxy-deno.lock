@@ -1590,7 +1590,8 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "npm:purgecss@7.0.2"
+          "npm:postcss-selector-parser@7.1.6",
+          "npm:postcss@8.5.29"
         ]
       },
       "extensions/ext-css-tailwind": {
@@ -1598,8 +1599,8 @@
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
           "npm:@tailwindcss/forms@0.5.11",
-          "npm:@tailwindcss/typography@0.5.19",
           "npm:daisyui@5.5.14",
+          "npm:postcss-selector-parser@7.1.6",
           "npm:tailwind-scrollbar-hide@2.0.0",
           "npm:tailwindcss-animate@1.0.7",
           "npm:tailwindcss@4.2.2"
