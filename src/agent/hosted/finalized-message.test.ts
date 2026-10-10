@@ -458,6 +458,89 @@ Deno.test("finalized tool input adopts matching final-step output without duplic
   );
 });
 
+for (
+  const [label, partType, partInput, finalStep] of [
+    ["a different final-step tool name", "tool-bash", { command: "x" }, {
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: { url: "u" } }],
+      toolResults: [{ toolCallId: "c", toolName: "web_fetch", output: "fetched" }],
+    }],
+    ["final-step calls with conflicting tool names", "tool-web_fetch", {}, {
+      toolCalls: [
+        { toolCallId: "c", toolName: "web_fetch", input: { url: "u" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "web_fetch", output: "fetched" }],
+    }],
+    ["final-step calls with conflicting inputs", "tool-bash", {}, {
+      toolCalls: [
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "y" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+    }],
+  ] as const
+) {
+  Deno.test(`pending tool is not completed from ${label}`, () => {
+    const part = {
+      type: partType,
+      toolCallId: "c",
+      input: partInput,
+      state: "input-streaming" as const,
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(
+      state.sanitizedFinalizedMessage.parts.some((candidate) =>
+        "toolCallId" in candidate && candidate.toolCallId === "c" &&
+        candidate.state === "output-available"
+      ),
+      false,
+    );
+    assertEquals(state.hasIncompleteFinalizedToolParts, true);
+    const mirrored = createMirroredToolChunkState();
+    mirrored.startedToolCallIds.add("c");
+    const replay = buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    });
+    assertEquals(replay.some((chunk) => chunk.type === "tool-output-available"), false);
+  });
+}
+
+Deno.test("pending tool completes from agreeing duplicate final-step records", () => {
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{ type: "tool-bash", toolCallId: "c", input: {}, state: "input-streaming" }],
+    },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+        { toolCallId: "c", toolName: "bash", input: { command: "x" } },
+      ],
+      toolResults: [{ toolCallId: "c", toolName: "bash", output: "ok" }],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: { command: "x" },
+    state: "output-available",
+    output: "ok",
+  }]);
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
+});
+
 Deno.test("partially streamed tool input recovers complete arguments in terminal and replay", () => {
   const finalStep = {
     toolCalls: [{ toolCallId: "c", toolName: "bash", input: { command: "x" } }],

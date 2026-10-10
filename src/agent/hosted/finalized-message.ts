@@ -298,6 +298,50 @@ function hasUniqueProviderOwnedFallback(
     toolPartName(match) === toolPartName(part) && match.providerExecuted === true;
 }
 
+function sameFallbackRecord(
+  left: ChatUiMessage["parts"][number],
+  right: ChatUiMessage["parts"][number],
+): boolean {
+  if (!isToolUiPart(left) || !isToolUiPart(right)) return false;
+  try {
+    return left.state === right.state && left.providerExecuted === right.providerExecuted &&
+      JSON.stringify(left.input) === JSON.stringify(right.input) &&
+      JSON.stringify("output" in left ? left.output : undefined) ===
+        JSON.stringify("output" in right ? right.output : undefined);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A pending tool part is completed only from final-step records that all carry its tool
+ * name and agree with each other. Mismatched names or conflicting duplicates for the same
+ * tool call id are ambiguous, so the part stays incomplete.
+ */
+function findUnambiguousCompletingFallback(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): ChatUiMessage["parts"][number] | undefined {
+  if (!isToolUiPart(part)) return undefined;
+  const sameCall = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  if (sameCall.some((fallback) => toolPartName(fallback) !== toolPartName(part))) {
+    return undefined;
+  }
+  const candidates = sameCall.filter((fallback) =>
+    isToolUiPart(fallback) &&
+    (fallback.state === "output-available" ||
+      (fallback.state === "input-available" && fallback.providerExecuted === true &&
+        part.providerExecuted !== false))
+  );
+  const [completed] = candidates;
+  if (!completed || candidates.some((candidate) => !sameFallbackRecord(candidate, completed))) {
+    return undefined;
+  }
+  return completed;
+}
+
 /** State for build finalized message. */
 export function buildFinalizedMessageState(
   input: BuildFinalizedMessageStateInput,
@@ -323,12 +367,7 @@ export function buildFinalizedMessageState(
       return part;
     }
     const partialInput = part.state === "input-streaming" || part.state === "pending";
-    const completed = finalStepFallbackParts.find((fallback) =>
-      isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId &&
-      (fallback.state === "output-available" ||
-        (fallback.state === "input-available" && fallback.providerExecuted === true &&
-          part.providerExecuted !== false))
-    );
+    const completed = findUnambiguousCompletingFallback(finalStepFallbackParts, part);
     if (!completed || !isToolUiPart(completed)) {
       return part;
     }
