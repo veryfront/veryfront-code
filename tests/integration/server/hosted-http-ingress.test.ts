@@ -398,7 +398,7 @@ it("refuses incompatible production startup before discovery, prewarming or list
   }
 });
 
-it("refuses preview HMR, preview mode and snippets under isolation without host handlers", async () => {
+it("refuses preview HMR, preview hosts and modes, and snippets under isolation without host handlers", async () => {
   await withEnv({ VERYFRONT_TRUST_FORWARDED_HEADERS: "1" }, async () => {
     const adapter = createMockAdapter();
     let hostReads = 0;
@@ -428,14 +428,17 @@ it("refuses preview HMR, preview mode and snippets under isolation without host 
       "x-token": "source-only",
     };
     for (
-      const [path, extra] of [
-        ["/_ws", { upgrade: "websocket", connection: "upgrade" }],
-        ["/guide.md", { "x-environment": "preview" }],
-        ["/@components/card", {}],
+      const [url, extra] of [
+        ["https://app.example/_ws", { upgrade: "websocket", connection: "upgrade" }],
+        ["https://app.example/guide.md", { "x-environment": "preview" }],
+        ["https://app.example/@components/card", {}],
+        // A preview host with a production header is still preview.
+        ["https://project-a.preview.example/page", {}],
       ] as const
     ) {
+      const path = url;
       const response = await handler(
-        new Request(`https://app.example${path}`, { headers: { ...headers, ...extra } }),
+        new Request(url, { headers: { ...headers, ...extra } }),
       );
       assertEquals(response.status, 503, path);
       assertEquals(response.headers.get("cache-control"), "no-store");

@@ -49,7 +49,10 @@ export interface HostedHttpIngressOptions {
 
 interface IngressSelection extends Partial<InstalledProjectHttpBinding> {
   sourceToken: string;
+  /** Mode named by the trusted `x-environment` header. */
   mode: "preview" | "production" | undefined;
+  /** Canonical mode derived from the effective request host. */
+  hostMode: "preview" | "production" | undefined;
   proxyTrusted: boolean | undefined;
 }
 
@@ -94,7 +97,12 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
   const fetch = options.broker.fetch.bind(options.broker);
   return async (request: Request, selection: IngressSelection): Promise<Response> => {
     request.signal.throwIfAborted();
-    if (isUnsupportedUnderIsolation(request) || selection.mode === "preview") {
+    // Either signal naming preview refuses: a preview host cannot be relabelled
+    // production by a header, and the reverse is refused too.
+    if (
+      isUnsupportedUnderIsolation(request) || selection.mode === "preview" ||
+      selection.hostMode !== "production"
+    ) {
       return unavailable(request, "This surface is unsupported under isolation");
     }
     if (
