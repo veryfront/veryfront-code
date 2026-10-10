@@ -49,7 +49,7 @@ describe("createHttpDeployControlPlane", () => {
           return Promise.resolve({
             access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
             token_type: "Bearer",
-            expires_in: 300,
+            expires_in_seconds: 300,
           });
         },
       }),
@@ -66,11 +66,8 @@ describe("createHttpDeployControlPlane", () => {
       },
     );
     assertEquals(calls, [{
-      path: "/auth/environment-token",
-      body: {
-        project_reference: "11111111-1111-4111-8111-111111111111",
-        environment_name: "production",
-      },
+      path: "/projects/11111111-1111-4111-8111-111111111111/environments/production/access-tokens",
+      body: undefined,
     }]);
   });
 
@@ -82,7 +79,7 @@ describe("createHttpDeployControlPlane", () => {
           post: () =>
             Promise.resolve({
               access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
-              expires_in: expiresIn,
+              expires_in_seconds: expiresIn,
             }),
         }),
       );

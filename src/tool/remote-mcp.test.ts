@@ -902,7 +902,8 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -930,7 +931,8 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -1016,7 +1018,8 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -1065,7 +1068,8 @@ describe("tool/remote-mcp", () => {
         error: "reconnect_required",
         code: "OAUTH_TOKEN_EXPIRED",
         integration: "calendar",
-        connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+        connectUrl:
+          "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
         message: "Calendar needs to be reconnected before this tool can run.",
       });
     } finally {

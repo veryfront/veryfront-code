@@ -1414,7 +1414,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `GET /api/projects/${PROJECT_ID}/environments`,
         // The environment is protected and the credential is an API key, so
         // deploy asks for a token bound to this environment before probing.
-        "POST /api/auth/environment-token",
+        `POST /api/projects/${PROJECT_ID}/environments/production/access-tokens`,
         "GET /dashboard",
         "GET /dashboard",
       ]);

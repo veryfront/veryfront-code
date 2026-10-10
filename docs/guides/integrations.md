@@ -23,7 +23,8 @@ and transport surfaces.
 - **Transport:** REST, GraphQL, MCP, the TypeScript client, and the Veryfront
   CLI all call the same hosted tools. REST, the TypeScript client, and the CLI
   also read connection inventory and start OAuth. GraphQL and MCP discover and
-  call tools but do not list connections.
+  call tools, create connect sessions, read connection status, and delete
+  connections, but do not list connections.
 
 The hosted API flow is `discover → connect → status → call`. No integration
 policy setup is required. Every surface can select an exact connection when a
@@ -315,6 +316,11 @@ If you keep the project as CommonJS, name the file `first-call.mts` and run
 
 `client.connect("gmail", { redirectUri })` starts the same OAuth handoff as the
 CLI and returns a one-time `connect_url` with an `expires_at` deadline.
+`client.createConnectSession("gmail", { scope, redirectUri })` creates the same
+one-time link as a connect session with `connectUrl` and `expiresAt`.
+`client.getConnectionStatus("gmail", scope)` reads whether the scope is
+connected, and `client.deleteConnection("gmail", connectionId, scope)` removes
+one connection and reports `providerRevoked`.
 
 ### Call with the CLI
 

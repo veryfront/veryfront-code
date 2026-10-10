@@ -15,7 +15,7 @@ API-key client through it, and which component owns each part.
 - The Cloud API owns credential issuance. A browser session is a user JWT in
   the `authToken` cookie. An environment access token is a purpose-bound JWT
   the API mints from an API key for one environment
-  (`POST /auth/environment-token`).
+  (`POST /projects/{project_reference}/environments/{environment_name}/access-tokens`).
 - The CLI deploy flow obtains an environment access token only to probe the
   environment it just deployed, in
   [cli/shared/deployment/deploy-project.ts](../../cli/shared/deployment/deploy-project.ts)
@@ -29,7 +29,7 @@ sequenceDiagram
   participant CLI as veryfront deploy
   participant API as Cloud API
   participant Proxy as Proxy gate
-  CLI->>API: POST /auth/environment-token (API key, project_reference, environment_name)
+  CLI->>API: POST /projects/{project_reference}/environments/{environment_name}/access-tokens (API key)
   API->>API: principal: owner for an all-project key, token for a project-scoped key
   API->>API: require effective read scope, check project access, resolve environment
   API-->>CLI: token bound to project and environment (5 min)
@@ -72,7 +72,9 @@ redirects to sign-in.
 
 The Cloud API must be deployed before a CLI release that performs the exchange:
 an older API answers the exchange with `404`, which the CLI reports as
-`unsupported` and degrades to `gated`. The gate change is backward compatible
+`unsupported` and degrades to `gated`. The exchange path also answers `404` for
+an unknown project or environment and for a key without access, so the CLI
+reports those as `unsupported` as well. The gate change is backward compatible
 with existing session cookies, so the proxy can ship in either order relative
 to the CLI.
 

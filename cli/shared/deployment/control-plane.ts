@@ -103,7 +103,7 @@ export interface EnvironmentAccessToken {
 
 interface WireEnvironmentAccessToken {
   access_token: string;
-  expires_in: number;
+  expires_in_seconds: number;
 }
 
 interface WireEnvironmentDeployment {
@@ -352,15 +352,16 @@ export function createHttpDeployControlPlane(
     },
 
     async createEnvironmentAccessToken(target) {
-      const response = await client.post<WireEnvironmentAccessToken>("/auth/environment-token", {
-        project_reference: target.projectId,
-        environment_name: target.environmentName,
-      });
+      const response = await client.post<WireEnvironmentAccessToken>(
+        `/projects/${encodeURIComponent(target.projectId)}/environments/${
+          encodeURIComponent(target.environmentName)
+        }/access-tokens`,
+      );
       const token = response?.access_token;
       if (typeof token !== "string" || token.length === 0) {
         throw new Error("The API did not return an environment access token");
       }
-      const expiresIn = response?.expires_in;
+      const expiresIn = response?.expires_in_seconds;
       if (typeof expiresIn !== "number" || !Number.isInteger(expiresIn) || expiresIn <= 0) {
         throw new Error("The API did not return a positive integer expiry");
       }

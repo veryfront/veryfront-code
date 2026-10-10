@@ -144,7 +144,7 @@ export async function dispatchIntegrationApiRequest(input: {
   projectSlug?: string | undefined;
   expectedProjectId?: string | undefined;
   signal: AbortSignal;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   redirect?: "error";
 }): Promise<Response> {
   const {
