@@ -1,3 +1,7 @@
+import { buildOpenAIChatRequest } from "../../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
+import { buildAnthropicMessagesRequest } from "../../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
+import { buildGoogleGenerateContentRequest } from "../../../extensions/ext-llm-google/src/google-request-builder.ts";
+import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { buildOpenAIResponsesRequest } from "../../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
@@ -882,6 +886,536 @@ for (const cloud of [false, true]) {
         assertEquals(JSON.stringify(request.metadata), JSON.stringify({ value: primitive }));
         assertEquals(JSON.stringify(Reflect.get(request, control)), JSON.stringify(primitive));
         assertEquals(hooks, 0);
+      });
+    }
+  }
+}
+
+for (
+  const surface of [
+    "anthropic",
+    "google-json-schema",
+    "google-response-schema",
+    "google-mime-only",
+    "google-mime-override",
+    "anthropic-schema-extension",
+    "google-schema-extension",
+  ] as const
+) {
+  for (const neutral of ["absent", "text", "json-schema", "json"] as const) {
+    for (const cloud of [false, true]) {
+      for (const streaming of [false, true]) {
+        if (surface === "google-mime-only" && neutral === "json-schema") continue;
+        if (surface === "google-mime-override" && neutral !== "json") continue;
+        if (
+          (surface === "anthropic-schema-extension" || surface === "google-schema-extension") &&
+          neutral !== "absent"
+        ) continue;
+        it(`captures effective ${surface} output format with ${neutral} neutral in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+          const provider = surface === "anthropic" || surface === "anthropic-schema-extension"
+            ? "anthropic"
+            : "google";
+          const nativeSchema = {
+            type: "object",
+            properties: { native: { type: "string" } },
+            ...(surface === "anthropic-schema-extension" || surface === "google-schema-extension"
+              ? { jsonSchema: { type: "number" } }
+              : {}),
+            required: ["native"],
+            additionalProperties: false,
+          };
+          const neutralSchema = {
+            type: "object",
+            properties: { neutral: { type: "number" } },
+            required: ["neutral"],
+            additionalProperties: false,
+          };
+          const providerOptions = provider === "anthropic"
+            ? {
+              anthropic: {
+                output_config: { format: { type: "json_schema", schema: nativeSchema } },
+              },
+            }
+            : {
+              google: {
+                generationConfig: {
+                  responseMimeType: surface === "google-mime-override"
+                    ? "text/plain"
+                    : "application/json",
+                  ...(surface === "google-mime-only" ? {} : {
+                    [
+                      surface === "google-json-schema" || surface === "google-mime-override" ||
+                        surface === "google-schema-extension"
+                        ? "responseJsonSchema"
+                        : "responseSchema"
+                    ]: nativeSchema,
+                  }),
+                },
+              },
+            };
+          const responseFormat: ModelRuntimeCallOptions["responseFormat"] = neutral === "absent"
+            ? undefined
+            : neutral === "text"
+            ? { type: "text" }
+            : neutral === "json"
+            ? { type: "json" }
+            : {
+              type: "json_schema",
+              name: "neutral",
+              description: "Neutral output",
+              strict: true,
+              schema: neutralSchema,
+            };
+          const wireOptions: ModelRuntimeCallOptions = {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions,
+            ...(responseFormat ? { responseFormat } : {}),
+          };
+          function buildWire(options: ModelRuntimeCallOptions) {
+            const warnings = {
+              push() {},
+              drain() {
+                return [];
+              },
+            };
+            return provider === "anthropic"
+              ? buildAnthropicMessagesRequest(
+                "claude-test",
+                "anthropic",
+                options,
+                streaming,
+                warnings,
+              )
+              : buildGoogleGenerateContentRequest("google", options, warnings);
+          }
+          const originalWire = buildWire(wireOptions);
+          const originalConstraint = provider === "anthropic"
+            ? originalWire.output_config
+            : originalWire.generationConfig;
+          assert(typeof originalConstraint === "object" && originalConstraint !== null);
+          let recorded: AgentRunEvent | undefined;
+          let dispatched: ModelRuntimeCallOptions | undefined;
+          const model: ModelRuntime<ModelRuntimeCallOptions> = {
+            provider: cloud ? "veryfront-cloud" : provider,
+            modelProvider: provider,
+            modelId: "format-test",
+            specificationVersion: "v3",
+            runtimeCapabilities: { structuredOutput: true },
+            doGenerate(options) {
+              dispatched = options;
+              return Promise.resolve({
+                content: [{ type: "text", text: "ok" }],
+                finishReason: "stop",
+                usage: {},
+              });
+            },
+            doStream(options) {
+              dispatched = options;
+              return Promise.resolve({
+                stream: new ReadableStream<unknown>({
+                  start(controller) {
+                    controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                    controller.close();
+                  },
+                }),
+              });
+            },
+          };
+          if (cloud) {
+            registerVeryfrontCloudModelFacts(
+              model,
+              () => ({
+                provider,
+                surface: provider,
+                native: true,
+                transportPlan: { transport: "chat-completions", pinned: true },
+              }),
+            );
+          }
+          const sink: AgentRunEventSink = (event) => {
+            if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") recorded = event;
+          };
+          const options: Parameters<typeof generateText>[0] = {
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            providerOptions,
+            ...(responseFormat ? { responseFormat } : {}),
+          };
+          try {
+            await runWithMandatoryRunEventSink(sink, async () => {
+              if (streaming) {
+                for await (const _part of streamText(options).fullStream) {
+                  /* Drain actual dispatch. */
+                }
+              } else await generateText(options);
+            });
+          } catch (error) {
+            if (surface !== "google-response-schema" || neutral === "json-schema") throw error;
+            assert(error instanceof TypeError || error instanceof DurableRunEventPersistenceError);
+            assertEquals(recorded, undefined);
+            assertEquals(dispatched, undefined);
+            return;
+          }
+          assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+          assert(dispatched);
+          const actualWire = buildWire(dispatched);
+          assertEquals(
+            JSON.stringify(
+              provider === "anthropic" ? actualWire.output_config : actualWire.generationConfig,
+            ),
+            JSON.stringify(originalConstraint),
+          );
+          const captured = recorded.request?.responseFormat;
+          if (surface === "google-mime-only") {
+            assertEquals(captured, { type: "json" });
+            return;
+          }
+          assert(
+            surface !== "google-response-schema" || neutral === "json-schema",
+            "Legacy Gemini responseSchema requires rejection before capture without a JSON Schema override",
+          );
+          assert(captured?.type === "json_schema");
+          if (neutral === "json-schema") {
+            assertEquals(captured.name, "neutral");
+            assertEquals(captured.description, "Neutral output");
+            assertEquals(captured.strict, true);
+          }
+          const selectedSchema = provider === "anthropic"
+            ? Reflect.get(originalConstraint, "format")
+            : "responseJsonSchema" in originalConstraint
+            ? originalConstraint.responseJsonSchema
+            : Reflect.get(originalConstraint, "responseSchema");
+          if (provider === "anthropic") {
+            assert(
+              typeof selectedSchema === "object" && selectedSchema !== null &&
+                "schema" in selectedSchema,
+            );
+            assertEquals(captured.schema, selectedSchema.schema);
+          } else assertEquals(captured.schema, selectedSchema);
+        });
+      }
+    }
+  }
+}
+
+for (const transport of ["chat-completions", "responses"] as const) {
+  for (const neutralText of [false, true]) {
+    for (const cloud of [false, true]) {
+      for (const streaming of [false, true]) {
+        it(`captures raw OpenAI ${transport} schema extension with ${neutralText ? "text" : "absent"} neutral in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+          const schema = {
+            type: "object",
+            properties: { answer: { type: "string" } },
+            required: ["answer"],
+            additionalProperties: false,
+            jsonSchema: { type: "number" },
+          };
+          const providerOptions = transport === "chat-completions"
+            ? {
+              openai: {
+                response_format: { type: "json_schema", json_schema: { name: "native", schema } },
+              },
+            }
+            : { openai: { text: { format: { type: "json_schema", name: "native", schema } } } };
+          let dispatched: ModelRuntimeCallOptions | undefined;
+          let recorded: AgentRunEvent | undefined;
+          const model: ModelRuntime<ModelRuntimeCallOptions> = {
+            provider: cloud ? "veryfront-cloud" : "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4.1-mini",
+            openAITransport: transport,
+            specificationVersion: "v3",
+            runtimeCapabilities: { structuredOutput: true },
+            doGenerate(options) {
+              dispatched = options;
+              return Promise.resolve({
+                content: [{ type: "text", text: "ok" }],
+                finishReason: "stop",
+                usage: {},
+              });
+            },
+            doStream(options) {
+              dispatched = options;
+              return Promise.resolve({
+                stream: new ReadableStream<unknown>({
+                  start(controller) {
+                    controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                    controller.close();
+                  },
+                }),
+              });
+            },
+          };
+          if (cloud) {
+            registerVeryfrontCloudModelFacts(
+              model,
+              () => ({
+                provider: "openai",
+                surface: "openai",
+                native: true,
+                transportPlan: { transport, pinned: true },
+              }),
+            );
+          }
+          const options: Parameters<typeof generateText>[0] = {
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            providerOptions,
+            ...(neutralText ? { responseFormat: { type: "text" } } : {}),
+          };
+          await runWithMandatoryRunEventSink((event) => {
+            if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") recorded = event;
+          }, async () => {
+            if (streaming) {
+              for await (const _part of streamText(options).fullStream) {
+                /* Drain actual dispatch. */
+              }
+            } else await generateText(options);
+          });
+          assert(dispatched);
+          assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+          const captured = recorded.request?.responseFormat;
+          assert(captured?.type === "json_schema");
+          assertEquals(captured.schema, schema);
+          const warnings = {
+            push() {},
+            drain() {
+              return [];
+            },
+          };
+          const body = transport === "chat-completions"
+            ? buildOpenAIChatRequest("gpt-4.1-mini", "openai", dispatched, streaming, warnings)
+            : buildOpenAIResponsesRequest(
+              "gpt-4.1-mini",
+              "openai",
+              dispatched,
+              streaming,
+              warnings,
+            );
+          let format: unknown;
+          if (transport === "chat-completions") {
+            const response = Reflect.get(body, "response_format");
+            assert(typeof response === "object" && response !== null && "json_schema" in response);
+            format = response.json_schema;
+          } else {
+            const text = Reflect.get(body, "text");
+            assert(typeof text === "object" && text !== null && "format" in text);
+            format = text.format;
+          }
+          assert(typeof format === "object" && format !== null && "schema" in format);
+          assertEquals(format.schema, schema);
+        });
+      }
+    }
+  }
+}
+
+for (const surface of ["openai-chat", "openai-responses", "anthropic", "google"] as const) {
+  for (const cloud of [false, true]) {
+    for (const streaming of [false, true]) {
+      it(`captures effective neutral wrapped schema for ${surface} in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+        const schema = {
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+          additionalProperties: false,
+          jsonSchema: { type: "number" },
+        };
+        const provider = surface === "openai-chat" || surface === "openai-responses"
+          ? "openai"
+          : surface;
+        const transport = surface === "openai-responses" ? "responses" : "chat-completions";
+        let dispatched: ModelRuntimeCallOptions | undefined;
+        let recorded: AgentRunEvent | undefined;
+        const model: ModelRuntime<ModelRuntimeCallOptions> = {
+          provider: cloud ? "veryfront-cloud" : provider,
+          modelProvider: provider,
+          modelId: "format-test",
+          openAITransport: transport,
+          specificationVersion: "v3",
+          runtimeCapabilities: { structuredOutput: true },
+          doGenerate(options) {
+            dispatched = options;
+            return Promise.resolve({
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              usage: {},
+            });
+          },
+          doStream(options) {
+            dispatched = options;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        if (cloud) {
+          registerVeryfrontCloudModelFacts(model, () => ({
+            provider,
+            surface: provider,
+            native: true,
+            transportPlan: { transport, pinned: true },
+          }));
+        }
+        const options: Parameters<typeof generateText>[0] = {
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          responseFormat: { type: "json_schema", name: "neutral", schema: { jsonSchema: schema } },
+        };
+        await runWithMandatoryRunEventSink((event) => {
+          if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") recorded = event;
+        }, async () => {
+          if (streaming) {
+            for await (const _part of streamText(options).fullStream) { /* Drain dispatch. */ }
+          } else await generateText(options);
+        });
+        assert(dispatched);
+        assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        const captured = recorded.request?.responseFormat;
+        assert(captured?.type === "json_schema");
+        const warnings = {
+          push() {},
+          drain() {
+            return [];
+          },
+        };
+        let effectiveSchema: unknown;
+        if (surface === "google") {
+          const body = buildGoogleGenerateContentRequest("google", dispatched, warnings);
+          const config = Reflect.get(body, "generationConfig");
+          assert(typeof config === "object" && config !== null);
+          effectiveSchema = Reflect.get(config, "responseJsonSchema");
+        } else if (surface === "anthropic") {
+          const body = buildAnthropicMessagesRequest(
+            "claude-test",
+            "anthropic",
+            dispatched,
+            streaming,
+            warnings,
+          );
+          const config = Reflect.get(body, "output_config");
+          assert(typeof config === "object" && config !== null);
+          const format = Reflect.get(config, "format");
+          assert(typeof format === "object" && format !== null);
+          effectiveSchema = Reflect.get(format, "schema");
+        } else {
+          const body = surface === "openai-chat"
+            ? buildOpenAIChatRequest("gpt-4.1-mini", "openai", dispatched, streaming, warnings)
+            : buildOpenAIResponsesRequest(
+              "gpt-4.1-mini",
+              "openai",
+              dispatched,
+              streaming,
+              warnings,
+            );
+          const config = Reflect.get(body, surface === "openai-chat" ? "response_format" : "text");
+          assert(typeof config === "object" && config !== null);
+          const format = Reflect.get(config, surface === "openai-chat" ? "json_schema" : "format");
+          assert(typeof format === "object" && format !== null);
+          effectiveSchema = Reflect.get(format, "schema");
+        }
+        assert(effectiveSchema !== undefined);
+        assertEquals(captured.schema, effectiveSchema);
+      });
+    }
+  }
+}
+
+for (const surface of ["openai-chat", "openai-responses"] as const) {
+  for (const cloud of [false, true]) {
+    for (const streaming of [false, true]) {
+      it(`captures effective deeply wrapped neutral schema for ${surface} in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+        const schema = {
+          type: "object",
+          jsonSchema: { type: "number", jsonSchema: { type: "boolean" } },
+        };
+        const provider = surface === "openai-chat" || surface === "openai-responses"
+          ? "openai"
+          : surface;
+        const transport = surface === "openai-responses" ? "responses" : "chat-completions";
+        let dispatched: ModelRuntimeCallOptions | undefined;
+        let recorded: AgentRunEvent | undefined;
+        const model: ModelRuntime<ModelRuntimeCallOptions> = {
+          provider: cloud ? "veryfront-cloud" : provider,
+          modelProvider: provider,
+          modelId: "format-test",
+          openAITransport: transport,
+          specificationVersion: "v3",
+          runtimeCapabilities: { structuredOutput: true },
+          doGenerate(options) {
+            dispatched = options;
+            return Promise.resolve({
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              usage: {},
+            });
+          },
+          doStream(options) {
+            dispatched = options;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        if (cloud) {
+          registerVeryfrontCloudModelFacts(model, () => ({
+            provider,
+            surface: provider,
+            native: true,
+            transportPlan: { transport, pinned: true },
+          }));
+        }
+        const options: Parameters<typeof generateText>[0] = {
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          responseFormat: { type: "json_schema", name: "neutral", schema: { jsonSchema: schema } },
+        };
+        await runWithMandatoryRunEventSink((event) => {
+          if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") recorded = event;
+        }, async () => {
+          if (streaming) {
+            for await (const _part of streamText(options).fullStream) { /* Drain dispatch. */ }
+          } else await generateText(options);
+        });
+        assert(dispatched);
+        assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        const captured = recorded.request?.responseFormat;
+        assert(captured?.type === "json_schema");
+        const warnings = {
+          push() {},
+          drain() {
+            return [];
+          },
+        };
+        let effectiveSchema: unknown;
+        {
+          const body = surface === "openai-chat"
+            ? buildOpenAIChatRequest("gpt-4.1-mini", "openai", dispatched, streaming, warnings)
+            : buildOpenAIResponsesRequest(
+              "gpt-4.1-mini",
+              "openai",
+              dispatched,
+              streaming,
+              warnings,
+            );
+          const config = Reflect.get(body, surface === "openai-chat" ? "response_format" : "text");
+          assert(typeof config === "object" && config !== null);
+          const format = Reflect.get(config, surface === "openai-chat" ? "json_schema" : "format");
+          assert(typeof format === "object" && format !== null);
+          effectiveSchema = Reflect.get(format, "schema");
+        }
+        assert(effectiveSchema !== undefined);
+        assertEquals(captured.schema, effectiveSchema);
       });
     }
   }

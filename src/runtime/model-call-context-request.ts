@@ -61,6 +61,7 @@ const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const MathMin = Math.min;
 const NativeWeakSet = WeakSet;
+const PreservedResponseFormatSchemas = new NativeWeakSet<SnapshotContainer>();
 const NativeDate = Date;
 const NativeNumber = Number;
 const NativeURL = URL;
@@ -145,6 +146,27 @@ function weakSetDelete(set: WeakSet<SnapshotContainer>, value: SnapshotContainer
 
 function weakSetHas(set: WeakSet<SnapshotContainer>, value: SnapshotContainer): boolean {
   return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
+
+function markPreservedResponseFormatSchema(value: unknown): unknown {
+  if (value !== null && typeof value === "object") {
+    weakSetAdd(PreservedResponseFormatSchemas, value as SnapshotContainer);
+  }
+  return value;
+}
+
+function shouldUnwrapResponseFormatSchema(value: unknown): boolean {
+  return value === null || typeof value !== "object" ||
+    !weakSetHas(PreservedResponseFormatSchemas, value as SnapshotContainer);
+}
+
+function snapshotPreservedResponseFormatSchema(value: unknown): unknown {
+  return markPreservedResponseFormatSchema(snapshotProviderOptionValue(
+    "responseFormat",
+    value,
+    { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+    0,
+  ));
 }
 
 function numberIsFinite(value: number): boolean {
@@ -601,12 +623,7 @@ function readNativeOpenAIJsonSchemaResponseFormat(
   return {
     type: "json_schema",
     name,
-    schema: snapshotProviderOptionValue(
-      "responseFormat",
-      schema,
-      { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
-      0,
-    ),
+    schema: snapshotPreservedResponseFormatSchema(schema),
     ...(typeof description === "string" ? { description } : {}),
     ...(typeof strict === "boolean" ? { strict } : {}),
   };
@@ -636,7 +653,7 @@ function resolveOpenAIResponseFormat(
     if (!isProviderOptionsBucket(text) || !ObjectHasOwn(text, "format")) return undefined;
     return readNativeOpenAIResponseFormat(text.format);
   }
-  return snapshotResponseFormat(options.responseFormat, {
+  return snapshotOpenAICaptureResponseFormat(options.responseFormat, {
     responsesJsonSchemaStrictDefault: transport === "responses",
   });
 }
@@ -1460,6 +1477,40 @@ function resolveAnthropicMaxOutputTokens(
   );
 }
 
+function readNativeAnthropicResponseFormat(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): ModelCallRequestSource["responseFormat"] | undefined {
+  const outputConfig = readProviderControl(model, options, "output_config")?.value;
+  if (!isProviderOptionsBucket(outputConfig)) return undefined;
+  const format = readOwnEnumerableDataDescriptor(outputConfig, "format")?.value;
+  if (!isProviderOptionsBucket(format)) return undefined;
+  const type = readOwnEnumerableDataDescriptor(format, "type")?.value;
+  if (type === "text") return { type: "text" };
+  if (type !== "json_schema") return undefined;
+  const schema = readOwnEnumerableDataDescriptor(format, "schema")?.value;
+  if (schema === undefined) return undefined;
+  const name = readOwnEnumerableDataDescriptor(format, "name")?.value;
+  const description = readOwnEnumerableDataDescriptor(format, "description")?.value;
+  const strict = readOwnEnumerableDataDescriptor(format, "strict")?.value;
+  return {
+    type: "json_schema",
+    name: typeof name === "string" && name.length > 0 ? name : "response",
+    schema: snapshotPreservedResponseFormatSchema(schema),
+    ...(typeof description === "string" ? { description } : {}),
+    ...(typeof strict === "boolean" ? { strict } : {}),
+  };
+}
+
+function resolveAnthropicResponseFormat(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): ModelCallRequestSource["responseFormat"] | undefined {
+  if (options.responseFormat?.type === "json_schema") return options.responseFormat;
+  return readNativeAnthropicResponseFormat(model, options) ??
+    (options.responseFormat?.type === "json" ? undefined : options.responseFormat);
+}
+
 function resolveAnthropicControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -1471,8 +1522,7 @@ function resolveAnthropicControls(
     readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled";
   const effective = {
     ...options,
-    // The Messages builder drops schemaless JSON instead of sending a constraint.
-    responseFormat: options.responseFormat?.type === "json" ? undefined : options.responseFormat,
+    responseFormat: resolveAnthropicResponseFormat(model, options),
   };
   forEachPrivateArray(
     [
@@ -1506,6 +1556,66 @@ function resolveAnthropicControls(
   return effective;
 }
 
+function readNativeGoogleResponseFormat(
+  generationConfig: unknown,
+  options: { forceJsonMimeType?: boolean } = {},
+): ModelCallRequestSource["responseFormat"] | undefined {
+  if (!isProviderOptionsBucket(generationConfig)) return undefined;
+  const responseMimeType = readOwnEnumerableDataDescriptor(
+    generationConfig,
+    "responseMimeType",
+  )?.value;
+  const responseJsonSchema = readOwnEnumerableDataDescriptor(
+    generationConfig,
+    "responseJsonSchema",
+  )?.value;
+  const hasResponseJsonSchema = responseJsonSchema !== undefined;
+  const responseSchema = readOwnEnumerableDataDescriptor(generationConfig, "responseSchema")?.value;
+  const hasResponseSchema = responseSchema !== undefined;
+  const hasNativeJsonSchema = hasResponseJsonSchema || hasResponseSchema;
+
+  if (hasResponseSchema) {
+    throw new TypeError(
+      "Google generationConfig.responseSchema cannot be captured as JSON Schema",
+    );
+  }
+  const effectiveResponseMimeType = options.forceJsonMimeType
+    ? "application/json"
+    : responseMimeType;
+  if (
+    hasNativeJsonSchema && effectiveResponseMimeType !== undefined &&
+    effectiveResponseMimeType !== "application/json"
+  ) {
+    throw new TypeError(
+      "Google generationConfig JSON schema requires responseMimeType application/json",
+    );
+  }
+  if (hasResponseJsonSchema) {
+    return {
+      type: "json_schema",
+      name: "response",
+      schema: snapshotPreservedResponseFormatSchema(responseJsonSchema),
+    };
+  }
+  if (effectiveResponseMimeType === "application/json") return { type: "json" };
+  if (effectiveResponseMimeType === "text/plain") return { type: "text" };
+  return undefined;
+}
+
+function resolveGoogleResponseFormat(
+  nativeGenerationConfig: PropertyDescriptor | undefined,
+  options: ModelCallRequestSource,
+): ModelCallRequestSource["responseFormat"] | undefined {
+  if (options.responseFormat?.type === "json_schema") return options.responseFormat;
+  const native = readNativeGoogleResponseFormat(nativeGenerationConfig?.value, {
+    forceJsonMimeType: options.responseFormat?.type === "json",
+  });
+  if (options.responseFormat?.type === "json") {
+    return native?.type === "json_schema" ? native : { type: "json" };
+  }
+  return native ?? options.responseFormat;
+}
+
 function resolveGoogleControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -1515,6 +1625,7 @@ function resolveGoogleControls(
     ...options,
     presencePenalty: undefined as number | undefined,
     frequencyPenalty: undefined as number | undefined,
+    responseFormat: resolveGoogleResponseFormat(native, options),
     stopSequences: options.stopSequences?.length ? options.stopSequences : undefined,
   };
   if (!native) return effective;
@@ -1553,7 +1664,9 @@ function snapshotResponseFormat(
     name: responseFormat.name,
     schema: snapshotProviderOptionValue(
       "responseFormat",
-      unwrapToolInputSchema(responseFormat.schema),
+      shouldUnwrapResponseFormatSchema(responseFormat.schema)
+        ? unwrapToolInputSchema(responseFormat.schema)
+        : responseFormat.schema,
       { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
       0,
     ),
@@ -1564,6 +1677,17 @@ function snapshotResponseFormat(
       ? options.responsesJsonSchemaStrictDefault ? { strict: false } : {}
       : { strict: responseFormat.strict }),
   };
+}
+
+function snapshotOpenAICaptureResponseFormat(
+  responseFormat: ModelCallRequestSource["responseFormat"],
+  options: { responsesJsonSchemaStrictDefault?: boolean } = {},
+): ModelCallResponseFormat | undefined {
+  const snapshot = snapshotResponseFormat(responseFormat, options);
+  if (snapshot?.type === "json_schema") {
+    markPreservedResponseFormatSchema(snapshot.schema);
+  }
+  return snapshot;
 }
 
 function buildModelCallRequest(

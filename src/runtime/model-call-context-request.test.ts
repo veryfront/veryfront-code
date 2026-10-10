@@ -537,6 +537,149 @@ describe("model call request projection", () => {
     }
   });
 
+  it("does not preserve caller schemas after native Anthropic and Google projection", () => {
+    for (
+      const testCase of [
+        {
+          model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+          nativeOptions(schema: unknown): ModelRuntimeCallOptions {
+            return {
+              prompt,
+              providerOptions: {
+                anthropic: {
+                  output_config: {
+                    format: { type: "json_schema", schema },
+                  },
+                },
+              },
+            };
+          },
+        },
+        {
+          model: { provider: "google", modelId: "gemini-synthetic" },
+          nativeOptions(schema: unknown): ModelRuntimeCallOptions {
+            return {
+              prompt,
+              providerOptions: {
+                google: {
+                  generationConfig: {
+                    responseMimeType: "application/json",
+                    responseJsonSchema: schema,
+                  },
+                },
+              },
+            };
+          },
+        },
+      ] as const
+    ) {
+      const schema = {
+        type: "object",
+        properties: { wrapper: { type: "boolean" } },
+        jsonSchema: { type: "number" },
+      };
+      buildModelCallContextRequest(testCase.model, testCase.nativeOptions(schema));
+
+      const neutralOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json_schema", name: "neutral", schema },
+      };
+      const projected = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        openAITransport: "chat-completions",
+      }, neutralOptions);
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        neutralOptions,
+        false,
+        createWarningCollector(),
+      );
+      const nativeSchema = (body.response_format as {
+        json_schema?: { schema?: unknown };
+      }).json_schema?.schema;
+      assertEquals(projected?.responseFormat?.type, "json_schema");
+      assertEquals(
+        projected?.responseFormat?.type === "json_schema"
+          ? projected.responseFormat.schema
+          : undefined,
+        nativeSchema,
+      );
+      assertEquals(nativeSchema, { type: "number" });
+    }
+  });
+
+  it("matches OpenAI neutral response format after provider option snapshots", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: {
+        type: "json_schema",
+        name: "neutral",
+        schema: {
+          jsonSchema: {
+            type: "object",
+            jsonSchema: { type: "number", jsonSchema: { type: "boolean" } },
+          },
+        },
+      },
+    };
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          schemaFromBody(snapshot: ModelRuntimeCallOptions): unknown {
+            const body = buildOpenAIChatRequest(
+              "gpt-4o",
+              "openai",
+              snapshot,
+              false,
+              createWarningCollector(),
+            );
+            return (body.response_format as { json_schema?: { schema?: unknown } })
+              .json_schema?.schema;
+          },
+        },
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          schemaFromBody(snapshot: ModelRuntimeCallOptions): unknown {
+            const body = buildOpenAIResponsesRequest(
+              "gpt-5.4-mini",
+              "openai",
+              snapshot,
+              false,
+              createWarningCollector(),
+            );
+            return body.text?.format?.type === "json_schema" ? body.text.format.schema : undefined;
+          },
+        },
+      ] as const
+    ) {
+      const snapshot = snapshotModelCallProviderOptions(testCase.model, options);
+      const projected = buildModelCallContextRequest(testCase.model, snapshot);
+      const actualSchema = testCase.schemaFromBody(snapshot);
+      assertEquals(projected?.responseFormat?.type, "json_schema");
+      assertEquals(
+        projected?.responseFormat?.type === "json_schema"
+          ? projected.responseFormat.schema
+          : undefined,
+        actualSchema,
+      );
+      assertEquals(actualSchema, { type: "number", jsonSchema: { type: "boolean" } });
+    }
+  });
+
   it("persists OpenAI neutral response format builder defaults", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
