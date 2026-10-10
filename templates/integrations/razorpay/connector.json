@@ -35,7 +35,7 @@
     {
       "id": "razorpay__list_payments",
       "name": "List Payments",
-      "description": "List payments, optionally within a Unix-timestamp window",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -88,7 +88,7 @@
     {
       "id": "razorpay__get_payment",
       "name": "Get Payment",
-      "description": "Get details of a payment",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -150,7 +150,7 @@
     {
       "id": "razorpay__get_order",
       "name": "Get Order",
-      "description": "Get details of an order",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -202,7 +202,7 @@
     {
       "id": "razorpay__list_settlements",
       "name": "List Settlements",
-      "description": "List settlements paid out to your bank account",
+      "description": "List settlements",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

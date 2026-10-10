@@ -72,7 +72,7 @@
     {
       "id": "snowflake__run_query",
       "name": "Run Query",
-      "description": "Execute a SQL query against your Snowflake data warehouse",
+      "description": "Run query",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -124,25 +124,25 @@
     {
       "id": "snowflake__list_databases",
       "name": "List Databases",
-      "description": "List all databases in your Snowflake account",
+      "description": "List databases",
       "requiresWrite": false
     },
     {
       "id": "snowflake__list_schemas",
       "name": "List Schemas",
-      "description": "List all schemas in a Snowflake database",
+      "description": "List schemas",
       "requiresWrite": false
     },
     {
       "id": "snowflake__list_tables",
       "name": "List Tables",
-      "description": "List all tables in a Snowflake database schema",
+      "description": "List tables",
       "requiresWrite": false
     },
     {
       "id": "snowflake__describe_table",
       "name": "Describe Table",
-      "description": "Get detailed column information for a specific table",
+      "description": "Describe table",
       "requiresWrite": false
     }
   ],

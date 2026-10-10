@@ -28,7 +28,7 @@
     {
       "id": "fly-io__list_apps",
       "name": "List Apps",
-      "description": "List apps in a Fly.io organization",
+      "description": "List apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -74,7 +74,7 @@
     {
       "id": "fly-io__get_app",
       "name": "Get App",
-      "description": "Get details about an app, including its organization and status",
+      "description": "Get app",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "fly-io__list_machines",
       "name": "List Machines",
-      "description": "List Machines of an app with their states",
+      "description": "List machines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -152,7 +152,7 @@
     {
       "id": "fly-io__get_machine",
       "name": "Get Machine",
-      "description": "Get a Machine by ID, including its config and state",
+      "description": "Get machine",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -176,7 +176,7 @@
     {
       "id": "fly-io__start_machine",
       "name": "Start Machine",
-      "description": "Start a stopped Machine",
+      "description": "Start machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -200,7 +200,7 @@
     {
       "id": "fly-io__stop_machine",
       "name": "Stop Machine",
-      "description": "Stop a running Machine",
+      "description": "Stop machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

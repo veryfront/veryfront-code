@@ -49,7 +49,7 @@
     {
       "id": "datadog__validate_api_key",
       "name": "Validate API Key",
-      "description": "Check that the configured Datadog API key is valid",
+      "description": "Validate API key",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59,7 +59,7 @@
     {
       "id": "datadog__list_monitors",
       "name": "List Monitors",
-      "description": "List monitors with optional name or tag filtering",
+      "description": "List monitors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -120,7 +120,7 @@
     {
       "id": "datadog__get_monitor",
       "name": "Get Monitor",
-      "description": "Get details and current state of a monitor",
+      "description": "Get monitor",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -138,7 +138,7 @@
     {
       "id": "datadog__mute_monitor",
       "name": "Mute Monitor",
-      "description": "Mute notifications for a monitor",
+      "description": "Mute monitor",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -161,7 +161,7 @@
     {
       "id": "datadog__list_dashboards",
       "name": "List Dashboards",
-      "description": "List all dashboards",
+      "description": "List dashboards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -198,7 +198,7 @@
     {
       "id": "datadog__query_timeseries",
       "name": "Query Timeseries Metrics",
-      "description": "Query timeseries metric data over a time window",
+      "description": "Query timeseries metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -228,7 +228,7 @@
     {
       "id": "datadog__search_logs",
       "name": "Search Logs",
-      "description": "Search log events with a Datadog log query",
+      "description": "Search logs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

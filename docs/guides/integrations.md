@@ -10,6 +10,11 @@ and transport surfaces.
 
 ## The four parts
 
+Tool summaries use an action and resource name in at most six words, such as
+"List messages". Define them in `templates/integrations/*/connector.json`, then
+run `deno run -A scripts/build/generate-integrations-module.ts` to refresh the
+runtime catalog. Keep parameter requirements in each tool's input schema.
+
 - **Catalog:** Provider metadata, setup requirements, available tools, input
   schemas, and side-effect information.
 - **Connection:** The authenticated provider account used by managed execution.

@@ -28,7 +28,7 @@
     {
       "id": "heroku__list_apps",
       "name": "List Apps",
-      "description": "List apps the authenticated user can access",
+      "description": "List apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -70,7 +70,7 @@
     {
       "id": "heroku__get_app",
       "name": "Get App",
-      "description": "Get details of an app",
+      "description": "Get app",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -95,7 +95,7 @@
     {
       "id": "heroku__list_dynos",
       "name": "List Dynos",
-      "description": "List the dynos of an app with their state",
+      "description": "List dynos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -137,7 +137,7 @@
     {
       "id": "heroku__restart_dyno",
       "name": "Restart Dyno",
-      "description": "Restart a specific dyno of an app",
+      "description": "Restart dyno",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -168,7 +168,7 @@
     {
       "id": "heroku__restart_all_dynos",
       "name": "Restart All Dynos",
-      "description": "Restart every dyno of an app",
+      "description": "Restart all dynos",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -193,7 +193,7 @@
     {
       "id": "heroku__get_config_vars",
       "name": "Get Config Vars",
-      "description": "Get the config vars (environment variables) of an app",
+      "description": "Get config vars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -218,7 +218,7 @@
     {
       "id": "heroku__list_releases",
       "name": "List Releases",
-      "description": "List the release history of an app",
+      "description": "List releases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

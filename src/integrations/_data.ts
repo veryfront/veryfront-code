@@ -28,7 +28,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "activecampaign__list_contacts",
       "name": "List Contacts",
-      "description": "List or search contacts in ActiveCampaign",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -85,7 +85,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__get_contact",
       "name": "Get Contact",
-      "description": "Get details of an ActiveCampaign contact",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -109,7 +109,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in ActiveCampaign",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -136,7 +136,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing ActiveCampaign contact",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -168,7 +168,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__list_deals",
       "name": "List Deals",
-      "description": "List deals in ActiveCampaign",
+      "description": "List deals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -199,7 +199,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__create_deal",
       "name": "Create Deal",
-      "description": "Create a new deal in ActiveCampaign",
+      "description": "Create deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -226,7 +226,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "activecampaign__list_accounts",
       "name": "List Accounts",
-      "description": "List accounts (companies) in ActiveCampaign",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -336,8 +336,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "adyen__create_payment_session",
       "name": "Create Payment Session",
-      "description":
-        "Create an Adyen Checkout payment session that a Drop-in or Component can use to collect payment",
+      "description": "Create payment session",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -383,8 +382,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__get_session_result",
       "name": "Get Session Result",
-      "description":
-        "Get the final result of an Adyen payment session, including authorized payments and status",
+      "description": "Get session result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -407,8 +405,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__list_payment_methods",
       "name": "List Payment Methods",
-      "description":
-        "List the payment methods available for a merchant account, amount, and shopper country",
+      "description": "List payment methods",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -435,8 +432,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__create_payment_link",
       "name": "Create Payment Link",
-      "description":
-        "Create a hosted Pay by Link URL the shopper can open to pay, without needing a Drop-in or Component frontend",
+      "description": "Create payment link",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -489,8 +485,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__capture_payment",
       "name": "Capture Payment",
-      "description":
-        "Capture an authorised Adyen payment (for manual-capture flows); the outcome arrives asynchronously via a CAPTURE webhook",
+      "description": "Start payment capture",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -499,7 +494,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the authorised payment to capture",
+            "description":
+              "PSP reference of the authorised payment to capture. Capture is asynchronous; its outcome arrives through a CAPTURE webhook. The immediate response is not final capture outcome evidence.",
             "required": true,
           },
         },
@@ -524,8 +520,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "adyen__create_refund",
       "name": "Create Refund",
-      "description":
-        "Refund all or part of a captured Adyen payment; the outcome arrives asynchronously via a REFUND webhook",
+      "description": "Start payment refund",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -534,7 +529,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentPspReference": {
             "type": "string",
             "in": "path",
-            "description": "PSP reference of the payment to refund",
+            "description":
+              "PSP reference of the payment to refund. Refund all or part of a captured payment; the outcome arrives asynchronously through a REFUND webhook.",
             "required": true,
           },
         },
@@ -657,7 +653,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "airtable__list_bases",
       "name": "List Bases",
-      "description": "List all accessible Airtable bases",
+      "description": "List bases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -680,7 +676,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__get_base",
       "name": "Get Base",
-      "description": "Get schema information for a specific base",
+      "description": "Get base",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -697,7 +693,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__list_records",
       "name": "List Records",
-      "description": "List records from a table with optional filtering",
+      "description": "List records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -743,7 +739,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__get_record",
       "name": "Get Record",
-      "description": "Get a specific record by ID",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -772,7 +768,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__create_record",
       "name": "Create Record",
-      "description": "Create a new record in a table",
+      "description": "Create record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -807,7 +803,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__create_records",
       "name": "Create Records",
-      "description": "Create multiple records in a table",
+      "description": "Create records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -843,7 +839,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__update_record",
       "name": "Update Record",
-      "description": "Update fields on an existing record",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -880,7 +876,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__delete_record",
       "name": "Delete Record",
-      "description": "Delete a record from a table",
+      "description": "Delete record",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -909,7 +905,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__create_table",
       "name": "Create Table",
-      "description": "Create a new table in an Airtable base",
+      "description": "Create table",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -935,7 +931,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__update_table",
       "name": "Update Table",
-      "description": "Update table metadata such as name or description using the table ID",
+      "description": "Update table",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -962,7 +958,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "airtable__create_field",
       "name": "Create Field",
-      "description": "Create a new field in an Airtable table",
+      "description": "Create field",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1077,7 +1073,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "algolia__list_indices",
       "name": "List Indices",
-      "description": "List the indices in the Algolia application",
+      "description": "List indices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1105,7 +1101,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "algolia__search_index",
       "name": "Search Index",
-      "description": "Run a search query against an index",
+      "description": "Search index",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -1143,7 +1139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "algolia__browse_index",
       "name": "Browse Index",
-      "description": "Browse all records in an index with cursor-based pagination",
+      "description": "Browse index",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -1175,7 +1171,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "algolia__get_object",
       "name": "Get Object",
-      "description": "Retrieve a single record from an index by objectID",
+      "description": "Get object",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1203,7 +1199,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "algolia__save_objects",
       "name": "Save Objects",
-      "description": "Add or update records in an index via a batch operation",
+      "description": "Save objects",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1297,7 +1293,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "alphavantage__quote",
       "name": "Get Quote",
-      "description": "Get the latest price and volume information for an equity ticker",
+      "description": "Get quote",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1320,7 +1316,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__daily_time_series",
       "name": "Daily Time Series",
-      "description": "Get daily open, high, low, close, and volume history for an equity ticker",
+      "description": "Get daily stock prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1350,7 +1346,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__symbol_search",
       "name": "Symbol Search",
-      "description": "Search for ticker symbols and companies matching keywords",
+      "description": "Search stock symbols",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1374,8 +1370,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__company_overview",
       "name": "Company Overview",
-      "description":
-        "Get company information and key fundamentals (market cap, PE ratio, EPS, sector) for an equity ticker",
+      "description": "Get company fundamentals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1398,8 +1393,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "alphavantage__fx_rate",
       "name": "FX Exchange Rate",
-      "description":
-        "Get the realtime exchange rate between two currencies (physical or digital, e.g. USD to EUR or BTC to USD)",
+      "description": "Get exchange rate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1498,7 +1492,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "amplitude__list_events",
       "name": "List Events",
-      "description": "List event types visible in the project with current week totals",
+      "description": "List event types with weekly totals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1518,7 +1512,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "amplitude__query_event_segmentation",
       "name": "Query Event Segmentation",
-      "description": "Get metrics for an event over a date range (Event Segmentation chart data)",
+      "description": "Query event segmentation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1565,7 +1559,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "amplitude__query_active_users",
       "name": "Query Active Users",
-      "description": "Get active or new user counts over a date range",
+      "description": "Query active users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1606,7 +1600,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "amplitude__get_chart_results",
       "name": "Get Chart Results",
-      "description": "Get JSON results from a saved Amplitude chart by chart ID",
+      "description": "Get chart results",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1623,7 +1617,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "amplitude__track_event",
       "name": "Track Event",
-      "description": "Send events to Amplitude via the HTTP V2 ingestion API",
+      "description": "Track event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1718,7 +1712,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "anthropic__list_workspaces",
       "name": "list-workspaces",
-      "description": "List all workspaces in the organization",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1763,7 +1757,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "anthropic__get_usage",
       "name": "get-usage",
-      "description": "Get API usage statistics for a date range",
+      "description": "Get usage",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1809,7 +1803,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "anthropic__list_api_keys",
       "name": "list-api-keys",
-      "description": "List API keys for a workspace or organization",
+      "description": "List API keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1864,7 +1858,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "anthropic__list_members",
       "name": "list-members",
-      "description": "List all members in the organization",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1909,7 +1903,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "anthropic__get_organization",
       "name": "get-organization",
-      "description": "Get organization details and settings",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2003,7 +1997,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "apify__list_actors",
       "name": "List Actors",
-      "description": "List actors in your Apify account",
+      "description": "List actors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2045,8 +2039,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apify__run_actor_sync",
       "name": "Run Actor (Sync)",
-      "description":
-        "Run an actor, wait for it to finish (up to 300s), and return its dataset items (consumes platform credits)",
+      "description": "Run actor synchronously (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2061,7 +2054,8 @@ export const connectors: IntegrationConfig[] = [
           "timeout": {
             "type": "number",
             "in": "query",
-            "description": "Run timeout in seconds (overrides the actor default)",
+            "description":
+              "Run timeout in seconds (overrides the actor default). This parameter limits actor execution separately from the HTTP wait. The endpoint waits at most 300 seconds. An HTTP timeout does not prove the actor stopped; it may keep running and consuming credits. Check the existing run before retrying to avoid creating a duplicate run.",
           },
           "memory": {
             "type": "number",
@@ -2088,7 +2082,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apify__get_run",
       "name": "Get Run",
-      "description": "Get the status and details of an actor run, including its defaultDatasetId",
+      "description": "Get run",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2106,7 +2100,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apify__list_runs",
       "name": "List Runs",
-      "description": "List recent actor runs in your account",
+      "description": "List runs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2136,7 +2130,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apify__get_dataset_items",
       "name": "Get Dataset Items",
-      "description": "Fetch items from a dataset produced by an actor run",
+      "description": "Get dataset items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2246,7 +2240,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "apollo__search_people",
       "name": "Search People",
-      "description": "Search the Apollo database for people by keywords, titles, and locations",
+      "description": "Search people",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2295,7 +2289,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__search_organizations",
       "name": "Search Organizations",
-      "description": "Search the Apollo database for companies; consumes Apollo credits",
+      "description": "Search organizations (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2321,8 +2315,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__enrich_person",
       "name": "Enrich Person",
-      "description":
-        "Enrich a person's profile by name, email, domain, or LinkedIn URL; consumes Apollo credits",
+      "description": "Enrich person (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2348,7 +2341,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__enrich_organization",
       "name": "Enrich Organization",
-      "description": "Enrich a company profile from its domain; consumes Apollo credits",
+      "description": "Enrich organization (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "GET",
@@ -2366,7 +2359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__search_contacts",
       "name": "Search Contacts",
-      "description": "Search contacts already saved to your Apollo account",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2391,7 +2384,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in your Apollo account",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2412,7 +2405,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "apollo__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing contact in your Apollo account",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -2512,7 +2505,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "asana__list_tasks",
       "name": "List Tasks",
-      "description": "List tasks in a project or assigned to a user",
+      "description": "List tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2596,7 +2589,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__get_task",
       "name": "Get Task",
-      "description": "Get details of a specific task",
+      "description": "Get task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2619,7 +2612,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__create_task",
       "name": "Create Task",
-      "description": "Create a new task in a project",
+      "description": "Create task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2637,7 +2630,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__update_task",
       "name": "Update Task",
-      "description": "Update an existing task",
+      "description": "Update task",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -2662,7 +2655,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__delete_task",
       "name": "Delete Task",
-      "description": "Delete an Asana task by GID",
+      "description": "Delete task",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -2679,7 +2672,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__list_projects",
       "name": "List Projects",
-      "description": "List all projects in the workspace",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2758,7 +2751,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__list_workspaces",
       "name": "List Workspaces",
-      "description": "List Asana workspaces accessible to the authenticated user",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2821,7 +2814,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__list_users",
       "name": "List Users",
-      "description": "List users in an Asana workspace",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2874,7 +2867,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__list_teams",
       "name": "List Teams",
-      "description": "List teams in an Asana workspace",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2949,7 +2942,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__add_task_comment",
       "name": "Add Task Comment",
-      "description": "Add a story/comment to an Asana task",
+      "description": "Add task comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2974,7 +2967,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__list_task_comments",
       "name": "List Task Comments",
-      "description": "List comment stories for an Asana task",
+      "description": "List task comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3032,7 +3025,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "asana__get_project",
       "name": "Get Project",
-      "description": "Get details of a specific Asana project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3136,7 +3129,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "ashby__list_candidates",
       "name": "List Candidates",
-      "description": "List all candidates in the organization (read-only RPC via POST)",
+      "description": "List candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3174,7 +3167,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ashby__get_candidate",
       "name": "Get Candidate",
-      "description": "Get a candidate by ID (read-only RPC via POST)",
+      "description": "Get candidate",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3185,7 +3178,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ashby__search_candidates",
       "name": "Search Candidates",
-      "description": "Search candidates by email or name (read-only RPC via POST)",
+      "description": "Search candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3199,7 +3192,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ashby__create_candidate",
       "name": "Create Candidate",
-      "description": "Create a new candidate",
+      "description": "Create candidate",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -3215,7 +3208,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ashby__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs, optionally filtered by status (read-only RPC via POST)",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3240,8 +3233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ashby__list_applications",
       "name": "List Applications",
-      "description":
-        "List applications, optionally filtered by job or status (read-only RPC via POST)",
+      "description": "List applications",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3338,7 +3330,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "assemblyai__submit_transcript",
       "name": "Submit Transcript",
-      "description": "Submit an audio or video URL for transcription (processing is asynchronous)",
+      "description": "Start audio transcription",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -3359,7 +3351,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "assemblyai__get_transcript",
       "name": "Get Transcript",
-      "description": "Get the status and text of a transcript by ID",
+      "description": "Get transcript",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3376,7 +3368,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "assemblyai__list_transcripts",
       "name": "List Transcripts",
-      "description": "List transcripts created by the account",
+      "description": "List transcripts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3420,7 +3412,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "assemblyai__delete_transcript",
       "name": "Delete Transcript",
-      "description": "Permanently delete a transcript and its data",
+      "description": "Permanently delete transcript and data",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -3517,8 +3509,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "attio__list_objects",
       "name": "List Objects",
-      "description":
-        "List object types in the Attio workspace (people, companies, deals, and custom objects)",
+      "description": "List objects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3528,7 +3519,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "attio__query_records",
       "name": "Query Records",
-      "description": "Query records of an object with optional filters and sorts",
+      "description": "Query records",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3580,7 +3571,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "attio__get_record",
       "name": "Get Record",
-      "description": "Get a single record of an object by ID",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3604,7 +3595,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "attio__create_record",
       "name": "Create Record",
-      "description": "Create a new record of an object (person, company, deal, or custom object)",
+      "description": "Create record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -3629,7 +3620,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "attio__update_record",
       "name": "Update Record",
-      "description": "Update attribute values on an existing record",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -3661,7 +3652,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "attio__list_lists",
       "name": "List Lists",
-      "description": "List all lists in the Attio workspace",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3766,23 +3757,23 @@ export const connectors: IntegrationConfig[] = [
     },
     "tools": [{
       "name": "list-s3-buckets",
-      "description": "List all S3 buckets in your AWS account",
+      "description": "List S3 buckets",
       "file": "tools/list-s3-buckets.ts",
     }, {
       "name": "list-s3-objects",
-      "description": "List objects in a specific S3 bucket",
+      "description": "List S3 objects",
       "file": "tools/list-s3-objects.ts",
     }, {
       "name": "get-s3-object",
-      "description": "Get the contents of an object from S3",
+      "description": "Get S3 object",
       "file": "tools/get-s3-object.ts",
     }, {
       "name": "list-ec2-instances",
-      "description": "List EC2 instances in your AWS account",
+      "description": "List EC2 instances",
       "file": "tools/list-ec2-instances.ts",
     }, {
       "name": "list-lambda-functions",
-      "description": "List Lambda functions in your AWS account",
+      "description": "List Lambda functions",
       "file": "tools/list-lambda-functions.ts",
     }],
     "setupGuide": {
@@ -3818,7 +3809,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "axiom__list_datasets",
       "name": "List Datasets",
-      "description": "List datasets in the Axiom organization",
+      "description": "List datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3837,7 +3828,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "axiom__get_dataset",
       "name": "Get Dataset",
-      "description": "Get a dataset's details",
+      "description": "Get dataset",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -3854,7 +3845,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "axiom__query_apl",
       "name": "Run APL Query",
-      "description": "Run an APL (Axiom Processing Language) query across datasets",
+      "description": "Run APL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -3887,7 +3878,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "axiom__ingest_events",
       "name": "Ingest Events",
-      "description": "Ingest a batch of JSON events into a dataset",
+      "description": "Ingest events",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -3994,8 +3985,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "azure__list_subscriptions",
       "name": "List Subscriptions",
-      "description":
-        "List all Azure subscriptions the signed-in user can access; use this first to get subscription IDs for the other tools",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4013,7 +4003,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__list_resource_groups",
       "name": "List Resource Groups",
-      "description": "List the resource groups in an Azure subscription",
+      "description": "List resource groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4047,8 +4037,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__list_virtual_machines",
       "name": "List Virtual Machines",
-      "description":
-        "List all virtual machines in an Azure subscription, optionally with runtime power state",
+      "description": "List virtual machines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4079,8 +4068,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__start_virtual_machine",
       "name": "Start Virtual Machine",
-      "description":
-        "Start a stopped or deallocated virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "description": "Request virtual machine start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4116,8 +4104,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__deallocate_virtual_machine",
       "name": "Deallocate Virtual Machine",
-      "description":
-        "Shut down a virtual machine and release its compute resources so it stops incurring compute charges (returns 202 Accepted)",
+      "description": "Request virtual machine deallocation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4159,8 +4146,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__list_storage_accounts",
       "name": "List Storage Accounts",
-      "description":
-        "List all storage accounts in an Azure subscription (storage keys are not returned)",
+      "description": "List storage accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4186,8 +4172,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__list_function_apps",
       "name": "List Function and Web Apps",
-      "description":
-        "List all App Service sites (function apps and web apps, Microsoft.Web/sites) in an Azure subscription; function apps have kind 'functionapp'",
+      "description": "List function and web apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4212,8 +4197,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__restart_virtual_machine",
       "name": "Restart Virtual Machine",
-      "description":
-        "Restart a running virtual machine (returns 202 Accepted; the operation completes asynchronously)",
+      "description": "Request virtual machine restart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4249,8 +4233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__get_vm_instance_view",
       "name": "Get VM Instance View",
-      "description":
-        "Get the runtime state of a single virtual machine, including power state (statuses with code PowerState/running etc.), OS info, and boot diagnostics — cheaper than listing all VMs with statusOnly",
+      "description": "Get VM instance view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4286,8 +4269,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__list_resources",
       "name": "List Resources",
-      "description":
-        "List all resources in an Azure subscription across every resource type — a generic inventory beyond the dedicated list tools",
+      "description": "List resources",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4435,8 +4417,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "azure-blob-storage__list_containers",
       "name": "List Containers",
-      "description":
-        "List blob containers in a storage account; the response is XML (EnumerationResults), not JSON",
+      "description": "List containers as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4471,8 +4452,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__list_blobs",
       "name": "List Blobs",
-      "description":
-        "List blobs in a container, optionally filtered by name prefix; the response is XML (EnumerationResults), not JSON",
+      "description": "List blobs as XML",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4515,8 +4495,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__download_blob",
       "name": "Download Blob",
-      "description":
-        "Download a blob's content (Get Blob); blob properties are returned as x-ms-* response headers",
+      "description": "Download blob",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4553,7 +4532,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__upload_blob",
       "name": "Upload Blob",
-      "description": "Create or overwrite a block blob with the given content (Put Blob)",
+      "description": "Create or overwrite blob",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -4611,7 +4590,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__delete_blob",
       "name": "Delete Blob",
-      "description": "Delete a blob from a container (Delete Blob); errors are returned as XML",
+      "description": "Delete blob",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -4647,8 +4626,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__create_container",
       "name": "Create Container",
-      "description":
-        "Create a new blob container in the storage account (Create Container); fails with 409 if a container with the same name already exists",
+      "description": "Create container",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -4685,8 +4663,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-blob-storage__copy_blob",
       "name": "Copy Blob",
-      "description":
-        "Server-side copy of a blob to a destination within the storage account (Copy Blob) — no download/re-upload needed; returns 202 with x-ms-copy-status 'success' or 'pending' (poll the destination blob until the copy finishes)",
+      "description": "Start blob copy",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -4707,7 +4684,8 @@ export const connectors: IntegrationConfig[] = [
           "blobName": {
             "type": "string",
             "in": "path",
-            "description": "Destination blob name, including any virtual folder prefix",
+            "description":
+              "Destination blob name, including any virtual folder prefix. Accepted copies return HTTP 202 with x-ms-copy-status success or pending. When pending, poll the destination blob until completion before using the copy.",
             "required": true,
           },
           "x-ms-copy-source": {
@@ -4816,8 +4794,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
-      "description":
-        "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID to fetch the extracted fields.",
+      "description": "Start invoice analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4839,7 +4816,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4851,8 +4828,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
-      "description":
-        "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
+      "description": "Start receipt analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4874,7 +4850,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4886,8 +4862,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
-      "description":
-        "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
+      "description": "Start document layout analysis",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4909,7 +4884,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4921,8 +4896,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__get_analyze_result",
       "name": "Get Analyze Result",
-      "description":
-        "Fetch the result of a previously started analysis. Use the result ID (GUID) from the Operation-Location response header of an analyze call, and the same model ID that started it. While status is 'running', wait and poll again; when status is 'succeeded', the extracted fields are in analyzeResult.",
+      "description": "Poll document analysis result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4940,7 +4914,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Result ID (GUID) from the Operation-Location header returned by the analyze call",
+              "Result ID (GUID) from the Operation-Location header returned by the analyze call. Use the same model ID that started the analysis. While status is running, wait and poll again; extracted fields are available in analyzeResult when status is succeeded.",
             "required": true,
           },
         },
@@ -4948,8 +4922,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description":
-        "Start pure OCR text extraction with the prebuilt-read model, the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
+      "description": "Start document text extraction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4971,7 +4944,7 @@ export const connectors: IntegrationConfig[] = [
           "urlSource": {
             "type": "string",
             "description":
-              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source",
+              "Publicly accessible URL of the document to analyze (PDF, JPEG, PNG, TIFF, BMP, HEIF). Provide either urlSource or base64Source. Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
           },
           "base64Source": {
             "type": "string",
@@ -4983,8 +4956,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure-document-intelligence__list_document_models",
       "name": "List Document Models",
-      "description":
-        "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions; use this to discover valid model IDs",
+      "description": "List document models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5087,8 +5059,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "bamboohr__get_employee_directory",
       "name": "Get Employee Directory",
-      "description":
-        "Get the company employee directory with names, job titles, departments, and contact details",
+      "description": "Get employee directory",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5115,7 +5086,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__get_employee",
       "name": "Get Employee",
-      "description": "Get a single employee record with the specific fields you request",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5160,8 +5131,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__list_time_off_requests",
       "name": "List Time-Off Requests",
-      "description":
-        "List time-off requests that overlap a date range, optionally filtered by employee or status",
+      "description": "List time off requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5221,8 +5191,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__create_time_off_request",
       "name": "Create Time-Off Request",
-      "description":
-        "Create a time-off request for an employee; it must be approved before it appears in history",
+      "description": "Request time off approval",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -5293,8 +5262,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__list_time_off_types",
       "name": "List Time-Off Types",
-      "description":
-        "List the company's time-off types and their IDs - needed to fill the timeOffTypeId field when creating a time-off request",
+      "description": "List time off types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5320,8 +5288,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__update_time_off_request_status",
       "name": "Update Time-Off Request Status",
-      "description":
-        "Approve, deny, or cancel an existing time-off request (the API user must have approval permissions)",
+      "description": "Update time off request status",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -5352,7 +5319,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "status": {
             "type": "string",
-            "description": "New status for the request: approved, denied, or canceled",
+            "description":
+              "New status for the request: approved, denied, or canceled. The API user must have approval permissions.",
             "required": true,
           },
           "note": {
@@ -5364,8 +5332,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__list_fields",
       "name": "List Field Metadata",
-      "description":
-        "List all employee fields available in the account (standard and custom) so agents know which field names Get Employee accepts",
+      "description": "List field metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5391,8 +5358,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bamboohr__list_whos_out",
       "name": "List Who's Out",
-      "description":
-        "List approved time off and company holidays in a date range to see who is out of office",
+      "description": "List who's out",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5514,7 +5480,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "basecamp__list_projects",
       "name": "List Projects",
-      "description": "List active projects in a Basecamp account",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5560,8 +5526,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__get_project",
       "name": "Get Project",
-      "description":
-        "Get a project including its dock (the todoset ID needed for to-do tools is in the dock entry named 'todoset')",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5584,7 +5549,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__create_project",
       "name": "Create Project",
-      "description": "Create a new Basecamp project",
+      "description": "Create project",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -5605,8 +5570,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__list_todolists",
       "name": "List To-do Lists",
-      "description":
-        "List to-do lists in a project's todoset (get the todoset ID from Get Project's dock)",
+      "description": "List to do lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5652,7 +5616,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__list_todos",
       "name": "List To-dos",
-      "description": "List to-dos in a to-do list",
+      "description": "List to dos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5699,7 +5663,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__create_todo",
       "name": "Create To-do",
-      "description": "Create a to-do in a to-do list",
+      "description": "Create to do",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -5733,7 +5697,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "basecamp__complete_todo",
       "name": "Complete To-do",
-      "description": "Mark a Basecamp to-do as completed",
+      "description": "Complete to-do",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -5818,7 +5782,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "betterstack__list_monitors",
       "name": "List Monitors",
-      "description": "List uptime monitors, optionally filtered by URL or name",
+      "description": "List monitors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5858,7 +5822,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "betterstack__get_monitor",
       "name": "Get Monitor",
-      "description": "Get a monitor's configuration and current status",
+      "description": "Get monitor",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5876,7 +5840,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "betterstack__get_monitor_sla",
       "name": "Get Monitor Availability",
-      "description": "Get a monitor's availability (SLA) summary for a time range",
+      "description": "Get monitor availability",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5896,7 +5860,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "betterstack__list_incidents",
       "name": "List Incidents",
-      "description": "List incidents, optionally limited to a date range or unresolved only",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5929,7 +5893,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "betterstack__list_heartbeats",
       "name": "List Heartbeats",
-      "description": "List heartbeat (cron/job) monitors and their status",
+      "description": "List heartbeats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6019,8 +5983,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "bigcommerce__list_orders",
       "name": "List Orders",
-      "description":
-        "List store orders with optional status, customer, and date filtering (Orders are served by the v2 API)",
+      "description": "List orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6070,7 +6033,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__get_order",
       "name": "Get Order",
-      "description": "Get full details of a single order (Orders are served by the v2 API)",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6093,8 +6056,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__list_order_products",
       "name": "List Order Products",
-      "description":
-        "List the line items of an order — v2 order responses do not embed products, so use this to see what was bought",
+      "description": "List order products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6129,8 +6091,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__update_order",
       "name": "Update Order",
-      "description":
-        "Update an order, e.g. change its status to Shipped/Cancelled/Refunded or add staff notes",
+      "description": "Update order",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -6165,7 +6126,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__list_products",
       "name": "List Products",
-      "description": "List catalog products with optional keyword, SKU, and availability filtering",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6212,7 +6173,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__get_product",
       "name": "Get Product",
-      "description": "Get full details of a single catalog product",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6242,7 +6203,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__list_customers",
       "name": "List Customers",
-      "description": "List store customers with optional email and name filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6282,7 +6243,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -6333,8 +6294,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bigcommerce__update_product",
       "name": "Update Product",
-      "description":
-        "Update fields of an existing catalog product, such as price, visibility, or inventory",
+      "description": "Update product",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -6468,8 +6428,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "billbee__list_orders",
       "name": "List Orders",
-      "description":
-        "List orders across all connected shops, optionally filtered by date range, modification time, or order state",
+      "description": "List orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6518,8 +6477,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__get_order",
       "name": "Get Order",
-      "description":
-        "Get a single order with positions, addresses, and payment details by its internal Billbee ID",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6536,8 +6494,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__update_order_state",
       "name": "Update Order State",
-      "description":
-        "Change the main state of an order, e.g. mark it as confirmed, paid, or shipped",
+      "description": "Update order state",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -6562,7 +6519,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__list_products",
       "name": "List Products",
-      "description": "List products (articles) in the Billbee account",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6590,7 +6547,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__list_customers",
       "name": "List Customers",
-      "description": "List customers in the Billbee account",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6613,8 +6570,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__list_invoices",
       "name": "List Invoices",
-      "description":
-        "List invoices with positions and amounts over a date range — the export feed into accounting tools. Throttled to 1 request per minute for the same page and minInvoiceDate.",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6633,7 +6589,8 @@ export const connectors: IntegrationConfig[] = [
           "page": {
             "type": "number",
             "in": "query",
-            "description": "Page number to request (1-based)",
+            "description":
+              "Page number to request (1-based). Calls with the same page and minInvoiceDate are throttled to one request per minute.",
             "default": 1,
           },
           "pageSize": {
@@ -6652,15 +6609,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "billbee__get_order_states",
       "name": "Get Order States",
-      "description":
-        "List all defined order state IDs and names — resolves the NewStateId values used by Update Order State",
+      "description": "Get order states",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.billbee.io/api/v1/enums/orderstates" },
     }, {
       "id": "billbee__update_stock",
       "name": "Update Stock",
-      "description":
-        "Set the absolute stock quantity of a product by SKU or Billbee product ID — the most common multichannel write; the change is pushed to connected shops",
+      "description": "Set stock quantity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -6775,7 +6730,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "bitbucket__list_repositories",
       "name": "List Repositories",
-      "description": "Get list of user's repositories",
+      "description": "List repositories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6833,7 +6788,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__get_repository",
       "name": "Get Repository",
-      "description": "Get details of a specific repository",
+      "description": "Get repository",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6856,7 +6811,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__list_pull_requests",
       "name": "List Pull Requests",
-      "description": "Get pull requests for a repository",
+      "description": "List pull requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6917,7 +6872,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__get_pull_request",
       "name": "Get Pull Request",
-      "description": "Get details of a specific pull request",
+      "description": "Get pull request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -6947,7 +6902,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__create_pull_request",
       "name": "Create Pull Request",
-      "description": "Create a new pull request",
+      "description": "Create pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -6995,7 +6950,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__add_pull_request_comment",
       "name": "Add Pull Request Comment",
-      "description": "Add a comment to a pull request",
+      "description": "Add pull request comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7032,7 +6987,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "bitbucket__list_issues",
       "name": "List Issues",
-      "description": "Get issues for a repository",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7127,7 +7082,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "box__list_folder_items",
       "name": "List Folder Items",
-      "description": "List files and subfolders inside a Box folder (folder 0 is the root)",
+      "description": "List folder items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7178,7 +7133,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__get_file",
       "name": "Get File",
-      "description": "Get metadata about a Box file",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7200,7 +7155,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__get_folder",
       "name": "Get Folder",
-      "description": "Get metadata about a Box folder",
+      "description": "Get folder",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7217,7 +7172,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__search",
       "name": "Search",
-      "description": "Search for files and folders across the Box account",
+      "description": "Search files and folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7256,7 +7211,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder inside a Box parent folder",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7274,8 +7229,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__upload_file",
       "name": "Upload File",
-      "description":
-        "Upload a new file (up to 50 MB) into a Box folder; larger files require Box's chunked upload API",
+      "description": "Upload file (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7297,7 +7251,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded file content, sent decoded as the binary multipart 'file' part",
+              "Base64-encoded file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -7315,7 +7269,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__upload_file_version",
       "name": "Upload File Version",
-      "description": "Upload a new version of an existing Box file (up to 50 MB)",
+      "description": "Upload file version (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7338,7 +7292,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part",
+              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -7355,7 +7309,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__list_file_comments",
       "name": "List File Comments",
-      "description": "List comments on a Box file",
+      "description": "List file comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7384,7 +7338,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Box file",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7405,8 +7359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "box__download_file",
       "name": "Download File",
-      "description":
-        "Download a file's content; Box responds with a 302 redirect to a short-lived dl.boxcloud.com URL that is followed to fetch the binary content (a 202 with Retry-After means the file is not yet ready)",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7415,7 +7368,8 @@ export const connectors: IntegrationConfig[] = [
           "fileId": {
             "type": "string",
             "in": "path",
-            "description": "Box file ID",
+            "description":
+              "Box file ID. A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
             "required": true,
           },
           "version": {
@@ -7497,7 +7451,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "brave-search__web_search",
       "name": "Web Search",
-      "description": "Search the web and get ranked results from Brave's independent index",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7556,7 +7510,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__news_search",
       "name": "News Search",
-      "description": "Search recent and historical news articles from trusted outlets worldwide",
+      "description": "Search news",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7624,7 +7578,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__image_search",
       "name": "Image Search",
-      "description": "Search Brave's image index and get image URLs with source page metadata",
+      "description": "Search images",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7665,8 +7619,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__video_search",
       "name": "Video Search",
-      "description":
-        "Search for videos and get results with titles, creators, durations, and thumbnails",
+      "description": "Search videos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7718,8 +7671,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__local_descriptions",
       "name": "Get Local Descriptions",
-      "description":
-        "Get AI-generated text descriptions for up to 20 locations using location IDs returned in a Web Search response's locations results",
+      "description": "Get local descriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7737,8 +7689,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brave-search__local_pois",
       "name": "Get Local Places",
-      "description":
-        "Get rich details (address, hours, ratings, pictures) for up to 20 locations using location IDs returned in a Web Search response's locations results",
+      "description": "Get local places",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7846,7 +7797,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "brevo__send_email",
       "name": "Send Email",
-      "description": "Send a transactional email",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7872,7 +7823,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brevo__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in the account",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7922,7 +7873,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brevo__get_contact",
       "name": "Get Contact",
-      "description": "Get a contact by email address or numeric ID",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7939,7 +7890,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brevo__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -7961,7 +7912,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brevo__list_lists",
       "name": "List Lists",
-      "description": "List contact lists",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -7984,7 +7935,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "brevo__list_email_campaigns",
       "name": "List Email Campaigns",
-      "description": "List email campaigns with status and scheduling info",
+      "description": "List email campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8087,7 +8038,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "browserbase__list_sessions",
       "name": "List Sessions",
-      "description": "List browser sessions, optionally filtered by status",
+      "description": "List sessions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8118,7 +8069,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__create_session",
       "name": "Create Session",
-      "description": "Create a new cloud browser session (consumes plan browser minutes)",
+      "description": "Create session (uses browser hours)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8151,7 +8102,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__get_session",
       "name": "Get Session",
-      "description": "Get a session's status, connection URL, and metadata",
+      "description": "Get session",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8168,7 +8119,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__release_session",
       "name": "Release Session",
-      "description": "Request release of a running session to stop billing for it",
+      "description": "Request session release to stop billing",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8197,7 +8148,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__list_projects",
       "name": "List Projects",
-      "description": "List the Browserbase projects available to the API key",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.browserbase.com/v1/projects" },
     }],
@@ -8273,13 +8224,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "buildkite__list_organizations",
       "name": "List Organizations",
-      "description": "List Buildkite organizations the token can access",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.buildkite.com/v2/organizations" },
     }, {
       "id": "buildkite__list_pipelines",
       "name": "List Pipelines",
-      "description": "List pipelines in an organization",
+      "description": "List pipelines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8313,7 +8264,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "buildkite__get_pipeline",
       "name": "Get Pipeline",
-      "description": "Get a pipeline's configuration and build stats",
+      "description": "Get pipeline",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8336,7 +8287,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "buildkite__list_builds",
       "name": "List Builds",
-      "description": "List builds for a pipeline, optionally filtered by branch or state",
+      "description": "List builds",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8392,7 +8343,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "buildkite__get_build",
       "name": "Get Build",
-      "description": "Get a build including its jobs and their states",
+      "description": "Get build",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8422,7 +8373,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "buildkite__create_build",
       "name": "Create Build",
-      "description": "Trigger a new build on a pipeline",
+      "description": "Create build",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8531,8 +8482,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "cal-com__list_bookings",
       "name": "List Bookings",
-      "description":
-        "List bookings for the authenticated user with optional status, event type, and attendee filters",
+      "description": "List bookings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8579,8 +8529,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__list_event_types",
       "name": "List Event Types",
-      "description":
-        "List event types so the agent can find the event type ID needed for slots and bookings",
+      "description": "List event types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8614,8 +8563,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__get_available_slots",
       "name": "Get Available Slots",
-      "description":
-        "Find available time slots for an event type within a date range, e.g. before creating a booking",
+      "description": "Get available slots",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8675,7 +8623,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__create_booking",
       "name": "Create Booking",
-      "description": "Book a time slot on an event type for an attendee",
+      "description": "Create booking",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8731,8 +8679,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__get_booking",
       "name": "Get Booking",
-      "description":
-        "Get a single booking by UID, e.g. to confirm details before rescheduling or cancelling",
+      "description": "Get booking",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8758,8 +8705,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__reschedule_booking",
       "name": "Reschedule Booking",
-      "description":
-        "Move an existing booking to a new start time (only accepted or pending bookings can be rescheduled)",
+      "description": "Reschedule booking",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8768,7 +8714,8 @@ export const connectors: IntegrationConfig[] = [
           "bookingUid": {
             "type": "string",
             "in": "path",
-            "description": "UID of the booking to reschedule (from list_bookings)",
+            "description":
+              "UID of the booking to reschedule (from list_bookings). Only accepted or pending bookings can be rescheduled.",
             "required": true,
           },
           "cal-api-version": {
@@ -8801,8 +8748,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__confirm_booking",
       "name": "Confirm Booking",
-      "description":
-        "Confirm a booking that is awaiting host approval (status unconfirmed in list_bookings)",
+      "description": "Confirm booking",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8827,7 +8773,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cal-com__cancel_booking",
       "name": "Cancel Booking",
-      "description": "Cancel an existing booking, optionally recording a cancellation reason",
+      "description": "Cancel booking",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -8941,7 +8887,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "calendar__list_calendars",
       "name": "List Calendars",
-      "description": "List all calendars in the authenticated user's calendar list",
+      "description": "List calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8959,7 +8905,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__list_events",
       "name": "List Events",
-      "description": "Get upcoming calendar events",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8998,7 +8944,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__create_event",
       "name": "Create Event",
-      "description": "Schedule a new calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -9032,7 +8978,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__get_event",
       "name": "Get Event",
-      "description": "Get details of a specific calendar event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9056,7 +9002,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__update_event",
       "name": "Update Event",
-      "description": "Update an existing calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -9103,7 +9049,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__delete_event",
       "name": "Delete Event",
-      "description": "Delete a calendar event by ID",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -9133,7 +9079,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendar__find_free_time",
       "name": "Find Free Time",
-      "description": "Find available time slots in calendar",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -9251,8 +9197,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "calendly__get_current_user",
       "name": "Get Current User",
-      "description":
-        "Get the connected Calendly user, including their user URI and organization URI (needed by the other tools)",
+      "description": "Get current user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9262,7 +9207,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendly__list_event_types",
       "name": "List Event Types",
-      "description": "List the user's or organization's event types (scheduling links)",
+      "description": "List event types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9315,7 +9260,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendly__list_scheduled_events",
       "name": "List Scheduled Events",
-      "description": "List scheduled events for a user or organization",
+      "description": "List scheduled events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9378,7 +9323,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendly__get_scheduled_event",
       "name": "Get Scheduled Event",
-      "description": "Get details of a specific scheduled event",
+      "description": "Get scheduled event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9396,7 +9341,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendly__list_event_invitees",
       "name": "List Event Invitees",
-      "description": "List invitees of a scheduled event",
+      "description": "List event invitees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9440,7 +9385,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "calendly__cancel_event",
       "name": "Cancel Event",
-      "description": "Cancel a scheduled event",
+      "description": "Cancel event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -9544,7 +9489,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "chargebee__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List subscriptions with optional status or customer filtering",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9594,7 +9539,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__get_subscription",
       "name": "Get Subscription",
-      "description": "Retrieve a single subscription with its plan, status, and billing details",
+      "description": "Get subscription",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9618,7 +9563,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__list_customers",
       "name": "List Customers",
-      "description": "List customers with optional email filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9662,7 +9607,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__list_invoices",
       "name": "List Invoices",
-      "description": "List invoices with optional status, customer, or subscription filtering",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9717,8 +9662,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__list_item_prices",
       "name": "List Item Prices",
-      "description":
-        "List item prices (plans, addons, charges) in the catalog to find IDs and pricing for subscriptions",
+      "description": "List item prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9777,8 +9721,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__get_invoice",
       "name": "Get Invoice",
-      "description":
-        "Retrieve a single invoice with its line items, amounts due, and linked payments",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9802,8 +9745,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__list_transactions",
       "name": "List Transactions",
-      "description":
-        "List payment-level transactions (payments, refunds, authorizations) behind invoices, e.g. to review failed payments",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -9864,7 +9806,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "chargebee__create_customer",
       "name": "Create Customer",
-      "description": "Create a new customer record in Chargebee",
+      "description": "Create customer",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -9978,7 +9920,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "checkly__list_checks",
       "name": "List Checks",
-      "description": "List API and browser checks in the account",
+      "description": "List checks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10011,7 +9953,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "checkly__get_check",
       "name": "Get Check",
-      "description": "Get a check's full configuration",
+      "description": "Get check",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10028,8 +9970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "checkly__list_check_results",
       "name": "List Check Results",
-      "description":
-        "List raw results for a check within a time window (from/to must be at most 6 hours apart)",
+      "description": "List check results",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10073,13 +10014,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "checkly__list_check_statuses",
       "name": "List Check Statuses",
-      "description": "Get the current status of every check in the account",
+      "description": "List check statuses",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.checklyhq.com/v1/check-statuses" },
     }, {
       "id": "checkly__get_check_status",
       "name": "Get Check Status",
-      "description": "Get the current status of a single check",
+      "description": "Get check status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10165,7 +10106,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "circleci__list_pipelines",
       "name": "List Pipelines",
-      "description": "List recent pipelines for a project",
+      "description": "List pipelines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10210,7 +10151,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__get_pipeline",
       "name": "Get Pipeline",
-      "description": "Get a pipeline by its ID",
+      "description": "Get pipeline",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10227,7 +10168,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__trigger_pipeline",
       "name": "Trigger Pipeline",
-      "description": "Trigger a new pipeline for a project on a branch or tag",
+      "description": "Trigger pipeline",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -10258,7 +10199,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__list_workflows",
       "name": "List Pipeline Workflows",
-      "description": "List the workflows of a pipeline",
+      "description": "List pipeline workflows",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10297,7 +10238,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__get_workflow",
       "name": "Get Workflow",
-      "description": "Get a workflow by its ID",
+      "description": "Get workflow",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10314,7 +10255,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__list_workflow_jobs",
       "name": "List Workflow Jobs",
-      "description": "List the jobs of a workflow with their statuses",
+      "description": "List workflow jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10331,7 +10272,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "circleci__cancel_workflow",
       "name": "Cancel Workflow",
-      "description": "Cancel a running workflow",
+      "description": "Cancel workflow",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -10427,8 +10368,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "cleverreach__list_groups",
       "name": "List Groups",
-      "description":
-        "List CleverReach groups (recipient lists) so agents can find a group ID before reading or adding recipients",
+      "description": "List groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10445,8 +10385,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__list_group_receivers",
       "name": "List Group Receivers",
-      "description":
-        "List the receivers (recipients) of a CleverReach group, with paging and email filters",
+      "description": "List group receivers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10492,7 +10431,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__add_receiver",
       "name": "Add Receiver",
-      "description": "Add (subscribe) a new receiver to a CleverReach group",
+      "description": "Add receiver",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -10540,8 +10479,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__list_mailings",
       "name": "List Mailings",
-      "description":
-        "List CleverReach mailings (email campaigns) filtered by state, such as drafts or finished mailings",
+      "description": "List mailings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10585,8 +10523,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__create_mailing",
       "name": "Create Mailing Draft",
-      "description":
-        "Create a new CleverReach mailing as a draft with subject, sender, and HTML/text content; sending is triggered separately",
+      "description": "Create mailing draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -10633,8 +10570,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__get_mailing",
       "name": "Get Mailing",
-      "description":
-        "Get a single mailing by ID, e.g. to inspect a draft created with Create Mailing Draft",
+      "description": "Get mailing",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10651,8 +10587,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__deactivate_receiver",
       "name": "Deactivate Receiver",
-      "description":
-        "Deactivate (unsubscribe) a receiver in a group by ID or email — the counterpart to Add Receiver for unsubscribe handling",
+      "description": "Deactivate receiver",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -10675,8 +10610,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cleverreach__get_group_stats",
       "name": "Get Group Stats",
-      "description":
-        "Get list health statistics for a group: active, inactive, and bounced receiver counts",
+      "description": "Get group stats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10765,7 +10699,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "clickhouse__list_organizations",
       "name": "List Organizations",
-      "description": "List organizations the API key has access to",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10783,7 +10717,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickhouse__get_organization",
       "name": "Get Organization",
-      "description": "Get details of an organization",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10801,7 +10735,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickhouse__list_services",
       "name": "List Services",
-      "description": "List all ClickHouse services in an organization",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10835,7 +10769,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickhouse__get_service",
       "name": "Get Service",
-      "description": "Get details of a ClickHouse service, including endpoints and state",
+      "description": "Get service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10937,13 +10871,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "clickup__list_workspaces",
       "name": "List Workspaces",
-      "description": "List ClickUp Workspaces (teams) the authorized user can access",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.clickup.com/api/v2/team" },
     }, {
       "id": "clickup__list_spaces",
       "name": "List Spaces",
-      "description": "List Spaces in a ClickUp Workspace",
+      "description": "List spaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10966,7 +10900,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickup__list_lists",
       "name": "List Lists",
-      "description": "List folderless Lists in a ClickUp Space",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -10989,7 +10923,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickup__list_tasks",
       "name": "List Tasks",
-      "description": "List tasks in a ClickUp List",
+      "description": "List tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11042,7 +10976,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickup__get_task",
       "name": "Get Task",
-      "description": "Get details of a ClickUp task",
+      "description": "Get task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11065,7 +10999,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickup__create_task",
       "name": "Create Task",
-      "description": "Create a new task in a ClickUp List",
+      "description": "Create task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11093,7 +11027,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "clickup__update_task",
       "name": "Update Task",
-      "description": "Update fields on an existing ClickUp task",
+      "description": "Update task",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -11195,7 +11129,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "close__list_leads",
       "name": "List Leads",
-      "description": "List or search leads in Close using the lead query language",
+      "description": "List leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11241,7 +11175,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__get_lead",
       "name": "Get Lead",
-      "description": "Get full details of a Close lead, including contacts and opportunities",
+      "description": "Get lead",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11258,7 +11192,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__create_lead",
       "name": "Create Lead",
-      "description": "Create a new lead in Close, optionally with contacts",
+      "description": "Create lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11281,7 +11215,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__update_lead",
       "name": "Update Lead",
-      "description": "Update fields on an existing Close lead",
+      "description": "Update lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -11304,7 +11238,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__list_opportunities",
       "name": "List Opportunities",
-      "description": "List opportunities, optionally filtered by lead",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11332,7 +11266,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__create_opportunity",
       "name": "Create Opportunity",
-      "description": "Create an opportunity on a Close lead",
+      "description": "Create opportunity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11360,7 +11294,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "close__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts, optionally filtered by lead",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11456,7 +11390,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "cloudflare__verify_token",
       "name": "Verify Token",
-      "description": "Check that the configured Cloudflare API token is valid and active",
+      "description": "Verify token",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11466,7 +11400,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__list_zones",
       "name": "List Zones",
-      "description": "List zones (domains) the token can access",
+      "description": "List zones",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11510,7 +11444,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__get_zone",
       "name": "Get Zone",
-      "description": "Get details of a zone by ID",
+      "description": "Get zone",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11529,7 +11463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__list_dns_records",
       "name": "List DNS Records",
-      "description": "List DNS records in a zone",
+      "description": "List DNS records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11575,7 +11509,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__create_dns_record",
       "name": "Create DNS Record",
-      "description": "Create a DNS record in a zone",
+      "description": "Create DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11619,7 +11553,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__update_dns_record",
       "name": "Update DNS Record",
-      "description": "Update fields of an existing DNS record",
+      "description": "Update DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -11648,8 +11582,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__list_accounts",
       "name": "List Accounts",
-      "description":
-        "List Cloudflare accounts the token can access (account IDs are needed for account-scoped APIs)",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11733,7 +11666,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "coda__list_docs",
       "name": "List Docs",
-      "description": "List Coda docs accessible to the token",
+      "description": "List docs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11781,7 +11714,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "coda__get_doc",
       "name": "Get Doc",
-      "description": "Get metadata for a Coda doc",
+      "description": "Get doc",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11798,7 +11731,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "coda__create_doc",
       "name": "Create Doc",
-      "description": "Create a new Coda doc, optionally copying an existing doc",
+      "description": "Create doc",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11818,7 +11751,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "coda__list_pages",
       "name": "List Pages",
-      "description": "List pages in a Coda doc",
+      "description": "List pages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11863,7 +11796,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "coda__get_page",
       "name": "Get Page",
-      "description": "Get metadata for a page in a Coda doc",
+      "description": "Get page",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11886,7 +11819,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "coda__update_page",
       "name": "Update Page",
-      "description": "Update a page's name, subtitle, or content in a Coda doc",
+      "description": "Update page",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -11985,7 +11918,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "cohere__list_models",
       "name": "List Models",
-      "description": "List the Cohere models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12025,7 +11958,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cohere__create_chat",
       "name": "Create Chat",
-      "description": "Generate a chat response with a Cohere Command model (v2 Chat API)",
+      "description": "Generate chat response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12051,7 +11984,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cohere__create_embedding",
       "name": "Create Embedding",
-      "description": "Create embedding vectors for input texts (v2 Embed API)",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12083,7 +12016,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cohere__rerank_documents",
       "name": "Rerank Documents",
-      "description": "Rank a list of documents by relevance to a query (v2 Rerank API)",
+      "description": "Rerank documents",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12207,8 +12140,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "confluence__list_sites",
       "name": "List Atlassian Sites",
-      "description":
-        "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12229,7 +12161,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__search_content",
       "name": "Search Confluence",
-      "description": "Search for pages and blog posts in Confluence",
+      "description": "Search Confluence",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12292,7 +12224,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__get_page",
       "name": "Get Page",
-      "description": "Get the content of a specific Confluence page (uses v2 API)",
+      "description": "Get page",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12321,8 +12253,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__create_page",
       "name": "Create Page",
-      "description":
-        "Create a new page in a Confluence space (uses v2 API; requires spaceId from list_spaces)",
+      "description": "Create page",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12354,8 +12285,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__update_page",
       "name": "Update Page",
-      "description":
-        "Update the content of an existing Confluence page (uses v2 API; version.number must be current+1)",
+      "description": "Update page",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -12396,7 +12326,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__list_spaces",
       "name": "List Spaces",
-      "description": "List all accessible Confluence spaces",
+      "description": "List spaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12445,7 +12375,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Confluence page (uses v1 content API)",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12574,7 +12504,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "customer-io__search_customers",
       "name": "Search Customers",
-      "description": "Search Customer.io people by attribute or segment filter conditions",
+      "description": "Search customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -12605,7 +12535,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__list_campaigns",
       "name": "List Campaigns",
-      "description": "List campaigns in the Customer.io workspace with their state and goals",
+      "description": "List campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12615,8 +12545,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__get_campaign_metrics",
       "name": "Get Campaign Metrics",
-      "description":
-        "Get delivery and conversion metrics for a Customer.io campaign over a time period",
+      "description": "Get campaign metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12660,8 +12589,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__get_person_attributes",
       "name": "Get Person Attributes",
-      "description":
-        "Get a person's full attribute profile by ID, email, or cio_id (Search Customers returns only identifiers)",
+      "description": "Get person attributes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12685,8 +12613,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__list_transactional_messages",
       "name": "List Transactional Messages",
-      "description":
-        "List the workspace's transactional message templates so agents can find a valid transactional_message_id before sending",
+      "description": "List transactional messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12696,8 +12623,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__trigger_broadcast",
       "name": "Trigger Broadcast",
-      "description":
-        "Trigger an API-triggered broadcast campaign, optionally overriding the recipients and passing liquid data into the messages",
+      "description": "Trigger broadcast",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12745,8 +12671,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__list_segments",
       "name": "List Segments",
-      "description":
-        "List segments in the Customer.io workspace so agents can target or filter people",
+      "description": "List segments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12756,8 +12681,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "customer-io__send_transactional_email",
       "name": "Send Transactional Email",
-      "description":
-        "Send a transactional email to a recipient, using a transactional message template or inline subject and body",
+      "description": "Send transactional email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12878,8 +12802,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "databricks__list_clusters",
       "name": "List Clusters",
-      "description":
-        "List all-purpose and job compute clusters in the workspace with their state and configuration",
+      "description": "List clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12919,7 +12842,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs defined in the workspace, optionally filtered by name",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12957,8 +12880,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__run_job_now",
       "name": "Run Job Now",
-      "description":
-        "Trigger an immediate run of an existing job, optionally overriding job parameters",
+      "description": "Run job now",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -12979,8 +12901,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__list_job_runs",
       "name": "List Job Runs",
-      "description":
-        "List recent job runs, optionally filtered to one job or to active/completed runs",
+      "description": "List job runs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13028,8 +12949,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__cancel_job_run",
       "name": "Cancel Job Run",
-      "description":
-        "Cancel a job run; the cancellation happens asynchronously, so the run may still be running briefly",
+      "description": "Request job run cancellation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13046,8 +12966,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__get_job_run",
       "name": "Get Job Run",
-      "description":
-        "Get the status, timing, and task results of a job run (use the run_id returned by Run Job Now)",
+      "description": "Get job run",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13064,8 +12983,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__execute_sql_statement",
       "name": "Execute SQL Statement",
-      "description":
-        "Execute a SQL query against a SQL warehouse and return the result rows (queries; the warehouse enforces table permissions)",
+      "description": "Execute SQL statement",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13106,8 +13024,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__get_sql_statement",
       "name": "Get SQL Statement",
-      "description":
-        "Poll the status and result of a previously submitted SQL statement, e.g. after an async or timed-out execution",
+      "description": "Poll SQL statement status and result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13124,8 +13041,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "databricks__list_sql_warehouses",
       "name": "List SQL Warehouses",
-      "description":
-        "List SQL warehouses in the workspace to find a warehouse_id for executing SQL statements",
+      "description": "List SQL warehouses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13249,13 +13165,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "datadog__validate_api_key",
       "name": "Validate API Key",
-      "description": "Check that the configured Datadog API key is valid",
+      "description": "Validate API key",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.{{env.DD_SITE}}/api/v1/validate" },
     }, {
       "id": "datadog__list_monitors",
       "name": "List Monitors",
-      "description": "List monitors with optional name or tag filtering",
+      "description": "List monitors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13298,7 +13214,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datadog__get_monitor",
       "name": "Get Monitor",
-      "description": "Get details and current state of a monitor",
+      "description": "Get monitor",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13315,7 +13231,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datadog__mute_monitor",
       "name": "Mute Monitor",
-      "description": "Mute notifications for a monitor",
+      "description": "Mute monitor",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13337,7 +13253,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datadog__list_dashboards",
       "name": "List Dashboards",
-      "description": "List all dashboards",
+      "description": "List dashboards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13357,7 +13273,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datadog__query_timeseries",
       "name": "Query Timeseries Metrics",
-      "description": "Query timeseries metric data over a time window",
+      "description": "Query timeseries metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13386,7 +13302,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datadog__search_logs",
       "name": "Search Logs",
-      "description": "Search log events with a Datadog log query",
+      "description": "Search logs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -13484,8 +13400,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "datev__list_clients",
       "name": "List Clients",
-      "description":
-        "List the DATEV clients (Mandanten) the connected user may upload documents for, including each client's ID needed by the other tools",
+      "description": "List clients",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13494,8 +13409,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datev__list_document_types",
       "name": "List Document Types",
-      "description":
-        "List the document types (e.g. incoming invoices, outgoing invoices, cash receipts) available in Belege online for a specific DATEV client, used to classify uploads",
+      "description": "List document types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13513,8 +13427,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "datev__upload_document",
       "name": "Upload Document",
-      "description":
-        "Upload a receipt or invoice file to DATEV Unternehmen online (Belege online) for a client so the tax advisor can process it for bookkeeping",
+      "description": "Upload document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13627,8 +13540,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "daytona__list_sandboxes",
       "name": "List Sandboxes",
-      "description":
-        "List sandboxes in the organization with optional name, label, and state filtering",
+      "description": "List sandboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13684,8 +13596,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__create_sandbox",
       "name": "Create Sandbox",
-      "description":
-        "Create a new sandbox, optionally from a snapshot and with custom resources (starts billable compute)",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13714,7 +13625,8 @@ export const connectors: IntegrationConfig[] = [
           "disk": { "type": "number", "description": "Disk space allocated to the sandbox in GB" },
           "autoStopInterval": {
             "type": "number",
-            "description": "Auto-stop interval in minutes (0 disables auto-stop)",
+            "description":
+              "Auto-stop interval in minutes. The usual default is 15 minutes of inactivity; 0 disables auto-stop. Pause-capable classes may default to auto-pause instead, so check the sandbox lifecycle settings.",
           },
           "public": {
             "type": "boolean",
@@ -13725,8 +13637,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__get_sandbox",
       "name": "Get Sandbox",
-      "description":
-        "Get sandbox details by ID or name, including state, snapshot, resources, and timestamps",
+      "description": "Get sandbox",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13744,7 +13655,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__delete_sandbox",
       "name": "Delete Sandbox",
-      "description": "Delete a sandbox by ID or name, discarding its state and filesystem",
+      "description": "Delete sandbox and its filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -13753,7 +13664,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "ID or name of the sandbox to delete",
+            "description":
+              "ID or name of the sandbox to delete. Deleting removes this sandbox and its local filesystem; unsnapshotted local state is lost. Save needed files or create a snapshot first. Independent snapshots are preserved and remain billed for storage.",
             "required": true,
           },
         },
@@ -13761,8 +13673,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__execute_command",
       "name": "Execute Command",
-      "description":
-        "Execute a shell command inside a running sandbox via the toolbox and return its exit code and output (legacy REST route; Daytona's current toolbox API is SDK-first)",
+      "description": "Execute command",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13788,8 +13699,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__start_sandbox",
       "name": "Start Sandbox",
-      "description":
-        "Start a stopped sandbox — required before Execute Command, since sandboxes auto-stop after the autoStopInterval (15 minutes by default)",
+      "description": "Start sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13798,7 +13708,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description":
+              "Sandbox ID or name. Check the sandbox lifecycle settings: the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead. Recheck the started state before executing after a delay.",
             "required": true,
           },
         },
@@ -13806,8 +13717,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description":
-        "Stop a running sandbox to pause billable compute without destroying its state",
+      "description": "Stop sandbox; clear memory",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -13816,7 +13726,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description":
+              "Sandbox ID or name. Stopping clears memory and running processes. Regular container and VM files are retained for restart, but GPU and ephemeral sandboxes lose their local filesystem on stop. Compute charges continue during stopping and end once stopped or deleted; reserved disk remains billed while stopped. Pause is a separate operation that preserves VM memory; containers do not support pause.",
             "required": true,
           },
         },
@@ -13824,8 +13735,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "daytona__list_snapshots",
       "name": "List Snapshots",
-      "description":
-        "List available snapshots (sandbox base images) — use these names or IDs in the snapshot field of Create Sandbox",
+      "description": "List snapshots",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13925,7 +13835,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "deel__list_contracts",
       "name": "List Contracts",
-      "description": "List contracts in the Deel account, optionally filtered by contract type",
+      "description": "List contracts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13953,7 +13863,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__get_contract",
       "name": "Get Contract",
-      "description": "Retrieve full details of a single contract by ID",
+      "description": "Get contract",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13970,7 +13880,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__list_people",
       "name": "List People",
-      "description": "List people (workers) in the organization with their employment details",
+      "description": "List people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -13999,8 +13909,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__get_person",
       "name": "Get Person",
-      "description":
-        "Retrieve a single person (worker) with their employments, manager, and direct reports",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14017,8 +13926,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__list_invoices",
       "name": "List Invoices",
-      "description":
-        "List worker invoices; only paid invoices are returned unless status=all is passed",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14057,7 +13965,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__list_timesheets",
       "name": "List Timesheets",
-      "description": "List timesheet entries, optionally filtered to a single contract",
+      "description": "List timesheets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14085,7 +13993,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__create_timesheet",
       "name": "Create Timesheet Entry",
-      "description": "Submit a timesheet entry (work performed) for a contractor contract",
+      "description": "Create timesheet entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14102,8 +14010,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__review_timesheet",
       "name": "Review Timesheet",
-      "description":
-        "Approve or decline a submitted timesheet entry; approved hours flow onto the contractor's invoice",
+      "description": "Review timesheet (approval schedules payment)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14203,7 +14110,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "deepgram__transcribe_url",
       "name": "Transcribe URL",
-      "description": "Transcribe a prerecorded audio file from a publicly accessible URL",
+      "description": "Transcribe URL",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14248,7 +14155,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deepgram__list_projects",
       "name": "List Projects",
-      "description": "List the Deepgram projects associated with the API key",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14265,7 +14172,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deepgram__get_project_balances",
       "name": "Get Project Balances",
-      "description": "Get the outstanding credit balances for a project",
+      "description": "Get project balances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14282,7 +14189,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deepgram__list_models",
       "name": "List Models",
-      "description": "List the speech-to-text and text-to-speech models Deepgram offers",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14374,7 +14281,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "dialpad__list_contacts",
       "name": "List Contacts",
-      "description": "List Dialpad contacts visible to the authenticated user",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14418,7 +14325,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__get_contact",
       "name": "Get Contact",
-      "description": "Get details of a Dialpad contact",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14435,7 +14342,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in Dialpad",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14452,7 +14359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing Dialpad contact",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -14477,7 +14384,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__list_users",
       "name": "List Users",
-      "description": "List Dialpad users in the company",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14503,7 +14410,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__send_sms",
       "name": "Send SMS",
-      "description": "Send an SMS message on behalf of a Dialpad user",
+      "description": "Send SMS",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14604,7 +14511,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "digitalocean__list_droplets",
       "name": "List Droplets",
-      "description": "List Droplets in the account",
+      "description": "List droplets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14647,7 +14554,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__get_droplet",
       "name": "Get Droplet",
-      "description": "Get a Droplet by ID",
+      "description": "Get droplet",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14665,7 +14572,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__create_droplet",
       "name": "Create Droplet",
-      "description": "Create a new Droplet (provisions billable infrastructure)",
+      "description": "Create billable droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14700,7 +14607,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__delete_droplet",
       "name": "Delete Droplet",
-      "description": "Permanently destroy a Droplet by ID",
+      "description": "Permanently destroy droplet",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -14717,7 +14624,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__list_databases",
       "name": "List Database Clusters",
-      "description": "List managed database clusters in the account",
+      "description": "List database clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14744,7 +14651,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "digitalocean__get_account",
       "name": "Get Account",
-      "description": "Get account information and limits for the authenticated user",
+      "description": "Get account",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14825,15 +14732,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "discord__get_bot_user",
       "name": "Get Bot User",
-      "description":
-        "Get the bot's own user account to confirm the token works and learn the bot's ID and username",
+      "description": "Get bot user",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://discord.com/api/v10/users/@me" },
     }, {
       "id": "discord__list_guilds",
       "name": "List Guilds",
-      "description":
-        "List the servers (guilds) the bot has been added to, so an agent can find a guild ID",
+      "description": "List guilds",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14866,8 +14771,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__list_guild_channels",
       "name": "List Guild Channels",
-      "description":
-        "List the channels in a server so an agent can find the right channel ID before reading or posting",
+      "description": "List guild channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14884,8 +14788,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__get_channel_messages",
       "name": "Get Channel Messages",
-      "description":
-        "Read recent messages from a channel for summaries, support triage, or context before replying",
+      "description": "Get channel messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14923,7 +14826,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__send_message",
       "name": "Send Message",
-      "description": "Post a message to a channel, optionally as a reply to an existing message",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14957,8 +14860,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__create_dm",
       "name": "Create DM Channel",
-      "description":
-        "Open (or return the existing) direct-message channel with a user; use the returned channel ID with Send Message to DM the user",
+      "description": "Create DM channel",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14975,8 +14877,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__edit_message",
       "name": "Edit Message",
-      "description":
-        "Edit the text of a message the bot previously sent, e.g. to update a status post or correct an announcement",
+      "description": "Edit message",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -15006,8 +14907,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__search_guild_members",
       "name": "Search Guild Members",
-      "description":
-        "Find members of a server whose username or nickname starts with a string, e.g. to resolve a name to a user ID for mentions or DMs",
+      "description": "Search guild members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15036,7 +14936,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__add_reaction",
       "name": "Add Reaction",
-      "description": "React to a message with an emoji, e.g. to acknowledge or label it",
+      "description": "Add reaction",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -15066,7 +14966,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__create_thread",
       "name": "Create Thread",
-      "description": "Start a thread from an existing message to keep a discussion organized",
+      "description": "Create thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15191,7 +15091,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "docs-google__list_documents",
       "name": "List Documents",
-      "description": "List recent Google Docs documents from Drive",
+      "description": "List documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15222,7 +15122,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docs-google__get_document",
       "name": "Get Document",
-      "description": "Get document content and metadata",
+      "description": "Get document",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15244,7 +15144,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docs-google__create_document",
       "name": "Create Document",
-      "description": "Create a new document with optional initial content",
+      "description": "Create document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15256,7 +15156,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docs-google__update_document",
       "name": "Update Document",
-      "description": "Update document content using batch requests",
+      "description": "Update document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15282,7 +15182,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docs-google__search_documents",
       "name": "Search Documents",
-      "description": "Search for documents by query string",
+      "description": "Search documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15416,15 +15316,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "docusign__get_user_info",
       "name": "Get User Info",
-      "description":
-        "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountId and base_uri (accountHostPrefix) values every other tool needs",
+      "description": "Get user info",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://account.docusign.com/oauth/userinfo" },
     }, {
       "id": "docusign__list_envelopes",
       "name": "List Envelopes",
-      "description":
-        "List envelope status changes in an account to track what is sent, delivered, or completed",
+      "description": "List envelopes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15479,7 +15377,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__get_envelope",
       "name": "Get Envelope",
-      "description": "Get the status and details of a single envelope by ID",
+      "description": "Get envelope",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15516,7 +15414,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__list_envelope_recipients",
       "name": "List Envelope Recipients",
-      "description": "List the recipients of an envelope and their signing status",
+      "description": "List envelope recipients",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15553,7 +15451,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__create_envelope",
       "name": "Create and Send Envelope",
-      "description": "Create an envelope with documents and recipients and send it for signature",
+      "description": "Create and send envelope",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15606,8 +15504,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__resend_envelope",
       "name": "Resend Envelope",
-      "description":
-        "Resend the signing request email to an in-progress envelope's pending recipients, e.g. to chase outstanding signers",
+      "description": "Resend envelope",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -15647,8 +15544,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__list_templates",
       "name": "List Templates",
-      "description":
-        "List the reusable envelope templates in an account, e.g. to find a template before sending from it",
+      "description": "List templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15695,7 +15591,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "docusign__download_envelope_documents",
       "name": "Download Envelope Documents",
-      "description": "Download all documents of an envelope as a single combined PDF",
+      "description": "Download envelope documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15825,7 +15721,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "drive__list_files",
       "name": "List Files",
-      "description": "List files and folders in a Google Drive folder or root",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15856,7 +15752,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__get_file",
       "name": "Get File",
-      "description": "Get metadata and details about a specific file or folder",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15879,7 +15775,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__search_files",
       "name": "Search Files",
-      "description": "Search for files and folders using queries",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15911,7 +15807,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder in Google Drive",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15929,7 +15825,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__upload_file",
       "name": "Upload File",
-      "description": "Upload or create a file in Google Drive",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -15970,8 +15866,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__update_file",
       "name": "Update File",
-      "description":
-        "Rename a file, update its description, or move it to a different folder in Google Drive",
+      "description": "Update file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -16010,7 +15905,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__delete_file",
       "name": "Delete File",
-      "description": "Permanently delete a file or folder from Google Drive",
+      "description": "Permanently delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -16027,8 +15922,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__download_file",
       "name": "Download File",
-      "description":
-        "Download the content of a binary or text file stored in Google Drive (not Google Docs/Sheets/Slides; use export_file for those)",
+      "description": "Download file (excludes Docs/Sheets/Slides)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16051,8 +15945,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__export_file",
       "name": "Export File",
-      "description":
-        "Export a Google Docs/Sheets/Slides file to another format such as text/plain, text/csv, or application/pdf",
+      "description": "Export file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16161,7 +16054,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "e2b__list_sandboxes",
       "name": "List Sandboxes",
-      "description": "List all running sandboxes, optionally filtered by metadata key/value pairs",
+      "description": "List running sandboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16170,14 +16063,15 @@ export const connectors: IntegrationConfig[] = [
           "metadata": {
             "type": "string",
             "in": "query",
-            "description": "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod",
+            "description":
+              "Metadata filter as a URL-encoded query string, e.g. user=abc&app=prod. This operation lists running sandboxes only. Paused sandboxes are excluded; the provider state filter is not exposed by this tool.",
           },
         },
       },
     }, {
       "id": "e2b__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create a new sandbox from a template (starts a billable running sandbox)",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16215,8 +16109,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__get_sandbox",
       "name": "Get Sandbox",
-      "description":
-        "Get a sandbox by ID, including template, state, resources, and start/end times",
+      "description": "Get sandbox",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16233,7 +16126,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__kill_sandbox",
       "name": "Kill Sandbox",
-      "description": "Kill a sandbox by ID, immediately terminating it and discarding its state",
+      "description": "Destroy sandbox and discard state",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -16242,7 +16135,8 @@ export const connectors: IntegrationConfig[] = [
           "sandboxID": {
             "type": "string",
             "in": "path",
-            "description": "Identifier of the sandbox to kill",
+            "description":
+              "Identifier of the sandbox to kill. Killing immediately terminates this sandbox and discards its active state. Use Pause Sandbox instead when you need to resume it.",
             "required": true,
           },
         },
@@ -16250,8 +16144,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__list_templates",
       "name": "List Templates",
-      "description":
-        "List all sandbox templates available to the account, with CPU, memory, and disk defaults",
+      "description": "List templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16267,8 +16160,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__pause_sandbox",
       "name": "Pause Sandbox",
-      "description":
-        "Pause a running sandbox, preserving its state so it can be resumed later — the middle ground between running and killed (returns 204 on success)",
+      "description": "Pause sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16285,7 +16177,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__resume_sandbox",
       "name": "Resume Sandbox",
-      "description": "Resume a paused sandbox with its preserved state and a fresh timeout",
+      "description": "Resume sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16309,8 +16201,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "e2b__set_sandbox_timeout",
       "name": "Set Sandbox Timeout",
-      "description":
-        "Reset a running sandbox's TTL: the sandbox will expire the given number of seconds from now (each call overwrites the previous timeout) — use this to keep a sandbox alive mid-task (returns 204 on success)",
+      "description": "Reset sandbox timeout",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16410,7 +16301,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "elevenlabs__list_voices",
       "name": "List Voices",
-      "description": "List and search the voices available to the account",
+      "description": "List voices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16451,7 +16342,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "elevenlabs__get_voice",
       "name": "Get Voice",
-      "description": "Get details about a specific voice",
+      "description": "Get voice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16468,20 +16359,19 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "elevenlabs__list_models",
       "name": "List Models",
-      "description": "List the speech models available to the account",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.elevenlabs.io/v1/models" },
     }, {
       "id": "elevenlabs__get_subscription",
       "name": "Get Subscription",
-      "description": "Get subscription tier, character usage, and limits for the account",
+      "description": "Get subscription",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.elevenlabs.io/v1/user/subscription" },
     }, {
       "id": "elevenlabs__text_to_speech",
       "name": "Text to Speech",
-      "description":
-        "Convert text to speech with a chosen voice; the response is binary audio (not JSON), so route the output to a file or player rather than parsing it",
+      "description": "Generate binary speech audio",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16585,7 +16475,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "exa__search",
       "name": "Search",
-      "description": "Search the web with Exa's neural and keyword search",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -16625,7 +16515,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "exa__get_contents",
       "name": "Get Contents",
-      "description": "Get parsed page contents, summaries, and metadata for a list of URLs",
+      "description": "Get contents",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -16650,7 +16540,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "exa__find_similar",
       "name": "Find Similar Links",
-      "description": "Find pages similar in meaning to a given URL",
+      "description": "Find similar links",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -16675,8 +16565,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "exa__answer",
       "name": "Answer",
-      "description":
-        "Get an LLM-generated answer to a question grounded in Exa search results with citations",
+      "description": "Answer question with citations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16761,8 +16650,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "factorial__list_employees",
       "name": "List Employees",
-      "description":
-        "List employees in the Factorial account, with filters for name, activity status, and team",
+      "description": "List employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16804,7 +16692,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__get_employee",
       "name": "Get Employee",
-      "description": "Get a single Factorial employee record by ID",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16821,8 +16709,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__list_leaves",
       "name": "List Leaves",
-      "description":
-        "List time-off leaves (absences) with filters for employee, date range, and approval status",
+      "description": "List leaves",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16876,8 +16763,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__create_leave",
       "name": "Create Leave",
-      "description":
-        "Create a time-off leave (absence) for an employee, such as vacation or sick leave",
+      "description": "Create leave",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -16912,8 +16798,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__list_teams",
       "name": "List Teams",
-      "description":
-        "List all teams in the Factorial account, useful before filtering employees by team",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16930,8 +16815,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__list_leave_types",
       "name": "List Leave Types",
-      "description":
-        "List the leave types configured in the account (vacation, sick leave, ...) with their IDs — required to pick a valid leave_type_id for Create Leave",
+      "description": "List leave types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -16958,7 +16842,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "factorial__delete_leave",
       "name": "Delete Leave",
-      "description": "Delete (cancel) a leave request by its ID",
+      "description": "Delete leave",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -17038,8 +16922,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fal__run_model",
       "name": "Run Model",
-      "description":
-        "Run a fal model synchronously and wait for the result (best for fast models; billed per run). The model endpoint ID is split into owner / app / variant segments, e.g. fal-ai/flux/schnell",
+      "description": "Run model (billed per run)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17079,8 +16962,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_submit",
       "name": "Submit Queue Request",
-      "description":
-        "Submit a request to the fal queue and return immediately with a request_id (billed per run)",
+      "description": "Submit queue request (billed per run)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17120,8 +17002,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_status",
       "name": "Get Queue Status",
-      "description":
-        "Check the status of a queued request (IN_QUEUE, IN_PROGRESS, or COMPLETED). Use the base app ID without the variant segment, matching the status_url returned at submit time",
+      "description": "Get queue status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17157,8 +17038,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_result",
       "name": "Get Queue Result",
-      "description":
-        "Fetch the result of a completed queue request. Use the base app ID without the variant segment, matching the response_url returned at submit time",
+      "description": "Get queue result",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17188,7 +17068,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fal__queue_cancel",
       "name": "Cancel Queue Request",
-      "description": "Cancel a queued request that has not started running yet",
+      "description": "Cancel pending queue request",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -17210,7 +17090,8 @@ export const connectors: IntegrationConfig[] = [
           "request_id": {
             "type": "string",
             "in": "path",
-            "description": "Request ID returned by Submit Queue Request",
+            "description":
+              "Request ID returned by Submit Queue Request. Only queued requests that have not started running can be canceled; this does not stop an already running request.",
             "required": true,
           },
         },
@@ -17289,7 +17170,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fathom__list_meetings",
       "name": "List Meetings",
-      "description": "List recorded meetings, optionally including summaries and action items",
+      "description": "List meetings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17350,7 +17231,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fathom__get_transcript",
       "name": "Get Transcript",
-      "description": "Get the transcript of a recording",
+      "description": "Get transcript",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17367,7 +17248,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fathom__get_summary",
       "name": "Get Summary",
-      "description": "Get the AI summary of a recording",
+      "description": "Get summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17384,7 +17265,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fathom__list_teams",
       "name": "List Teams",
-      "description": "List teams in the Fathom workspace",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17400,7 +17281,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fathom__list_team_members",
       "name": "List Team Members",
-      "description": "List team members in the Fathom workspace",
+      "description": "List team members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17496,15 +17377,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "figma__get_me",
       "name": "Get Me",
-      "description":
-        "Get the authenticated user's Figma profile (id, email, handle). Use this to verify the connection and identify the user.",
+      "description": "Get Figma user profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.figma.com/v1/me" },
     }, {
       "id": "figma__get_file",
       "name": "Get File",
-      "description":
-        "Get detailed information about a Figma file, including pages, frames, components, and styles. Requires a Figma file key from a file or design URL.",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17541,7 +17420,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "figma__get_comments",
       "name": "Get Comments",
-      "description": "Get all comments on a Figma file",
+      "description": "Get comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17559,7 +17438,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "figma__post_comment",
       "name": "Post Comment",
-      "description": "Post a comment on a Figma file",
+      "description": "Post comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17681,8 +17560,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "finapi__search_banks",
       "name": "Search Banks",
-      "description":
-        "Search finAPI's database of supported banks by name, BLZ, BIC, or city, with interface and location filters",
+      "description": "Search banks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17754,8 +17632,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "finapi__get_bank",
       "name": "Get Bank",
-      "description":
-        "Retrieve a single bank from finAPI's catalog by its identifier, including supported interfaces and login requirements",
+      "description": "Get bank",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -17772,15 +17649,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "finapi__get_client_configuration",
       "name": "Get Client Configuration",
-      "description":
-        "Get your finAPI client's configuration: token validity periods, callback URLs, enabled bank sets, and consent settings",
+      "description": "Get client configuration",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://live.finapi.io/api/v2/clientConfiguration" },
     }, {
       "id": "finapi__create_user",
       "name": "Create User",
-      "description":
-        "Provision a new finAPI end user (one per application end user); user-level operations then authenticate with that user's own token",
+      "description": "Create user",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17874,7 +17749,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "firecrawl__scrape",
       "name": "Scrape Page",
-      "description": "Scrape a single URL into markdown or other formats",
+      "description": "Scrape page",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -17897,7 +17772,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "firecrawl__search",
       "name": "Search Web",
-      "description": "Search the web and optionally scrape the results' content",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -17931,7 +17806,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "firecrawl__map_site",
       "name": "Map Site",
-      "description": "Quickly list the URLs discovered on a website",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -17949,7 +17824,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "firecrawl__start_crawl",
       "name": "Start Crawl",
-      "description": "Start an asynchronous crawl job over a website (returns a job ID)",
+      "description": "Start crawl",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17970,7 +17845,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "firecrawl__get_crawl_status",
       "name": "Get Crawl Status",
-      "description": "Get the status and results of a crawl job",
+      "description": "Get crawl status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18054,8 +17929,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fireflies__list_transcripts",
       "name": "List Transcripts",
-      "description":
-        "List meeting transcripts, optionally filtered by date, participants, or keyword",
+      "description": "List transcripts",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -18123,7 +17997,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireflies__get_transcript",
       "name": "Get Transcript",
-      "description": "Get a transcript with its sentences and AI summary",
+      "description": "Get transcript",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -18144,7 +18018,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireflies__search_transcripts",
       "name": "Search Transcripts",
-      "description": "Keyword-search transcripts and return matches with summaries",
+      "description": "Search transcripts",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -18171,7 +18045,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireflies__list_users",
       "name": "List Users",
-      "description": "List teammates in the Fireflies workspace",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -18183,7 +18057,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireflies__get_user",
       "name": "Get User",
-      "description": "Get a workspace user by ID",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -18273,7 +18147,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fireworks-ai__list_models",
       "name": "List Models",
-      "description": "List the models available on Fireworks AI",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18291,7 +18165,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireworks-ai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18315,7 +18189,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireworks-ai__create_completion",
       "name": "Create Completion",
-      "description": "Generate a text completion from a raw prompt",
+      "description": "Generate text completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18339,7 +18213,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fireworks-ai__create_embedding",
       "name": "Create Embedding",
-      "description": "Create an embedding vector for input text",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18432,7 +18306,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "fly-io__list_apps",
       "name": "List Apps",
-      "description": "List apps in a Fly.io organization",
+      "description": "List apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18461,7 +18335,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fly-io__get_app",
       "name": "Get App",
-      "description": "Get details about an app, including its organization and status",
+      "description": "Get app",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18478,7 +18352,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fly-io__list_machines",
       "name": "List Machines",
-      "description": "List Machines of an app with their states",
+      "description": "List machines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18521,7 +18395,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fly-io__get_machine",
       "name": "Get Machine",
-      "description": "Get a Machine by ID, including its config and state",
+      "description": "Get machine",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18544,7 +18418,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fly-io__start_machine",
       "name": "Start Machine",
-      "description": "Start a stopped Machine",
+      "description": "Start machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18567,7 +18441,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "fly-io__stop_machine",
       "name": "Stop Machine",
-      "description": "Stop a running Machine",
+      "description": "Stop machine",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18668,7 +18542,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "folk__list_people",
       "name": "List People",
-      "description": "List people in the folk workspace with optional filters",
+      "description": "List people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18707,7 +18581,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__get_person",
       "name": "Get Person",
-      "description": "Get details of a person in folk",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18725,7 +18599,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__create_person",
       "name": "Create Person",
-      "description": "Create a new person in folk",
+      "description": "Create person",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18746,7 +18620,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__update_person",
       "name": "Update Person",
-      "description": "Update fields on an existing person in folk",
+      "description": "Update person",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -18771,7 +18645,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__list_companies",
       "name": "List Companies",
-      "description": "List companies in the folk workspace",
+      "description": "List companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18794,7 +18668,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__create_company",
       "name": "Create Company",
-      "description": "Create a new company in folk",
+      "description": "Create company",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -18813,7 +18687,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "folk__list_groups",
       "name": "List Groups",
-      "description": "List groups (pipelines/segments) in the folk workspace",
+      "description": "List groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18911,7 +18785,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "freshdesk__list_tickets",
       "name": "List Tickets",
-      "description": "List support tickets in the Freshdesk account",
+      "description": "List tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -18976,7 +18850,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "freshdesk__get_ticket",
       "name": "Get Ticket",
-      "description": "Get details of a Freshdesk ticket",
+      "description": "Get ticket",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19004,7 +18878,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "freshdesk__create_ticket",
       "name": "Create Ticket",
-      "description": "Create a new support ticket in Freshdesk",
+      "description": "Create ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19047,7 +18921,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "freshdesk__update_ticket",
       "name": "Update Ticket",
-      "description": "Update fields on an existing Freshdesk ticket",
+      "description": "Update ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -19081,7 +18955,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "freshdesk__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in the Freshdesk account",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19185,7 +19059,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "front__list_conversations",
       "name": "List Conversations",
-      "description": "List conversations across your Front inboxes, most recently updated first",
+      "description": "List conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19236,8 +19110,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__get_conversation",
       "name": "Get Conversation",
-      "description":
-        "Retrieve a single conversation with its subject, status, assignee, recipient, and tags",
+      "description": "Get conversation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19254,7 +19127,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__list_conversation_messages",
       "name": "List Conversation Messages",
-      "description": "List the messages in a conversation thread, including bodies and authors",
+      "description": "List conversation messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19300,8 +19173,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__reply_to_conversation",
       "name": "Reply to Conversation",
-      "description":
-        "Send a reply message in an existing conversation (archives the conversation by default)",
+      "description": "Reply and archive conversation by default",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19353,8 +19225,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__update_conversation",
       "name": "Update Conversation",
-      "description":
-        "Update a conversation's assignee, status, inbox, or tags, e.g. to assign, archive, or reopen it without sending a message",
+      "description": "Update conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -19390,8 +19261,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__search_conversations",
       "name": "Search Conversations",
-      "description":
-        "Full-text search across conversations with operators like from:, tag:, inbox:, is:open, before:/after:",
+      "description": "Search conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19436,8 +19306,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__list_teammates",
       "name": "List Teammates",
-      "description":
-        "List the teammates in the company to find teammate IDs for assignment and reply authorship",
+      "description": "List teammates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19457,7 +19326,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "front__list_inboxes",
       "name": "List Inboxes",
-      "description": "List the shared inboxes in the company to find inbox IDs and names",
+      "description": "List inboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19587,7 +19456,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gcp__list_compute_instances",
       "name": "List Compute Instances",
-      "description": "List Compute Engine VM instances in a specific zone of a project",
+      "description": "List compute instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19628,8 +19497,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_all_compute_instances",
       "name": "List All Compute Instances",
-      "description":
-        "List Compute Engine VM instances across all zones of a project (aggregated list), useful when you don't know which zones are in use",
+      "description": "List all compute instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19671,8 +19539,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__get_compute_instance",
       "name": "Get Compute Instance",
-      "description":
-        "Get one Compute Engine VM instance's details - machine type, status, IPs, and disks - e.g. to confirm a start or stop completed",
+      "description": "Get compute instance",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19702,8 +19569,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_zones",
       "name": "List Zones",
-      "description":
-        "List the Compute Engine zones available in a project, so agents can discover valid zone names for the zone-scoped tools",
+      "description": "List zones",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19737,8 +19603,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__start_compute_instance",
       "name": "Start Compute Instance",
-      "description":
-        "Start a stopped Compute Engine VM instance (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "description": "Request compute instance start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19760,7 +19625,8 @@ export const connectors: IntegrationConfig[] = [
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to start",
+            "description":
+              "Name of the VM instance to start. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19768,8 +19634,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__stop_compute_instance",
       "name": "Stop Compute Instance",
-      "description":
-        "Stop a running Compute Engine VM instance so it stops incurring compute charges (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
+      "description": "Request compute instance stop",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19791,7 +19656,8 @@ export const connectors: IntegrationConfig[] = [
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to stop",
+            "description":
+              "Name of the VM instance to stop. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19799,7 +19665,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_cloud_run_services",
       "name": "List Cloud Run Services",
-      "description": "List Cloud Run services in a project location (region)",
+      "description": "List Cloud Run services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19841,8 +19707,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__get_cloud_run_service",
       "name": "Get Cloud Run Service",
-      "description":
-        "Get one Cloud Run service's details - URL, container image, environment, and traffic split",
+      "description": "Get Cloud Run service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19872,8 +19737,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_cloud_functions",
       "name": "List Cloud Functions",
-      "description":
-        "List Cloud Functions (2nd gen API) in a project location — requires the optional cloud-platform scope (the only scope the Cloud Functions API accepts)",
+      "description": "List Cloud Functions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19883,7 +19747,8 @@ export const connectors: IntegrationConfig[] = [
           "projectId": {
             "type": "string",
             "in": "path",
-            "description": "Google Cloud project ID",
+            "description":
+              "Google Cloud project ID. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
             "required": true,
           },
           "location": {
@@ -20001,7 +19866,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gemini__list_models",
       "name": "List Models",
-      "description": "List the Gemini models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20034,7 +19899,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific Gemini model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20051,7 +19916,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__generate_content",
       "name": "Generate Content",
-      "description": "Generate a model response from text or multimodal content",
+      "description": "Generate content",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20085,7 +19950,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__embed_content",
       "name": "Embed Content",
-      "description": "Create an embedding vector for input text",
+      "description": "Embed content",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20119,7 +19984,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__count_tokens",
       "name": "Count Tokens",
-      "description": "Count the tokens a prompt would use for a given model",
+      "description": "Count tokens",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -20144,8 +20009,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__generate_image",
       "name": "Generate Image",
-      "description":
-        "Generate or edit an image with a Nano Banana model via generateContent; the response returns image parts as base64 inlineData",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20177,8 +20041,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__edit_image",
       "name": "Edit Image",
-      "description":
-        "Edit an existing image with a Nano Banana model: send the source image as a base64 inlineData part plus a text instruction (add/remove/modify elements, change style, adjust color grading); the edited image is returned as base64 inlineData",
+      "description": "Edit image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20210,8 +20073,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__imagen_generate",
       "name": "Generate Image (Imagen)",
-      "description":
-        "Generate text-to-image samples with an Imagen 4 model via the predict endpoint; returns base64-encoded images in predictions",
+      "description": "Generate image (Imagen)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20242,8 +20104,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__upload_file",
       "name": "Upload File",
-      "description":
-        "Upload content to the Files API for use in later generateContent calls via its file URI; this simple media upload sends the decoded bytes directly as the request body (a custom displayName requires the multipart or resumable X-Goog-Upload protocol), and files expire after 48 hours",
+      "description": "Upload temporary file (48-hour retention)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20278,7 +20139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__list_files",
       "name": "List Files",
-      "description": "List files uploaded to the Files API for this project",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20311,7 +20172,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__get_file",
       "name": "Get File",
-      "description": "Get metadata for an uploaded file, including its uri and processing state",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20328,7 +20189,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__delete_file",
       "name": "Delete File",
-      "description": "Delete an uploaded file before its automatic 48-hour expiry",
+      "description": "Delete file",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -20421,13 +20282,13 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "github__get_current_user",
       "name": "Get Current User",
-      "description": "Get the authenticated GitHub user identity",
+      "description": "Get current user",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.github.com/user" },
     }, {
       "id": "github__list_repos",
       "name": "List Repositories",
-      "description": "Get list of user's repositories",
+      "description": "List repositories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20482,8 +20343,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_user",
       "name": "Get User",
-      "description":
-        "Get a GitHub user profile by username. Use this to verify repository owners, assignees, and other GitHub usernames before acting.",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20500,7 +20360,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_repo",
       "name": "Get Repository",
-      "description": "Get details of a specific repository",
+      "description": "Get repository",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20523,7 +20383,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__list_prs",
       "name": "List Pull Requests",
-      "description": "Get pull requests for a repository",
+      "description": "List pull requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20585,7 +20445,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__create_issue",
       "name": "Create Issue",
-      "description": "Create a new issue in a repository",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20614,7 +20474,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_pr_diff",
       "name": "Get PR Diff",
-      "description": "Get the diff for a pull request",
+      "description": "Get PR diff",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20649,7 +20509,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__list_issues",
       "name": "List Issues",
-      "description": "List issues for a repository",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -20719,7 +20579,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_issue",
       "name": "Get Issue",
-      "description": "Get details of a GitHub issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20773,7 +20633,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__update_issue",
       "name": "Update Issue",
-      "description": "Update, close, or reopen a GitHub issue",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -20809,7 +20669,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__add_issue_comment",
       "name": "Add Issue Comment",
-      "description": "Add a comment to a GitHub issue or pull request",
+      "description": "Add issue comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20841,8 +20701,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_pr",
       "name": "Get Pull Request",
-      "description":
-        "Get details of a specific pull request (title, body, status, author, reviewers, labels)",
+      "description": "Get pull request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -20899,7 +20758,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__create_pr",
       "name": "Create Pull Request",
-      "description": "Create a new pull request in a repository",
+      "description": "Create pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20937,7 +20796,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__merge_pr",
       "name": "Merge Pull Request",
-      "description": "Merge an open pull request",
+      "description": "Merge pull request",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -20975,7 +20834,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__list_commits",
       "name": "List Commits",
-      "description": "List commits for a repository, branch, or file path",
+      "description": "List commits",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21116,7 +20975,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gitlab__list_projects",
       "name": "List Projects",
-      "description": "List accessible GitLab projects",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21147,7 +21006,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__get_project",
       "name": "Get Project",
-      "description": "Get detailed information about a GitLab project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21164,7 +21023,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__search_issues",
       "name": "Search Issues",
-      "description": "Search for issues across projects",
+      "description": "Search issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21204,7 +21063,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21227,7 +21086,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__create_issue",
       "name": "Create Issue",
-      "description": "Create a new issue in a project",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21250,7 +21109,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__update_issue",
       "name": "Update Issue",
-      "description": "Update, close, or reopen a GitLab issue",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -21280,7 +21139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__add_issue_comment",
       "name": "Add Issue Comment",
-      "description": "Add a comment/note to a GitLab issue",
+      "description": "Add issue comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21310,7 +21169,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__list_merge_requests",
       "name": "List Merge Requests",
-      "description": "List merge requests for a project or across projects",
+      "description": "List merge requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21345,7 +21204,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__get_merge_request",
       "name": "Get Merge Request",
-      "description": "Get detailed information about a specific GitLab merge request",
+      "description": "Get merge request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21368,7 +21227,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gitlab__add_merge_request_comment",
       "name": "Add Merge Request Comment",
-      "description": "Add a comment/note to a GitLab merge request",
+      "description": "Add merge request comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21494,8 +21353,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gmail__list_emails",
       "name": "List Emails",
-      "description":
-        "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
+      "description": "List emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21556,7 +21414,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__send_email",
       "name": "Send Email",
-      "description": "Send an email to recipients",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21573,7 +21431,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_email",
       "name": "Get Email",
-      "description": "Get a specific email by ID with full content",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21602,8 +21460,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__search_emails",
       "name": "Search Emails",
-      "description":
-        "Search Gmail messages and return summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens.",
+      "description": "Search emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21660,7 +21517,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__mark_email_read",
       "name": "Mark Email Read",
-      "description": "Mark an email as read",
+      "description": "Mark email read",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21684,7 +21541,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__archive_email",
       "name": "Archive Email",
-      "description": "Archive an email",
+      "description": "Archive email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21708,7 +21565,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__list_labels",
       "name": "List Labels",
-      "description": "List Gmail labels",
+      "description": "List labels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21726,7 +21583,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_label",
       "name": "Get Label",
-      "description": "Get a Gmail label",
+      "description": "Get label",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21743,7 +21600,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__create_label",
       "name": "Create Label",
-      "description": "Create a Gmail user label",
+      "description": "Create label",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21761,7 +21618,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__update_label",
       "name": "Update Label",
-      "description": "Update a Gmail user label",
+      "description": "Update label",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -21787,7 +21644,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_label",
       "name": "Delete Label",
-      "description": "Delete a Gmail user label",
+      "description": "Delete label",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -21804,7 +21661,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__apply_labels",
       "name": "Apply Labels",
-      "description": "Apply or remove labels on an email",
+      "description": "Apply labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21825,7 +21682,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__modify_email_labels",
       "name": "Modify Email Labels",
-      "description": "Modify labels on an email",
+      "description": "Modify email labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21846,7 +21703,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__trash_email",
       "name": "Trash Email",
-      "description": "Move an email to trash",
+      "description": "Trash email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21863,7 +21720,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__untrash_email",
       "name": "Untrash Email",
-      "description": "Remove an email from trash",
+      "description": "Untrash email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21880,7 +21737,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_email",
       "name": "Delete Email",
-      "description": "Permanently delete an email",
+      "description": "Permanently delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -21897,7 +21754,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__batch_modify_emails",
       "name": "Batch Modify Emails",
-      "description": "Modify labels on multiple emails",
+      "description": "Batch modify emails",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -21923,7 +21780,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__list_threads",
       "name": "List Threads",
-      "description": "List Gmail threads",
+      "description": "List threads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21963,7 +21820,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_thread",
       "name": "Get Thread",
-      "description": "Get a Gmail thread",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -21986,7 +21843,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__modify_thread_labels",
       "name": "Modify Thread Labels",
-      "description": "Modify labels on a Gmail thread",
+      "description": "Modify thread labels",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22007,7 +21864,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__trash_thread",
       "name": "Trash Thread",
-      "description": "Move a Gmail thread to trash",
+      "description": "Trash thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22024,7 +21881,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__untrash_thread",
       "name": "Untrash Thread",
-      "description": "Remove a Gmail thread from trash",
+      "description": "Untrash thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22041,7 +21898,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_thread",
       "name": "Delete Thread",
-      "description": "Permanently delete a Gmail thread",
+      "description": "Permanently delete thread",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -22058,7 +21915,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__create_draft",
       "name": "Create Draft",
-      "description": "Create a Gmail draft",
+      "description": "Create draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22074,7 +21931,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__list_drafts",
       "name": "List Drafts",
-      "description": "List Gmail drafts",
+      "description": "List drafts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22107,7 +21964,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_draft",
       "name": "Get Draft",
-      "description": "Get a Gmail draft",
+      "description": "Get draft",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22130,7 +21987,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__update_draft",
       "name": "Update Draft",
-      "description": "Replace a Gmail draft",
+      "description": "Replace draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -22154,7 +22011,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__send_draft",
       "name": "Send Draft",
-      "description": "Send an existing Gmail draft",
+      "description": "Send draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22164,7 +22021,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__delete_draft",
       "name": "Delete Draft",
-      "description": "Permanently delete a Gmail draft",
+      "description": "Permanently delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -22181,7 +22038,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_attachment",
       "name": "Get Attachment",
-      "description": "Get a Gmail message attachment",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22205,7 +22062,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__get_profile",
       "name": "Get Profile",
-      "description": "Get the Gmail mailbox profile",
+      "description": "Get profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22214,7 +22071,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gmail__list_history",
       "name": "List History",
-      "description": "List Gmail mailbox history changes",
+      "description": "List history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22352,7 +22209,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gocardless__list_customers",
       "name": "List Customers",
-      "description": "List GoCardless customers to find customer IDs and contact details",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22388,8 +22245,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__list_payments",
       "name": "List Payments",
-      "description":
-        "List GoCardless payments with optional status, customer, or mandate filtering",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22436,8 +22292,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__get_payment",
       "name": "Get Payment",
-      "description":
-        "Get a single GoCardless payment by ID to check its status, amount, and linked mandate",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22462,8 +22317,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__list_mandates",
       "name": "List Mandates",
-      "description":
-        "List Direct Debit mandates to find an active mandate before collecting a payment",
+      "description": "List mandates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22505,7 +22359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__create_payment",
       "name": "Create Payment",
-      "description": "Collect a one-off payment against an existing active Direct Debit mandate",
+      "description": "Create payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22530,7 +22384,7 @@ export const connectors: IntegrationConfig[] = [
           "payments": {
             "type": "object",
             "description":
-              'Payment resource. Required: amount (integer, in the smallest currency unit, e.g. pence or cents), currency (e.g. GBP, EUR, USD), and links with a mandate ID, e.g. {"amount": 1000, "currency": "GBP", "links": {"mandate": "MD123"}}. Optional: charge_date (YYYY-MM-DD, rolled forward to the mandate\'s next possible charge date if too early), description, reference, and metadata.',
+              'Payment resource. Wait for the mandates_active webhook before collecting against this mandate. Required: amount (integer, in the smallest currency unit, e.g. pence or cents), currency (e.g. GBP, EUR, USD), and links with a mandate ID, e.g. {"amount": 1000, "currency": "GBP", "links": {"mandate": "MD123"}}. Optional: charge_date (YYYY-MM-DD, rolled forward to the mandate\'s next possible charge date if too early), description, reference, and metadata.',
             "required": true,
           },
         },
@@ -22538,8 +22392,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__create_subscription",
       "name": "Create Subscription",
-      "description":
-        "Set up a recurring payment collection against an existing active Direct Debit mandate",
+      "description": "Create subscription",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22564,7 +22417,7 @@ export const connectors: IntegrationConfig[] = [
           "subscriptions": {
             "type": "object",
             "description":
-              'Subscription resource. Required: amount (integer, in the smallest currency unit), currency (e.g. GBP, EUR, USD), interval_unit (weekly, monthly, or yearly), and links with a mandate ID, e.g. {"amount": 2500, "currency": "GBP", "interval_unit": "monthly", "links": {"mandate": "MD123"}}. Optional: interval (periods between charges), day_of_month, start_date (YYYY-MM-DD), count (total number of payments), name, and metadata.',
+              'Subscription resource. Wait for the mandates_active webhook before creating a subscription against this mandate. Required: amount (integer, in the smallest currency unit), currency (e.g. GBP, EUR, USD), interval_unit (weekly, monthly, or yearly), and links with a mandate ID, e.g. {"amount": 2500, "currency": "GBP", "interval_unit": "monthly", "links": {"mandate": "MD123"}}. Optional: interval (periods between charges), day_of_month, start_date (YYYY-MM-DD), count (total number of payments), name, and metadata.',
             "required": true,
           },
         },
@@ -22572,8 +22425,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__retry_payment",
       "name": "Retry Payment",
-      "description":
-        "Retry a failed payment if its mandate is still active; a payment can be retried at most three times",
+      "description": "Retry failed payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -22583,7 +22435,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state)",
+              "GoCardless payment ID to retry, e.g. PM123 (the payment must be in the failed state). Retry only if the mandate remains active. A failed payment can be manually retried at most three times.",
             "required": true,
           },
           "GoCardless-Version": {
@@ -22599,8 +22451,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gocardless__list_events",
       "name": "List Events",
-      "description":
-        "List GoCardless events (status changes such as payment failures, chargebacks, and mandate cancellations) for monitoring and audit workflows",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22742,7 +22593,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gong__list_calls",
       "name": "List Calls",
-      "description": "List calls in a date window (max 90 days per request)",
+      "description": "List calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22787,7 +22638,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__get_call",
       "name": "Get Call",
-      "description": "Get metadata for a single call",
+      "description": "Get call",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22805,8 +22656,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__get_calls_extensive",
       "name": "Get Calls Extensive",
-      "description":
-        "Retrieve detailed call data with content selectors (read-only retrieval via POST)",
+      "description": "Get detailed calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -22832,7 +22682,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__get_call_transcripts",
       "name": "Get Call Transcripts",
-      "description": "Retrieve transcripts for specific calls (read-only retrieval via POST)",
+      "description": "Get call transcripts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -22854,7 +22704,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__list_users",
       "name": "List Users",
-      "description": "List Gong users in the company",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22870,7 +22720,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gong__get_user",
       "name": "Get User",
-      "description": "Get a Gong user by ID",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -22967,8 +22817,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-analytics__list_account_summaries",
       "name": "List Account Summaries",
-      "description":
-        "List GA4 accounts and their properties accessible to the connected user (use this to find property IDs)",
+      "description": "List account summaries",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23002,7 +22851,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-analytics__run_report",
       "name": "Run Report",
-      "description": "Run a GA4 report for a property over one or more date ranges",
+      "description": "Run report",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -23046,7 +22895,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-analytics__run_realtime_report",
       "name": "Run Realtime Report",
-      "description": "Run a GA4 realtime report showing activity from the last 30 minutes",
+      "description": "Run realtime report (last 30 minutes)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -23076,8 +22925,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-analytics__get_metadata",
       "name": "Get Report Metadata",
-      "description":
-        "List the dimensions and metrics available for a GA4 property (use before building reports)",
+      "description": "Get report metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23179,8 +23027,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-bigquery__list_projects",
       "name": "List Projects",
-      "description":
-        "List the Google Cloud projects the connected user can access, so agents can discover the projectId every other tool requires",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23203,7 +23050,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__list_datasets",
       "name": "List Datasets",
-      "description": "List all BigQuery datasets in a Google Cloud project",
+      "description": "List datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23238,7 +23085,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__list_tables",
       "name": "List Tables",
-      "description": "List tables and views in a BigQuery dataset",
+      "description": "List tables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23274,7 +23121,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__get_table",
       "name": "Get Table Schema",
-      "description": "Get a table's metadata including its full column schema, row count, and size",
+      "description": "Get table schema",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23310,8 +23157,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__preview_table_data",
       "name": "Preview Table Data",
-      "description":
-        "Read sample rows directly from a table without running a query - no bytes are billed, ideal for inspecting data before writing SQL",
+      "description": "Preview table data without query charges",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23364,8 +23210,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__run_query",
       "name": "Run SQL Query",
-      "description":
-        "Run a read/SELECT GoogleSQL query and return the first page of results. With the default read-only scope only SELECT queries work; DML statements (INSERT/UPDATE/DELETE) require the full https://www.googleapis.com/auth/bigquery scope.",
+      "description": "Run SQL query (SELECT by default)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -23382,7 +23227,7 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "string",
             "description":
-              "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10",
+              "GoogleSQL SELECT query, e.g. SELECT name FROM `project.dataset.table` LIMIT 10. The default read-only scope supports SELECT queries only. DML statements (INSERT, UPDATE, DELETE) require the optional https://www.googleapis.com/auth/bigquery OAuth scope.",
             "required": true,
           },
           "useLegacySql": {
@@ -23417,8 +23262,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-bigquery__get_query_results",
       "name": "Get Query Results",
-      "description":
-        "Fetch additional pages of results from a previously started query job, using the jobId and pageToken returned by Run SQL Query",
+      "description": "Get query results",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23556,8 +23400,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-chat__list_spaces",
       "name": "List Spaces",
-      "description":
-        "List Google Chat spaces (rooms and direct messages) the authenticated user is a member of",
+      "description": "List spaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23596,7 +23439,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-chat__get_space",
       "name": "Get Space",
-      "description": "Get details of a Google Chat space",
+      "description": "Get space",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23614,7 +23457,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-chat__list_messages",
       "name": "List Messages",
-      "description": "List messages in a Google Chat space, including messages in threads",
+      "description": "List messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23668,7 +23511,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-chat__get_message",
       "name": "Get Message",
-      "description": "Get details of a specific Google Chat message",
+      "description": "Get message",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23691,7 +23534,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-chat__send_message",
       "name": "Send Message",
-      "description": "Send a text message to a Google Chat space",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -23809,7 +23652,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-cloud-storage__list_buckets",
       "name": "List Buckets",
-      "description": "List Cloud Storage buckets in a Google Cloud project",
+      "description": "List buckets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23844,8 +23687,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__get_bucket",
       "name": "Get Bucket Metadata",
-      "description":
-        "Get a bucket's metadata - location, storage class, versioning, and lifecycle configuration",
+      "description": "Get bucket metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23867,8 +23709,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__list_objects",
       "name": "List Objects",
-      "description":
-        "List objects in a bucket, optionally filtered by name prefix or grouped by delimiter",
+      "description": "List objects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23909,8 +23750,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__download_object",
       "name": "Download Object",
-      "description":
-        "Download an object's content (alt=media), or set alt=json to return the object's metadata instead",
+      "description": "Download object",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23941,8 +23781,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__upload_object",
       "name": "Upload Object",
-      "description":
-        "Upload content as a new object (or overwrite an existing one) using a simple media upload — requires the read-write scope",
+      "description": "Create or overwrite object",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -23979,7 +23818,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "content": {
             "type": "string",
-            "description": "Raw object content sent as the request body",
+            "description":
+              "Raw object content sent as the request body. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -23988,8 +23828,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__copy_object",
       "name": "Copy Object",
-      "description":
-        "Copy an object to another name or bucket server-side (rewrite), without downloading and re-uploading - requires the read-write scope",
+      "description": "Copy object",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -23999,7 +23838,8 @@ export const connectors: IntegrationConfig[] = [
           "sourceBucket": {
             "type": "string",
             "in": "path",
-            "description": "Bucket containing the source object",
+            "description":
+              "Bucket containing the source object. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
           "sourceObject": {
@@ -24033,7 +23873,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-cloud-storage__delete_object",
       "name": "Delete Object",
-      "description": "Permanently delete an object from a bucket — requires the read-write scope",
+      "description": "Delete object (may be permanent)",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -24049,7 +23889,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F",
+              "Object name to delete, URL-encoded. Slashes in the name must be encoded as %2F. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -24145,8 +23985,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-contacts__list_contacts",
       "name": "List Contacts",
-      "description":
-        "List the authenticated user's contacts (connections) with the requested person fields",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24183,8 +24022,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__search_contacts",
       "name": "Search Contacts",
-      "description":
-        "Search the user's contacts by prefix match on names, nicknames, email addresses, and phone numbers. For best results send a warmup request with an empty query first, then search.",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24194,7 +24032,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Plain-text search query matched against prefix phrases (use an empty string for a cache warmup request)",
+              "Plain-text search query matched against prefix phrases. First send a warmup request with an empty query to update the cache, then send the actual search query.",
             "required": true,
           },
           "readMask": {
@@ -24217,7 +24055,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__get_contact",
       "name": "Get Contact",
-      "description": "Get a single contact by person ID, including the etag needed for updates",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24243,8 +24081,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__list_contact_groups",
       "name": "List Contact Groups",
-      "description":
-        "List the user's contact groups (labels), including system groups and member counts, e.g. to organize or filter contacts",
+      "description": "List contact groups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24273,8 +24110,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__create_contact",
       "name": "Create Contact",
-      "description":
-        "Create a new contact in the user's Google Contacts (requires the full contacts scope)",
+      "description": "Create contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24316,8 +24152,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-contacts__update_contact",
       "name": "Update Contact",
-      "description":
-        "Update an existing contact (requires the full contacts scope). You must pass updatePersonFields naming the fields you are changing, and the body must include the contact's current etag (fetch it with Get Contact including metadata first); a stale etag fails with a 400 failedPrecondition error.",
+      "description": "Update contact (requires full Contacts scope)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -24471,8 +24306,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "google-forms__get_form",
       "name": "Get Form",
-      "description":
-        "Get a form's metadata, settings, and items (questions) including the question IDs needed to interpret responses",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24489,7 +24323,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-forms__list_form_responses",
       "name": "List Form Responses",
-      "description": "List submitted responses for a form, with answers keyed by question ID",
+      "description": "List form responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24519,7 +24353,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-forms__get_form_response",
       "name": "Get Form Response",
-      "description": "Get a single response submitted to a form",
+      "description": "Get form response",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24537,8 +24371,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-forms__create_form",
       "name": "Create Form",
-      "description":
-        "Create a new form with a title; add questions afterwards with Batch Update Form",
+      "description": "Create form",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24555,8 +24388,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-forms__set_publish_settings",
       "name": "Set Publish Settings",
-      "description":
-        "Publish or unpublish a form and toggle whether it accepts responses, e.g. to open a survey after building it or close it when done (requires the forms.body scope)",
+      "description": "Set publish settings",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24565,7 +24397,8 @@ export const connectors: IntegrationConfig[] = [
           "formId": {
             "type": "string",
             "in": "path",
-            "description": "Form ID to update",
+            "description":
+              "Form ID to update. Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
             "required": true,
           },
         },
@@ -24586,8 +24419,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "google-forms__batch_update_form",
       "name": "Batch Update Form",
-      "description":
-        "Apply a batch of updates to a form, such as adding questions, updating form info, or changing settings",
+      "description": "Batch update form",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24712,8 +24544,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gorgias__list_tickets",
       "name": "List Tickets",
-      "description":
-        "List helpdesk tickets, optionally filtered by customer or ordered by creation/update time",
+      "description": "List tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24771,8 +24602,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__get_ticket",
       "name": "Get Ticket",
-      "description":
-        "Retrieve a single ticket with its full details (customer, assignee, status, tags)",
+      "description": "Get ticket",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24796,7 +24626,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__list_ticket_messages",
       "name": "List Ticket Messages",
-      "description": "List the messages (customer and agent) in a ticket's conversation thread",
+      "description": "List ticket messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24847,8 +24677,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__create_ticket_message",
       "name": "Create Ticket Message",
-      "description":
-        "Add a message to a ticket, e.g. an agent reply to the customer or an internal note",
+      "description": "Create ticket message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24895,8 +24724,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__create_ticket",
       "name": "Create Ticket",
-      "description":
-        "Create a new helpdesk ticket with an initial message, e.g. to open an issue on behalf of a customer",
+      "description": "Create ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -24939,8 +24767,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__list_customers",
       "name": "List Customers",
-      "description":
-        "List or search helpdesk customers, e.g. to find a customer ID by email for ticket filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -24998,8 +24825,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__list_users",
       "name": "List Users",
-      "description":
-        "List helpdesk agents/users, e.g. to find the user IDs needed for ticket assignment and message senders",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25049,7 +24875,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gorgias__update_ticket_status",
       "name": "Update Ticket Status",
-      "description": "Update a ticket, e.g. close or reopen it, or change its assignee",
+      "description": "Update ticket status",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -25162,7 +24988,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "grafana-cloud__search_dashboards",
       "name": "Search Dashboards",
-      "description": "Search dashboards and folders in the Grafana stack",
+      "description": "Search dashboards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25217,7 +25043,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "grafana-cloud__get_dashboard",
       "name": "Get Dashboard",
-      "description": "Get a dashboard's full JSON model by UID",
+      "description": "Get dashboard",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25240,7 +25066,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "grafana-cloud__list_folders",
       "name": "List Folders",
-      "description": "List dashboard folders in the Grafana stack",
+      "description": "List folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25263,7 +25089,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "grafana-cloud__list_annotations",
       "name": "List Annotations",
-      "description": "List annotations and alert events in a time range",
+      "description": "List annotations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25306,7 +25132,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "grafana-cloud__create_annotation",
       "name": "Create Annotation",
-      "description": "Create an annotation (e.g. mark a deploy) on a dashboard or globally",
+      "description": "Create annotation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -25341,7 +25167,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "grafana-cloud__list_datasources",
       "name": "List Data Sources",
-      "description": "List data sources configured in the Grafana stack",
+      "description": "List data sources",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25437,8 +25263,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "greenhouse__list_jobs",
       "name": "List Jobs",
-      "description":
-        "List jobs in the Greenhouse organization with optional status and date filtering",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25475,7 +25300,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__list_candidates",
       "name": "List Candidates",
-      "description": "List candidates with optional job, email, and date filtering",
+      "description": "List candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25517,8 +25342,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__get_candidate",
       "name": "Get Candidate",
-      "description":
-        "Get a candidate's full record, including applications, attachments, and contact details",
+      "description": "Get candidate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25535,7 +25359,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__list_applications",
       "name": "List Applications",
-      "description": "List applications with optional job, status, and activity filtering",
+      "description": "List applications",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25578,8 +25402,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__list_users",
       "name": "List Users",
-      "description":
-        "List Greenhouse users to find the numeric user IDs needed for On-Behalf-Of headers and notes",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25611,8 +25434,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__list_job_stages",
       "name": "List Job Stages",
-      "description":
-        "List the interview stages of a job to find the stage IDs needed to move applications",
+      "description": "List job stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25640,8 +25462,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__move_application",
       "name": "Move Application",
-      "description":
-        "Move an active application to another stage on the same job (the core pipeline action)",
+      "description": "Move active application to stage",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -25677,8 +25498,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__add_candidate_note",
       "name": "Add Candidate Note",
-      "description":
-        "Create a note on a candidate's activity feed (requires the acting Greenhouse user's ID)",
+      "description": "Add candidate note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -25793,7 +25613,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "groq__list_models",
       "name": "List Models",
-      "description": "List the models available on Groq",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25813,7 +25633,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "groq__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific Groq model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25830,7 +25650,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "groq__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -25859,7 +25679,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "groq__list_batches",
       "name": "List Batches",
-      "description": "List the organization's batch jobs",
+      "description": "List batches",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.groq.com/openai/v1/batches" },
     }],
@@ -25942,7 +25762,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "guru__search_cards",
       "name": "Search Cards",
-      "description": "Search the knowledge base for cards matching search terms",
+      "description": "Search cards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -25982,8 +25802,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "guru__get_card",
       "name": "Get Card",
-      "description":
-        "Get a single card with its full content and additional details (collection, verifiers, collaborators)",
+      "description": "Get card",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26000,13 +25819,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "guru__list_collections",
       "name": "List Collections",
-      "description": "List the collections in the team to find collection IDs, names, and stats",
+      "description": "List collections",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.getguru.com/api/v1/collections" },
     }, {
       "id": "guru__create_card",
       "name": "Create Card",
-      "description": "Create a new knowledge-base card in a collection",
+      "description": "Create card",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -26042,8 +25861,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "guru__update_card",
       "name": "Update Card",
-      "description":
-        "Update an existing card's title, content, or visibility to keep knowledge current",
+      "description": "Update card",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -26088,7 +25906,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "guru__verify_card",
       "name": "Verify Card",
-      "description": "Mark a card as verified, confirming its content is accurate and up to date",
+      "description": "Mark card as verified",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -26188,8 +26006,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "gusto__get_token_info",
       "name": "Get Token Info",
-      "description":
-        "Get the resource (company) and scope associated with the current access token",
+      "description": "Get token info",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26207,7 +26024,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gusto__get_company",
       "name": "Get Company",
-      "description": "Get a company's profile, locations, and entity details",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26231,7 +26048,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gusto__list_employees",
       "name": "List Employees",
-      "description": "List employees of a company",
+      "description": "List employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26290,7 +26107,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gusto__get_employee",
       "name": "Get Employee",
-      "description": "Get a single employee",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26314,7 +26131,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gusto__list_payrolls",
       "name": "List Payrolls",
-      "description": "List payrolls for a company",
+      "description": "List payrolls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26358,7 +26175,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gusto__get_payroll",
       "name": "Get Payroll",
-      "description": "Get a single payroll with totals",
+      "description": "Get payroll",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26466,8 +26283,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "harvest__list_accounts",
       "name": "List Accounts",
-      "description":
-        "List all Harvest accounts the authenticated user can access. Call this first to get your Harvest-Account-Id for subsequent API calls.",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26485,8 +26301,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__get_current_user",
       "name": "Get Current User",
-      "description":
-        "Get the authenticated user's Harvest profile (id, name, email, timezone, roles)",
+      "description": "Get current user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26504,7 +26319,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_users",
       "name": "List Users",
-      "description": "List all active users in the Harvest account",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26565,8 +26380,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_time_entries",
       "name": "List Time Entries",
-      "description":
-        "List time entries (timesheets). Filter by user, project, client, or date range.",
+      "description": "List time entries",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26647,7 +26461,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__get_time_entry",
       "name": "Get Time Entry",
-      "description": "Get details of a specific time entry by ID",
+      "description": "Get time entry",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26671,8 +26485,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__create_time_entry",
       "name": "Create Time Entry",
-      "description":
-        "Create a new time entry (timesheet). Provide either hours or start/end times.",
+      "description": "Create time entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -26722,7 +26535,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__update_time_entry",
       "name": "Update Time Entry",
-      "description": "Update an existing time entry",
+      "description": "Update time entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -26756,7 +26569,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__delete_time_entry",
       "name": "Delete Time Entry",
-      "description": "Delete a time entry. Only unlocked, non-billed entries can be deleted.",
+      "description": "Delete unlocked, unbilled time entry",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -26780,7 +26593,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__stop_timer",
       "name": "Stop Timer",
-      "description": "Stop a running timer for a time entry",
+      "description": "Stop timer",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -26804,7 +26617,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__restart_timer",
       "name": "Restart Timer",
-      "description": "Restart a stopped timer for a time entry",
+      "description": "Restart timer",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -26828,7 +26641,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_projects",
       "name": "List Projects",
-      "description": "List all projects in the Harvest account",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26889,7 +26702,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__get_project",
       "name": "Get Project",
-      "description": "Get details of a specific project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26913,7 +26726,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_tasks",
       "name": "List Tasks",
-      "description": "List all tasks available in the Harvest account",
+      "description": "List tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -26968,8 +26781,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_project_task_assignments",
       "name": "List Project Task Assignments",
-      "description":
-        "List all task assignments for a specific project (tasks billable to this project)",
+      "description": "List project task assignments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27034,7 +26846,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_clients",
       "name": "List Clients",
-      "description": "List all clients in the Harvest account",
+      "description": "List clients",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27089,7 +26901,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__get_client",
       "name": "Get Client",
-      "description": "Get details of a specific client",
+      "description": "Get client",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27113,7 +26925,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_invoices",
       "name": "List Invoices",
-      "description": "List all invoices. Filter by client, status, or date range.",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27186,7 +26998,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__get_invoice",
       "name": "Get Invoice",
-      "description": "Get details of a specific invoice including line items",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27210,7 +27022,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__create_invoice",
       "name": "Create Invoice",
-      "description": "Create a new invoice for a client",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -27256,7 +27068,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__update_invoice",
       "name": "Update Invoice",
-      "description": "Update an existing invoice (subject, notes, dates, line items, state)",
+      "description": "Update invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -27287,7 +27099,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__list_invoice_payments",
       "name": "List Invoice Payments",
-      "description": "List all payments recorded for an invoice",
+      "description": "List invoice payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27343,7 +27155,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__create_invoice_payment",
       "name": "Create Invoice Payment",
-      "description": "Record a payment for an invoice",
+      "description": "Record invoice payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -27384,7 +27196,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_project",
       "name": "Time Report by Project",
-      "description": "Get a time report aggregated by project. Requires from and to date range.",
+      "description": "Get time report by project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27456,8 +27268,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_team",
       "name": "Time Report by Team",
-      "description":
-        "Get a time report aggregated by team member. Requires from and to date range.",
+      "description": "Get time report by team",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27522,7 +27333,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_client",
       "name": "Time Report by Client",
-      "description": "Get a time report aggregated by client. Requires from and to date range.",
+      "description": "Get time report by client",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27587,7 +27398,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__time_report_by_task",
       "name": "Time Report by Task",
-      "description": "Get a time report aggregated by task. Requires from and to date range.",
+      "description": "Get time report by task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27652,7 +27463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "harvest__invoice_report",
       "name": "Invoice Report",
-      "description": "Get an invoiced time and expenses report. Requires from and to date range.",
+      "description": "Get invoice report",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27818,8 +27629,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "help-scout__list_mailboxes",
       "name": "List Mailboxes",
-      "description":
-        "List Help Scout mailboxes (inboxes) so agents can find a mailbox ID before reading conversations",
+      "description": "List mailboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27837,8 +27647,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__list_conversations",
       "name": "List Conversations",
-      "description":
-        "List Help Scout conversations, optionally filtered by mailbox, status, tag, or assignee",
+      "description": "List conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27898,7 +27707,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__get_conversation",
       "name": "Get Conversation",
-      "description": "Get a Help Scout conversation by ID, including its message threads",
+      "description": "Get conversation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27922,8 +27731,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__list_customers",
       "name": "List Customers",
-      "description":
-        "List Help Scout customers, optionally filtered by mailbox, name, or a search query",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -27971,8 +27779,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__list_users",
       "name": "List Users",
-      "description":
-        "List Help Scout users (team members) so agents can find user IDs for assignment and reply attribution",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28000,8 +27807,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__add_note",
       "name": "Add Note",
-      "description":
-        "Add an internal note to a conversation - visible to the team only, never emailed to the customer",
+      "description": "Add internal conversation note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28026,8 +27832,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__update_tags",
       "name": "Update Tags",
-      "description":
-        "Replace the tag list of a conversation, e.g. to label it during triage. Send the full list: tags omitted from the payload are removed.",
+      "description": "Replace conversation tags",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -28052,8 +27857,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__create_reply",
       "name": "Reply to Conversation",
-      "description":
-        "Send a reply on an existing Help Scout conversation, optionally changing its status",
+      "description": "Reply to conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28095,7 +27899,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "help-scout__create_conversation",
       "name": "Create Conversation",
-      "description": "Create a new Help Scout conversation in a mailbox with an initial thread",
+      "description": "Create conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28222,7 +28026,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "heroku__list_apps",
       "name": "List Apps",
-      "description": "List apps the authenticated user can access",
+      "description": "List apps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28264,7 +28068,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__get_app",
       "name": "Get App",
-      "description": "Get details of an app",
+      "description": "Get app",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28288,7 +28092,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__list_dynos",
       "name": "List Dynos",
-      "description": "List the dynos of an app with their state",
+      "description": "List dynos",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28329,7 +28133,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__restart_dyno",
       "name": "Restart Dyno",
-      "description": "Restart a specific dyno of an app",
+      "description": "Restart dyno",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -28359,7 +28163,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__restart_all_dynos",
       "name": "Restart All Dynos",
-      "description": "Restart every dyno of an app",
+      "description": "Restart all dynos",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -28383,7 +28187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__get_config_vars",
       "name": "Get Config Vars",
-      "description": "Get the config vars (environment variables) of an app",
+      "description": "Get config vars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28407,7 +28211,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "heroku__list_releases",
       "name": "List Releases",
-      "description": "List the release history of an app",
+      "description": "List releases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28523,8 +28327,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "hetzner__list_servers",
       "name": "List Servers",
-      "description":
-        "List servers in the Hetzner Cloud project with optional name, label, and status filtering",
+      "description": "List servers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28566,8 +28369,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__get_server",
       "name": "Get Server",
-      "description":
-        "Get a server by ID, including status, server type, image, and public network info",
+      "description": "Get server",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28585,7 +28387,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__create_server",
       "name": "Create Server",
-      "description": "Create a new server (provisions billable infrastructure)",
+      "description": "Create billable server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28627,7 +28429,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__power_on_server",
       "name": "Power On Server",
-      "description": "Power on a server by ID",
+      "description": "Power on server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28645,8 +28447,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__power_off_server",
       "name": "Power Off Server",
-      "description":
-        "Cut power to a server by ID (hard power off, like pulling the plug; data may be lost if the OS is running)",
+      "description": "Hard power off server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28655,7 +28456,8 @@ export const connectors: IntegrationConfig[] = [
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server ID",
+            "description":
+              "Server ID. Hard power-off is like pulling the power plug; unsaved data can be lost if the operating system is running.",
             "required": true,
           },
         },
@@ -28664,8 +28466,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__list_images",
       "name": "List Images",
-      "description":
-        "List available images (system images, backups, snapshots) usable for server creation",
+      "description": "List images",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28715,7 +28516,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__list_server_types",
       "name": "List Server Types",
-      "description": "List available server types (sizes) with cores, memory, disk, and pricing",
+      "description": "List server types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28754,8 +28555,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__shutdown_server",
       "name": "Shutdown Server",
-      "description":
-        "Gracefully shut down a server by sending an ACPI shutdown signal to the OS — prefer this over Power Off for running workloads",
+      "description": "Gracefully shut down server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28773,7 +28573,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__reboot_server",
       "name": "Reboot Server",
-      "description": "Gracefully reboot a server by sending an ACPI reboot signal to the OS",
+      "description": "Gracefully reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -28791,8 +28591,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__list_ssh_keys",
       "name": "List SSH Keys",
-      "description":
-        "List SSH keys in the project — use these IDs or names in the ssh_keys field of Create Server",
+      "description": "List SSH keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28925,7 +28724,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "hubspot__list_forms",
       "name": "List Forms",
-      "description": "List HubSpot forms so agents can find a form ID before reading submissions",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28954,7 +28753,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_form_submissions",
       "name": "List Form Submissions",
-      "description": "List recent submissions for a HubSpot form in reverse chronological order",
+      "description": "List form submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28983,7 +28782,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__get_contact",
       "name": "Get Contact",
-      "description": "Get a HubSpot contact by ID or email before scoring, dedupe, or updates",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29021,7 +28820,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__search_contacts",
       "name": "Search Contacts",
-      "description": "Search HubSpot contacts by filters for lead research and CRM lookup",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -29042,7 +28841,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__create_contact",
       "name": "Create Contact",
-      "description": "Create a HubSpot contact from form submission or researched lead data",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29059,7 +28858,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__update_contact",
       "name": "Update Contact",
-      "description": "Update HubSpot contact properties, including lead score or research notes",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -29088,7 +28887,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__get_lead",
       "name": "Get Lead",
-      "description": "Get a HubSpot CRM lead before scoring, routing, or updates",
+      "description": "Get lead",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29121,8 +28920,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_leads",
       "name": "List Leads",
-      "description":
-        "List HubSpot CRM leads for scoring, spreadsheet updates, or research workflows",
+      "description": "List leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29161,7 +28959,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__search_leads",
       "name": "Search Leads",
-      "description": "Search HubSpot CRM leads for dedupe, scoring, and routing workflows",
+      "description": "Search leads",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -29182,7 +28980,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__create_lead",
       "name": "Create Lead",
-      "description": "Create a HubSpot CRM lead associated with an existing contact or company",
+      "description": "Create lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29203,8 +29001,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__update_lead",
       "name": "Update Lead",
-      "description":
-        "Update a HubSpot CRM lead with score, qualification, owner, or research fields",
+      "description": "Update lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -29228,7 +29025,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__get_company",
       "name": "Get Company",
-      "description": "Get a HubSpot company by ID or domain before lead research or association",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29266,7 +29063,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__search_companies",
       "name": "Search Companies",
-      "description": "Search HubSpot companies by domain, name, or firmographic properties",
+      "description": "Search companies",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -29291,7 +29088,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__create_company",
       "name": "Create Company",
-      "description": "Create a HubSpot company for researched lead accounts",
+      "description": "Create company",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29308,7 +29105,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__update_company",
       "name": "Update Company",
-      "description": "Update HubSpot company properties with research or enrichment data",
+      "description": "Update company",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -29337,8 +29134,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_properties",
       "name": "List Properties",
-      "description":
-        "List HubSpot CRM properties for contacts, leads, or companies before updating custom fields",
+      "description": "List properties",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29368,7 +29164,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_owners",
       "name": "List Owners",
-      "description": "List HubSpot owners so agents can assign or route contacts and leads",
+      "description": "List owners",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29398,8 +29194,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_association_labels",
       "name": "List Association Labels",
-      "description":
-        "List HubSpot association labels between CRM object types before associating records",
+      "description": "List association labels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29423,7 +29218,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__list_associations",
       "name": "List Associations",
-      "description": "List records associated with a HubSpot CRM record",
+      "description": "List associations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29465,7 +29260,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__associate_records",
       "name": "Associate Records",
-      "description": "Create a default HubSpot association between two CRM records",
+      "description": "Associate records",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -29501,7 +29296,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hubspot__remove_association",
       "name": "Remove Association",
-      "description": "Remove all HubSpot associations between two CRM records",
+      "description": "Remove all associations between records",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -29609,7 +29404,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "huggingface__search_models",
       "name": "Search Models",
-      "description": "Search models on the Hugging Face Hub",
+      "description": "Search models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29656,7 +29451,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "huggingface__get_model",
       "name": "Get Model",
-      "description": "Get details about a model repository on the Hub",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29679,7 +29474,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "huggingface__search_datasets",
       "name": "Search Datasets",
-      "description": "Search datasets on the Hugging Face Hub",
+      "description": "Search datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29706,14 +29501,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "huggingface__whoami",
       "name": "Who Am I",
-      "description": "Get the account and permissions associated with the access token",
+      "description": "Get account identity",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://huggingface.co/api/whoami-v2" },
     }, {
       "id": "huggingface__create_chat_completion",
       "name": "Create Chat Completion",
-      "description":
-        "Generate a chat completion through the Hugging Face Inference Providers router (OpenAI-compatible)",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29818,7 +29612,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "intercom__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts (users and leads) in the Intercom workspace",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29859,7 +29653,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "intercom__search_contacts",
       "name": "Search Contacts",
-      "description": "Search Intercom contacts with a field/operator/value query",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -29880,7 +29674,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "intercom__get_contact",
       "name": "Get Contact",
-      "description": "Get a single Intercom contact by ID",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29897,7 +29691,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "intercom__list_conversations",
       "name": "List Conversations",
-      "description": "List conversations in the Intercom workspace, newest first",
+      "description": "List conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -29919,7 +29713,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "intercom__reply_to_conversation",
       "name": "Reply To Conversation",
-      "description": "Reply to an Intercom conversation as an admin (comment or internal note)",
+      "description": "Reply to conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -29960,7 +29754,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "intercom__list_articles",
       "name": "List Articles",
-      "description": "List help center articles in the Intercom workspace",
+      "description": "List articles",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30055,8 +29849,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "ionos__list_datacenters",
       "name": "List Data Centers",
-      "description":
-        "List virtual data centers in the account; each data center contains servers, volumes, and networks",
+      "description": "List data centers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30098,7 +29891,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__list_servers",
       "name": "List Servers",
-      "description": "List servers inside a virtual data center",
+      "description": "List servers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30146,8 +29939,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__get_server",
       "name": "Get Server",
-      "description":
-        "Get a server in a data center, including name, vmState, cores, RAM, and boot device",
+      "description": "Get server",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30176,8 +29968,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__start_server",
       "name": "Start Server",
-      "description":
-        "Start (power on) an Enterprise server; CUBE servers cannot be started with this endpoint (they use suspend/resume instead)",
+      "description": "Start Enterprise server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30201,8 +29992,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__stop_server",
       "name": "Stop Server",
-      "description":
-        "Stop (power off) an Enterprise server; the server is forcefully powered off and billing for compute stops; public IPv4 addresses that are not reserved are returned to the IPv4 pool (reserved IPs are kept). CUBE servers cannot be stopped with this endpoint (they use suspend/resume instead)",
+      "description": "Request Enterprise poweroff; release unreserved IPs",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30218,7 +30008,8 @@ export const connectors: IntegrationConfig[] = [
           "serverId": {
             "type": "string",
             "in": "path",
-            "description": "Server UUID",
+            "description":
+              "Server UUID. This forcefully powers off an Enterprise server and stops compute billing. Unreserved public IPv4 addresses are released; reserved IPs are kept. CUBE servers cannot use this endpoint and use suspend/resume instead.",
             "required": true,
           },
         },
@@ -30226,8 +30017,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__reboot_server",
       "name": "Reboot Server",
-      "description":
-        "Force a hard reboot of a server (equivalent to powering it down and back on) — recovers hung servers without a separate stop/start cycle; not a graceful OS reboot",
+      "description": "Hard reboot server",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30251,8 +30041,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ionos__get_request_status",
       "name": "Get Request Status",
-      "description":
-        "Poll the status of an asynchronous write operation (202 Accepted responses) until it reports DONE or FAILED; the request ID comes from the Location response header of the write call",
+      "description": "Poll asynchronous request status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30357,8 +30146,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "jira__list_sites",
       "name": "List Atlassian Sites",
-      "description":
-        "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30408,7 +30196,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__list_projects",
       "name": "List Projects",
-      "description": "List all accessible Jira projects",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30483,7 +30271,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__get_project",
       "name": "Get Project",
-      "description": "Get detailed information about a Jira project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30506,7 +30294,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__search_issues",
       "name": "Search Issues",
-      "description": "Search Jira issues using JQL (Jira Query Language)",
+      "description": "Search issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30563,7 +30351,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific Jira issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30591,7 +30379,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__create_issue",
       "name": "Create Issue",
-      "description": "Create a new Jira issue in a project",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30616,7 +30404,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__update_issue",
       "name": "Update Issue",
-      "description": "Update an existing Jira issue (status, fields, etc.)",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -30643,7 +30431,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__list_comments",
       "name": "List Comments",
-      "description": "List comments on a Jira issue",
+      "description": "List comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30694,7 +30482,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Jira issue",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30725,7 +30513,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__get_transitions",
       "name": "Get Transitions",
-      "description": "List available workflow transitions for a Jira issue",
+      "description": "Get transitions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30749,8 +30537,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__transition_issue",
       "name": "Transition Issue",
-      "description":
-        "Move a Jira issue to a new workflow status. First call get_transitions to get valid transition IDs, then pass the ID here.",
+      "description": "Transition issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30790,8 +30577,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jira__search_users",
       "name": "Search Users",
-      "description":
-        "Search Jira users by name or email to find the accountId needed for assigning issues",
+      "description": "Search users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30932,7 +30718,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "jotform__list_forms",
       "name": "List Forms",
-      "description": "List forms owned by the account",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30985,7 +30771,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jotform__get_form",
       "name": "Get Form",
-      "description": "Get basic details of a form",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31003,7 +30789,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jotform__get_form_questions",
       "name": "Get Form Questions",
-      "description": "List the questions/fields on a form",
+      "description": "Get form questions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31021,7 +30807,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jotform__list_submissions",
       "name": "List Submissions",
-      "description": "List submissions for a form",
+      "description": "List submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31062,7 +30848,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jotform__get_submission",
       "name": "Get Submission",
-      "description": "Get a single submission with its answers",
+      "description": "Get submission",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31080,7 +30866,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "jotform__get_user",
       "name": "Get User",
-      "description": "Get the authenticated account profile and usage",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31167,8 +30953,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "klarna__get_order",
       "name": "Get Order",
-      "description":
-        "Retrieve a Klarna order including status, amounts, order lines, captures, and refunds",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31185,8 +30970,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__capture_order",
       "name": "Capture Order",
-      "description":
-        "Capture a full or partial amount of an authorized order (activates the payment after fulfillment)",
+      "description": "Capture fulfilled order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31195,7 +30979,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Capture only after the corresponding goods or services have been fulfilled; capture triggers the customer charge and merchant payout.",
             "required": true,
           },
         },
@@ -31219,7 +31004,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__refund_order",
       "name": "Refund Order",
-      "description": "Refund a full or partial captured amount back to the customer",
+      "description": "Refund captured order amount",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31228,7 +31013,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
             "required": true,
           },
         },
@@ -31248,8 +31034,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__cancel_order",
       "name": "Cancel Order",
-      "description":
-        "Cancel an authorized order that has not been captured, releasing the full authorization",
+      "description": "Cancel uncaptured order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31258,7 +31043,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
             "required": true,
           },
         },
@@ -31266,8 +31052,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__release_remaining_authorization",
       "name": "Release Remaining Authorization",
-      "description":
-        "Release the remaining (uncaptured) authorized amount of an order after the final partial capture: the standard end-of-fulfillment step that frees the customer's remaining authorization",
+      "description": "Release remaining authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31277,7 +31062,8 @@ export const connectors: IntegrationConfig[] = [
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description":
+              "Klarna order ID. Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
             "required": true,
           },
         },
@@ -31285,7 +31071,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klarna__get_capture",
       "name": "Get Capture",
-      "description": "Get a single capture of an order with its status and amounts",
+      "description": "Get capture",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31388,7 +31174,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "klaviyo__list_profiles",
       "name": "List Profiles",
-      "description": "List customer profiles",
+      "description": "List profiles",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31432,7 +31218,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__get_profile",
       "name": "Get Profile",
-      "description": "Get a customer profile by ID",
+      "description": "Get profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31456,7 +31242,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__create_profile",
       "name": "Create Profile",
-      "description": "Create a new customer profile",
+      "description": "Create profile",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31482,7 +31268,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__list_lists",
       "name": "List Lists",
-      "description": "List marketing lists",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31514,7 +31300,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__list_segments",
       "name": "List Segments",
-      "description": "List audience segments",
+      "description": "List segments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31537,7 +31323,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__list_metrics",
       "name": "List Metrics",
-      "description": "List tracked event metrics (e.g. Placed Order, Opened Email)",
+      "description": "List metrics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31560,7 +31346,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "klaviyo__create_event",
       "name": "Create Event",
-      "description": "Track a custom event for a profile",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31660,7 +31446,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "langfuse__list_traces",
       "name": "List Traces",
-      "description": "List traces in the Langfuse project with optional filters",
+      "description": "List traces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31730,7 +31516,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langfuse__get_trace",
       "name": "Get Trace",
-      "description": "Get a single trace with its full observation tree and scores",
+      "description": "Get trace",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31747,7 +31533,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langfuse__list_observations",
       "name": "List Observations",
-      "description": "List observations (spans, generations, events) with optional filters",
+      "description": "List observations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31790,7 +31576,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langfuse__create_score",
       "name": "Create Score",
-      "description": "Attach a score (evaluation result) to a trace or observation",
+      "description": "Score trace or observation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -31892,7 +31678,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "langsmith__list_projects",
       "name": "List Projects",
-      "description": "List tracing projects (tracer sessions) in your LangSmith workspace",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31930,8 +31716,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langsmith__query_runs",
       "name": "Query Runs",
-      "description":
-        "Query traced runs with filters (project, trace filter expressions, root runs only)",
+      "description": "Query runs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -31968,7 +31753,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langsmith__get_run",
       "name": "Get Run",
-      "description": "Get full details of a single run, including inputs, outputs, and errors",
+      "description": "Get run",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -31980,7 +31765,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langsmith__list_datasets",
       "name": "List Datasets",
-      "description": "List evaluation datasets in your LangSmith workspace",
+      "description": "List datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32008,7 +31793,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "langsmith__list_examples",
       "name": "List Examples",
-      "description": "List examples in a LangSmith dataset",
+      "description": "List examples",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32105,7 +31890,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "launchdarkly__list_projects",
       "name": "List Projects",
-      "description": "List projects in the LaunchDarkly account",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32132,7 +31917,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "launchdarkly__list_flags",
       "name": "List Feature Flags",
-      "description": "List feature flags in a project, optionally scoped to one environment",
+      "description": "List feature flags",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32182,8 +31967,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "launchdarkly__get_flag",
       "name": "Get Feature Flag",
-      "description":
-        "Get a feature flag including its variations and per-environment configuration",
+      "description": "Get feature flag",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32211,7 +31995,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "launchdarkly__list_environments",
       "name": "List Environments",
-      "description": "List environments in a LaunchDarkly project",
+      "description": "List environments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32239,8 +32023,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "launchdarkly__toggle_flag",
       "name": "Toggle Feature Flag",
-      "description":
-        "Turn a feature flag on or off in one environment using a semantic patch instruction",
+      "description": "Toggle feature flag",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -32363,7 +32146,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "lever__list_opportunities",
       "name": "List Opportunities",
-      "description": "List candidate opportunities",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32427,7 +32210,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lever__get_opportunity",
       "name": "Get Opportunity",
-      "description": "Get a single opportunity",
+      "description": "Get opportunity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32450,7 +32233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lever__list_postings",
       "name": "List Postings",
-      "description": "List job postings",
+      "description": "List postings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32480,7 +32263,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lever__get_posting",
       "name": "Get Posting",
-      "description": "Get a single job posting",
+      "description": "Get posting",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32498,7 +32281,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lever__list_stages",
       "name": "List Stages",
-      "description": "List pipeline stages",
+      "description": "List stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32584,8 +32367,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "lexoffice__list_vouchers",
       "name": "List Vouchers",
-      "description":
-        "List and filter bookkeeping vouchers (sales and purchase invoices, credit notes) via the voucherlist, e.g. to find open or overdue invoices",
+      "description": "List vouchers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32650,8 +32432,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__get_invoice",
       "name": "Get Invoice",
-      "description":
-        "Retrieve a single invoice with line items, totals, tax conditions, and payment status",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32668,8 +32449,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__create_invoice",
       "name": "Create Invoice",
-      "description":
-        "Create a sales invoice. Created as an editable draft by default; set finalize=true to immediately open it",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -32731,8 +32511,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__list_contacts",
       "name": "List Contacts",
-      "description":
-        "List and filter customers and vendors, e.g. to find the contactId for an invoice",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32783,7 +32562,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__create_contact",
       "name": "Create Contact",
-      "description": "Create a customer or vendor contact for use on invoices and vouchers",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -32830,8 +32609,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__upload_voucher_file",
       "name": "Upload Voucher File",
-      "description":
-        "Upload a receipt image or invoice file (pdf, jpg, png, xml; max 5 MB) for bookkeeping; returns the file id and the id of the voucher created for it",
+      "description": "Upload voucher file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -32864,8 +32642,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__download_file",
       "name": "Download File",
-      "description":
-        "Download an uploaded bookkeeping voucher file (receipt/invoice image) as binary data by its file id; Content-Type and Content-Disposition response headers carry the MIME type and suggested filename. For sales voucher documents prefer the document render flow.",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32883,8 +32660,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
-      "description":
-        "Trigger PDF rendering for an invoice and return its documentFileId, which can then be downloaded via Download File. Required for invoices created through the API with status open; draft invoices have no document file and are rejected with 406.",
+      "description": "Render non-draft invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32893,7 +32669,8 @@ export const connectors: IntegrationConfig[] = [
           "id": {
             "type": "string",
             "in": "path",
-            "description": "Invoice id (UUID)",
+            "description":
+              "Invoice id (UUID). Draft invoices have no document file and are rejected; use a non-draft invoice.",
             "required": true,
           },
         },
@@ -32901,8 +32678,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "lexoffice__get_payments",
       "name": "Get Payments",
-      "description":
-        "Get the payment status of an invoice or voucher: open amount, paid date, and payment items — the reliable way to check who actually paid",
+      "description": "Get payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33002,7 +32778,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "linear__search_issues",
       "name": "Search Issues",
-      "description": "Search for Linear issues by title or description",
+      "description": "Search issues",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33042,7 +32818,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific Linear issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33063,7 +32839,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__create_issue",
       "name": "Create Issue",
-      "description": "Create a new Linear issue in a team",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -33095,7 +32871,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__update_issue",
       "name": "Update Issue",
-      "description": "Update the status, assignee, or other properties of an issue",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -33114,8 +32890,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__delete_issue",
       "name": "Delete Issue",
-      "description":
-        "Archive a Linear issue. By default this is non-permanent so canary-created issues do not remain active.",
+      "description": "Archive or delete issue",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -33137,7 +32912,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__list_projects",
       "name": "List Projects",
-      "description": "List all projects in the workspace",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33193,8 +32968,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__list_teams",
       "name": "List Teams",
-      "description":
-        "List Linear teams in the workspace so issues can be created in the right team",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33250,8 +33024,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__list_workflow_states",
       "name": "List Workflow States",
-      "description":
-        "List workflow states for a Linear team so issues can be moved to the right status",
+      "description": "List workflow states",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33307,8 +33080,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__list_users",
       "name": "List Users",
-      "description":
-        "List Linear users in the workspace so issues can be assigned to the right person",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33335,7 +33107,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Linear issue",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -33362,8 +33134,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "linear__list_issue_labels",
       "name": "List Issue Labels",
-      "description":
-        "List Linear issue labels so the right label IDs can be applied when creating or updating issues",
+      "description": "List issue labels",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -33478,7 +33249,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mailchimp__list_audiences",
       "name": "List Audiences",
-      "description": "List audiences (lists) in the Mailchimp account",
+      "description": "List audiences",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33520,7 +33291,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mailchimp__list_members",
       "name": "List Members",
-      "description": "List members of a Mailchimp audience",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33562,8 +33333,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mailchimp__get_member",
       "name": "Get Member",
-      "description":
-        "Get a single audience member by email (MD5 hash of the lowercase address) or contact ID",
+      "description": "Get member",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33594,7 +33364,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mailchimp__add_member",
       "name": "Add Member",
-      "description": "Add a new member to a Mailchimp audience",
+      "description": "Add member",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -33637,7 +33407,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mailchimp__list_campaigns",
       "name": "List Campaigns",
-      "description": "List campaigns in the Mailchimp account",
+      "description": "List campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33746,7 +33516,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "metabase__list_databases",
       "name": "List Databases",
-      "description": "List databases connected to the Metabase instance",
+      "description": "List databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33766,7 +33536,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__list_cards",
       "name": "List Questions",
-      "description": "List saved questions (cards) on the Metabase instance",
+      "description": "List questions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33783,7 +33553,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__run_card_query",
       "name": "Run Question Query",
-      "description": "Execute a saved question (card) and return its query results",
+      "description": "Run question query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -33807,7 +33577,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__search",
       "name": "Search",
-      "description": "Search questions, dashboards, collections, and tables across the instance",
+      "description": "Search questions, dashboards, collections, and tables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33825,7 +33595,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__get_dashboard",
       "name": "Get Dashboard",
-      "description": "Get a dashboard and its cards by ID",
+      "description": "Get dashboard",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -33842,7 +33612,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "metabase__list_collections",
       "name": "List Collections",
-      "description": "List collections that organize questions and dashboards",
+      "description": "List collections",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://{{env.METABASE_HOST}}/api/collection" },
     }],
@@ -33915,8 +33685,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mindee__parse_invoice",
       "name": "Parse Invoice",
-      "description":
-        "Extract structured fields (supplier, customer, line items, totals, taxes, dates, payment details) from an invoice PDF or image using the Invoice OCR model. Consumes a page of your Mindee quota per call.",
+      "description": "Parse invoice (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -33936,8 +33705,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mindee__parse_receipt",
       "name": "Parse Receipt",
-      "description":
-        "Extract structured fields (merchant, date, time, category, line items, taxes, total amounts, tip) from an expense receipt photo or PDF using the Receipt OCR model. Consumes a page of your Mindee quota per call.",
+      "description": "Parse receipt (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -33957,8 +33725,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mindee__parse_financial_document",
       "name": "Parse Financial Document",
-      "description":
-        "Parse a document that may be either an invoice or a receipt: the Financial Document model classifies it and returns the union of invoice and receipt fields. Use this when the document type is unknown. Consumes a page of your Mindee quota per call.",
+      "description": "Parse financial document (consumes page quota)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34045,7 +33812,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mistral__list_models",
       "name": "List Models",
-      "description": "List the Mistral models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34065,7 +33832,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mistral__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific Mistral model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34082,7 +33849,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mistral__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34108,7 +33875,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mistral__create_embedding",
       "name": "Create Embedding",
-      "description": "Create embedding vectors for input text",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34243,12 +34010,12 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mixpanel__track_event",
       "name": "Track Event",
-      "description": "Track a custom event in Mixpanel with properties",
+      "description": "Track event",
       "requiresWrite": true,
     }, {
       "id": "mixpanel__query_events",
       "name": "Query Events",
-      "description": "Query and export event data from Mixpanel",
+      "description": "Query events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34293,7 +34060,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mixpanel__get_funnel",
       "name": "Get Funnel",
-      "description": "Retrieve funnel analysis data to understand conversion rates",
+      "description": "Get funnel",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34333,7 +34100,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mixpanel__list_funnels",
       "name": "List Funnels",
-      "description": "List saved funnels with their names and funnel IDs",
+      "description": "List funnels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34350,7 +34117,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mixpanel__get_retention",
       "name": "Get Retention",
-      "description": "Analyze user retention cohorts over time",
+      "description": "Get retention",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34400,7 +34167,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mixpanel__list_cohorts",
       "name": "List Cohorts",
-      "description": "List all user cohorts defined in your Mixpanel project",
+      "description": "List cohorts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -34482,8 +34249,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mollie__list_payments",
       "name": "List Payments",
-      "description":
-        "List Mollie payments in reverse chronological order to review recent transactions",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34511,7 +34277,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__get_payment",
       "name": "Get Payment",
-      "description": "Retrieve a single Mollie payment with its current status and details",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34534,7 +34300,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__create_payment",
       "name": "Create Payment",
-      "description": "Create a Mollie payment and get a checkout URL to send to the customer",
+      "description": "Create payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34579,7 +34345,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__list_customers",
       "name": "List Customers",
-      "description": "List Mollie customers to find customer IDs for payments or refund context",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34602,8 +34368,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__list_payment_methods",
       "name": "List Payment Methods",
-      "description":
-        "List the payment methods enabled on your Mollie profile, e.g. to pick a valid method for a new payment",
+      "description": "List payment methods",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34631,8 +34396,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__create_payment_link",
       "name": "Create Payment Link",
-      "description":
-        "Create a shareable hosted payment link the customer can open to pay, without building a checkout",
+      "description": "Create payment link",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34672,7 +34436,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__list_payment_refunds",
       "name": "List Payment Refunds",
-      "description": "List the refunds created for a payment to review refund status and history",
+      "description": "List payment refunds",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -34701,7 +34465,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mollie__create_refund",
       "name": "Create Refund",
-      "description": "Refund all or part of a Mollie payment back to the customer",
+      "description": "Create refund",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -34813,7 +34577,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "monday__list_boards",
       "name": "List Boards",
-      "description": "List boards in the monday.com account",
+      "description": "List boards",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -34856,7 +34620,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "monday__list_items",
       "name": "List Items",
-      "description": "List items on a monday.com board with their column values",
+      "description": "List items",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -34888,7 +34652,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "monday__get_item",
       "name": "Get Item",
-      "description": "Get a monday.com item by ID with its column values and updates",
+      "description": "Get item",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -34904,7 +34668,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "monday__create_item",
       "name": "Create Item",
-      "description": "Create a new item on a monday.com board",
+      "description": "Create item",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -34942,7 +34706,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "monday__update_column_values",
       "name": "Update Column Values",
-      "description": "Update one or more column values on an existing monday.com item",
+      "description": "Update column values",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -35051,7 +34815,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "mongodb-atlas__list_projects",
       "name": "List Projects",
-      "description": "List Atlas projects (groups) the service account can access",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35092,7 +34856,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mongodb-atlas__list_clusters",
       "name": "List Clusters",
-      "description": "List clusters in an Atlas project",
+      "description": "List clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35147,7 +34911,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mongodb-atlas__get_cluster",
       "name": "Get Cluster",
-      "description": "Get details of a cluster, including state and connection strings",
+      "description": "Get cluster",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35177,7 +34941,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "mongodb-atlas__list_database_users",
       "name": "List Database Users",
-      "description": "List database users configured in an Atlas project",
+      "description": "List database users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35312,8 +35076,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "moss__list_expenses",
       "name": "List Expenses",
-      "description":
-        "List expenses — card transactions, invoices, and reimbursements — with status, export status, and date filters; the basis for accounting exports",
+      "description": "List expenses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35393,8 +35156,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__search_bank_transactions",
       "name": "Search Bank Transactions",
-      "description":
-        "Search bank transactions of a Moss bank account within a booking-date window (read-only search query)",
+      "description": "Search bank transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35420,15 +35182,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__list_bank_accounts",
       "name": "List Bank Accounts",
-      "description":
-        "List the company's bank accounts in Moss (use the IDs with Search Bank Transactions)",
+      "description": "List bank accounts",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://public-api.getmoss.com/v1/bank-accounts" },
     }, {
       "id": "moss__search_receipt_files",
       "name": "Search Receipt Files",
-      "description":
-        "Find receipt and invoice files attached to specific expenses (read-only search query); download via the returned file IDs",
+      "description": "Search receipt files",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35449,8 +35209,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__list_expense_accounts",
       "name": "List Expense Accounts",
-      "description":
-        "List the chart of accounts used for ledger posting, for mapping expenses into your accounting system",
+      "description": "List expense accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35478,8 +35237,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__list_suppliers",
       "name": "List Suppliers",
-      "description":
-        "List supplier master data for spend-by-vendor analysis and accounting export enrichment",
+      "description": "List suppliers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35513,8 +35271,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__get_file_content",
       "name": "Get File Content",
-      "description":
-        "Download the binary content of a receipt or invoice file (application/octet-stream) using a file ID from Search Receipt Files",
+      "description": "Download receipt file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35531,7 +35288,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__get_bank_account_balance",
       "name": "Get Bank Account Balance",
-      "description": "Get the current balance of a Moss bank account for liquidity overviews",
+      "description": "Get bank account balance",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35548,8 +35305,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "moss__list_tax_rates",
       "name": "List Tax Rates",
-      "description":
-        "List VAT/tax rate master data for mapping expenses into the accounting system",
+      "description": "List tax rates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35665,8 +35421,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description":
-        "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. The request runs in the Query API read access mode, so Neo4j rejects write statements; use Run Cypher Write to change the graph",
+      "description": "Run read-only Cypher query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35703,8 +35458,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neo4j__run_cypher_write",
       "name": "Run Cypher Write",
-      "description":
-        "Execute a Cypher statement that modifies the graph (CREATE, MERGE, SET, DELETE) in an implicit transaction",
+      "description": "Run Cypher write",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -35821,7 +35575,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "neon__list_projects",
       "name": "List Projects",
-      "description": "List all Neon projects in your account",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35858,7 +35612,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neon__get_project",
       "name": "Get Project",
-      "description": "Get details of a specific Neon project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35875,7 +35629,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neon__list_branches",
       "name": "List Branches",
-      "description": "List all branches for a specific project",
+      "description": "List branches",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35907,7 +35661,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neon__create_branch",
       "name": "Create Branch",
-      "description": "Create a new branch in a Neon project",
+      "description": "Create branch",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -35936,7 +35690,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neon__list_databases",
       "name": "List Databases",
-      "description": "List databases on a specific branch of a project",
+      "description": "List databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -35960,17 +35714,17 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "neon__query_database",
       "name": "Query Database",
-      "description": "Execute SQL queries against the connected database",
+      "description": "Query database",
       "requiresWrite": false,
     }, {
       "id": "neon__list_tables",
       "name": "List Tables",
-      "description": "List all tables in the connected database",
+      "description": "List tables",
       "requiresWrite": false,
     }, {
       "id": "neon__describe_table",
       "name": "Describe Table",
-      "description": "Get detailed schema information for a specific table",
+      "description": "Describe table",
       "requiresWrite": false,
     }],
     "prompts": [{
@@ -36020,7 +35774,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "netlify__list_sites",
       "name": "List Sites",
-      "description": "List all sites the authenticated user has access to",
+      "description": "List sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36062,7 +35816,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "netlify__get_site",
       "name": "Get Site",
-      "description": "Get a site by ID or custom domain",
+      "description": "Get site",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36079,7 +35833,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "netlify__list_deploys",
       "name": "List Deploys",
-      "description": "List deploys for a site",
+      "description": "List deploys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36132,7 +35886,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "netlify__get_deploy",
       "name": "Get Deploy",
-      "description": "Get a deploy by ID",
+      "description": "Get deploy",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36149,7 +35903,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "netlify__trigger_build",
       "name": "Trigger Build",
-      "description": "Trigger a new build of a site from its linked repository",
+      "description": "Trigger build",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -36173,7 +35927,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "netlify__list_form_submissions",
       "name": "List Form Submissions",
-      "description": "List verified form submissions across all forms of a site",
+      "description": "List form submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36294,7 +36048,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
-      "description": "Run an NRQL query against a New Relic account and return the results",
+      "description": "Run NRQL query",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36321,8 +36075,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "new-relic__search_entities",
       "name": "Search Entities",
-      "description":
-        "Search monitored entities (apps, hosts, services) with an entity search query",
+      "description": "Search entities",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36359,7 +36112,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "new-relic__get_entity",
       "name": "Get Entity",
-      "description": "Get an entity's details and tags by GUID",
+      "description": "Get entity",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36380,8 +36133,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "new-relic__list_issues",
       "name": "List Issues",
-      "description":
-        "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
+      "description": "List issues (24 hours, maximum 100)",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36393,7 +36145,8 @@ export const connectors: IntegrationConfig[] = [
           "accountId": {
             "type": "number",
             "in": "body",
-            "description": "New Relic account ID",
+            "description":
+              "New Relic account ID. This operation queries NrAiIssue with fixed SINCE 1 day ago and LIMIT 100 clauses. No time-window or pagination controls are exposed; older issues and results beyond the limit are not included.",
             "required": true,
           },
         },
@@ -36473,8 +36226,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "north-data__search_companies",
       "name": "Search Companies",
-      "description":
-        "Fuzzy universal search for companies (and optionally persons) by free-text query, e.g. 'Siemens, München'. Use this to find a company before fetching its details.",
+      "description": "Search companies and people",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36518,8 +36270,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__get_company",
       "name": "Get Company",
-      "description":
-        "Retrieve a single company's profile (register info, address, status, financial indicators). Identify it either by name + address (city), or by registerId + registerCity, or by companyId from a previous search.",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36563,8 +36314,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__power_search",
       "name": "Power Search",
-      "description":
-        "Structured company search with filters for location radius, industry segment, legal form, status, and countries. Billed per unique company returned, so keep filters narrow.",
+      "description": "Search narrowly; billed per unique company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36610,8 +36360,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__suggest",
       "name": "Suggest Companies",
-      "description":
-        "Auto-complete suggestions for a partial company or person name. Free of charge — suggested companies do not count toward the monthly quota, so use this as a cheap first pass before Get Company.",
+      "description": "Suggest companies and people (unbilled)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36653,8 +36402,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "north-data__get_person",
       "name": "Get Person",
-      "description":
-        "Look up a person (officer, shareholder, representative) by name and address or by a person ID from a previous search result. Billed like company lookups.",
+      "description": "Get person (billed lookup)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36776,7 +36524,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "notion__search_notion",
       "name": "Search Notion",
-      "description": "Search pages and databases in the workspace",
+      "description": "Search Notion",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -36805,7 +36553,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__read_page",
       "name": "Read Page",
-      "description": "Read the content of a Notion page",
+      "description": "Read page",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36836,7 +36584,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__create_page",
       "name": "Create Page",
-      "description": "Create a new page in a database or as a subpage",
+      "description": "Create page",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -36862,7 +36610,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__query_database",
       "name": "Query Database",
-      "description": "Query a Notion database with filters and sorts",
+      "description": "Query database",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -36896,8 +36644,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__get_page",
       "name": "Get Page Metadata",
-      "description":
-        "Retrieve Notion page metadata and properties without fetching child block content",
+      "description": "Get page metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36920,7 +36667,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__get_database",
       "name": "Get Database",
-      "description": "Retrieve Notion database metadata, title, and property schema",
+      "description": "Get database",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -36943,7 +36690,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__append_blocks",
       "name": "Append Blocks",
-      "description": "Append child blocks to a Notion page or block",
+      "description": "Append blocks",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -36977,7 +36724,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__update_page",
       "name": "Update Page",
-      "description": "Update Notion page properties or archive/unarchive a page",
+      "description": "Update page",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -37006,7 +36753,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__create_database",
       "name": "Create Database",
-      "description": "Create a new Notion database as a subpage with a property schema",
+      "description": "Create database",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37045,8 +36792,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "notion__list_users",
       "name": "List Users",
-      "description":
-        "List users in the Notion workspace so pages can mention or attribute the right person",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37165,7 +36911,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "onedrive__list_files",
       "name": "List Files",
-      "description": "List files and folders in a OneDrive folder",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37187,7 +36933,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__search_files",
       "name": "Search Files",
-      "description": "Search for files and folders in OneDrive by name or content",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37210,7 +36956,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__upload_file",
       "name": "Upload File",
-      "description": "Upload or update a file in OneDrive",
+      "description": "Create or overwrite file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -37242,7 +36988,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__download_file",
       "name": "Download File",
-      "description": "Download file content from OneDrive",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37259,7 +37005,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__get_file",
       "name": "Get File",
-      "description": "Get metadata for a OneDrive file or folder",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37281,7 +37027,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder in OneDrive",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37311,7 +37057,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "onedrive__delete_file",
       "name": "Delete File",
-      "description": "Delete a file or folder from OneDrive (moves it to the recycle bin)",
+      "description": "Move file to recycle bin",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -37320,7 +37066,8 @@ export const connectors: IntegrationConfig[] = [
           "itemId": {
             "type": "string",
             "in": "path",
-            "description": "OneDrive item ID to delete",
+            "description":
+              "OneDrive item ID to delete. Deletion moves this file or folder to the recycle bin instead of permanently deleting it.",
             "required": true,
           },
         },
@@ -37423,7 +37170,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "openai__list_models",
       "name": "List Models",
-      "description": "List the models available to the API key",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37441,7 +37188,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_model",
       "name": "Get Model",
-      "description": "Get details about a specific model",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37458,7 +37205,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__create_response",
       "name": "Create Response",
-      "description": "Generate a model response using the OpenAI Responses API",
+      "description": "Generate model response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37488,7 +37235,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37514,7 +37261,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__create_embedding",
       "name": "Create Embedding",
-      "description": "Create an embedding vector for input text",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37535,7 +37282,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__generate_image",
       "name": "Generate Image",
-      "description": "Generate an image from a text prompt",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37558,8 +37305,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__upload_file",
       "name": "Upload File",
-      "description":
-        "Upload a file for use with assistants, batch, fine-tune, vision, user_data, or evals",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37592,7 +37338,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__list_files",
       "name": "List Files",
-      "description": "List files uploaded to the organization, optionally filtered by purpose",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37636,7 +37382,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_file",
       "name": "Get File",
-      "description": "Get metadata about an uploaded file by ID",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37653,7 +37399,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__delete_file",
       "name": "Delete File",
-      "description": "Delete an uploaded file and remove it from all vector stores",
+      "description": "Delete file and all vector-store references",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -37670,8 +37416,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_usage_completions",
       "name": "Get Completions Usage",
-      "description":
-        "Get token usage for completions across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "description": "Get completions usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37715,8 +37460,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_costs",
       "name": "Get Costs",
-      "description":
-        "Get daily spend (in USD) for the organization, bucketed by day. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "description": "Get costs (requires organization admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37754,8 +37498,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_file_content",
       "name": "Get File Content",
-      "description":
-        "Download the raw contents of an uploaded file by ID — required to read batch output files and other generated artifacts",
+      "description": "Download file content",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37772,8 +37515,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openai__get_usage_embeddings",
       "name": "Get Embeddings Usage",
-      "description":
-        "Get token usage for embeddings across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
+      "description": "Get embeddings usage (requires admin key)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37892,7 +37634,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "openrouter__list_models",
       "name": "List Models",
-      "description": "List the models available through OpenRouter",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37910,7 +37652,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from any OpenRouter model",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -37936,7 +37678,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__get_generation",
       "name": "Get Generation",
-      "description": "Get metadata, token counts, and cost for a past generation by ID",
+      "description": "Get generation",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37953,8 +37695,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__get_key",
       "name": "Get Current Key",
-      "description":
-        "Get the current API key's label, credit usage (total/daily/weekly/monthly in USD), spend limit, remaining limit, and free-tier status — works with the regular inference key",
+      "description": "Get current key",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -37964,8 +37705,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "openrouter__get_credits",
       "name": "Get Credits",
-      "description":
-        "Get total credits purchased and used for the account (OpenRouter requires a management key for this endpoint)",
+      "description": "Get credits (requires management key)",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://openrouter.ai/api/v1/credits" },
     }],
@@ -38059,7 +37799,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "outlook__list_emails",
       "name": "List Emails",
-      "description": "List recent emails from inbox or a specific folder",
+      "description": "List emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38125,7 +37865,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_email",
       "name": "Get Email",
-      "description": "Get detailed information about a specific email",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38149,7 +37889,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__send_email",
       "name": "Send Email",
-      "description": "Send a new email message",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38171,7 +37911,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__search_emails",
       "name": "Search Emails",
-      "description": "Search emails by query, subject, sender, or date",
+      "description": "Search emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38232,7 +37972,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_folders",
       "name": "List Folders",
-      "description": "List all mail folders in the mailbox",
+      "description": "List folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38272,7 +38012,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_folder",
       "name": "Get Folder",
-      "description": "Get metadata for a mail folder",
+      "description": "Get folder",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38289,7 +38029,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_folder",
       "name": "Create Folder",
-      "description": "Create a mail folder",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38305,7 +38045,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_folder",
       "name": "Update Folder",
-      "description": "Rename a mail folder",
+      "description": "Rename folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38329,7 +38069,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_folder",
       "name": "Delete Folder",
-      "description": "Delete a mail folder",
+      "description": "Delete folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -38346,7 +38086,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__mark_email_read",
       "name": "Mark Email Read",
-      "description": "Mark an email as read",
+      "description": "Mark email read",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38364,7 +38104,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__mark_email_unread",
       "name": "Mark Email Unread",
-      "description": "Mark an email as unread",
+      "description": "Mark email unread",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38382,7 +38122,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_email",
       "name": "Delete Email",
-      "description": "Delete an email message",
+      "description": "Delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -38399,7 +38139,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__move_email",
       "name": "Move Email",
-      "description": "Move an email to another folder",
+      "description": "Move email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38423,7 +38163,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__archive_email",
       "name": "Archive Email",
-      "description": "Move an email to the archive folder",
+      "description": "Archive email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38447,7 +38187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__flag_email",
       "name": "Flag Email",
-      "description": "Set a follow-up flag on an email",
+      "description": "Flag email",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38471,7 +38211,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__clear_email_flag",
       "name": "Clear Email Flag",
-      "description": "Clear the follow-up flag on an email",
+      "description": "Clear email flag",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38495,7 +38235,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__categorize_email",
       "name": "Categorize Email",
-      "description": "Replace the categories on an email",
+      "description": "Replace email categories",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38519,7 +38259,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_categories",
       "name": "List Categories",
-      "description": "List Outlook master categories",
+      "description": "List categories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38538,7 +38278,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_category",
       "name": "Create Category",
-      "description": "Create an Outlook master category",
+      "description": "Create category",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38555,7 +38295,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_category",
       "name": "Update Category",
-      "description": "Update an Outlook master category color",
+      "description": "Update category",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38575,7 +38315,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_category",
       "name": "Delete Category",
-      "description": "Delete an Outlook master category",
+      "description": "Delete category",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -38592,7 +38332,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_draft",
       "name": "Create Draft",
-      "description": "Create a draft email message",
+      "description": "Create draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38622,7 +38362,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_drafts",
       "name": "List Drafts",
-      "description": "List draft email messages",
+      "description": "List drafts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38680,7 +38420,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_draft",
       "name": "Get Draft",
-      "description": "Get a draft message",
+      "description": "Get draft",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38704,7 +38444,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_draft",
       "name": "Update Draft",
-      "description": "Update a draft email message",
+      "description": "Update draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -38737,7 +38477,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__send_draft",
       "name": "Send Draft",
-      "description": "Send a draft email message",
+      "description": "Send draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38754,7 +38494,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_draft",
       "name": "Delete Draft",
-      "description": "Delete a draft email message",
+      "description": "Delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -38771,7 +38511,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__reply_email",
       "name": "Reply Email",
-      "description": "Reply to an email",
+      "description": "Reply email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38791,7 +38531,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__reply_all_email",
       "name": "Reply All Email",
-      "description": "Reply all to an email",
+      "description": "Reply all email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38811,7 +38551,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__forward_email",
       "name": "Forward Email",
-      "description": "Forward an email",
+      "description": "Forward email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38836,7 +38576,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_reply_draft",
       "name": "Create Reply Draft",
-      "description": "Create a reply draft for an email",
+      "description": "Create reply draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38853,7 +38593,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_reply_all_draft",
       "name": "Create Reply All Draft",
-      "description": "Create a reply-all draft for an email",
+      "description": "Create reply all draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38870,7 +38610,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_forward_draft",
       "name": "Create Forward Draft",
-      "description": "Create a forward draft for an email",
+      "description": "Create forward draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38887,7 +38627,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_attachments",
       "name": "List Attachments",
-      "description": "List attachments for an email message",
+      "description": "List attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38921,7 +38661,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_attachment",
       "name": "Get Attachment",
-      "description": "Get metadata and content for an email attachment",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38945,7 +38685,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__add_attachment_to_message",
       "name": "Add Attachment To Message",
-      "description": "Add a small attachment to a draft message",
+      "description": "Add attachment to message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -38967,7 +38707,8 @@ export const connectors: IntegrationConfig[] = [
           "name": { "type": "string", "description": "Attachment filename", "required": true },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description":
+              "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true,
           },
           "contentType": { "type": "string", "description": "Attachment MIME type" },
@@ -38981,7 +38722,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_conversation_messages",
       "name": "List Conversation Messages",
-      "description": "List messages in an Outlook conversation",
+      "description": "List conversation messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39040,8 +38781,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_threads",
       "name": "List Threads",
-      "description":
-        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to get_thread.",
+      "description": "List threads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39111,7 +38851,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_thread",
       "name": "Get Thread",
-      "description": "Get Outlook messages in a conversation by thread ID.",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39144,8 +38884,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_shared_mailbox_emails",
       "name": "List Shared Mailbox Emails",
-      "description":
-        "List messages from a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "List shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39217,8 +38956,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__search_shared_mailbox_emails",
       "name": "Search Shared Mailbox Emails",
-      "description":
-        "Search messages in a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "Search shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39285,7 +39023,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
-      "description": "List Outlook calendars",
+      "description": "List calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39320,7 +39058,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_calendar",
       "name": "Get Calendar",
-      "description": "Get metadata for an Outlook calendar",
+      "description": "Get calendar",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39337,7 +39075,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_calendar",
       "name": "Create Calendar",
-      "description": "Create an Outlook calendar",
+      "description": "Create calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -39347,7 +39085,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_calendar",
       "name": "Update Calendar",
-      "description": "Update an Outlook calendar",
+      "description": "Update calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -39368,7 +39106,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_calendar",
       "name": "Delete Calendar",
-      "description": "Delete an Outlook calendar",
+      "description": "Delete calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -39385,7 +39123,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_events",
       "name": "List Events",
-      "description": "List events from a specific Outlook calendar",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39445,7 +39183,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_calendar_view",
       "name": "List Calendar View",
-      "description": "List occurrences in a calendar time window",
+      "description": "List calendar view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39510,7 +39248,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_event",
       "name": "Get Event",
-      "description": "Get details for an Outlook event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39534,7 +39272,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__create_event",
       "name": "Create Event",
-      "description": "Create an Outlook calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -39584,7 +39322,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__update_event",
       "name": "Update Event",
-      "description": "Update an Outlook calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -39640,7 +39378,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__delete_event",
       "name": "Delete Event",
-      "description": "Delete an Outlook calendar event",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -39657,7 +39395,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__respond_to_event",
       "name": "Respond To Event",
-      "description": "Accept, tentatively accept, or decline an event invitation",
+      "description": "Respond to event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -39688,7 +39426,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_event_instances",
       "name": "Get Event Instances",
-      "description": "List instances of a recurring event in a time window",
+      "description": "Get event instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39753,7 +39491,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__list_event_attachments",
       "name": "List Event Attachments",
-      "description": "List attachments for an event",
+      "description": "List event attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39787,7 +39525,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_event_attachment",
       "name": "Get Event Attachment",
-      "description": "Get metadata and content for an event attachment",
+      "description": "Get event attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -39810,7 +39548,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__add_event_attachment",
       "name": "Add Event Attachment",
-      "description": "Add a small attachment to an event",
+      "description": "Add event attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -39832,7 +39570,8 @@ export const connectors: IntegrationConfig[] = [
           "name": { "type": "string", "description": "Attachment filename", "required": true },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description":
+              "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true,
           },
           "contentType": { "type": "string", "description": "Attachment MIME type" },
@@ -39846,7 +39585,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__find_free_time",
       "name": "Find Free Time",
-      "description": "Return free/busy schedule information for users or resources",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -39893,7 +39632,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__get_schedule",
       "name": "Get Schedule",
-      "description": "Get detailed free/busy schedule information",
+      "description": "Get schedule",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -39940,7 +39679,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "outlook__find_meeting_times",
       "name": "Find Meeting Times",
-      "description": "Find meeting time suggestions from attendees and constraints",
+      "description": "Find meeting times",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -40086,7 +39825,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "paddle__list_products",
       "name": "List Products",
-      "description": "List products in the Paddle catalog, optionally including their prices",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40119,8 +39858,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__list_prices",
       "name": "List Prices",
-      "description":
-        "List prices for Paddle products to find price IDs for checkouts and subscriptions",
+      "description": "List prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40153,7 +39891,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__list_customers",
       "name": "List Customers",
-      "description": "List or search Paddle customers to find customer IDs and contact details",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40186,8 +39924,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__list_transactions",
       "name": "List Transactions",
-      "description":
-        "List Paddle transactions for revenue review, filtered by status, customer, or subscription",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40232,8 +39969,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__list_subscriptions",
       "name": "List Subscriptions",
-      "description":
-        "List Paddle subscriptions to review recurring revenue, statuses, and renewal dates",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40272,8 +40008,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__get_subscription",
       "name": "Get Subscription",
-      "description":
-        "Retrieve a single Paddle subscription with its items, status, and billing dates",
+      "description": "Get subscription",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40297,8 +40032,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__create_customer",
       "name": "Create Customer",
-      "description":
-        "Create a new Paddle customer, e.g. before creating transactions or subscriptions for a new buyer",
+      "description": "Create customer",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40323,8 +40057,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__create_price",
       "name": "Create Price",
-      "description":
-        "Create a price for a Paddle product so it can be used in checkouts, transactions, and subscriptions",
+      "description": "Create price",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40370,7 +40103,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paddle__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the Paddle catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40488,7 +40221,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "pagerduty__list_incidents",
       "name": "List Incidents",
-      "description": "List PagerDuty incidents with optional status, service, and time filters",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40548,7 +40281,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pagerduty__get_incident",
       "name": "Get Incident",
-      "description": "Get a PagerDuty incident by ID or incident number",
+      "description": "Get incident",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40565,7 +40298,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pagerduty__create_incident",
       "name": "Create Incident",
-      "description": "Manually trigger a new incident on a service",
+      "description": "Create incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40592,7 +40325,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pagerduty__manage_incident",
       "name": "Manage Incident",
-      "description": "Acknowledge, resolve, reassign, or escalate an incident",
+      "description": "Manage incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -40625,7 +40358,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pagerduty__list_services",
       "name": "List Services",
-      "description": "List PagerDuty services",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40658,7 +40391,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pagerduty__list_oncalls",
       "name": "List On-Calls",
-      "description": "List on-call entries for schedules, escalation policies, and users",
+      "description": "List on calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40767,8 +40500,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "pandadoc__list_documents",
       "name": "List Documents",
-      "description":
-        "List and search documents with optional filtering by status, template, folder, or date",
+      "description": "List documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40844,8 +40576,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__get_document_status",
       "name": "Get Document Status",
-      "description":
-        "Get basic info and current status of a document — useful to confirm it reached the expected state (e.g. document.draft before sending, document.completed before downloading)",
+      "description": "Get document status",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40862,8 +40593,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__get_document_details",
       "name": "Get Document Details",
-      "description":
-        "Get full details of a document: recipients and their completion status, fields, tokens, pricing tables, metadata, and timestamps",
+      "description": "Get document details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40880,7 +40610,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__list_templates",
       "name": "List Templates",
-      "description": "List templates in the workspace to find template IDs for creating documents",
+      "description": "List templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40925,8 +40655,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__get_template_details",
       "name": "Get Template Details",
-      "description":
-        "Get a template's roles, tokens, fields, and pricing tables to know what Create Document from Template needs",
+      "description": "Get template details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -40943,8 +40672,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__create_document_link",
       "name": "Create Document Link",
-      "description":
-        "Create a signing session link for a recipient to view and sign a sent document, without sending an email",
+      "description": "Create document link",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -40960,7 +40688,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "recipient": {
             "type": "string",
-            "description": "Email address of the document recipient the session is created for",
+            "description":
+              "Email address of the document recipient the session is created for. Creates a session link for this recipient to view and sign an already-sent document. This operation does not email the link to the recipient.",
             "required": true,
           },
           "lifetime": {
@@ -40972,8 +40701,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__create_document_from_template",
       "name": "Create Document from Template",
-      "description":
-        "Create a new draft document from an existing template, pre-filling recipients, tokens, and fields",
+      "description": "Create draft document from template",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41014,8 +40742,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pandadoc__send_document",
       "name": "Send Document",
-      "description":
-        "Send a draft document to its recipients for completion and signing (document must be in document.draft status)",
+      "description": "Send draft document",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41132,7 +40859,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "paypal__list_transactions",
       "name": "List Transactions",
-      "description": "Search account transactions in a date window (max 31 days per request)",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41184,7 +40911,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paypal__list_balances",
       "name": "List Balances",
-      "description": "Get current account balances by currency",
+      "description": "List balances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41241,7 +40968,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paypal__get_invoice",
       "name": "Get Invoice",
-      "description": "Get details of an invoice",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41258,7 +40985,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "paypal__get_order",
       "name": "Get Order",
-      "description": "Get details of a checkout order",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41342,7 +41069,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "perplexity__search_web",
       "name": "Search Web",
-      "description": "Search the web with Perplexity's Search API and get ranked results",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -41370,7 +41097,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "perplexity__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a web-grounded chat completion with citations using a Sonar model",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41406,8 +41133,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "perplexity__create_agent_response",
       "name": "Create Agent Response",
-      "description":
-        "Generate a response with Perplexity's Agent API using optional web search and reasoning",
+      "description": "Generate agent response",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41499,7 +41225,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "persona__list_inquiries",
       "name": "List Inquiries",
-      "description": "List Persona inquiries for KYC and onboarding review",
+      "description": "List inquiries",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41521,7 +41247,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "persona__get_inquiry",
       "name": "Get Inquiry",
-      "description": "Get a Persona inquiry by ID",
+      "description": "Get inquiry",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41538,7 +41264,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "persona__approve_inquiry",
       "name": "Approve Inquiry",
-      "description": "Approve a Persona inquiry after compliance review",
+      "description": "Approve inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41547,7 +41273,8 @@ export const connectors: IntegrationConfig[] = [
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description":
+              "Persona inquiry ID. Complete compliance review before approval. Approving prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true,
           },
         },
@@ -41555,7 +41282,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "persona__decline_inquiry",
       "name": "Decline Inquiry",
-      "description": "Decline a Persona inquiry after compliance review",
+      "description": "Decline inquiry after compliance review",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41564,7 +41291,8 @@ export const connectors: IntegrationConfig[] = [
           "inquiryId": {
             "type": "string",
             "in": "path",
-            "description": "Persona inquiry ID",
+            "description":
+              "Persona inquiry ID. Complete compliance review before declining. Declining prevents further inquiry progress and triggers associated workflows and webhooks.",
             "required": true,
           },
         },
@@ -41624,8 +41352,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "personio__list_persons",
       "name": "List Persons",
-      "description":
-        "List employees (persons) in the Personio account with optional email filtering",
+      "description": "List persons",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41652,7 +41379,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__get_person",
       "name": "Get Person",
-      "description": "Retrieve a single employee (person) by ID",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41669,8 +41396,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__list_employments",
       "name": "List Employments",
-      "description":
-        "List a person's employment records (position, department, supervisor, status), most recent first",
+      "description": "List employments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41698,8 +41424,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__list_absence_types",
       "name": "List Absence Types",
-      "description":
-        "List the account's absence types (vacation, sick leave, ...) to find the absence_type IDs needed to create absences",
+      "description": "List absence types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41721,8 +41446,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__list_absence_periods",
       "name": "List Absence Periods",
-      "description":
-        "List absence periods (vacation, sick leave, etc.) with person and date-range filters",
+      "description": "List absence periods",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41761,8 +41485,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__list_attendance_periods",
       "name": "List Attendance Periods",
-      "description":
-        "List attendance periods (work and break times) with person and update-date filters",
+      "description": "List attendance periods",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41785,7 +41508,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "personio__create_absence_period",
       "name": "Create Absence Period",
-      "description": "Create an absence period (e.g. vacation or sick leave) for an employee",
+      "description": "Create absence period",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41889,7 +41612,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "pinecone__list_indexes",
       "name": "List Indexes",
-      "description": "List all indexes in the Pinecone project",
+      "description": "List indexes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41918,8 +41641,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pinecone__describe_index",
       "name": "Describe Index",
-      "description":
-        "Get an index's configuration and its data-plane host. Drop the trailing '.pinecone.io' from the returned host to get the indexHostPrefix that Query Vectors and Upsert Vectors take.",
+      "description": "Describe index",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -41943,7 +41665,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pinecone__create_index",
       "name": "Create Index",
-      "description": "Create a new serverless or pod-based index",
+      "description": "Create index",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41983,8 +41705,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pinecone__query_vectors",
       "name": "Query Vectors",
-      "description":
-        "Query a Pinecone index for the nearest vectors. Select the index with indexHostPrefix (its data-plane host from Describe Index without the trailing '.pinecone.io').",
+      "description": "Query vectors",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -42039,8 +41760,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pinecone__upsert_vectors",
       "name": "Upsert Vectors",
-      "description":
-        "Write vectors into a Pinecone index selected via indexHostPrefix; verify the prefix names the intended index before writing",
+      "description": "Upsert vectors",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -42155,7 +41875,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "pipedrive__list_deals",
       "name": "List Deals",
-      "description": "List deals in the Pipedrive account",
+      "description": "List deals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42210,7 +41930,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__get_deal",
       "name": "Get Deal",
-      "description": "Get full details of a Pipedrive deal",
+      "description": "Get deal",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42228,7 +41948,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__create_deal",
       "name": "Create Deal",
-      "description": "Create a new deal in Pipedrive",
+      "description": "Create deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -42261,7 +41981,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__update_deal",
       "name": "Update Deal",
-      "description": "Update fields on an existing Pipedrive deal",
+      "description": "Update deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -42285,7 +42005,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__list_persons",
       "name": "List Persons",
-      "description": "List persons (contacts) in the Pipedrive account",
+      "description": "List persons",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42314,7 +42034,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__create_person",
       "name": "Create Person",
-      "description": "Create a new person (contact) in Pipedrive",
+      "description": "Create person",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -42339,7 +42059,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "pipedrive__list_organizations",
       "name": "List Organizations",
-      "description": "List organizations in the Pipedrive account",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42433,7 +42153,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "planetscale__list_organizations",
       "name": "List Organizations",
-      "description": "List organizations the service token can access",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42467,7 +42187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "planetscale__list_databases",
       "name": "List Databases",
-      "description": "List databases in an organization",
+      "description": "List databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42512,7 +42232,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "planetscale__get_database",
       "name": "Get Database",
-      "description": "Get details of a database",
+      "description": "Get database",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42535,7 +42255,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "planetscale__list_branches",
       "name": "List Branches",
-      "description": "List branches of a database",
+      "description": "List branches",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42588,7 +42308,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "planetscale__list_deploy_requests",
       "name": "List Deploy Requests",
-      "description": "List deploy requests for a database",
+      "description": "List deploy requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42723,8 +42443,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "polygon__get_aggregates",
       "name": "Get Aggregate Bars",
-      "description":
-        "Get OHLCV aggregate bars (candles) for a stock ticker over a custom date range and time window",
+      "description": "Get aggregate bars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42806,8 +42525,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "polygon__get_previous_close",
       "name": "Get Previous Close",
-      "description":
-        "Get the previous trading day's open, high, low, close, and volume for a stock ticker",
+      "description": "Get previous close",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42830,8 +42548,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "polygon__get_daily_open_close",
       "name": "Get Daily Open/Close",
-      "description":
-        "Get the open, close, high, low, volume, and pre-market/after-hours prices for a stock ticker on a specific date",
+      "description": "Get daily open/close",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42860,8 +42577,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "polygon__list_tickers",
       "name": "Search Tickers",
-      "description":
-        "Search and list ticker symbols across stocks, indices, forex, and crypto reference data",
+      "description": "Search tickers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42922,8 +42638,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "polygon__get_ticker_details",
       "name": "Get Ticker Details",
-      "description":
-        "Get reference details for a single ticker: company name, market, exchange, market cap, description, and identifiers",
+      "description": "Get ticker details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -42945,15 +42660,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "polygon__get_market_status",
       "name": "Get Market Status",
-      "description":
-        "Get the current trading status of US exchanges and market-wide sessions (open, closed, early hours, after hours) — a cheap check before quoting prices",
+      "description": "Get market status",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.polygon.io/v1/marketstatus/now" },
     }, {
       "id": "polygon__get_ticker_news",
       "name": "Get Ticker News",
-      "description":
-        "Get recent news articles for a ticker, including publisher, summary, and per-ticker sentiment insights",
+      "description": "Get ticker news",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43073,8 +42786,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "portkey__get_cost_analytics",
       "name": "Get Cost Analytics",
-      "description":
-        "Get time-series LLM spend data for a workspace over a date range, optionally filtered by model, status, or metadata",
+      "description": "Get cost analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43119,8 +42831,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__get_request_analytics",
       "name": "Get Request Analytics",
-      "description":
-        "Get time-series request volume data for a workspace over a date range to spot traffic spikes and error trends",
+      "description": "Get request analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43160,7 +42871,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__get_token_analytics",
       "name": "Get Token Analytics",
-      "description": "Get time-series token consumption data for a workspace over a date range",
+      "description": "Get token analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43195,8 +42906,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__get_user_analytics_summary",
       "name": "Get User Analytics Summary",
-      "description":
-        "Get per-user grouped analytics (request counts and cost) for a workspace over a date range",
+      "description": "Get user analytics summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43238,8 +42948,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__get_model_analytics_summary",
       "name": "Get Model Analytics Summary",
-      "description":
-        "Get per-model grouped analytics (request counts) for a workspace over a date range — spend and traffic by model",
+      "description": "Get model analytics summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43281,8 +42990,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__list_workspaces",
       "name": "List Workspaces",
-      "description":
-        "List the organization's workspaces with their IDs and slugs — feeds the workspace_slug every analytics tool needs",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43316,8 +43024,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__list_virtual_keys",
       "name": "List Virtual Keys",
-      "description":
-        "List virtual keys (managed provider credentials) with their status, usage limits, and expiry",
+      "description": "List virtual keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43351,8 +43058,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "portkey__list_log_exports",
       "name": "List Log Exports",
-      "description":
-        "List log export tasks for a workspace (Portkey exposes gateway logs via exports rather than a direct list endpoint)",
+      "description": "List log exports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43467,7 +43173,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "posthog__get_trends",
       "name": "Get Trends",
-      "description": "Retrieve event trends and analytics data",
+      "description": "Get trends",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -43496,7 +43202,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "posthog__list_feature_flags",
       "name": "List Feature Flags",
-      "description": "List all feature flags in your PostHog project",
+      "description": "List feature flags",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43536,7 +43242,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "posthog__list_persons",
       "name": "List Persons",
-      "description": "List persons/users tracked in PostHog",
+      "description": "List persons",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43582,7 +43288,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "posthog__capture_event",
       "name": "Capture Event",
-      "description": "Track a custom event in PostHog",
+      "description": "Capture event",
       "requiresWrite": true,
     }],
     "prompts": [{
@@ -43650,7 +43356,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "power-bi__list_workspaces",
       "name": "List Workspaces",
-      "description": "List Power BI workspaces (groups) the signed-in user has access to",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43674,7 +43380,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_datasets",
       "name": "List My Workspace Datasets",
-      "description": "List datasets in the signed-in user's My workspace",
+      "description": "List My workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43684,7 +43390,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_workspace_datasets",
       "name": "List Workspace Datasets",
-      "description": "List datasets in a specific Power BI workspace",
+      "description": "List workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43702,7 +43408,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_reports",
       "name": "List My Workspace Reports",
-      "description": "List reports in the signed-in user's My workspace",
+      "description": "List My workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43712,7 +43418,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_workspace_reports",
       "name": "List Workspace Reports",
-      "description": "List reports in a specific Power BI workspace",
+      "description": "List workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43730,7 +43436,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__execute_dax_query",
       "name": "Execute DAX Query",
-      "description": "Run a read-only DAX query against a dataset and return the resulting rows",
+      "description": "Run read-only DAX query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -43765,8 +43471,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__refresh_dataset",
       "name": "Refresh Dataset",
-      "description":
-        "Trigger a data refresh for a dataset in the signed-in user's My workspace (returns 202 Accepted; the refresh runs asynchronously). Datasets in shared workspaces are not supported by this endpoint",
+      "description": "Start dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -43793,8 +43498,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__refresh_workspace_dataset",
       "name": "Refresh Workspace Dataset",
-      "description":
-        "Trigger a data refresh for a dataset in a specific workspace (returns 202 Accepted; the refresh runs asynchronously)",
+      "description": "Start workspace dataset refresh",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -43826,8 +43530,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_refresh_history",
       "name": "List Refresh History",
-      "description":
-        "Get the refresh history of a dataset in the signed-in user's My workspace — the way to follow up the 202 returned by Refresh Dataset",
+      "description": "List refresh history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43852,8 +43555,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_workspace_refresh_history",
       "name": "List Workspace Refresh History",
-      "description":
-        "Get the refresh history of a dataset in a specific workspace, including status and failure error codes",
+      "description": "List workspace refresh history",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43968,7 +43670,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "productboard__list_notes",
       "name": "List Notes",
-      "description": "List customer feedback notes in the Productboard workspace",
+      "description": "List notes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44016,7 +43718,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__get_note",
       "name": "Get Note",
-      "description": "Get a Productboard note by ID",
+      "description": "Get note",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44033,7 +43735,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__create_note",
       "name": "Create Note",
-      "description": "Create a feedback note in Productboard",
+      "description": "Create note",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44050,8 +43752,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__list_entities",
       "name": "List Entities",
-      "description":
-        "List product hierarchy entities (features, components, initiatives, releases, etc.)",
+      "description": "List entities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44096,7 +43797,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__get_entity",
       "name": "Get Entity",
-      "description": "Get a hierarchy entity (e.g. a feature) by ID",
+      "description": "Get entity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44113,7 +43814,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__create_entity",
       "name": "Create Entity",
-      "description": "Create a hierarchy entity such as a feature or initiative",
+      "description": "Create entity",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44130,8 +43831,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "productboard__update_entity",
       "name": "Update Entity",
-      "description":
-        "Update fields of a hierarchy entity (e.g. rename a feature or change its status)",
+      "description": "Update entity",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -44225,7 +43925,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "qdrant__list_collections",
       "name": "List Collections",
-      "description": "List all collections in the Qdrant cluster",
+      "description": "List collections",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44243,7 +43943,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qdrant__get_collection",
       "name": "Get Collection Info",
-      "description": "Get a collection's configuration, vector parameters, and point count",
+      "description": "Get collection info",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44261,7 +43961,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qdrant__search_points",
       "name": "Search Points",
-      "description": "Search a collection for the points nearest to a query vector",
+      "description": "Search points",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -44311,7 +44011,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qdrant__upsert_points",
       "name": "Upsert Points",
-      "description": "Insert or update points (vectors with payloads) in a collection",
+      "description": "Upsert points",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -44415,8 +44115,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "qonto__get_organization",
       "name": "Get Organization",
-      "description":
-        "Retrieve the authenticated organization with its bank accounts, including IBAN, BIC, currency, status, and current/authorized balances",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44433,8 +44132,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__list_transactions",
       "name": "List Transactions",
-      "description":
-        "List transactions for one bank account (identified by bank_account_id or IBAN) with status, side, and date filtering",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44528,8 +44226,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__get_transaction",
       "name": "Get Transaction",
-      "description":
-        "Retrieve a single transaction by its UUID, optionally embedding VAT details, labels, or attachments",
+      "description": "Get transaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44551,8 +44248,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__list_transaction_attachments",
       "name": "List Transaction Attachments",
-      "description":
-        "List the attachments (receipts, invoices) of a transaction with download URLs",
+      "description": "List transaction attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44575,8 +44271,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__upload_transaction_attachment",
       "name": "Upload Transaction Attachment",
-      "description":
-        "Upload a receipt or invoice (JPEG, PNG, or PDF) onto a transaction to justify it for bookkeeping; the file is processed in the background, so the attachment is not visible immediately",
+      "description": "Start transaction attachment upload",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44610,8 +44305,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__get_attachment",
       "name": "Get Attachment",
-      "description":
-        "Retrieve an attachment by id to get a fresh download URL — URLs returned by the attachment endpoints expire after 30 minutes, so re-fetch before any delayed download",
+      "description": "Get attachment with expiring download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44621,7 +44315,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments",
+              "Attachment UUID from a transaction's attachment_ids or List Transaction Attachments. Returns a fresh download URL that expires after 30 minutes; fetch it again before any delayed download.",
             "required": true,
           },
         },
@@ -44629,8 +44323,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "qonto__list_supplier_invoices",
       "name": "List Supplier Invoices",
-      "description":
-        "List the organization's supplier invoices (accounts payable inbox) with status and payment matching; available on all price plans except Solo Basic",
+      "description": "List supplier invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44765,7 +44458,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "quickbooks__list_invoices",
       "name": "List Invoices",
-      "description": "List recent invoices in a QuickBooks Online company",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44817,7 +44510,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__list_customers",
       "name": "List Customers",
-      "description": "List customers in a QuickBooks Online company",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44848,7 +44541,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__list_accounts",
       "name": "List Accounts",
-      "description": "List the chart of accounts in a QuickBooks Online company",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44879,7 +44572,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__get_invoice",
       "name": "Get Invoice",
-      "description": "Get a QuickBooks invoice with its line items",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44910,7 +44603,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__create_invoice",
       "name": "Create Invoice",
-      "description": "Create an invoice in a QuickBooks Online company",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -44944,7 +44637,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__list_bills",
       "name": "List Bills",
-      "description": "List vendor bills (accounts payable) in a QuickBooks Online company",
+      "description": "List bills",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44994,7 +44687,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__get_bill",
       "name": "Get Bill",
-      "description": "Get a QuickBooks vendor bill with its line items",
+      "description": "Get bill",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45025,7 +44718,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__create_bill",
       "name": "Create Bill",
-      "description": "Create a vendor bill (accounts payable) in a QuickBooks Online company",
+      "description": "Create bill",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -45059,8 +44752,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__create_purchase",
       "name": "Create Purchase",
-      "description":
-        "Record an expense (cash, check, or credit card purchase) in a QuickBooks Online company",
+      "description": "Record expense",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -45094,8 +44786,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__upload_attachment",
       "name": "Upload Attachment",
-      "description":
-        "Upload a file and attach it to a QuickBooks transaction (bill, invoice, purchase, ...) via the Attachable API",
+      "description": "Upload attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -45143,8 +44834,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__run_query",
       "name": "Run Query",
-      "description":
-        "Run an arbitrary QuickBooks query against any entity (Invoice, Customer, Account, Payment, Bill, Item, ...)",
+      "description": "Run query",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45176,8 +44866,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__list_vendors",
       "name": "List Vendors",
-      "description":
-        "List vendors in a QuickBooks Online company; use this to find the VendorRef IDs that Create Bill requires",
+      "description": "List vendors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45222,8 +44911,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "quickbooks__list_purchases",
       "name": "List Purchases",
-      "description":
-        "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company, the read counterpart to Create Purchase",
+      "description": "List purchases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45348,7 +45036,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "railway__list_projects",
       "name": "List Projects",
-      "description": "List Railway projects accessible to the token",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -45370,7 +45058,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "railway__get_project",
       "name": "Get Project",
-      "description": "Get a project with its services and environments",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -45386,7 +45074,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "railway__list_deployments",
       "name": "List Deployments",
-      "description": "List deployments filtered by project, service, or environment",
+      "description": "List deployments",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -45423,7 +45111,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "railway__get_deployment",
       "name": "Get Deployment",
-      "description": "Get a deployment by ID, including redeploy/rollback eligibility",
+      "description": "Get deployment",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -45444,7 +45132,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "railway__restart_deployment",
       "name": "Restart Deployment",
-      "description": "Restart a running deployment",
+      "description": "Restart deployment",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -45463,7 +45151,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "railway__redeploy_deployment",
       "name": "Redeploy Deployment",
-      "description": "Redeploy an existing deployment (creates a new deployment from it)",
+      "description": "Redeploy deployment",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -45556,8 +45244,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "ramp__list_transactions",
       "name": "List Transactions",
-      "description":
-        "List card transactions with optional filtering by state, user, card, or date window",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45635,7 +45322,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__get_transaction",
       "name": "Get Transaction",
-      "description": "Fetch full details of a single card transaction",
+      "description": "Get transaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45657,7 +45344,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__list_cards",
       "name": "List Cards",
-      "description": "List corporate cards with optional filtering by owner or activation state",
+      "description": "List cards",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45715,8 +45402,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__list_users",
       "name": "List Users",
-      "description":
-        "List employees on the Ramp account with optional filtering by email, role, department, or status",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45772,8 +45458,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__get_user",
       "name": "Get User",
-      "description":
-        "Fetch a single employee by ID, e.g. to resolve the user_id referenced on a transaction or card",
+      "description": "Get user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45790,8 +45475,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__get_card",
       "name": "Get Card",
-      "description":
-        "Fetch a single corporate card by ID, e.g. to resolve the card_id referenced on a transaction",
+      "description": "Get card",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45808,8 +45492,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "ramp__list_reimbursements",
       "name": "List Reimbursements",
-      "description":
-        "List employee reimbursements with optional filtering by user, state, or date window",
+      "description": "List reimbursements",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45954,7 +45637,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "razorpay__list_payments",
       "name": "List Payments",
-      "description": "List payments, optionally within a Unix-timestamp window",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46006,7 +45689,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "razorpay__get_payment",
       "name": "Get Payment",
-      "description": "Get details of a payment",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46066,7 +45749,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "razorpay__get_order",
       "name": "Get Order",
-      "description": "Get details of an order",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46116,7 +45799,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "razorpay__list_settlements",
       "name": "List Settlements",
-      "description": "List settlements paid out to your bank account",
+      "description": "List settlements",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46224,7 +45907,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "redis-cloud__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List Redis Cloud Pro subscriptions in the account",
+      "description": "List Pro subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46243,13 +45926,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__list_fixed_subscriptions",
       "name": "List Essentials Subscriptions",
-      "description": "List Redis Cloud Essentials (fixed plan) subscriptions in the account",
+      "description": "List Essentials subscriptions",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.redislabs.com/v1/fixed/subscriptions" },
     }, {
       "id": "redis-cloud__list_databases",
       "name": "List Databases",
-      "description": "List databases in a Redis Cloud Pro subscription",
+      "description": "List Pro databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46258,7 +45941,8 @@ export const connectors: IntegrationConfig[] = [
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID (from List Subscriptions)",
+            "description":
+              "Subscription ID (from List Subscriptions). This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true,
           },
           "offset": {
@@ -46278,7 +45962,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__get_database",
       "name": "Get Database",
-      "description": "Get configuration and status of a database in a Pro subscription",
+      "description": "Get Pro database",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46287,7 +45971,8 @@ export const connectors: IntegrationConfig[] = [
           "subscriptionId": {
             "type": "string",
             "in": "path",
-            "description": "Subscription ID",
+            "description":
+              "Subscription ID. This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
             "required": true,
           },
           "databaseId": {
@@ -46301,7 +45986,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__list_fixed_databases",
       "name": "List Essentials Databases",
-      "description": "List databases in a Redis Cloud Essentials subscription",
+      "description": "List Essentials databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46387,7 +46072,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "render__list_services",
       "name": "List Services",
-      "description": "List services owned by the authenticated user or team",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46425,7 +46110,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "render__get_service",
       "name": "Get Service",
-      "description": "Get a service by ID",
+      "description": "Get service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46442,7 +46127,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "render__list_deploys",
       "name": "List Deploys",
-      "description": "List deploys for a service",
+      "description": "List deploys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46479,7 +46164,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "render__trigger_deploy",
       "name": "Trigger Deploy",
-      "description": "Trigger a new deploy for a service",
+      "description": "Trigger deploy",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46513,7 +46198,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "render__list_env_vars",
       "name": "List Environment Variables",
-      "description": "List all environment variables for a service",
+      "description": "List environment variables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46608,7 +46293,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "replicate__list_models",
       "name": "List Models",
-      "description": "List public models available on Replicate",
+      "description": "List public models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46629,7 +46314,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "replicate__get_model",
       "name": "Get Model",
-      "description": "Get details about a model, including its latest version ID",
+      "description": "Get model",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46652,7 +46337,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "replicate__create_prediction",
       "name": "Create Prediction",
-      "description": "Run a model by creating a prediction from a version ID and input object",
+      "description": "Create prediction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46683,7 +46368,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "replicate__get_prediction",
       "name": "Get Prediction",
-      "description": "Get the status and output of a prediction",
+      "description": "Get prediction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46700,7 +46385,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "replicate__cancel_prediction",
       "name": "Cancel Prediction",
-      "description": "Cancel a running prediction",
+      "description": "Cancel prediction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46783,7 +46468,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "resend__send_email",
       "name": "Send Email",
-      "description": "Send an email",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46811,7 +46496,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "resend__get_email",
       "name": "Get Email",
-      "description": "Get a sent email and its delivery status by ID",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46828,7 +46513,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "resend__list_domains",
       "name": "List Domains",
-      "description": "List sending domains and their verification status",
+      "description": "List domains",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46848,7 +46533,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "resend__list_audiences",
       "name": "List Audiences",
-      "description": "List audiences (contact groups)",
+      "description": "List audiences",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46858,7 +46543,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "resend__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in an audience",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46876,7 +46561,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "resend__create_contact",
       "name": "Create Contact",
-      "description": "Add a contact to an audience",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -46977,7 +46662,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "rippling__list_employees",
       "name": "List Employees",
-      "description": "List active employees in the Rippling company with pagination",
+      "description": "List active employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47000,8 +46685,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__get_employee",
       "name": "Get Employee",
-      "description":
-        "Get a single employee's record (title, department, work location, employment type) by ID",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47018,7 +46702,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__list_departments",
       "name": "List Departments",
-      "description": "List the company's departments",
+      "description": "List departments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47041,7 +46725,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__list_teams",
       "name": "List Teams",
-      "description": "List the company's teams",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47064,7 +46748,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__list_leave_requests",
       "name": "List Leave Requests",
-      "description": "List leave (time off) requests with optional status and date filtering",
+      "description": "List leave requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47090,7 +46774,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "rippling__process_leave_request",
       "name": "Process Leave Request",
-      "description": "Approve or decline a pending leave request",
+      "description": "Process pending leave request",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47099,7 +46783,8 @@ export const connectors: IntegrationConfig[] = [
           "leaveRequestId": {
             "type": "string",
             "in": "path",
-            "description": "ID of the leave request to process (from List Leave Requests)",
+            "description":
+              "ID of the leave request to process (from List Leave Requests). The leave request must be pending.",
             "required": true,
           },
           "action": {
@@ -47191,7 +46876,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "salesflare__list_contacts",
       "name": "List Contacts",
-      "description": "List or search contacts in Salesflare",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47235,7 +46920,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__get_contact",
       "name": "Get Contact",
-      "description": "Get details of a Salesflare contact",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47252,7 +46937,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in Salesflare",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47269,7 +46954,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing Salesflare contact",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -47292,7 +46977,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__list_accounts",
       "name": "List Accounts",
-      "description": "List or search accounts (companies) in Salesflare",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47316,7 +47001,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__create_account",
       "name": "Create Account",
-      "description": "Create a new account (company) in Salesflare",
+      "description": "Create account",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47331,7 +47016,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesflare__list_opportunities",
       "name": "List Opportunities",
-      "description": "List or search opportunities in Salesflare",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47453,8 +47138,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "salesforce__find_customer",
       "name": "Find Customer",
-      "description":
-        "Find customer contacts with account context for support triage. Pass a focused SOQL query when searching by email, name, phone, or account.",
+      "description": "Find customer",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47475,7 +47159,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__search_accounts",
       "name": "Search Accounts",
-      "description": "Search Salesforce accounts with business context for support or sales work",
+      "description": "Search accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47495,7 +47179,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__get_account",
       "name": "Get Account",
-      "description": "Get detailed information about a specific account",
+      "description": "Get account",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47512,7 +47196,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__search_contacts",
       "name": "Search Contacts",
-      "description": "Search contacts with account fields for CRM follow-up and support context",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47532,7 +47216,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__get_contact",
       "name": "Get Contact",
-      "description": "Get a Salesforce contact by ID",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47549,7 +47233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__list_cases",
       "name": "List Cases",
-      "description": "List Service Cloud cases for a customer, account, owner, status, or queue",
+      "description": "List cases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47570,7 +47254,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__get_case",
       "name": "Get Case",
-      "description": "Get a Service Cloud case by ID",
+      "description": "Get case",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47587,8 +47271,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__list_case_activity",
       "name": "List Case Activity",
-      "description":
-        "List case comments for support handoff, timeline review, and resolution context",
+      "description": "List case activity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47609,8 +47292,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__search_knowledge_articles",
       "name": "Search Knowledge Articles",
-      "description":
-        "Search published Salesforce Knowledge articles that can help answer or deflect a support case",
+      "description": "Search knowledge articles",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47620,7 +47302,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed.",
+              "SOQL KnowledgeArticleVersion query. Filter by Title, Summary, DataCategory, or language when needed. The default query selects published articles with PublishStatus = Online; other authorized publication states require an explicit query.",
             "default":
               "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 25",
             "exposeDefault": true,
@@ -47631,7 +47313,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__list_opportunities",
       "name": "List Opportunities",
-      "description": "List Sales Cloud opportunities for account planning and customer context",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47651,7 +47333,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__create_lead",
       "name": "Create Lead",
-      "description": "Create a new lead in Salesforce CRM",
+      "description": "Create lead",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47668,7 +47350,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__create_case",
       "name": "Create Case",
-      "description": "Create a Service Cloud case for customer support",
+      "description": "Create case",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47690,7 +47372,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__add_case_comment",
       "name": "Add Case Comment",
-      "description": "Add a support note or customer-visible comment to a Service Cloud case",
+      "description": "Add case comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47708,8 +47390,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__update_case",
       "name": "Update Case",
-      "description":
-        "Update case details, classification, ownership, or resolution fields on a Service Cloud case",
+      "description": "Update case",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -47739,7 +47420,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__describe_object",
       "name": "Describe Object",
-      "description": "Get metadata and field definitions for a Salesforce object",
+      "description": "Describe object",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47757,8 +47438,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "salesforce__run_soql_query",
       "name": "Run SOQL Query",
-      "description":
-        "Run a read-only SOQL query for expert inspection when curated tools are not enough",
+      "description": "Run read-only SOQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47880,7 +47560,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sap__list_supplier_invoices",
       "name": "List Supplier Invoices",
-      "description": "List supplier invoices from SAP S/4HANA with optional OData filters",
+      "description": "List supplier invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47911,7 +47591,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sap__get_supplier_invoice",
       "name": "Get Supplier Invoice",
-      "description": "Get a supplier invoice by invoice number and fiscal year",
+      "description": "Get supplier invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -47941,7 +47621,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sap__release_supplier_invoice",
       "name": "Release Supplier Invoice",
-      "description": "Release a blocked supplier invoice in SAP S/4HANA",
+      "description": "Release blocked supplier invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -47950,7 +47630,8 @@ export const connectors: IntegrationConfig[] = [
           "SupplierInvoice": {
             "type": "string",
             "in": "query",
-            "description": "SAP supplier invoice number",
+            "description":
+              "SAP supplier invoice number. This operation releases an invoice that is blocked.",
             "required": true,
           },
           "FiscalYear": {
@@ -48016,7 +47697,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "segment__list_sources",
       "name": "List Sources",
-      "description": "List sources in the Segment workspace",
+      "description": "List sources",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48057,7 +47738,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__get_source",
       "name": "Get Source",
-      "description": "Get a source by ID",
+      "description": "Get source",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48075,7 +47756,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__create_source",
       "name": "Create Source",
-      "description": "Create a new source in the workspace",
+      "description": "Create source",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48106,7 +47787,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__update_source",
       "name": "Update Source",
-      "description": "Update a source's name, slug, enabled state, or settings",
+      "description": "Update source",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -48130,7 +47811,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__list_destinations",
       "name": "List Destinations",
-      "description": "List destinations in the Segment workspace",
+      "description": "List destinations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48166,7 +47847,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__get_destination",
       "name": "Get Destination",
-      "description": "Get a destination by ID",
+      "description": "Get destination",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48184,7 +47865,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "segment__create_destination",
       "name": "Create Destination",
-      "description": "Connect a new destination to a source",
+      "description": "Create destination",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48291,8 +47972,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sendcloud__list_shipments",
       "name": "List Shipments",
-      "description":
-        "List shipments (parcels) in the Sendcloud account with optional filters such as order number, tracking number, or update time",
+      "description": "List shipments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48341,8 +48021,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__get_shipment",
       "name": "Get Shipment",
-      "description":
-        "Get a single shipment with its parcels, addresses, tracking numbers, and label documents",
+      "description": "Get shipment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48359,8 +48038,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__create_shipment",
       "name": "Create Shipment",
-      "description":
-        "Create and announce a shipment synchronously, generating a shipping label for one or more parcels",
+      "description": "Create shipment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48412,8 +48090,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__list_shipping_options",
       "name": "List Shipping Options",
-      "description":
-        "List available carrier shipping options (methods) for a given route and parcel, optionally with price quotes",
+      "description": "List shipping options",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -48447,8 +48124,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__get_tracking",
       "name": "Get Tracking",
-      "description":
-        "Get the current status and recent tracking events of a parcel by its carrier tracking number",
+      "description": "Get tracking",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48465,8 +48141,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendcloud__cancel_shipment",
       "name": "Cancel Shipment",
-      "description":
-        "Cancel an announced shipment and its label before carrier collection — the undo for a mis-announced (cost-incurring) label; cancellation is no longer possible once the carrier has the parcel",
+      "description": "Cancel shipment before carrier collection",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48562,7 +48237,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sendgrid__send_email",
       "name": "Send Email",
-      "description": "Send an email via the SendGrid v3 Mail Send API",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -48592,7 +48267,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__list_contacts",
       "name": "List Contacts",
-      "description": "List marketing contacts in the account",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48615,7 +48290,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__search_contacts",
       "name": "Search Contacts",
-      "description": "Search marketing contacts with an SGQL query (read-only search via POST)",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -48632,7 +48307,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__upsert_contacts",
       "name": "Upsert Contacts",
-      "description": "Add or update marketing contacts (asynchronous; returns a job_id)",
+      "description": "Start contact upsert",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -48652,7 +48327,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__list_templates",
       "name": "List Templates",
-      "description": "List transactional email templates",
+      "description": "List templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48680,8 +48355,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sendgrid__get_email_stats",
       "name": "Get Email Stats",
-      "description":
-        "Get global email statistics (delivered, opens, clicks, bounces) for a date range",
+      "description": "Get email stats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48801,8 +48475,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sentry__list_organizations",
       "name": "List Organizations",
-      "description":
-        "List Sentry organizations available to the authenticated user so agents can discover organization slugs before project or issue calls",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48825,7 +48498,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sentry__list_projects",
       "name": "List Projects",
-      "description": "List Sentry projects for an organization",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48843,7 +48516,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sentry__list_issues",
       "name": "List Issues",
-      "description": "List Sentry issues for a project",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48882,7 +48555,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sentry__get_issue",
       "name": "Get Issue",
-      "description": "Get details for a Sentry issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -48910,7 +48583,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sentry__resolve_issue",
       "name": "Resolve Issue",
-      "description": "Resolve a Sentry issue",
+      "description": "Resolve issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -48937,8 +48610,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sentry__get_latest_event",
       "name": "Get Latest Event",
-      "description":
-        "Get the latest event for a Sentry issue, including the stack trace and tags needed for root-cause analysis",
+      "description": "Get latest event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49042,8 +48714,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "serpapi__google_search",
       "name": "Google Search",
-      "description":
-        "Run a Google web search and get structured organic results, answer boxes, and related data",
+      "description": "Search Google",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49082,8 +48753,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_news",
       "name": "Google News Search",
-      "description":
-        "Search Google News and get structured article results with titles, sources, and publish dates",
+      "description": "Search Google News",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49106,8 +48776,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_maps",
       "name": "Google Maps Search",
-      "description":
-        "Search Google Maps for places and get structured local results with addresses, ratings, and coordinates",
+      "description": "Search Google Maps",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49136,8 +48805,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "serpapi__google_shopping",
       "name": "Google Shopping Search",
-      "description":
-        "Search Google Shopping and get structured product results with prices, merchants, and ratings",
+      "description": "Search Google Shopping",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49217,7 +48885,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "servicenow__list_incidents",
       "name": "List Incidents",
-      "description": "List ServiceNow incidents with optional filters",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49248,7 +48916,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__get_incident",
       "name": "Get Incident",
-      "description": "Get details of a specific incident",
+      "description": "Get incident",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49272,7 +48940,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__create_incident",
       "name": "Create Incident",
-      "description": "Create a new incident in ServiceNow",
+      "description": "Create incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49297,7 +48965,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__update_incident",
       "name": "Update Incident",
-      "description": "Update an existing incident",
+      "description": "Update incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -49326,7 +48994,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__list_interactions",
       "name": "List Interactions",
-      "description": "List ServiceNow Interaction records used for request-desk intake and routing",
+      "description": "List interactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49357,7 +49025,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__get_interaction",
       "name": "Get Interaction",
-      "description": "Get details of a specific ServiceNow Interaction record",
+      "description": "Get interaction",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49381,8 +49049,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__create_interaction",
       "name": "Create Interaction",
-      "description":
-        "Create a ServiceNow Interaction intake record before converting or linking it to an incident or request",
+      "description": "Create interaction",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49408,8 +49075,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__update_interaction",
       "name": "Update Interaction",
-      "description":
-        "Update an existing ServiceNow Interaction with routing status, parent record, notes, or comments",
+      "description": "Update interaction",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -49435,7 +49101,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__list_requests",
       "name": "List Requests",
-      "description": "List ServiceNow service request records from the sc_request table",
+      "description": "List requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49466,7 +49132,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__get_request",
       "name": "Get Request",
-      "description": "Get details of a specific ServiceNow service request",
+      "description": "Get request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49490,7 +49156,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__create_request",
       "name": "Create Request",
-      "description": "Order a Service Catalog item to create a workflow-backed ServiceNow request",
+      "description": "Order catalog item",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49521,7 +49187,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__list_request_items",
       "name": "List Request Items",
-      "description": "List ServiceNow requested item records from the sc_req_item table",
+      "description": "List request items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49552,7 +49218,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__get_request_item",
       "name": "Get Request Item",
-      "description": "Get details of a specific ServiceNow requested item",
+      "description": "Get request item",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49576,8 +49242,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__create_request_item",
       "name": "Create Request Item",
-      "description":
-        "Create a requested item table record when direct sc_req_item writes are allowed",
+      "description": "Create request item",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49585,7 +49250,8 @@ export const connectors: IntegrationConfig[] = [
         "body": {
           "request": {
             "type": "string",
-            "description": "Parent sc_request sys_id",
+            "description":
+              "Parent sc_request sys_id. This inserts a sc_req_item record directly. Use it only when direct table writes are allowed; use Order Catalog Item for the normal catalog-order workflow.",
             "required": true,
           },
           "cat_item": { "type": "string", "description": "Catalog item sys_id" },
@@ -49610,7 +49276,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__search_knowledge",
       "name": "Search Knowledge Base",
-      "description": "Search ServiceNow knowledge base articles",
+      "description": "Search knowledge base",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49640,7 +49306,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "servicenow__search_users",
       "name": "Search Users",
-      "description": "Search ServiceNow users to find the sys_id needed for assigning incidents",
+      "description": "Search users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49716,8 +49382,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sevdesk__list_contacts",
       "name": "List Contacts",
-      "description":
-        "List sevdesk contacts (organizations and persons), e.g. to find a contact id before creating an invoice",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49747,8 +49412,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__list_invoices",
       "name": "List Invoices",
-      "description":
-        "List sevdesk invoices with optional status, number, date, and contact filters",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49799,7 +49463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__get_invoice",
       "name": "Get Invoice",
-      "description": "Retrieve a single sevdesk invoice by its id",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49817,8 +49481,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__create_invoice",
       "name": "Create Invoice",
-      "description":
-        "Create a sevdesk invoice with positions via the saveInvoice factory endpoint; create with status 100 for an editable draft",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49858,8 +49521,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__upload_voucher_file",
       "name": "Upload Voucher File",
-      "description":
-        "Upload a receipt or invoice file to sevdesk; returns an internal filename that can be attached when creating a voucher",
+      "description": "Upload voucher file",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49886,8 +49548,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__list_vouchers",
       "name": "List Vouchers",
-      "description":
-        "List sevdesk accounting vouchers (receipts) with optional status, type, date, and description filters",
+      "description": "List vouchers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49931,8 +49592,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__create_voucher",
       "name": "Create Voucher",
-      "description":
-        "Create a bookable voucher (receipt) with positions via the saveVoucher factory endpoint — the step that turns a file staged with Upload Voucher File into an actual accounting record",
+      "description": "Create voucher",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -49965,7 +49625,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__get_invoice_pdf",
       "name": "Get Invoice PDF",
-      "description": "Retrieve the rendered PDF document of an invoice for sending or archiving",
+      "description": "Get invoice PDF",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -49993,8 +49653,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sevdesk__book_invoice_amount",
       "name": "Book Invoice Amount",
-      "description":
-        "Register a (partial) payment on an invoice and mark it paid when settled — closes the reconciliation loop after money arrives",
+      "description": "Record invoice payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -50124,7 +49783,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sharepoint__list_sites",
       "name": "List SharePoint Sites",
-      "description": "List all SharePoint sites the user has access to",
+      "description": "List SharePoint sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50148,7 +49807,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__get_site",
       "name": "Get Site Details",
-      "description": "Get detailed information about a specific SharePoint site",
+      "description": "Get site details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50165,7 +49824,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__list_files",
       "name": "List Files",
-      "description": "List files and folders in a SharePoint document library",
+      "description": "List files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50188,7 +49847,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__get_file",
       "name": "Get File",
-      "description": "Get file metadata and content from SharePoint",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50211,7 +49870,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__upload_file",
       "name": "Upload File",
-      "description": "Upload a file to a SharePoint document library",
+      "description": "Upload file",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -50249,8 +49908,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__search_files",
       "name": "Search Files",
-      "description":
-        "Search for files and folders in a SharePoint document library by name or content",
+      "description": "Search files",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50280,7 +49938,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sharepoint__download_file",
       "name": "Download File",
-      "description": "Download file content from a SharePoint document library",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50405,7 +50063,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sheets__list_spreadsheets",
       "name": "List Spreadsheets",
-      "description": "List recent Google Sheets spreadsheets from Drive",
+      "description": "List spreadsheets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50436,7 +50094,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__get_spreadsheet",
       "name": "Get Spreadsheet",
-      "description": "Get spreadsheet metadata including sheet names and properties",
+      "description": "Get spreadsheet",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50464,7 +50122,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__read_range",
       "name": "Read Range",
-      "description": "Read cell data from a spreadsheet range",
+      "description": "Read range",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50497,7 +50155,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__write_range",
       "name": "Write Range",
-      "description": "Write data to a spreadsheet range",
+      "description": "Write range",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -50544,7 +50202,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__create_spreadsheet",
       "name": "Create Spreadsheet",
-      "description": "Create a new spreadsheet with optional initial data",
+      "description": "Create spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50561,7 +50219,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__append_rows",
       "name": "Append Rows",
-      "description": "Append rows to a spreadsheet range",
+      "description": "Append rows",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50615,7 +50273,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__clear_range",
       "name": "Clear Range",
-      "description": "Clear values from a spreadsheet range",
+      "description": "Clear range values",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50630,7 +50288,8 @@ export const connectors: IntegrationConfig[] = [
           "range": {
             "type": "string",
             "in": "path",
-            "description": "A1 notation range to clear",
+            "description":
+              "A1 notation range to clear. This clears cell values only; it does not delete cells or remove their formatting.",
             "required": true,
           },
         },
@@ -50639,8 +50298,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__batch_update",
       "name": "Batch Update",
-      "description":
-        "Run raw Google Sheets batchUpdate requests for formatting and structural changes",
+      "description": "Update spreadsheet structure and formatting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50668,7 +50326,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__add_sheet",
       "name": "Add Sheet",
-      "description": "Add a new sheet/tab to a spreadsheet",
+      "description": "Add sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50692,7 +50350,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__delete_sheet",
       "name": "Delete Sheet",
-      "description": "Delete a sheet/tab from a spreadsheet by sheet ID",
+      "description": "Delete sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50716,7 +50374,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__rename_sheet",
       "name": "Rename Sheet",
-      "description": "Rename a sheet/tab by sheet ID",
+      "description": "Rename sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50741,7 +50399,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
-      "description": "Move an app-accessible spreadsheet file to trash",
+      "description": "Trash spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -50765,7 +50423,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__find_replace",
       "name": "Find and Replace",
-      "description": "Find and replace text in a spreadsheet or sheet",
+      "description": "Find and replace spreadsheet text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50789,7 +50447,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__copy_sheet",
       "name": "Copy Sheet",
-      "description": "Copy a sheet/tab to another spreadsheet",
+      "description": "Copy sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50820,7 +50478,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__create_chart",
       "name": "Create Chart",
-      "description": "Create an embedded chart using a Sheets API chart specification",
+      "description": "Create chart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50844,7 +50502,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sheets__set_data_validation",
       "name": "Set Data Validation",
-      "description": "Set data validation rules on a sheet range",
+      "description": "Set data validation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -50972,27 +50630,27 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "shopify__list_products",
       "name": "List Products",
-      "description": "List products in your Shopify store",
+      "description": "List products",
       "requiresWrite": false,
     }, {
       "id": "shopify__get_product",
       "name": "Get Product",
-      "description": "Get details of a specific product",
+      "description": "Get product",
       "requiresWrite": false,
     }, {
       "id": "shopify__list_orders",
       "name": "List Orders",
-      "description": "List orders from your Shopify store",
+      "description": "List orders",
       "requiresWrite": false,
     }, {
       "id": "shopify__get_order",
       "name": "Get Order",
-      "description": "Get details of a specific order",
+      "description": "Get order",
       "requiresWrite": false,
     }, {
       "id": "shopify__list_customers",
       "name": "List Customers",
-      "description": "List customers in your Shopify store",
+      "description": "List customers",
       "requiresWrite": false,
     }],
     "prompts": [{
@@ -51058,8 +50716,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "shopware__search_products",
       "name": "Search Products",
-      "description":
-        "Search products with the Admin API search criteria (term, filters, sorting, paging)",
+      "description": "Search products",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51090,7 +50747,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__search_orders",
       "name": "Search Orders",
-      "description": "Search orders with the Admin API search criteria (filters, sorting, paging)",
+      "description": "Search orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51121,8 +50778,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__search_customers",
       "name": "Search Customers",
-      "description":
-        "Search customers with the Admin API search criteria (term, filters, sorting, paging)",
+      "description": "Search customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51153,7 +50809,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__get_order",
       "name": "Get Order",
-      "description": "Get full details of a single order by ID",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51171,7 +50827,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__get_product",
       "name": "Get Product",
-      "description": "Get full details of a single product by ID",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51189,8 +50845,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__create_product",
       "name": "Create Product",
-      "description":
-        "Create a new product (requires name, productNumber, stock, taxId, and a price array)",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51207,7 +50862,7 @@ export const connectors: IntegrationConfig[] = [
           "product": {
             "type": "object",
             "description":
-              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]}',
+              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]}. Requires name, productNumber, stock, taxId, and a price array.',
             "required": true,
           },
         },
@@ -51217,7 +50872,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__update_product",
       "name": "Update Product",
-      "description": "Partially update a product, e.g. change its price, stock, or visibility",
+      "description": "Update product",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -51250,8 +50905,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shopware__transition_order_state",
       "name": "Transition Order State",
-      "description":
-        "Move an order to its next state via a state machine transition (e.g. process, complete, cancel, reopen)",
+      "description": "Transition order state",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51355,7 +51009,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "shortcut__search_stories",
       "name": "Search Stories",
-      "description": "Search Shortcut stories with the Shortcut search syntax",
+      "description": "Search stories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51409,7 +51063,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shortcut__get_story",
       "name": "Get Story",
-      "description": "Get a Shortcut story by its public ID",
+      "description": "Get story",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51426,7 +51080,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shortcut__create_story",
       "name": "Create Story",
-      "description": "Create a new story in Shortcut",
+      "description": "Create story",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51451,7 +51105,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shortcut__update_story",
       "name": "Update Story",
-      "description": "Update an existing Shortcut story",
+      "description": "Update story",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -51480,7 +51134,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shortcut__list_epics",
       "name": "List Epics",
-      "description": "List epics in the Shortcut workspace",
+      "description": "List epics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51514,13 +51168,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "shortcut__list_members",
       "name": "List Members",
-      "description": "List members of the Shortcut workspace (use member UUIDs as owner_ids)",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.app.shortcut.com/api/v3/members" },
     }, {
       "id": "shortcut__list_workflows",
       "name": "List Workflows",
-      "description": "List workflows and their states (use state IDs as workflow_state_id)",
+      "description": "List workflows",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.app.shortcut.com/api/v3/workflows" },
     }],
@@ -51665,7 +51319,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "slack__list_channels",
       "name": "List Channels",
-      "description": "Get list of Slack channels",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51706,7 +51360,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__send_message",
       "name": "Send Message",
-      "description": "Send a message to a Slack channel",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51725,7 +51379,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__update_message",
       "name": "Update Message",
-      "description": "Update a message previously sent by this integration",
+      "description": "Update message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51738,7 +51392,8 @@ export const connectors: IntegrationConfig[] = [
           },
           "ts": {
             "type": "string",
-            "description": "Timestamp (ts) of the message to update",
+            "description":
+              "Timestamp (ts) of the message to update. Only messages previously sent by this integration can be updated.",
             "required": true,
           },
           "text": {
@@ -51751,7 +51406,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__delete_message",
       "name": "Delete Message",
-      "description": "Delete a message previously sent by this integration",
+      "description": "Delete message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51764,7 +51419,8 @@ export const connectors: IntegrationConfig[] = [
           },
           "ts": {
             "type": "string",
-            "description": "Timestamp (ts) of the message to delete",
+            "description":
+              "Timestamp (ts) of the message to delete. Only messages previously sent by this integration can be deleted.",
             "required": true,
           },
         },
@@ -51772,7 +51428,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__get_messages",
       "name": "Get Messages",
-      "description": "Get recent messages from a channel",
+      "description": "Get messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51787,7 +51443,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__get_thread",
       "name": "Get Thread",
-      "description": "Get all replies in a Slack message thread",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51810,7 +51466,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "slack__list_users",
       "name": "List Users",
-      "description": "List members of the Slack workspace",
+      "description": "List users",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -51952,7 +51608,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "snowflake__run_query",
       "name": "Run Query",
-      "description": "Execute a SQL query against your Snowflake data warehouse",
+      "description": "Run query",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -51993,22 +51649,22 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "snowflake__list_databases",
       "name": "List Databases",
-      "description": "List all databases in your Snowflake account",
+      "description": "List databases",
       "requiresWrite": false,
     }, {
       "id": "snowflake__list_schemas",
       "name": "List Schemas",
-      "description": "List all schemas in a Snowflake database",
+      "description": "List schemas",
       "requiresWrite": false,
     }, {
       "id": "snowflake__list_tables",
       "name": "List Tables",
-      "description": "List all tables in a Snowflake database schema",
+      "description": "List tables",
       "requiresWrite": false,
     }, {
       "id": "snowflake__describe_table",
       "name": "Describe Table",
-      "description": "Get detailed column information for a specific table",
+      "description": "Describe table",
       "requiresWrite": false,
     }],
     "prompts": [{
@@ -52096,7 +51752,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "snyk__list_orgs",
       "name": "List Organizations",
-      "description": "List Snyk organizations the token can access",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52119,7 +51775,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "snyk__list_projects",
       "name": "List Projects",
-      "description": "List projects in a Snyk organization",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52165,7 +51821,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "snyk__get_project",
       "name": "Get Project",
-      "description": "Get a project's details in a Snyk organization",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52194,8 +51850,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "snyk__list_issues",
       "name": "List Issues",
-      "description":
-        "List security issues in a Snyk organization, optionally filtered by severity or status",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52235,7 +51890,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "snyk__get_org",
       "name": "Get Organization",
-      "description": "Get details of a Snyk organization",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52331,8 +51986,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sprites__list_sprites",
       "name": "List Sprites",
-      "description":
-        "List sprites in the organization, optionally filtered by name prefix and paginated",
+      "description": "List sprites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52359,8 +52013,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__create_sprite",
       "name": "Create Sprite",
-      "description":
-        "Create a new sprite — a persistent, hardware-isolated Linux VM that keeps its filesystem state between runs",
+      "description": "Create sprite",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52381,8 +52034,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__get_sprite",
       "name": "Get Sprite",
-      "description":
-        "Get a sprite by name, including its URL, runtime status (cold, warm, or running), and creation/activity timestamps",
+      "description": "Get sprite",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52399,8 +52051,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__delete_sprite",
       "name": "Destroy Sprite",
-      "description":
-        "Destroy a sprite by name, permanently deleting the VM and its persisted filesystem state",
+      "description": "Permanently destroy sprite and filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -52409,7 +52060,8 @@ export const connectors: IntegrationConfig[] = [
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to destroy",
+            "description":
+              "Unique name of the sprite to destroy. Destruction permanently deletes the sprite filesystem, packages and checkpoints; there is no undo.",
             "required": true,
           },
         },
@@ -52417,8 +52069,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__exec_command",
       "name": "Execute Command",
-      "description":
-        "Execute a command inside a sprite over HTTP (non-interactive) and return its output as JSON",
+      "description": "Execute command",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52434,7 +52085,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string[]",
             "in": "query",
             "description":
-              'Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. ["ls", "-la"]',
+              'Command and its arguments, one array entry per argument (sent as repeated cmd query parameters), e.g. ["ls", "-la"]. This HTTP operation is non-interactive and does not provide a TTY; use commands that do not require an interactive terminal.',
             "required": true,
           },
           "dir": {
@@ -52453,8 +52104,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__create_checkpoint",
       "name": "Create Checkpoint",
-      "description":
-        "Create a point-in-time checkpoint of a sprite (filesystem and memory) before risky operations; the response is a stream of NDJSON progress events",
+      "description": "Create checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52463,7 +52113,8 @@ export const connectors: IntegrationConfig[] = [
           "name": {
             "type": "string",
             "in": "path",
-            "description": "Unique name of the sprite to checkpoint",
+            "description":
+              "Unique name of the sprite to checkpoint. Creates a point-in-time checkpoint of sprite state and returns streaming NDJSON progress. Services may be interrupted during checkpoint creation; wait for the completion event before using the checkpoint.",
             "required": true,
           },
         },
@@ -52477,8 +52128,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__list_checkpoints",
       "name": "List Checkpoints",
-      "description":
-        "List a sprite's checkpoints with their IDs (e.g. v7), creation times, and comments — discover restore points",
+      "description": "List checkpoints",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52495,8 +52145,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "sprites__restore_checkpoint",
       "name": "Restore Checkpoint",
-      "description":
-        "Roll a sprite back to a checkpoint, replacing its current state with the snapshot; the response is a stream of NDJSON progress events",
+      "description": "Replace sprite state with checkpoint",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -52511,7 +52160,8 @@ export const connectors: IntegrationConfig[] = [
           "checkpointId": {
             "type": "string",
             "in": "path",
-            "description": "Checkpoint ID from List Checkpoints, e.g. v7",
+            "description":
+              "Checkpoint ID from List Checkpoints, e.g. v7. Restoring replaces the current filesystem with the checkpoint; changes made after that checkpoint are lost. The response contains streaming NDJSON progress; wait for completion.",
             "required": true,
           },
         },
@@ -52609,7 +52259,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "square__list_payments",
       "name": "List Payments",
-      "description": "List payments taken by the seller account",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52677,7 +52327,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "square__get_payment",
       "name": "Get Payment",
-      "description": "Get details of a payment",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52702,7 +52352,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "square__search_orders",
       "name": "Search Orders",
-      "description": "Search orders across locations (read-only search via POST)",
+      "description": "Search orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -52737,7 +52387,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "square__list_customers",
       "name": "List Customers",
-      "description": "List customer profiles",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52778,7 +52428,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "square__list_locations",
       "name": "List Locations",
-      "description": "List the seller's business locations",
+      "description": "List locations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52797,7 +52447,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "square__list_catalog",
       "name": "List Catalog",
-      "description": "List catalog objects such as items and categories",
+      "description": "List catalog",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52895,7 +52545,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "stability-ai__list_engines",
       "name": "List Engines",
-      "description": "List the generation engines (models) available to your account",
+      "description": "List engines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -52915,20 +52565,19 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stability-ai__get_balance",
       "name": "Get Balance",
-      "description": "Get the credit balance of your Stability AI account",
+      "description": "Get balance",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.stability.ai/v1/user/balance" },
     }, {
       "id": "stability-ai__get_account",
       "name": "Get Account",
-      "description": "Get profile and organization details for the account that owns the API key",
+      "description": "Get account",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.stability.ai/v1/user/account" },
     }, {
       "id": "stability-ai__text_to_image",
       "name": "Text to Image",
-      "description":
-        "Generate images from a text prompt with a Stable Diffusion engine (consumes credits)",
+      "description": "Generate image (consumes credits)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -53066,8 +52715,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "stackit__list_projects",
       "name": "List Projects",
-      "description":
-        "List STACKIT projects visible to the service account via the Resource Manager. At least one of containerParentId or member must be provided (use the service account's email as member).",
+      "description": "List projects (requires parent or member)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53077,13 +52725,13 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Identifier of the parent resource container (organization or folder); containerId or UUID",
+              "Identifier of the parent resource container (organization or folder); containerId or UUID. At least one of containerParentId or member is required.",
           },
           "member": {
             "type": "string",
             "in": "query",
             "description":
-              "Email address of the user or service account whose visible projects should be listed",
+              "Email address of the user or service account whose visible projects should be listed. At least one of containerParentId or member is required.",
           },
           "limit": {
             "type": "number",
@@ -53113,7 +52761,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__list_servers",
       "name": "List Servers",
-      "description": "List IaaS servers in a STACKIT project and region",
+      "description": "List servers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53163,8 +52811,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__get_server",
       "name": "Get Server",
-      "description":
-        "Get a single IaaS server in a project and region, including status, machine type, and availability zone",
+      "description": "Get server",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53200,8 +52847,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__list_machine_types",
       "name": "List Machine Types",
-      "description":
-        "List available machine types (server flavors) in a project and region, useful before creating or resizing servers",
+      "description": "List machine types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53241,8 +52887,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__start_server",
       "name": "Start Server",
-      "description":
-        "Boot up a stopped server, or allocate it again if it was deallocated (returns 202 Accepted; completes asynchronously)",
+      "description": "Request server start",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -53272,8 +52917,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__stop_server",
       "name": "Stop Server",
-      "description":
-        "Stop a server (returns 202 Accepted; completes asynchronously). Note: a stopped server remains on the hypervisor and is still charged full price for its attached resources",
+      "description": "Request server stop without reducing charges",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -53303,8 +52947,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stackit__reboot_server",
       "name": "Reboot Server",
-      "description":
-        "Reboot a server (returns 202 Accepted; completes asynchronously); soft reboots ask the OS to shut down gracefully, hard reboots power-cycle",
+      "description": "Request server reboot",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -53423,7 +53066,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "stripe__list_customers",
       "name": "List Customers",
-      "description": "List Stripe customers with optional filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53466,7 +53109,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stripe__get_customer",
       "name": "Get Customer",
-      "description": "Retrieve detailed information about a specific customer",
+      "description": "Get customer",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53483,7 +53126,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stripe__list_payments",
       "name": "List Payments",
-      "description": "List payment intents with optional status filtering",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53528,13 +53171,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stripe__get_balance",
       "name": "Get Balance",
-      "description": "Retrieve the current account balance",
+      "description": "Get balance",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.stripe.com/v1/balance" },
     }, {
       "id": "stripe__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List subscriptions with optional status filtering",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53588,7 +53231,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stripe__list_invoices",
       "name": "List Invoices",
-      "description": "List invoices with optional customer and status filtering",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53642,7 +53285,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "stripe__list_charges",
       "name": "List Charges",
-      "description": "List charges with optional customer or payment intent filtering",
+      "description": "List charges",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53766,44 +53409,44 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "supabase__list_tables",
       "name": "List Tables",
-      "description": "List all tables in your Supabase database",
+      "description": "List tables",
       "requiresWrite": false,
     }, {
       "id": "supabase__query_table",
       "name": "Query Table",
-      "description": "Select rows from a table with optional filters and sorting",
+      "description": "Query table",
       "requiresWrite": false,
     }, {
       "id": "supabase__insert_row",
       "name": "Insert Row",
-      "description": "Insert a new row into a table",
+      "description": "Insert row",
       "requiresWrite": true,
     }, {
       "id": "supabase__update_row",
       "name": "Update Row",
-      "description": "Update an existing row in a table",
+      "description": "Update row",
       "requiresWrite": true,
     }, {
       "id": "supabase__delete_row",
       "name": "Delete Row",
-      "description": "Delete a row from a table",
+      "description": "Delete row",
       "requiresWrite": true,
     }, {
       "id": "supabase__list_organizations",
       "name": "List Organizations",
-      "description": "List the organizations your access token can manage",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.supabase.com/v1/organizations" },
     }, {
       "id": "supabase__list_projects",
       "name": "List Projects",
-      "description": "List all Supabase projects across your organizations",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.supabase.com/v1/projects" },
     }, {
       "id": "supabase__get_project",
       "name": "Get Project",
-      "description": "Get details and status of a Supabase project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53820,7 +53463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "supabase__run_sql",
       "name": "Run SQL",
-      "description": "Run a SQL query against a project's Postgres database via the Management API",
+      "description": "Run SQL",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -53897,7 +53540,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "surveymonkey__list_surveys",
       "name": "List Surveys",
-      "description": "List surveys owned by or shared with the authenticated account",
+      "description": "List surveys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53949,8 +53592,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__get_survey_details",
       "name": "Get Survey Details",
-      "description":
-        "Get a survey's full design, including pages, questions, and answer option IDs needed to interpret responses",
+      "description": "Get survey details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53967,8 +53609,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__list_survey_responses",
       "name": "List Survey Responses",
-      "description":
-        "List full responses for a survey, including each answer keyed by question and choice IDs",
+      "description": "List survey responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53998,7 +53639,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__get_response_details",
       "name": "Get Response Details",
-      "description": "Get a single survey response with all answers expanded",
+      "description": "Get response details",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54021,8 +53662,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__get_survey_rollups",
       "name": "Get Survey Rollups",
-      "description":
-        "Get aggregated answer counts and statistics per question — summarize results without paging every response",
+      "description": "Get survey rollups",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54057,8 +53697,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__list_survey_folders",
       "name": "List Survey Folders",
-      "description":
-        "List the survey folders in the account to find folder IDs for filtering surveys",
+      "description": "List survey folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54082,8 +53721,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "surveymonkey__list_collectors",
       "name": "List Collectors",
-      "description":
-        "List the collectors (web links, email invitations, etc.) that gather responses for a survey",
+      "description": "List collectors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54194,7 +53832,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "tally__list_forms",
       "name": "List Forms",
-      "description": "List forms in the Tally account, optionally filtered by workspace",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54222,7 +53860,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tally__get_form",
       "name": "Get Form",
-      "description": "Retrieve a single form by ID with all its blocks and settings",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54239,8 +53877,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tally__list_submissions",
       "name": "List Submissions",
-      "description":
-        "List submissions of a form with their responses, filterable by status and date range",
+      "description": "List submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54289,8 +53926,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tally__get_submission",
       "name": "Get Submission",
-      "description":
-        "Retrieve a specific form submission with all its responses and the form questions",
+      "description": "Get submission",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54313,8 +53949,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tally__list_form_questions",
       "name": "List Form Questions",
-      "description":
-        "List a form's questions with their IDs, types, and response counts — lighter than parsing the full form blocks for mapping answers",
+      "description": "List form questions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54331,7 +53966,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tally__list_workspaces",
       "name": "List Workspaces",
-      "description": "List workspaces with their members and pending invites",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54416,7 +54051,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "tavily__search",
       "name": "Search",
-      "description": "Search the web and get ranked results with optional LLM answer",
+      "description": "Search web",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54466,7 +54101,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__extract",
       "name": "Extract",
-      "description": "Extract clean page content from one or more URLs",
+      "description": "Extract URL content",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54492,7 +54127,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__crawl",
       "name": "Crawl",
-      "description": "Crawl a website from a root URL and extract content from discovered pages",
+      "description": "Crawl website",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54523,7 +54158,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "tavily__map",
       "name": "Map",
-      "description": "Get a list of URLs discovered on a website without extracting content",
+      "description": "List website URLs",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -54629,7 +54264,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "teams__list_chats",
       "name": "List Chats",
-      "description": "List recent Teams chats",
+      "description": "List chats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54647,7 +54282,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__get_messages",
       "name": "Get Messages",
-      "description": "Get messages from a specific chat",
+      "description": "Get messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54671,7 +54306,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__send_message",
       "name": "Send Channel Message",
-      "description": "Send a message to a Teams channel",
+      "description": "Send channel message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54702,7 +54337,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__send_chat_message",
       "name": "Send Chat Message",
-      "description": "Send a message to a Teams 1:1 or group chat",
+      "description": "Send chat message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54727,7 +54362,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__list_teams",
       "name": "List Teams",
-      "description": "List all joined Teams",
+      "description": "List joined teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54745,7 +54380,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__list_channels",
       "name": "List Channels",
-      "description": "List channels in a specific Team",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54763,8 +54398,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "teams__create_chat",
       "name": "Create Chat",
-      "description":
-        "Create a new 1:1 or group chat so a message can be sent to someone without an existing chat",
+      "description": "Create chat",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54874,7 +54508,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "telegram__send_message",
       "name": "Send Message",
-      "description": "Send a text message to a chat, group, or channel the bot has access to",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54901,8 +54535,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "telegram__get_updates",
       "name": "Get Updates",
-      "description":
-        "Receive incoming updates (messages sent to the bot) via long polling; use it to discover chat ids",
+      "description": "Get updates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -54931,15 +54564,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "telegram__get_me",
       "name": "Get Me",
-      "description":
-        "Return basic information about the bot itself; useful for verifying the token works",
+      "description": "Get bot profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.telegram.org/bot{{auth.token}}/getMe" },
     }, {
       "id": "telegram__send_photo",
       "name": "Send Photo",
-      "description":
-        "Send a photo to a chat by passing a publicly reachable HTTP URL or an existing Telegram file_id",
+      "description": "Send photo",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -54966,7 +54597,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "telegram__edit_message_text",
       "name": "Edit Message Text",
-      "description": "Edit the text of a message previously sent by the bot",
+      "description": "Edit message text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55051,7 +54682,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "todoist__list_tasks",
       "name": "List Tasks",
-      "description": "List active tasks, optionally filtered by project",
+      "description": "List active tasks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55100,7 +54731,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "todoist__get_task",
       "name": "Get Task",
-      "description": "Get details of a specific task",
+      "description": "Get task",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55117,7 +54748,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "todoist__create_task",
       "name": "Create Task",
-      "description": "Create a new task",
+      "description": "Create task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55144,7 +54775,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "todoist__update_task",
       "name": "Update Task",
-      "description": "Update an existing task",
+      "description": "Update task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55171,7 +54802,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "todoist__close_task",
       "name": "Complete Task",
-      "description": "Mark a task as complete",
+      "description": "Complete task",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55188,7 +54819,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "todoist__list_projects",
       "name": "List Projects",
-      "description": "List the user's projects",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55289,7 +54920,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "together-ai__list_models",
       "name": "List Models",
-      "description": "List the models available on Together AI",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55308,7 +54939,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "together-ai__create_chat_completion",
       "name": "Create Chat Completion",
-      "description": "Generate a chat completion from a list of messages",
+      "description": "Generate chat completion",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55331,7 +54962,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "together-ai__create_embedding",
       "name": "Create Embedding",
-      "description": "Create an embedding vector for input text",
+      "description": "Create embedding",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55348,7 +54979,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "together-ai__generate_image",
       "name": "Generate Image",
-      "description": "Generate an image from a text prompt",
+      "description": "Generate image",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55446,27 +55077,27 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "trello__list_boards",
       "name": "List Boards",
-      "description": "List all boards accessible to the user",
+      "description": "List boards",
       "requiresWrite": false,
     }, {
       "id": "trello__list_cards",
       "name": "List Cards",
-      "description": "List cards in a board or list",
+      "description": "List cards",
       "requiresWrite": false,
     }, {
       "id": "trello__get_card",
       "name": "Get Card",
-      "description": "Get details of a specific card",
+      "description": "Get card",
       "requiresWrite": false,
     }, {
       "id": "trello__create_card",
       "name": "Create Card",
-      "description": "Create a new card in a list",
+      "description": "Create card",
       "requiresWrite": true,
     }, {
       "id": "trello__update_card",
       "name": "Update Card",
-      "description": "Update an existing card",
+      "description": "Update card",
       "requiresWrite": true,
     }],
     "prompts": [{
@@ -55518,8 +55149,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "trusted-shops__list_reviews",
       "name": "List Reviews",
-      "description":
-        "List service and product reviews for the whole account or specific channels, with filters and cursor pagination",
+      "description": "List reviews",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55603,8 +55233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__get_review",
       "name": "Get Review",
-      "description":
-        "Get a single review with full comment, customer, transaction, product, and reply details",
+      "description": "Get review",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55621,15 +55250,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__list_channels",
       "name": "List Channels",
-      "description":
-        "List all review channels (shops/touchpoints) of the account with their IDs, names, URLs, and locales",
+      "description": "List channels",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.etrusted.com/channels" },
     }, {
       "id": "trusted-shops__get_channel_rating",
       "name": "Get Channel Aggregate Rating",
-      "description":
-        "Get aggregate service review ratings for a channel across 7-day, 30-day, 90-day, 365-day, and overall periods, including star distribution",
+      "description": "Get channel aggregate rating",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55646,8 +55273,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__create_review_invites",
       "name": "Create Review Invites",
-      "description":
-        "Schedule review invite emails for one or more customers of a channel after a transaction",
+      "description": "Schedule review invitations",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55680,8 +55306,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__get_reviews_count",
       "name": "Get Reviews Count",
-      "description":
-        "Get the total number of reviews matching a filter — cheap KPI queries without paging through review lists",
+      "description": "Get reviews count",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55733,7 +55358,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "trusted-shops__reply_to_review",
       "name": "Reply to Review",
-      "description": "Save a public reply on a review — the natural follow-up to negative reviews",
+      "description": "Save public review reply",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -55850,17 +55475,17 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "twilio__send_sms",
       "name": "Send SMS",
-      "description": "Send an SMS text message to a phone number",
+      "description": "Send SMS",
       "requiresWrite": true,
     }, {
       "id": "twilio__send_whatsapp",
       "name": "Send WhatsApp Message",
-      "description": "Send a WhatsApp message to a phone number",
+      "description": "Send WhatsApp message",
       "requiresWrite": true,
     }, {
       "id": "twilio__list_messages",
       "name": "List Messages",
-      "description": "List recent SMS and WhatsApp messages",
+      "description": "List messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55920,7 +55545,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "twilio__get_message",
       "name": "Get Message",
-      "description": "Get details about a specific message",
+      "description": "Get message",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55944,7 +55569,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "twilio__list_calls",
       "name": "List Calls",
-      "description": "List recent phone calls",
+      "description": "List calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56086,7 +55711,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "typeform__list_forms",
       "name": "List Forms",
-      "description": "List forms in the account or a workspace",
+      "description": "List forms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56126,7 +55751,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "typeform__get_form",
       "name": "Get Form",
-      "description": "Get a form definition including its fields",
+      "description": "Get form",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56143,7 +55768,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "typeform__list_responses",
       "name": "List Responses",
-      "description": "List responses submitted to a form",
+      "description": "List responses",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56206,7 +55831,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "typeform__list_workspaces",
       "name": "List Workspaces",
-      "description": "List workspaces in the account",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56230,7 +55855,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "typeform__get_me",
       "name": "Get Me",
-      "description": "Get the authenticated Typeform account profile",
+      "description": "Get Typeform account profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.typeform.com/me" },
     }],
@@ -56299,8 +55924,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "unstructured__partition_document",
       "name": "Partition Document",
-      "description":
-        "Parse one local document into structured JSON elements (titles, narrative text, tables, lists) with optional chunking for RAG. The file content is uploaded as the multipart/form-data 'files' field together with the other fields; remote URLs are not accepted — fetch the file first and pass its content",
+      "description": "Extract document elements",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -56309,7 +55933,7 @@ export const connectors: IntegrationConfig[] = [
           "files": {
             "type": "string",
             "description":
-              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request",
+              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request. Remote URLs are not accepted; fetch the file first and provide its content.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -56449,8 +56073,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "unzer__get_payment",
       "name": "Get Payment",
-      "description":
-        "Retrieve a payment resource with its state, amounts (total, charged, canceled, remaining), and linked transactions",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56467,8 +56090,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__get_charge",
       "name": "Get Charge",
-      "description":
-        "Retrieve a specific charge transaction of a payment, including amount, status, and processing details",
+      "description": "Get charge",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56491,8 +56113,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__create_charge",
       "name": "Create Charge",
-      "description":
-        "Directly charge a payment type (one-step payment without prior authorization) using a payment type ID",
+      "description": "Create charge",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56532,7 +56153,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__refund_charge",
       "name": "Refund Charge",
-      "description": "Cancel (refund) a charge fully or partially, returning money to the customer",
+      "description": "Refund charge",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56565,8 +56186,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__authorize_payment",
       "name": "Authorize Payment",
-      "description":
-        "Reserve funds on a payment type without charging yet (first step of the two-step authorize-then-charge flow, e.g. charge on shipment); reservations are held for about 7 days",
+      "description": "Authorize payment (approximately seven-day hold)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56606,8 +56226,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__charge_authorization",
       "name": "Charge Authorization",
-      "description":
-        "Capture a previously authorized payment, fully (empty body) or partially (with amount) — the second step of the authorize-then-charge flow",
+      "description": "Capture authorized payment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56635,8 +56254,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "unzer__cancel_authorization",
       "name": "Cancel Authorization",
-      "description":
-        "Cancel (reverse) an uncaptured authorization fully or partially, releasing the reserved funds — distinct from refunding a charge",
+      "description": "Cancel uncaptured authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -56645,7 +56263,8 @@ export const connectors: IntegrationConfig[] = [
           "paymentId": {
             "type": "string",
             "in": "path",
-            "description": "Payment ID of the authorized payment (e.g. s-pay-1)",
+            "description":
+              "Payment ID of the authorized payment (e.g. s-pay-1). This reverses an uncaptured authorization fully or partially, releasing reserved funds; it does not refund captured charges.",
             "required": true,
           },
         },
@@ -56733,7 +56352,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "vercel__list_projects",
       "name": "List Projects",
-      "description": "List projects of the authenticated user or team",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56783,7 +56402,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "vercel__get_project",
       "name": "Get Project",
-      "description": "Get a project by ID or name",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56810,7 +56429,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "vercel__list_deployments",
       "name": "List Deployments",
-      "description": "List deployments under the authenticated user or team",
+      "description": "List deployments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56881,7 +56500,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "vercel__get_deployment",
       "name": "Get Deployment",
-      "description": "Get a deployment by ID or hostname URL",
+      "description": "Get deployment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56908,8 +56527,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "vercel__list_env_vars",
       "name": "List Environment Variables",
-      "description":
-        "List the environment variables of a project (values stay encrypted unless decrypt is set)",
+      "description": "List environment variables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57016,8 +56634,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "voyage-ai__create_embeddings",
       "name": "Create Embeddings",
-      "description":
-        "Create embedding vectors for one or more texts — use input_type to optimize for retrieval queries vs documents",
+      "description": "Create embeddings",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57058,8 +56675,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "voyage-ai__rerank_documents",
       "name": "Rerank Documents",
-      "description":
-        "Rank candidate documents by relevance to a query with a Voyage reranker — use as a precision pass after vector search",
+      "description": "Rerank documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57099,8 +56715,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "voyage-ai__create_contextualized_embeddings",
       "name": "Create Contextualized Embeddings",
-      "description":
-        "Embed document chunks with document-level context (voyage-context-3) so each chunk vector also captures the surrounding document",
+      "description": "Create contextualized embeddings",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57136,8 +56751,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "voyage-ai__create_multimodal_embeddings",
       "name": "Create Multimodal Embeddings",
-      "description":
-        "Embed interleaved text and images into one vector space (voyage-multimodal models) for visual RAG over screenshots, slides, and PDFs",
+      "description": "Create multimodal embeddings",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57251,7 +56865,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "weaviate__get_schema",
       "name": "Get Schema",
-      "description": "List all collections (classes) and their property definitions",
+      "description": "Get schema",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57270,8 +56884,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
-      "description":
-        "Run a GraphQL query against the cluster (Get, Aggregate, Explore, including nearText/nearVector search)",
+      "description": "Run GraphQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -57288,7 +56901,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "weaviate__list_objects",
       "name": "List Objects",
-      "description": "List objects, optionally filtered to one collection (class)",
+      "description": "List objects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57315,7 +56928,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "weaviate__get_object",
       "name": "Get Object",
-      "description": "Get a single object by collection (class) and ID",
+      "description": "Get object",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57333,7 +56946,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "weaviate__create_object",
       "name": "Create Object",
-      "description": "Create a new object in a collection (class)",
+      "description": "Create object",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57447,7 +57060,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "webex__list_rooms",
       "name": "List Rooms",
-      "description": "List Webex rooms (spaces) the authenticated user belongs to",
+      "description": "List rooms",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57491,7 +57104,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "webex__list_messages",
       "name": "List Messages",
-      "description": "List recent messages in a Webex room",
+      "description": "List messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57519,7 +57132,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "webex__create_message",
       "name": "Send Message",
-      "description": "Send a message to a Webex room or directly to a person",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57543,13 +57156,13 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "webex__get_my_details",
       "name": "Get My Details",
-      "description": "Get the authenticated Webex user's profile",
+      "description": "Get my details",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://webexapis.com/v1/people/me" },
     }, {
       "id": "webex__list_people",
       "name": "List People",
-      "description": "Look up people in the organization by email or display name",
+      "description": "Find people by email or name",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57661,8 +57274,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "whatsapp__send_text_message",
       "name": "Send Text Message",
-      "description":
-        "Send a free-form text message to a WhatsApp user (only within 24 hours of their last message; otherwise use a template)",
+      "description": "Send text within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57703,8 +57315,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__send_template_message",
       "name": "Send Template Message",
-      "description":
-        "Send an approved message template to a WhatsApp user; required to start conversations outside the 24-hour customer service window",
+      "description": "Send template to start conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57740,8 +57351,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__send_media_message",
       "name": "Send Media Message",
-      "description":
-        "Send an image, document, video, or audio message to a WhatsApp user by public URL or uploaded media ID (subject to the same 24-hour window as text messages)",
+      "description": "Send media within 24-hour window",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57796,8 +57406,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__get_media_url",
       "name": "Get Media URL",
-      "description":
-        "Get a short-lived download URL and metadata for a media ID, e.g. to retrieve an image or document a customer sent inbound",
+      "description": "Get temporary media download URL",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57820,8 +57429,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__update_business_profile",
       "name": "Update Business Profile",
-      "description":
-        "Update the business profile (about, address, description, email, websites, vertical) shown to customers for a business phone number",
+      "description": "Update business profile",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57864,8 +57472,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__mark_message_read",
       "name": "Mark Message as Read",
-      "description":
-        "Mark an inbound WhatsApp message as read so the customer sees read receipts after the agent processes it",
+      "description": "Mark message as read",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -57887,7 +57494,8 @@ export const connectors: IntegrationConfig[] = [
           "status": { "type": "string", "description": "Status to set", "default": "read" },
           "message_id": {
             "type": "string",
-            "description": "WhatsApp message ID (wamid...) of the inbound message to mark as read",
+            "description":
+              "WhatsApp message ID (wamid...) of the inbound message to mark as read. This marks an inbound message as read and sends a read receipt visible to the customer.",
             "required": true,
           },
         },
@@ -57895,8 +57503,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__get_business_profile",
       "name": "Get Business Profile",
-      "description":
-        "Read the business profile (about, address, email, websites) shown to customers for a business phone number",
+      "description": "Get business profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57920,8 +57527,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "whatsapp__list_message_templates",
       "name": "List Message Templates",
-      "description":
-        "List the message templates on a WhatsApp Business Account so an agent can pick an approved template name and language before sending",
+      "description": "List message templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58047,7 +57653,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "wix__query_products",
       "name": "Query Products",
-      "description": "Query Wix Stores catalog products with filtering, sorting, and paging",
+      "description": "Query products",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -58068,7 +57674,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__search_orders",
       "name": "Search Orders",
-      "description": "Search Wix eCommerce orders with filtering, sorting, and cursor paging",
+      "description": "Search orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -58085,8 +57691,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__get_order",
       "name": "Get Order",
-      "description":
-        "Get full details of a single eCommerce order, including line items, totals, and buyer info",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58104,8 +57709,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__query_contacts",
       "name": "Query Contacts",
-      "description":
-        "Query CRM contacts with filtering, sorting, and paging (up to 1000 per request)",
+      "description": "Query contacts (1000 maximum per request)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -58114,7 +57718,7 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "object",
             "description":
-              'Query options, e.g. {"filter":{"info.name.last":{"$eq":"Smith"}},"paging":{"limit":25,"offset":0}}',
+              'Query options, e.g. {"filter":{"info.name.last":{"$eq":"Smith"}},"paging":{"limit":25,"offset":0}}. query.paging.limit must not exceed 1000 contacts per request.',
           },
         },
         "response": { "transform": "contacts" },
@@ -58122,8 +57726,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__create_fulfillment",
       "name": "Create Fulfillment",
-      "description":
-        "Mark eCommerce order line items as fulfilled, optionally with shipping tracking info",
+      "description": "Mark order items as fulfilled",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -58140,7 +57743,7 @@ export const connectors: IntegrationConfig[] = [
           "fulfillment": {
             "type": "object",
             "description":
-              'Fulfillment to create, e.g. {"lineItems":[{"id":"<line item id>","quantity":1}],"trackingInfo":{"trackingNumber":"...","shippingProvider":"ups"}} (lineItems required; line item IDs come from Get Order)',
+              'Fulfillment to create, e.g. {"lineItems":[{"id":"<line item id>","quantity":1}],"trackingInfo":{"trackingNumber":"...","shippingProvider":"ups"}} (lineItems required; line item IDs come from Get Order). Creating this fulfillment marks the included order line items as fulfilled.',
             "required": true,
           },
         },
@@ -58148,8 +57751,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__create_contact",
       "name": "Create Contact",
-      "description":
-        "Create a new CRM contact with at least a name, email address, or phone number",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -58172,7 +57774,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "wix__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the Wix Stores catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -58285,7 +57887,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "woocommerce__list_orders",
       "name": "List Orders",
-      "description": "List orders in the store with optional status, search, and date filters",
+      "description": "List orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58326,8 +57928,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__get_order",
       "name": "Get Order",
-      "description":
-        "Retrieve full details of a specific order, including line items, totals, and shipping",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58344,8 +57945,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__update_order_status",
       "name": "Update Order Status",
-      "description":
-        "Update an order's status (e.g. mark as completed) and optionally add a customer note",
+      "description": "Update order status",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -58374,7 +57974,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__list_products",
       "name": "List Products",
-      "description": "List products in the catalog with optional search, status, and SKU filters",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58413,7 +58013,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the store catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -58457,8 +58057,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__get_product",
       "name": "Get Product",
-      "description":
-        "Retrieve full details of a specific product, including price, stock, and categories",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58475,7 +58074,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__update_product",
       "name": "Update Product",
-      "description": "Update an existing product's price, stock, status, or descriptions",
+      "description": "Update product",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -58525,8 +58124,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__get_sales_report",
       "name": "Get Sales Report",
-      "description":
-        "Get a sales report with totals for revenue, orders, items, and customers over a period or date range",
+      "description": "Get sales report",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58553,7 +58151,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "woocommerce__list_customers",
       "name": "List Customers",
-      "description": "List store customers with optional email, role, and search filters",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58677,7 +58275,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "workable__list_jobs",
       "name": "List Jobs",
-      "description": "List jobs in the Workable account with optional state filtering",
+      "description": "List jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58743,7 +58341,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__get_job",
       "name": "Get Job",
-      "description": "Get the full details of a job by its shortcode",
+      "description": "Get job",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58766,8 +58364,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__list_candidates",
       "name": "List Candidates",
-      "description":
-        "List candidates account-wide or for a specific job (filter by job shortcode, stage, or email)",
+      "description": "List candidates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58838,8 +58435,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__get_candidate",
       "name": "Get Candidate",
-      "description":
-        "Get the full profile of a candidate by ID, including stage, answers, and attachments",
+      "description": "Get candidate",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58862,8 +58458,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__list_members",
       "name": "List Members",
-      "description":
-        "List account members to find the member IDs required by the comment and move-candidate tools",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58919,8 +58514,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__list_stages",
       "name": "List Stages",
-      "description":
-        "List the recruitment pipeline stages to find stage slugs for candidate filtering and moves",
+      "description": "List stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58937,7 +58531,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__create_candidate",
       "name": "Create Candidate",
-      "description": "Add a candidate to a job, either as sourced or as having applied",
+      "description": "Create candidate",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -58978,7 +58572,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__create_candidate_comment",
       "name": "Create Candidate Comment",
-      "description": "Post a comment on a candidate's timeline on behalf of a team member",
+      "description": "Create candidate comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59015,7 +58609,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "workable__move_candidate",
       "name": "Move Candidate",
-      "description": "Move a candidate to another pipeline stage on behalf of a team member",
+      "description": "Move candidate",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59136,8 +58730,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "xentral__list_sales_orders",
       "name": "List Sales Orders",
-      "description":
-        "List sales orders in the Xentral instance with optional filtering and pagination",
+      "description": "List sales orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59179,7 +58772,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__get_sales_order",
       "name": "Get Sales Order",
-      "description": "Get a single sales order with its positions and financial details",
+      "description": "Get sales order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59197,8 +58790,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__list_products",
       "name": "List Products",
-      "description":
-        "List products in the Xentral instance (v2 API) with optional filtering and pagination",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59234,8 +58826,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__list_customers",
       "name": "List Customers",
-      "description":
-        "List customers in the Xentral instance (v2 API) with optional filtering and pagination",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59271,8 +58862,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__create_sales_order",
       "name": "Create Sales Order",
-      "description":
-        "Import a new sales order into Xentral with customer, financials, delivery, and order positions",
+      "description": "Create sales order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59323,8 +58913,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__get_product",
       "name": "Get Product",
-      "description":
-        "Get a single product with full details (v2 API) after finding it via List Products",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59342,8 +58931,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xentral__get_customer",
       "name": "Get Customer",
-      "description":
-        "Get a single customer record with full details including addresses (v2 API); useful before creating a sales order",
+      "description": "Get customer",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59454,8 +59042,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "xero__list_connections",
       "name": "List Connections",
-      "description":
-        "List Xero tenants (organisations) connected to this token — run this first to discover the tenantId used by every other tool",
+      "description": "List connections",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59475,7 +59062,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_invoices",
       "name": "List Invoices",
-      "description": "List invoices in a Xero organisation",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59537,7 +59124,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__get_invoice",
       "name": "Get Invoice",
-      "description": "Get a Xero sales invoice or supplier bill with its line items",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59569,7 +59156,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__create_invoice",
       "name": "Create Invoice",
-      "description": "Create an invoice in a Xero organisation",
+      "description": "Create invoice",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59604,8 +59191,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_bills",
       "name": "List Bills",
-      "description":
-        "List supplier bills (accounts payable) in a Xero organisation — bills are Invoices with Type ACCPAY",
+      "description": "List bills",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59669,8 +59255,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__create_bill",
       "name": "Create Bill",
-      "description":
-        'Create a supplier bill (accounts payable) in a Xero organisation — a bill is an Invoice with Type "ACCPAY"',
+      "description": "Create bill",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59705,8 +59290,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__create_invoice_attachment",
       "name": "Create Invoice Attachment",
-      "description":
-        "Attach a file to a Xero sales invoice or supplier bill (max 10 MB per attachment)",
+      "description": "Create invoice attachment (25 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -59743,7 +59327,7 @@ export const connectors: IntegrationConfig[] = [
           "content": {
             "type": "string",
             "description":
-              "Base64-encoded file content; the decoded bytes are sent as the raw request body",
+              "Base64-encoded file content; the decoded bytes are sent as the raw request body. The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
             "required": true,
             "encoding": "base64",
           },
@@ -59755,7 +59339,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__create_purchase_order",
       "name": "Create Purchase Order",
-      "description": "Create a purchase order in a Xero organisation",
+      "description": "Create purchase order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -59790,7 +59374,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in a Xero organisation",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59828,7 +59412,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_accounts",
       "name": "List Accounts",
-      "description": "List the chart of accounts in a Xero organisation",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59859,8 +59443,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_invoice_attachments",
       "name": "List Invoice Attachments",
-      "description":
-        "List the attachments on an invoice or bill (AttachmentID, FileName, MimeType, ContentLength) — see what Create Invoice Attachment uploaded",
+      "description": "List invoice attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -59892,8 +59475,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "xero__list_purchase_orders",
       "name": "List Purchase Orders",
-      "description":
-        "List purchase orders in a Xero organisation — the read counterpart to Create Purchase Order",
+      "description": "List purchase orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60019,7 +59601,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "zendesk__list_tickets",
       "name": "List Tickets",
-      "description": "List Zendesk support tickets",
+      "description": "List tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60049,7 +59631,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zendesk__get_ticket",
       "name": "Get Ticket",
-      "description": "Get a Zendesk ticket by ID",
+      "description": "Get ticket",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60073,7 +59655,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zendesk__search_tickets",
       "name": "Search Tickets",
-      "description": "Search Zendesk tickets with the Zendesk search API",
+      "description": "Search tickets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60097,7 +59679,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zendesk__update_ticket",
       "name": "Update Ticket",
-      "description": "Update a Zendesk ticket status, priority, tags, or comment",
+      "description": "Update ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -60128,7 +59710,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zendesk__create_ticket",
       "name": "Create Ticket",
-      "description": "Create a new Zendesk support ticket",
+      "description": "Create ticket",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -60154,7 +59736,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zendesk__list_ticket_comments",
       "name": "List Ticket Comments",
-      "description": "List comments on a Zendesk ticket",
+      "description": "List ticket comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60246,8 +59828,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "zoho-crm__list_records",
       "name": "List Records",
-      "description":
-        "List records from a Zoho CRM module such as Leads, Contacts, Deals, or Accounts",
+      "description": "List records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60294,7 +59875,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__get_record",
       "name": "Get Record",
-      "description": "Get a single Zoho CRM record by ID from any module",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60323,8 +59904,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__search_records",
       "name": "Search Records",
-      "description":
-        "Search records in a Zoho CRM module by criteria, email, phone, or a free-text word",
+      "description": "Search records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60380,8 +59960,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__get_fields",
       "name": "Get Fields Metadata",
-      "description":
-        "List the field metadata of a Zoho CRM module so agents can discover the field API names required by list, search, and write tools",
+      "description": "Get fields metadata",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60400,8 +59979,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__coql_query",
       "name": "Run COQL Query",
-      "description":
-        "Run a CRM Object Query Language (COQL) SELECT query for filtered reads, joins, and aggregation that the list and search tools cannot express",
+      "description": "Run COQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -60419,8 +59997,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__create_records",
       "name": "Create Records",
-      "description":
-        "Create up to 100 records in a Zoho CRM module (requires the ZohoCRM.modules.CREATE scope)",
+      "description": "Create up to 100 CRM records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -60437,7 +60014,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}]',
+              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}]. At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.',
             "required": true,
           },
         },
@@ -60446,8 +60023,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__update_record",
       "name": "Update Record",
-      "description":
-        "Update fields on an existing Zoho CRM record (requires the ZohoCRM.modules.UPDATE scope)",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -60470,7 +60046,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}]',
+              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}]. Requires the ZohoCRM.modules.UPDATE OAuth scope.',
             "required": true,
           },
         },
@@ -60571,7 +60147,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "zoom__list_meetings",
       "name": "List Meetings",
-      "description": "List scheduled or upcoming Zoom meetings for the authenticated user",
+      "description": "List meetings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60627,7 +60203,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoom__get_meeting",
       "name": "Get Meeting",
-      "description": "Get details of a Zoom meeting by ID",
+      "description": "Get meeting",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60644,7 +60220,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoom__create_meeting",
       "name": "Create Meeting",
-      "description": "Schedule a new Zoom meeting for the authenticated user",
+      "description": "Create meeting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -60685,7 +60261,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoom__list_recordings",
       "name": "List Recordings",
-      "description": "List cloud recordings for the authenticated user",
+      "description": "List recordings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60723,7 +60299,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoom__get_me",
       "name": "Get My Profile",
-      "description": "Get the authenticated Zoom user's profile",
+      "description": "Get my profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.zoom.us/v2/users/me" },
     }],

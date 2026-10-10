@@ -28,7 +28,7 @@
     {
       "id": "circleci__list_pipelines",
       "name": "List Pipelines",
-      "description": "List recent pipelines for a project",
+      "description": "List pipelines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -92,7 +92,7 @@
     {
       "id": "circleci__get_pipeline",
       "name": "Get Pipeline",
-      "description": "Get a pipeline by its ID",
+      "description": "Get pipeline",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "circleci__trigger_pipeline",
       "name": "Trigger Pipeline",
-      "description": "Trigger a new pipeline for a project on a branch or tag",
+      "description": "Trigger pipeline",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -142,7 +142,7 @@
     {
       "id": "circleci__list_workflows",
       "name": "List Pipeline Workflows",
-      "description": "List the workflows of a pipeline",
+      "description": "List pipeline workflows",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -200,7 +200,7 @@
     {
       "id": "circleci__get_workflow",
       "name": "Get Workflow",
-      "description": "Get a workflow by its ID",
+      "description": "Get workflow",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -218,7 +218,7 @@
     {
       "id": "circleci__list_workflow_jobs",
       "name": "List Workflow Jobs",
-      "description": "List the jobs of a workflow with their statuses",
+      "description": "List workflow jobs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -236,7 +236,7 @@
     {
       "id": "circleci__cancel_workflow",
       "name": "Cancel Workflow",
-      "description": "Cancel a running workflow",
+      "description": "Cancel workflow",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

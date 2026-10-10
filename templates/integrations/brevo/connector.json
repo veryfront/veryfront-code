@@ -28,7 +28,7 @@
     {
       "id": "brevo__send_email",
       "name": "Send Email",
-      "description": "Send a transactional email",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -67,7 +67,7 @@
     {
       "id": "brevo__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts in the account",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -118,7 +118,7 @@
     {
       "id": "brevo__get_contact",
       "name": "Get Contact",
-      "description": "Get a contact by email address or numeric ID",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -136,7 +136,7 @@
     {
       "id": "brevo__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -166,7 +166,7 @@
     {
       "id": "brevo__list_lists",
       "name": "List Lists",
-      "description": "List contact lists",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -190,7 +190,7 @@
     {
       "id": "brevo__list_email_campaigns",
       "name": "List Email Campaigns",
-      "description": "List email campaigns with status and scheduling info",
+      "description": "List email campaigns",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

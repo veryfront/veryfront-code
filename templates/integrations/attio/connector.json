@@ -42,7 +42,7 @@
     {
       "id": "attio__list_objects",
       "name": "List Objects",
-      "description": "List object types in the Attio workspace (people, companies, deals, and custom objects)",
+      "description": "List objects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -55,7 +55,7 @@
     {
       "id": "attio__query_records",
       "name": "Query Records",
-      "description": "Query records of an object with optional filters and sorts",
+      "description": "Query records",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -107,7 +107,7 @@
     {
       "id": "attio__get_record",
       "name": "Get Record",
-      "description": "Get a single record of an object by ID",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -134,7 +134,7 @@
     {
       "id": "attio__create_record",
       "name": "Create Record",
-      "description": "Create a new record of an object (person, company, deal, or custom object)",
+      "description": "Create record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -162,7 +162,7 @@
     {
       "id": "attio__update_record",
       "name": "Update Record",
-      "description": "Update attribute values on an existing record",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -196,7 +196,7 @@
     {
       "id": "attio__list_lists",
       "name": "List Lists",
-      "description": "List all lists in the Attio workspace",
+      "description": "List lists",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

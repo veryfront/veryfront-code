@@ -41,7 +41,7 @@
     {
       "id": "google-chat__list_spaces",
       "name": "List Spaces",
-      "description": "List Google Chat spaces (rooms and direct messages) the authenticated user is a member of",
+      "description": "List spaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -84,7 +84,7 @@
     {
       "id": "google-chat__get_space",
       "name": "Get Space",
-      "description": "Get details of a Google Chat space",
+      "description": "Get space",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -102,7 +102,7 @@
     {
       "id": "google-chat__list_messages",
       "name": "List Messages",
-      "description": "List messages in a Google Chat space, including messages in threads",
+      "description": "List messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "google-chat__get_message",
       "name": "Get Message",
-      "description": "Get details of a specific Google Chat message",
+      "description": "Get message",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -181,7 +181,7 @@
     {
       "id": "google-chat__send_message",
       "name": "Send Message",
-      "description": "Send a text message to a Google Chat space",
+      "description": "Send message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

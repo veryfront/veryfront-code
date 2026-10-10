@@ -29,7 +29,7 @@
     {
       "id": "portkey__get_cost_analytics",
       "name": "Get Cost Analytics",
-      "description": "Get time-series LLM spend data for a workspace over a date range, optionally filtered by model, status, or metadata",
+      "description": "Get cost analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -74,7 +74,7 @@
     {
       "id": "portkey__get_request_analytics",
       "name": "Get Request Analytics",
-      "description": "Get time-series request volume data for a workspace over a date range to spot traffic spikes and error trends",
+      "description": "Get request analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "portkey__get_token_analytics",
       "name": "Get Token Analytics",
-      "description": "Get time-series token consumption data for a workspace over a date range",
+      "description": "Get token analytics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -149,7 +149,7 @@
     {
       "id": "portkey__get_user_analytics_summary",
       "name": "Get User Analytics Summary",
-      "description": "Get per-user grouped analytics (request counts and cost) for a workspace over a date range",
+      "description": "Get user analytics summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -194,7 +194,7 @@
     {
       "id": "portkey__get_model_analytics_summary",
       "name": "Get Model Analytics Summary",
-      "description": "Get per-model grouped analytics (request counts) for a workspace over a date range — spend and traffic by model",
+      "description": "Get model analytics summary",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -239,7 +239,7 @@
     {
       "id": "portkey__list_workspaces",
       "name": "List Workspaces",
-      "description": "List the organization's workspaces with their IDs and slugs — feeds the workspace_slug every analytics tool needs",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -277,7 +277,7 @@
     {
       "id": "portkey__list_virtual_keys",
       "name": "List Virtual Keys",
-      "description": "List virtual keys (managed provider credentials) with their status, usage limits, and expiry",
+      "description": "List virtual keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -316,7 +316,7 @@
     {
       "id": "portkey__list_log_exports",
       "name": "List Log Exports",
-      "description": "List log export tasks for a workspace (Portkey exposes gateway logs via exports rather than a direct list endpoint)",
+      "description": "List log exports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

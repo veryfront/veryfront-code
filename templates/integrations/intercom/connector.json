@@ -38,7 +38,7 @@
     {
       "id": "intercom__list_contacts",
       "name": "List Contacts",
-      "description": "List contacts (users and leads) in the Intercom workspace",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "intercom__search_contacts",
       "name": "Search Contacts",
-      "description": "Search Intercom contacts with a field/operator/value query",
+      "description": "Search contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -103,7 +103,7 @@
     {
       "id": "intercom__get_contact",
       "name": "Get Contact",
-      "description": "Get a single Intercom contact by ID",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "intercom__list_conversations",
       "name": "List Conversations",
-      "description": "List conversations in the Intercom workspace, newest first",
+      "description": "List conversations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -144,7 +144,7 @@
     {
       "id": "intercom__reply_to_conversation",
       "name": "Reply To Conversation",
-      "description": "Reply to an Intercom conversation as an admin (comment or internal note)",
+      "description": "Reply to conversation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -186,7 +186,7 @@
     {
       "id": "intercom__list_articles",
       "name": "List Articles",
-      "description": "List help center articles in the Intercom workspace",
+      "description": "List articles",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

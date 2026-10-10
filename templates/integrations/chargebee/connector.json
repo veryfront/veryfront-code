@@ -43,7 +43,7 @@
     {
       "id": "chargebee__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List subscriptions with optional status or customer filtering",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -91,7 +91,7 @@
     {
       "id": "chargebee__get_subscription",
       "name": "Get Subscription",
-      "description": "Retrieve a single subscription with its plan, status, and billing details",
+      "description": "Get subscription",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -115,7 +115,7 @@
     {
       "id": "chargebee__list_customers",
       "name": "List Customers",
-      "description": "List customers with optional email filtering",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -158,7 +158,7 @@
     {
       "id": "chargebee__list_invoices",
       "name": "List Invoices",
-      "description": "List invoices with optional status, customer, or subscription filtering",
+      "description": "List invoices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -211,7 +211,7 @@
     {
       "id": "chargebee__list_item_prices",
       "name": "List Item Prices",
-      "description": "List item prices (plans, addons, charges) in the catalog to find IDs and pricing for subscriptions",
+      "description": "List item prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -269,7 +269,7 @@
     {
       "id": "chargebee__get_invoice",
       "name": "Get Invoice",
-      "description": "Retrieve a single invoice with its line items, amounts due, and linked payments",
+      "description": "Get invoice",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -293,7 +293,7 @@
     {
       "id": "chargebee__list_transactions",
       "name": "List Transactions",
-      "description": "List payment-level transactions (payments, refunds, authorizations) behind invoices, e.g. to review failed payments",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -351,7 +351,7 @@
     {
       "id": "chargebee__create_customer",
       "name": "Create Customer",
-      "description": "Create a new customer record in Chargebee",
+      "description": "Create customer",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

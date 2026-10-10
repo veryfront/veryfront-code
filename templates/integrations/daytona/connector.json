@@ -30,7 +30,7 @@
     {
       "id": "daytona__list_sandboxes",
       "name": "List Sandboxes",
-      "description": "List sandboxes in the organization with optional name, label, and state filtering",
+      "description": "List sandboxes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -86,7 +86,7 @@
     {
       "id": "daytona__create_sandbox",
       "name": "Create Sandbox",
-      "description": "Create a new sandbox, optionally from a snapshot and with custom resources (starts billable compute)",
+      "description": "Create billable sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -126,7 +126,7 @@
           },
           "autoStopInterval": {
             "type": "number",
-            "description": "Auto-stop interval in minutes (0 disables auto-stop)"
+            "description": "Auto-stop interval in minutes. The usual default is 15 minutes of inactivity; 0 disables auto-stop. Pause-capable classes may default to auto-pause instead, so check the sandbox lifecycle settings."
           },
           "public": {
             "type": "boolean",
@@ -138,7 +138,7 @@
     {
       "id": "daytona__get_sandbox",
       "name": "Get Sandbox",
-      "description": "Get sandbox details by ID or name, including state, snapshot, resources, and timestamps",
+      "description": "Get sandbox",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -161,7 +161,7 @@
     {
       "id": "daytona__delete_sandbox",
       "name": "Delete Sandbox",
-      "description": "Delete a sandbox by ID or name, discarding its state and filesystem",
+      "description": "Delete sandbox and its filesystem",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -170,7 +170,7 @@
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "ID or name of the sandbox to delete",
+            "description": "ID or name of the sandbox to delete. Deleting removes this sandbox and its local filesystem; unsnapshotted local state is lost. Save needed files or create a snapshot first. Independent snapshots are preserved and remain billed for storage.",
             "required": true
           }
         }
@@ -179,7 +179,7 @@
     {
       "id": "daytona__execute_command",
       "name": "Execute Command",
-      "description": "Execute a shell command inside a running sandbox via the toolbox and return its exit code and output (legacy REST route; Daytona's current toolbox API is SDK-first)",
+      "description": "Execute command",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -213,7 +213,7 @@
     {
       "id": "daytona__start_sandbox",
       "name": "Start Sandbox",
-      "description": "Start a stopped sandbox — required before Execute Command, since sandboxes auto-stop after the autoStopInterval (15 minutes by default)",
+      "description": "Start sandbox",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -222,7 +222,7 @@
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description": "Sandbox ID or name. Check the sandbox lifecycle settings: the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead. Recheck the started state before executing after a delay.",
             "required": true
           }
         }
@@ -231,7 +231,7 @@
     {
       "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
-      "description": "Stop a running sandbox to pause billable compute without destroying its state",
+      "description": "Stop sandbox; clear memory",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -240,7 +240,7 @@
           "sandboxIdOrName": {
             "type": "string",
             "in": "path",
-            "description": "Sandbox ID or name",
+            "description": "Sandbox ID or name. Stopping clears memory and running processes. Regular container and VM files are retained for restart, but GPU and ephemeral sandboxes lose their local filesystem on stop. Compute charges continue during stopping and end once stopped or deleted; reserved disk remains billed while stopped. Pause is a separate operation that preserves VM memory; containers do not support pause.",
             "required": true
           }
         }
@@ -249,7 +249,7 @@
     {
       "id": "daytona__list_snapshots",
       "name": "List Snapshots",
-      "description": "List available snapshots (sandbox base images) — use these names or IDs in the snapshot field of Create Sandbox",
+      "description": "List snapshots",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

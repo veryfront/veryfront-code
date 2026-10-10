@@ -28,7 +28,7 @@
     {
       "id": "deepgram__transcribe_url",
       "name": "Transcribe URL",
-      "description": "Transcribe a prerecorded audio file from a publicly accessible URL",
+      "description": "Transcribe URL",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -74,7 +74,7 @@
     {
       "id": "deepgram__list_projects",
       "name": "List Projects",
-      "description": "List the Deepgram projects associated with the API key",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -95,7 +95,7 @@
     {
       "id": "deepgram__get_project_balances",
       "name": "Get Project Balances",
-      "description": "Get the outstanding credit balances for a project",
+      "description": "Get project balances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -113,7 +113,7 @@
     {
       "id": "deepgram__list_models",
       "name": "List Models",
-      "description": "List the speech-to-text and text-to-speech models Deepgram offers",
+      "description": "List models",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

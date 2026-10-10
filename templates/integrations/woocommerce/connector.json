@@ -43,7 +43,7 @@
     {
       "id": "woocommerce__list_orders",
       "name": "List Orders",
-      "description": "List orders in the store with optional status, search, and date filters",
+      "description": "List orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "woocommerce__get_order",
       "name": "Get Order",
-      "description": "Retrieve full details of a specific order, including line items, totals, and shipping",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "woocommerce__update_order_status",
       "name": "Update Order Status",
-      "description": "Update an order's status (e.g. mark as completed) and optionally add a customer note",
+      "description": "Update order status",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -130,7 +130,7 @@
     {
       "id": "woocommerce__list_products",
       "name": "List Products",
-      "description": "List products in the catalog with optional search, status, and SKU filters",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -170,7 +170,7 @@
     {
       "id": "woocommerce__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the store catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -219,7 +219,7 @@
     {
       "id": "woocommerce__get_product",
       "name": "Get Product",
-      "description": "Retrieve full details of a specific product, including price, stock, and categories",
+      "description": "Get product",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -237,7 +237,7 @@
     {
       "id": "woocommerce__update_product",
       "name": "Update Product",
-      "description": "Update an existing product's price, stock, status, or descriptions",
+      "description": "Update product",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -289,7 +289,7 @@
     {
       "id": "woocommerce__get_sales_report",
       "name": "Get Sales Report",
-      "description": "Get a sales report with totals for revenue, orders, items, and customers over a period or date range",
+      "description": "Get sales report",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -316,7 +316,7 @@
     {
       "id": "woocommerce__list_customers",
       "name": "List Customers",
-      "description": "List store customers with optional email, role, and search filters",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

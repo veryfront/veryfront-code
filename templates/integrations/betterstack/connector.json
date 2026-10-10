@@ -28,7 +28,7 @@
     {
       "id": "betterstack__list_monitors",
       "name": "List Monitors",
-      "description": "List uptime monitors, optionally filtered by URL or name",
+      "description": "List monitors",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -74,7 +74,7 @@
     {
       "id": "betterstack__get_monitor",
       "name": "Get Monitor",
-      "description": "Get a monitor's configuration and current status",
+      "description": "Get monitor",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -95,7 +95,7 @@
     {
       "id": "betterstack__get_monitor_sla",
       "name": "Get Monitor Availability",
-      "description": "Get a monitor's availability (SLA) summary for a time range",
+      "description": "Get monitor availability",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "betterstack__list_incidents",
       "name": "List Incidents",
-      "description": "List incidents, optionally limited to a date range or unresolved only",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -164,7 +164,7 @@
     {
       "id": "betterstack__list_heartbeats",
       "name": "List Heartbeats",
-      "description": "List heartbeat (cron/job) monitors and their status",
+      "description": "List heartbeats",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

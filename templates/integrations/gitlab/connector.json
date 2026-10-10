@@ -74,7 +74,7 @@
     {
       "id": "gitlab__list_projects",
       "name": "List Projects",
-      "description": "List accessible GitLab projects",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -115,7 +115,7 @@
     {
       "id": "gitlab__get_project",
       "name": "Get Project",
-      "description": "Get detailed information about a GitLab project",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -133,7 +133,7 @@
     {
       "id": "gitlab__search_issues",
       "name": "Search Issues",
-      "description": "Search for issues across projects",
+      "description": "Search issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -179,7 +179,7 @@
     {
       "id": "gitlab__get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -203,7 +203,7 @@
     {
       "id": "gitlab__create_issue",
       "name": "Create Issue",
-      "description": "Create a new issue in a project",
+      "description": "Create issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -240,7 +240,7 @@
     {
       "id": "gitlab__update_issue",
       "name": "Update Issue",
-      "description": "Update, close, or reopen a GitLab issue",
+      "description": "Update issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -286,7 +286,7 @@
     {
       "id": "gitlab__add_issue_comment",
       "name": "Add Issue Comment",
-      "description": "Add a comment/note to a GitLab issue",
+      "description": "Add issue comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -321,7 +321,7 @@
     {
       "id": "gitlab__list_merge_requests",
       "name": "List Merge Requests",
-      "description": "List merge requests for a project or across projects",
+      "description": "List merge requests",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -362,7 +362,7 @@
     {
       "id": "gitlab__get_merge_request",
       "name": "Get Merge Request",
-      "description": "Get detailed information about a specific GitLab merge request",
+      "description": "Get merge request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -386,7 +386,7 @@
     {
       "id": "gitlab__add_merge_request_comment",
       "name": "Add Merge Request Comment",
-      "description": "Add a comment/note to a GitLab merge request",
+      "description": "Add merge request comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

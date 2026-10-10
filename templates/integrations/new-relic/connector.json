@@ -28,7 +28,7 @@
     {
       "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
-      "description": "Run an NRQL query against a New Relic account and return the results",
+      "description": "Run NRQL query",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -57,7 +57,7 @@
     {
       "id": "new-relic__search_entities",
       "name": "Search Entities",
-      "description": "Search monitored entities (apps, hosts, services) with an entity search query",
+      "description": "Search entities",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -97,7 +97,7 @@
     {
       "id": "new-relic__get_entity",
       "name": "Get Entity",
-      "description": "Get an entity's details and tags by GUID",
+      "description": "Get entity",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -120,7 +120,7 @@
     {
       "id": "new-relic__list_issues",
       "name": "List Issues",
-      "description": "List alert issues from the last day in an account (queries the NrAiIssue event type via NRQL)",
+      "description": "List issues (24 hours, maximum 100)",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -131,7 +131,7 @@
           "accountId": {
             "type": "number",
             "in": "body",
-            "description": "New Relic account ID",
+            "description": "New Relic account ID. This operation queries NrAiIssue with fixed SINCE 1 day ago and LIMIT 100 clauses. No time-window or pagination controls are exposed; older issues and results beyond the limit are not included.",
             "required": true
           }
         },

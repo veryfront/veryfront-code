@@ -47,7 +47,7 @@
     {
       "id": "lever__list_opportunities",
       "name": "List Opportunities",
-      "description": "List candidate opportunities",
+      "description": "List opportunities",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -120,7 +120,7 @@
     {
       "id": "lever__get_opportunity",
       "name": "Get Opportunity",
-      "description": "Get a single opportunity",
+      "description": "Get opportunity",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -146,7 +146,7 @@
     {
       "id": "lever__list_postings",
       "name": "List Postings",
-      "description": "List job postings",
+      "description": "List postings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -178,7 +178,7 @@
     {
       "id": "lever__get_posting",
       "name": "Get Posting",
-      "description": "Get a single job posting",
+      "description": "Get posting",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -199,7 +199,7 @@
     {
       "id": "lever__list_stages",
       "name": "List Stages",
-      "description": "List pipeline stages",
+      "description": "List stages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

@@ -77,7 +77,7 @@
     {
       "id": "airtable__list_bases",
       "name": "List Bases",
-      "description": "List all accessible Airtable bases",
+      "description": "List bases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "airtable__get_base",
       "name": "Get Base",
-      "description": "Get schema information for a specific base",
+      "description": "Get base",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "airtable__list_records",
       "name": "List Records",
-      "description": "List records from a table with optional filtering",
+      "description": "List records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -174,7 +174,7 @@
     {
       "id": "airtable__get_record",
       "name": "Get Record",
-      "description": "Get a specific record by ID",
+      "description": "Get record",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -204,7 +204,7 @@
     {
       "id": "airtable__create_record",
       "name": "Create Record",
-      "description": "Create a new record in a table",
+      "description": "Create record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -240,7 +240,7 @@
     {
       "id": "airtable__create_records",
       "name": "Create Records",
-      "description": "Create multiple records in a table",
+      "description": "Create records",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -279,7 +279,7 @@
     {
       "id": "airtable__update_record",
       "name": "Update Record",
-      "description": "Update fields on an existing record",
+      "description": "Update record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -321,7 +321,7 @@
     {
       "id": "airtable__delete_record",
       "name": "Delete Record",
-      "description": "Delete a record from a table",
+      "description": "Delete record",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -351,7 +351,7 @@
     {
       "id": "airtable__create_table",
       "name": "Create Table",
-      "description": "Create a new table in an Airtable base",
+      "description": "Create table",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -385,7 +385,7 @@
     {
       "id": "airtable__update_table",
       "name": "Update Table",
-      "description": "Update table metadata such as name or description using the table ID",
+      "description": "Update table",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -419,7 +419,7 @@
     {
       "id": "airtable__create_field",
       "name": "Create Field",
-      "description": "Create a new field in an Airtable table",
+      "description": "Create field",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

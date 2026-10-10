@@ -28,7 +28,7 @@
     {
       "id": "netlify__list_sites",
       "name": "List Sites",
-      "description": "List all sites the authenticated user has access to",
+      "description": "List sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -101,7 +101,7 @@
     {
       "id": "netlify__get_site",
       "name": "Get Site",
-      "description": "Get a site by ID or custom domain",
+      "description": "Get site",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -119,7 +119,7 @@
     {
       "id": "netlify__list_deploys",
       "name": "List Deploys",
-      "description": "List deploys for a site",
+      "description": "List deploys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -203,7 +203,7 @@
     {
       "id": "netlify__get_deploy",
       "name": "Get Deploy",
-      "description": "Get a deploy by ID",
+      "description": "Get deploy",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -221,7 +221,7 @@
     {
       "id": "netlify__trigger_build",
       "name": "Trigger Build",
-      "description": "Trigger a new build of a site from its linked repository",
+      "description": "Trigger build",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -246,7 +246,7 @@
     {
       "id": "netlify__list_form_submissions",
       "name": "List Form Submissions",
-      "description": "List verified form submissions across all forms of a site",
+      "description": "List form submissions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

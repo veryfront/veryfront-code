@@ -79,7 +79,7 @@
     {
       "id": "calendar__list_calendars",
       "name": "List Calendars",
-      "description": "List all calendars in the authenticated user's calendar list",
+      "description": "List calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -100,7 +100,7 @@
     {
       "id": "calendar__list_events",
       "name": "List Events",
-      "description": "Get upcoming calendar events",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -150,7 +150,7 @@
     {
       "id": "calendar__create_event",
       "name": "Create Event",
-      "description": "Schedule a new calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -198,7 +198,7 @@
     {
       "id": "calendar__get_event",
       "name": "Get Event",
-      "description": "Get details of a specific calendar event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -223,7 +223,7 @@
     {
       "id": "calendar__update_event",
       "name": "Update Event",
-      "description": "Update an existing calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -280,7 +280,7 @@
     {
       "id": "calendar__delete_event",
       "name": "Delete Event",
-      "description": "Delete a calendar event by ID",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -311,7 +311,7 @@
     {
       "id": "calendar__find_free_time",
       "name": "Find Free Time",
-      "description": "Find available time slots in calendar",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

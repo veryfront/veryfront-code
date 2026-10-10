@@ -41,7 +41,7 @@
     {
       "id": "box__list_folder_items",
       "name": "List Folder Items",
-      "description": "List files and subfolders inside a Box folder (folder 0 is the root)",
+      "description": "List folder items",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -116,7 +116,7 @@
     {
       "id": "box__get_file",
       "name": "Get File",
-      "description": "Get metadata about a Box file",
+      "description": "Get file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -139,7 +139,7 @@
     {
       "id": "box__get_folder",
       "name": "Get Folder",
-      "description": "Get metadata about a Box folder",
+      "description": "Get folder",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "box__search",
       "name": "Search",
-      "description": "Search for files and folders across the Box account",
+      "description": "Search files and folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -197,7 +197,7 @@
     {
       "id": "box__create_folder",
       "name": "Create Folder",
-      "description": "Create a new folder inside a Box parent folder",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -222,7 +222,7 @@
     {
       "id": "box__upload_file",
       "name": "Upload File",
-      "description": "Upload a new file (up to 50 MB) into a Box folder; larger files require Box's chunked upload API",
+      "description": "Upload file (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -244,7 +244,7 @@
           },
           "file": {
             "type": "string",
-            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part",
+            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"
@@ -260,7 +260,7 @@
     {
       "id": "box__upload_file_version",
       "name": "Upload File Version",
-      "description": "Upload a new version of an existing Box file (up to 50 MB)",
+      "description": "Upload file version (50 MB maximum)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -283,7 +283,7 @@
           },
           "file": {
             "type": "string",
-            "description": "Base64-encoded new file content, sent decoded as the binary multipart 'file' part",
+            "description": "Base64-encoded new file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"
@@ -299,7 +299,7 @@
     {
       "id": "box__list_file_comments",
       "name": "List File Comments",
-      "description": "List comments on a Box file",
+      "description": "List file comments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -329,7 +329,7 @@
     {
       "id": "box__add_comment",
       "name": "Add Comment",
-      "description": "Add a comment to a Box file",
+      "description": "Add comment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -351,7 +351,7 @@
     {
       "id": "box__download_file",
       "name": "Download File",
-      "description": "Download a file's content; Box responds with a 302 redirect to a short-lived dl.boxcloud.com URL that is followed to fetch the binary content (a 202 with Retry-After means the file is not yet ready)",
+      "description": "Download file",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -360,7 +360,7 @@
           "fileId": {
             "type": "string",
             "in": "path",
-            "description": "Box file ID",
+            "description": "Box file ID. A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
             "required": true
           },
           "version": {
