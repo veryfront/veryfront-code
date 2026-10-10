@@ -2,6 +2,7 @@ import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { tmpdir } from "node:os";
 import {
   captureBrowserDiagnostics,
   findHydrationOrCspFailures,
@@ -23,7 +24,7 @@ export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 // removed: unlinking a lock file while another isolate waits on it would let a
 // third take a second lock.
 const COORDINATION_DIR = join(
-  Deno.env.get("TMPDIR") ?? "/tmp",
+  tmpdir(),
   `veryfront-compiled-binary-e2e-${Deno.uid() ?? "user"}`,
 );
 const BINARY_LOCK_PATH = join(COORDINATION_DIR, "compile.lock");
