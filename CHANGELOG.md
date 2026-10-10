@@ -36,6 +36,15 @@ hosted child runs, including durable child forks, no longer retry it the way
 they retry an unknown provider stream failure. Run the agent again, or choose a
 different model.
 
+### Breaking: sandbox callers use the canonical workspace API
+
+The `veryfront/sandbox` SDK requires the canonical `/sandboxes` API deployment.
+Upgrade veryfront-api before publishing this SDK, then migrate veryfront-studio
+and other consumers. See the [sandbox migration guide](docs/guides/sandbox.md#migrate-from-the-previous-sandbox-sdk)
+for removed methods and types, option changes and workspace cleanup semantics.
+The removed names have no compatibility aliases. Keep API transition routes
+until all consumers and runtime images have migrated.
+
 ### Breaking: run creation can return a compact receipt
 
 `CreateRunResponse.run` is now a full `Run` or a compact `{ run_id, status }`
