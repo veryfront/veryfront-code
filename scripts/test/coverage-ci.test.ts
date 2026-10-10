@@ -1,12 +1,17 @@
 import { fromFileUrl } from "#std/path";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  annotateLcovWorkspace,
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
-  coverageProducerRoots,
   LOOPBACK_ALLOW_NET,
   mergeLcovReports,
+  normalizeLcovArtifacts,
   normalizeLcovSourcePaths,
 } from "./coverage-ci.ts";
 
@@ -292,26 +297,6 @@ describe("mergeLcovReports", () => {
 });
 
 describe("coverage source paths", () => {
-  it("limits alternate checkout roots to a validated repository name", () => {
-    assertEquals(
-      coverageProducerRoots("/local/repo", "veryfront/veryfront-code"),
-      [
-        "/local/repo",
-        "/home/runner/work/veryfront-code/veryfront-code",
-        "/home/runner/_work/veryfront-code/veryfront-code",
-      ],
-    );
-    assertEquals(coverageProducerRoots("/local/repo", "../outside/path"), [
-      "/local/repo",
-    ]);
-    assertEquals(coverageProducerRoots("/local/repo", "../outside"), [
-      "/local/repo",
-    ]);
-    assertEquals(coverageProducerRoots("/local/repo", "owner/.."), [
-      "/local/repo",
-    ]);
-    assertEquals(coverageProducerRoots("/local/repo"), ["/local/repo"]);
-  });
   it("maps verified checkout files across producer roots without changing coverage records", () => {
     const roots = [
       "/home/runner/work/veryfront-code/veryfront-code",
@@ -371,6 +356,99 @@ describe("coverage source paths", () => {
         (path) => path === "src/task.ts",
       ),
       report,
+    );
+  });
+});
+
+describe("coverage artifact producer provenance", () => {
+  it("uses the actual custom producer workspace for primary and nested reports only", () => {
+    const root = "/custom/runner/checkouts/repo";
+    const record =
+      `SF:${root}/src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n`;
+    const reports = [
+      {
+        path: "coverage-profiles/shard-1/lcov.info",
+        content: annotateLcovWorkspace(record, root),
+      },
+      { path: "coverage-profiles/shard-1/history/lcov.info", content: record },
+      { path: "coverage-profiles/shard-1/cli/lcov.info", content: record },
+      { path: "coverage-profiles/shard-10/lcov.info", content: record },
+    ];
+    const normalized = normalizeLcovArtifacts(
+      reports,
+      "/aggregator/repo",
+      (source) => source === "src/task.ts",
+    );
+    for (const report of normalized.slice(0, 3)) {
+      assert(
+        report.includes(
+          "SF:src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n",
+        ),
+      );
+    }
+    assertEquals(normalized[3], record);
+  });
+  it("rejects invalid or conflicting provenance without borrowing sibling roots", () => {
+    const root = "/custom/checkouts/repo";
+    for (
+      const invalid of [
+        "/",
+        "C:/",
+        "relative/repo",
+        "/custom/../repo",
+        "C:\\runner\\..\\repo",
+      ]
+    ) {
+      assertThrows(
+        () => annotateLcovWorkspace("SF:src/task.ts\n", invalid),
+        Error,
+        "Invalid",
+      );
+    }
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          [
+            {
+              path: "artifacts/shard/lcov.info",
+              content: "# veryfront-coverage-workspace: invalid-json\n",
+            },
+          ],
+          "/aggregator/repo",
+          () => true,
+        ),
+      Error,
+      "Invalid",
+    );
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          [
+            {
+              path: "artifacts/shard/lcov.info",
+              content: annotateLcovWorkspace("", root),
+            },
+            {
+              path: "artifacts/shard/history/lcov.info",
+              content: annotateLcovWorkspace("", "/different/repo"),
+            },
+          ],
+          "/aggregator/repo",
+          () => true,
+        ),
+      Error,
+      "Conflicting",
+    );
+    const native = "SF:src/native.ts\nDA:2,4\nend_of_record\n";
+    assertEquals(
+      normalizeLcovArtifacts(
+        [
+          { path: "artifacts/native/lcov.info", content: native },
+        ],
+        "/aggregator/repo",
+        () => false,
+      ),
+      [native],
     );
   });
 });
