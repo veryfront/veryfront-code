@@ -9,10 +9,16 @@
 const apply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const objectKeys = Object.keys;
+const NativeSet = Set;
+const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 
 function hasSetValue<T>(set: Set<T>, value: T): boolean {
   return apply(setHas, set, [value]) as boolean;
+}
+
+function addSetValue<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
 }
 
 /**
@@ -109,7 +115,9 @@ function closeObjectSchemas(
   const source = schema as Record<string, unknown>;
   const result: Record<string, unknown> = {};
 
-  for (const key of objectKeys(source)) {
+  const keys = objectKeys(source);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
     const value = source[key];
     const keyPointer = `${pointer}/${encodePointerToken(key)}`;
     if (hasSetValue(SCHEMA_MAP_KEYWORDS, key)) {
@@ -161,7 +169,9 @@ function closeSchemaMap(
   if (typeof value !== "object" || value === null || ArrayIsArray(value)) return value;
   const source = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
-  for (const name of objectKeys(source)) {
+  const names = objectKeys(source);
+  for (let nameIndex = 0; nameIndex < names.length; nameIndex += 1) {
+    const name = names[nameIndex]!;
     const namePointer = `${pointer}/${encodePointerToken(name)}`;
     result[name] = closeObjectSchemas(
       source[name],
@@ -179,7 +189,8 @@ const EMPTY_POINTER_SET: Set<string> = new Set();
 /** Escape a JSON pointer token, per RFC 6901. */
 function encodePointerToken(token: string): string {
   let escaped = "";
-  for (const char of token) {
+  for (let index = 0; index < token.length; index += 1) {
+    const char = token[index];
     if (char === "~") escaped += "~0";
     else if (char === "/") escaped += "~1";
     else escaped += char;
@@ -202,7 +213,7 @@ function encodePointerToken(token: string): string {
  * and then matches nothing, which surfaces as an empty generation.
  */
 export function closeSchemaForOutputConfig(schema: unknown): unknown {
-  const openTargets: Set<string> = new Set();
+  const openTargets: Set<string> = new NativeSet();
   collectAllOfRefTargets(schema, openTargets);
   return closeObjectSchemas(schema, true, "#", openTargets);
 }
@@ -214,20 +225,25 @@ export function closeSchemaForOutputConfig(schema: unknown): unknown {
  */
 function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
   if (ArrayIsArray(schema)) {
-    for (const entry of schema) collectAllOfRefTargets(entry, out);
+    for (let index = 0; index < schema.length; index += 1) {
+      collectAllOfRefTargets(schema[index], out);
+    }
     return;
   }
   if (typeof schema !== "object" || schema === null) return;
 
   const source = schema as Record<string, unknown>;
-  for (const key of objectKeys(source)) {
+  const keys = objectKeys(source);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
     const value = source[key];
     if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
       const branches = ArrayIsArray(value) ? value : [value];
-      for (const branch of branches) {
+      for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
+        const branch: unknown = branches[branchIndex];
         if (typeof branch !== "object" || branch === null) continue;
         const ref = (branch as Record<string, unknown>).$ref;
-        if (typeof ref === "string" && ref.startsWith("#/")) out.add(ref);
+        if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") addSetValue(out, ref);
       }
     }
     collectAllOfRefTargets(value, out);
@@ -243,5 +259,10 @@ function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
  * string would leave that branch open and let Anthropic reject it.
  */
 function isObjectTyped(type: unknown): boolean {
-  return type === "object" || (Array.isArray(type) && type.includes("object"));
+  if (type === "object") return true;
+  if (!ArrayIsArray(type)) return false;
+  for (let index = 0; index < type.length; index += 1) {
+    if (type[index] === "object") return true;
+  }
+  return false;
 }

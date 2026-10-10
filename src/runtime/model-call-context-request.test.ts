@@ -1686,6 +1686,54 @@ describe("model call request projection", () => {
     }
   });
 
+  it("captures the closed Anthropic schema without mutable iterators or helpers", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        "a/b~c": { type: ["object", "null"], properties: { lat: { type: "number" } } },
+        merged: { allOf: [{ $ref: "#/$defs/Base" }] },
+      },
+      $defs: { Base: { type: "object", properties: { id: { type: "string" } } } },
+    };
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: { type: "json_schema", name: "weather", schema },
+    };
+    const expected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const arrayIterator = Array.prototype[Symbol.iterator];
+    const stringIterator = String.prototype[Symbol.iterator];
+    const arrayIncludes = Array.prototype.includes;
+    const stringStartsWith = String.prototype.startsWith;
+    const fail = (): never => {
+      throw new Error("mutable intrinsic used");
+    };
+    let projected: ReturnType<typeof buildModelCallContextRequest>;
+    try {
+      Array.prototype[Symbol.iterator] = fail;
+      String.prototype[Symbol.iterator] = fail;
+      Array.prototype.includes = fail;
+      String.prototype.startsWith = fail;
+      projected = buildModelCallContextRequest({
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, options);
+    } finally {
+      Array.prototype[Symbol.iterator] = arrayIterator;
+      String.prototype[Symbol.iterator] = stringIterator;
+      Array.prototype.includes = arrayIncludes;
+      String.prototype.startsWith = stringStartsWith;
+    }
+
+    assert(expected?.responseFormat?.type === "json_schema");
+    assert(projected?.responseFormat?.type === "json_schema");
+    assertEquals(projected.responseFormat.schema, expected.responseFormat.schema);
+  });
+
   it("matches Anthropic undefined native max_tokens suppression", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
