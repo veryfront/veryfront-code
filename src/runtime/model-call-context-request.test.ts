@@ -1255,28 +1255,6 @@ describe("model call request projection", () => {
     }
   });
 
-  it("preserves explicit undefined native Anthropic token overrides", () => {
-    const options: ModelRuntimeCallOptions = {
-      prompt,
-      maxOutputTokens: 64,
-      providerOptions: { anthropic: { max_tokens: undefined } },
-    };
-    const projected = buildModelCallContextRequest({
-      provider: "anthropic",
-      modelProvider: "anthropic",
-      modelId: "claude-haiku-4-5",
-    }, options);
-    const body = buildAnthropicMessagesRequest(
-      "claude-haiku-4-5",
-      "anthropic",
-      options,
-      false,
-      createWarningCollector(),
-    );
-    assertEquals(body.max_tokens, undefined);
-    assertEquals(projected?.maxOutputTokens, body.max_tokens);
-  });
-
   it("matches direct Anthropic native max_tokens overrides to the exact wire body", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
@@ -1300,6 +1278,31 @@ describe("model call request projection", () => {
 
     assertEquals(body.max_tokens, 512);
     assertEquals(projected?.maxOutputTokens, body.max_tokens);
+  });
+
+  it("matches Anthropic undefined native max_tokens suppression", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions: {
+        anthropic: { max_tokens: undefined },
+      },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, undefined);
+    assertEquals(projected, undefined);
   });
 
   it("shares neutral Anthropic controls between capture and the native wire builder", () => {
