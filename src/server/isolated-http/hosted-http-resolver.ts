@@ -3,6 +3,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import { getHostedExecutorImageSchema } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import type { RenderGenerationBinding } from "#veryfront/rendering/render-generation-binding.ts";
 import { fetchProjectEnvVars } from "../project-env/fetcher.ts";
 import { ProjectEnvironmentIdentityResolver } from "../project-env/production-environment-resolver.ts";
@@ -363,7 +364,12 @@ export function createHostedHttpResolver(
       { projectId: authority.projectId, releaseId: authority.releaseId },
       signal,
     );
-    const snapshot = snapshotBoundedJsonValue(value);
+    // The same per-record budget as the host record list, for any lookup.
+    const snapshot = snapshotBoundedJsonValue(
+      value,
+      MAX_SOURCE_RECORD_BYTES,
+      MAX_SOURCE_RECORD_BYTES,
+    );
     const parsed = snapshot.success
       ? getSourceRecordSchema().safeParse(snapshot.value)
       : { success: false as const };
@@ -517,8 +523,14 @@ export function buildHostedHttpGenerationBindingInput(
   if (
     owner.scopeKind !== "project" || allocationOwner.scopeKind !== "project" ||
     owner.projectId !== allocationOwner.projectId ||
+    verifyHostedRuntimeSourceBinding(input.session.request.source, input.installation.source) !==
+      undefined ||
     !getHostedExecutorImageSchema().safeParse(input.session.expectedImage).success
-  ) throw new TypeError("Hosted HTTP generation binding requires one project-owned image");
+  ) {
+    throw new TypeError(
+      "Hosted HTTP generation binding requires one project-owned image for one release",
+    );
+  }
   return freeze({
     projectId: owner.projectId,
     environmentId: input.installation.environmentId,
