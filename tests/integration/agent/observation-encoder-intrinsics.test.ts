@@ -143,28 +143,6 @@ describe("project run parent private intrinsics", () => {
 });
 
 describe("observation encoder private intrinsics", () => {
-  it("keeps array indexes stable while project code replaces String", () => {
-    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    const originalString = globalThis.String;
-    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents>;
-
-    try {
-      globalThis.String = (() => "0") as StringConstructor;
-      events = mapRuntimeStreamEventToAgUiEvents(state, {
-        type: "message-finish",
-        object: ["first", "second"],
-      });
-    } finally {
-      globalThis.String = originalString;
-    }
-
-    const value = events[0]?.payload.value as Record<string, unknown>;
-    const snapshot = value.object as Record<string, unknown>;
-
-    assertEquals(events[0]?.event, "RuntimeEventRecorded");
-    assertEquals(snapshot, ["first", "second"]);
-  });
-
   it("preserves observed tool inputs when project code replaces JSON.stringify", () => {
     const original = JSON.stringify;
     let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
@@ -183,6 +161,28 @@ describe("observation encoder private intrinsics", () => {
     }
     const args = events.find((event) => event.event === "ToolCallArgs");
     assertEquals(args?.payload.delta, '{"query":"exact input"}');
+  });
+
+  it("keeps array indexes stable when project code replaces String", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const originalString = globalThis.String;
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+
+    try {
+      globalThis.String = (() => "0") as StringConstructor;
+      events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-finish",
+        object: ["first", "second"],
+      });
+    } finally {
+      globalThis.String = originalString;
+    }
+
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot, ["first", "second"]);
   });
 
   it("preserves direct tool arguments and closure when project code replaces Set operations", () => {
