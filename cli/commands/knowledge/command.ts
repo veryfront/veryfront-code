@@ -334,6 +334,8 @@ function resolveOkfCompanionReferenceCandidates(documentPath: string, reference:
   if (!path) return [];
 
   const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  // Prefer OKF document-relative references, then fall back to bundle-root paths
+  // for legacy fixtures that used root paths without a leading slash.
   const rawPaths = path.startsWith("/")
     ? [path.replace(/^\/+/, "")]
     : documentDir === "."
