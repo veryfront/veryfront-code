@@ -20,6 +20,11 @@ Ingest an exact list of uploaded files:
 veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploads/contracts/c.pdf --json
 ```
 
+Studio knowledge-ingest runs write generated files to their admitted preview branch.
+Main-branch runs keep writing to main. The destination comes from the signed run
+target, not ingestion task configuration. Select main or a preview branch for
+knowledge ingestion. Environment-target runs fail before ingestion starts.
+
 ## Prerequisites
 
 Authenticate with the CLI and set the target project:
@@ -38,6 +43,32 @@ veryfront login
 `veryfront knowledge ingest` parses PDF, Office, EPUB, HTML, and RTF sources
 through the built-in Kreuzberg document extension. Plain text, Markdown, JSON,
 CSV, TSV, and common code files are converted directly by the CLI.
+
+## Import an OKF bundle
+
+Preserve an existing bundle rather than converting its documents:
+
+```bash
+veryfront knowledge ingest --path ./bundle --all --okf-bundle
+```
+
+Bundle mode requires an explicit root and `--all`; it does not accept positional
+sources. Documents retain their metadata, Markdown, links and relative paths,
+including files in hidden directories. Document envelopes are validated before
+upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
+with their relative paths, regardless of filename extension. Unreferenced viewer
+artifacts are excluded. Referenced Markdown companions preserve their bytes even when their contents resemble malformed
+YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log files
+retain document validation and classification. Unreferenced Markdown remains subject to document
+diagnostics.
+IDs, labels and descriptions in companion objects remain metadata;
+only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.
+
+Documents and companions must be valid UTF-8 because project file uploads store text. Invalid
+binary content produces an explicit ingestion failure rather than a corrupted
+file or a silent skip. Ordinary conversion retains its informational `source`
+field and records standardized provenance only when a usable absolute HTTP(S)
+source URL is available.
 
 ## Single-file examples
 
@@ -108,7 +139,9 @@ With `--json`, the command returns a machine-readable run result with
   "metadata": {
     "requested_count": 1,
     "source_mode": "explicit_sources",
-    "knowledge_path": "knowledge"
+    "knowledge_path": "knowledge",
+    "okf_bundle": false,
+    "pending_acceptance": []
   },
   "summary": {
     "requested_count": 1,
@@ -139,6 +172,13 @@ With `--json`, the command returns a machine-readable run result with
 
 The exact `stats` shape varies by source type, but the top-level result fields
 are stable.
+
+`metadata.okf_bundle` is `true` when you use `--okf-bundle`; otherwise it is
+`false`. `metadata.pending_acceptance` lists acceptance checks that the command
+does not verify. It is empty for ordinary ingestion. In bundle mode, it contains
+`job_retry_idempotence`, `derived_link_index`, `provider_file_flow`, and
+`full_okf_import_export_roundtrip`. A successful ingestion result does not prove
+that those checks passed.
 
 ## Path rules
 

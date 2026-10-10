@@ -5,7 +5,7 @@ import {
   inheritHostedAgentPauseCapability,
 } from "../hosted/manual-pause-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import type {
@@ -1220,7 +1220,9 @@ describe("managed broker handler", () => {
           signal: sessionController.signal,
           settlementSignal: controller.signal,
           fetch: (_url, init) => {
-            if (JSON.parse(String(observeFetchRequestInit(init).body)).settled) {
+            const observedRequest1 = observeFetchRequestInit(init);
+            assert(init && "body" in init, "fetch must receive request options");
+            if (JSON.parse(String(observedRequest1.body)).settled) {
               receipts++;
               assertEquals(sessionController.signal.aborted, true);
               assertEquals(controller.signal.aborted, false);
@@ -1287,7 +1289,9 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(observeFetchRequestInit(init).body)).settled) receipts++;
+          const observedRequest2 = observeFetchRequestInit(init);
+          assert(init && "body" in init, "fetch must receive request options");
+          if (JSON.parse(String(observedRequest2.body)).settled) receipts++;
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -1333,7 +1337,9 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (!JSON.parse(String(observeFetchRequestInit(init).body)).settled) {
+          const observedRequest3 = observeFetchRequestInit(init);
+          assert(init && "body" in init, "fetch must receive request options");
+          if (!JSON.parse(String(observedRequest3.body)).settled) {
             return Promise.resolve(Response.json({ stop: true }));
           }
           assertEquals(f.managed.active, 0);

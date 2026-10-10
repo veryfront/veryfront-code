@@ -1,6 +1,11 @@
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
-import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -319,15 +324,17 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
-  const globalTools: HostToolSet = {
-    ...(options.buildGlobalTools?.(
+  const globalTools = withPlatformHostToolAliases(
+    {
+      sleep: markTrustedHostToolProvenance(sleepTool),
+    },
+    options.buildGlobalTools?.(
       options.context,
       childAgentId,
       childConfig,
       durableChildRun,
-    ) ?? {}),
-    sleep: sleepTool,
-  };
+    ) ?? {},
+  );
 
   return prepareDefaultHostedChildForkSandboxToolSources({
     authToken: options.context.authToken,
@@ -363,11 +370,13 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 function withoutDeniedForkTools(
   toolSources: DefaultHostedChildForkToolAssemblySourceResult,
   deniedToolNames: readonly string[] | undefined,
+  selectedToolNames?: readonly string[],
 ): DefaultHostedChildForkToolAssemblySourceResult {
   if (!toolSources.ok || !deniedToolNames?.length) {
     return toolSources;
   }
   const denied = new Set(deniedToolNames);
+  const selected = new Set(selectedToolNames ?? []);
   const entries = Object.entries(toolSources.forkTools);
   const projectToolNames = new Set<string>();
   for (const [name, tool] of entries) {
@@ -383,6 +392,7 @@ function withoutDeniedForkTools(
           return false;
         }
         if (!hasTrustedHostToolProvenance(tool)) return true;
+        if (selected.has(toolName)) return true;
         const legacyName = platformMcpLegacyName(toolName);
         const hasProjectCollision = projectToolNames.has(legacyName);
         return !denied.has(`veryfront__${legacyName}`) &&
@@ -478,6 +488,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
       input.durableChildRun,
     ),
     input.childConfig?.deniedToolNames,
+    input.childConfig?.toolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
     requestedTools: input.requestedTools,
@@ -655,6 +666,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
             const baseInstructions = buildHostedChildForkInstructions({
               ...scopedOptions.context,
               availableSkillIds: runtimeOptions.childConfig?.availableSkillIds,
+              skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(
+                runtimeOptions.childConfig?.toolNames,
+              ),
             });
             const childSystem = runtimeOptions.childConfig?.system;
             if (childSystem === undefined) {

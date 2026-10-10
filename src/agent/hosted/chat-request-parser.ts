@@ -159,6 +159,8 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
+  /** Grant only after replay contents match immutable run/input-response evidence or a pre-edit host-authored digest. Editable row IDs or parts alone do not prove origin; edited replacements lose the grant. */
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
@@ -290,6 +292,7 @@ async function withVerifiedRunEventAppendToken(
     if (
       trustServerEnvelope &&
       (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds") ||
         hasLegacyReplayState)
     ) {
       return Response.json(
@@ -404,6 +407,13 @@ async function withVerifiedRunEventAppendToken(
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
+    ...(trustServerEnvelope &&
+        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
+      }
+      : {}),
     ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
     ...(verifiedToolExposureCheckpoint
       ? { serverResolvedToolExposureCheckpoint: verifiedToolExposureCheckpoint }
@@ -437,6 +447,7 @@ function stripUnverifiedServerResolvedRequestState(
 ): ParsedHostedChatRequest {
   const {
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
     serverResolvedToolExposureCheckpoint: _serverResolvedToolExposureCheckpoint,
     ...publicParsedRequest
@@ -705,6 +716,7 @@ async function buildParsedHostedChatRequestInternal(
     allowDelegation,
     forwardedProps,
     serverResolvedProviderReplayCheckpoints,
+    serverResolvedTrustedHostedHistoryMessageIds,
     resumeToolCall,
     runtimeOverrides,
     durableRootRun,
@@ -772,6 +784,9 @@ async function buildParsedHostedChatRequestInternal(
     forwardedProps,
     ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
       ? { serverResolvedProviderReplayCheckpoints }
+      : {}),
+    ...(Object.hasOwn(input.chatRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+      ? { serverResolvedTrustedHostedHistoryMessageIds }
       : {}),
     ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
     runtimeOverrides,

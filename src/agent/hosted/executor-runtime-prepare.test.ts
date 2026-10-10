@@ -26,6 +26,7 @@ import type {
   RemoteToolSource,
   ToolDefinition,
 } from "#veryfront/tool";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
@@ -466,7 +467,14 @@ describe("executor runtime preparation", () => {
       const f = fixture({
         config: { tools: true, skills: false },
         grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
-        facades: { hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]) },
+        facades: {
+          hostTools: new Map([[
+            "skills",
+            markTrustedHostToolSet({
+              load_skill: syntheticHostTool(),
+            }),
+          ]]),
+        },
       });
       try {
         const result = await prepare(f.owner, {
@@ -1663,7 +1671,12 @@ describe("executor runtime preparation review regressions", () => {
       config: { tools: {}, skills: true },
       grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
       facades: {
-        hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]),
+        hostTools: new Map([[
+          "skills",
+          markTrustedHostToolSet({
+            load_skill: syntheticHostTool(),
+          }),
+        ]]),
         projectSteering: {
           prepare: ({ definition }) =>
             Promise.resolve(Object.create({
@@ -1843,13 +1856,13 @@ describe("executor runtime preparation review regressions", () => {
         facades: {
           hostTools: new Map([[
             "skills",
-            Object.fromEntries(names.map((name) => [name, {
+            markTrustedHostToolSet(Object.fromEntries(names.map((name) => [name, {
               ...syntheticHostTool(),
               execute: () => {
                 executions.push(name);
                 return { ok: true };
               },
-            }])),
+            }]))),
           ]]),
           projectSteering: {
             prepare: ({ definition }) =>

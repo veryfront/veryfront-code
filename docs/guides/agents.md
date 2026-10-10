@@ -657,6 +657,19 @@ Its lifecycle is:
 - Re-entrant `next()` calls made by Promise species or other framework-internal
   result-observation hooks are rejected; they are not middleware-body calls.
 
+Middleware can replace or edit messages, but changing a platform control result
+removes its trusted ownership. Internal clones preserve that ownership only when
+the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
+Caller-supplied result shapes never grant platform control authority.
+
+For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
+matching the replayed platform result contents against immutable canonical run or
+input-response evidence, or an original host-authored content digest retained
+before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
+do not prove origin. Edited replacements lose the grant. Deploy compatible API
+and Studio support and qualify replay against that deployed combination before
+claiming trusted replay acceptance.
+
 ## Verify it worked
 
 Save the agent file and restart `veryfront dev`. The quickest server-side

@@ -1,3 +1,8 @@
+import { getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
+import {
+  hasTrustedPlatformPolicyToolDefinition,
+  isLoadSkillToolName,
+} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -21,7 +26,10 @@ import type {
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -33,6 +41,7 @@ import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
+  scopeHostedRuntimeToolResults,
   scopeHostedRuntimeTools,
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
@@ -71,6 +80,162 @@ function emptyRemoteSource(config: RemoteMCPToolSourceConfig): RemoteToolSource 
   };
 }
 
+for (const trusted of [false, true]) {
+  Deno.test(`hosted tool wrappers preserve platform provenance without granting it: ${trusted}`, async () => {
+    const hostTools = {
+      form_input: localTool("Form"),
+      load_skill: localTool("Skill"),
+    };
+    if (trusted) {
+      markTrustedHostToolProvenance(hostTools.form_input);
+      markTrustedHostToolProvenance(hostTools.load_skill);
+    }
+    const tools = createToolsFromHostDefinitions(hostTools);
+    const resultsScoped = scopeHostedRuntimeToolResults(tools);
+    const fullyScoped = scopeHostedRuntimeTools({
+      tools,
+      taskContext: {
+        authToken: "token",
+        projectId: "project",
+        branchId: null,
+        model: "test/model",
+      },
+      cloudContext: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "token",
+        serviceLayer: "cloud",
+      },
+    });
+    for (const scoped of [resultsScoped, fullyScoped]) {
+      assertEquals(hasTrustedHostToolProvenance(scoped.form_input), trusted);
+      assertEquals(hasTrustedHostToolProvenance(scoped.load_skill), trusted);
+      const definitions = await getAvailableTools(scoped, {
+        includeSkillTools: true,
+        includeIntegrationTools: false,
+        strictConfiguredToolsOnly: true,
+      });
+      assertEquals(definitions.length, 2);
+      for (const definition of definitions) {
+        assertEquals(hasTrustedPlatformPolicyToolDefinition(definition), trusted);
+      }
+    }
+  });
+}
+
+for (const trusted of [false, true]) {
+  Deno.test(`hosted scoped skill and form results affect live policy only with provenance: ${trusted}`, async () => {
+    clearModelProviders();
+    const toolNamesByCall: string[][] = [];
+    let calls = 0;
+    registerModelProvider("test", () => ({
+      provider: "test",
+      modelId: `test/wrapper-policy-${trusted}`,
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options: unknown) {
+        calls++;
+        const tools = typeof options === "object" && options !== null && "tools" in options
+          ? options.tools
+          : undefined;
+        toolNamesByCall.push(
+          Array.isArray(tools)
+            ? tools.flatMap((tool) =>
+              typeof tool === "object" && tool !== null && "name" in tool &&
+                typeof tool.name === "string"
+                ? [tool.name]
+                : []
+            )
+            : [],
+        );
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              if (calls <= 2) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: `policy-${calls}`,
+                  toolName: calls === 1 ? "load_skill" : "form_input",
+                  input: calls === 1 ? { skillId: "review" } : {},
+                });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "tool-calls",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              } else {
+                controller.enqueue({ type: "text-delta", text: "done" });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "stop",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              }
+              controller.close();
+            },
+          }),
+        });
+      },
+    }));
+    try {
+      const loadSkill = {
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+        execute: () => ({
+          skillId: "review",
+          instructions: "# Review",
+          references: [],
+          scripts: ["scripts/review.sh"],
+        }),
+      };
+      const form = {
+        ...localTool("Collect input"),
+        execute: () => ({
+          submitted: true,
+          values: { approved: true },
+          inputRequestId: "input-request",
+        }),
+      };
+      if (trusted) {
+        markTrustedHostToolProvenance(loadSkill);
+        markTrustedHostToolProvenance(form);
+      }
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        options: {
+          projectId: "project",
+          authToken: "token",
+          instructions: "Review then collect input",
+          model: `test/wrapper-policy-${trusted}`,
+          allowedTools: ["load_skill", "form_input", "execute_skill_script"],
+        },
+        config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+        buildLocalTools: () => ({
+          load_skill: loadSkill,
+          form_input: form,
+          execute_skill_script: localTool("Run loaded script"),
+        }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+      await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (
+          const _chunk of result.toUIMessageStream()
+        ) { /* Complete the three-step model run. */ }
+      });
+      assertEquals(calls, 3);
+      assertEquals(toolNamesByCall[0]?.includes("execute_skill_script"), false);
+      assertEquals(toolNamesByCall[1]?.includes("execute_skill_script"), trusted);
+      assertEquals(toolNamesByCall[2]?.includes("form_input"), !trusted);
+      assertEquals(toolNamesByCall[2]?.includes("load_skill"), !trusted);
+    } finally {
+      clearModelProviders();
+    }
+  });
+}
+
 Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes project errors", async () => {
   const trustedError = INVALID_ARGUMENT.create({ detail: "Correct the trusted tool input" });
   const tools = createToolsFromHostDefinitions({
@@ -105,6 +270,12 @@ Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes projec
       serviceLayer: "cloud",
     },
   });
+
+  const resultScoped = scopeHostedRuntimeToolResults(tools);
+  for (const wrapped of [resultScoped, scoped]) {
+    assertEquals(hasTrustedHostToolProvenance(wrapped.trusted_failure), true);
+    assertEquals(hasTrustedHostToolProvenance(wrapped.project_failure), false);
+  }
 
   let caughtTrustedError: unknown;
   try {
@@ -1228,7 +1399,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           bash: localTool("Run shell commands"),
           create_release: localTool("Create a release"),
           delete_project: localTool("Delete a project"),
-          load_skill: localTool("Load skill"),
+          load_skill: markTrustedHostToolProvenance(localTool("Load skill")),
         }),
         createRemoteToolSource: testCase.sourceIntegrationPolicy === undefined
           ? emptyRemoteSource
@@ -1497,3 +1668,85 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
     "sandbox tool setup failed",
   );
 });
+
+for (const denySkillLoader of [false, true]) {
+  it(`keeps ${denySkillLoader ? "denied" : "authorized"} live steering catalog after Array.prototype.some is replaced`, async () => {
+    const originalSome = Array.prototype.some;
+    const originalApply = Reflect.apply;
+    Array.prototype.some = function (predicate, thisArg) {
+      return predicate === isLoadSkillToolName
+        ? denySkillLoader
+        : originalApply(originalSome, this, [predicate, thisArg]);
+    };
+    clearModelProviders();
+    let capturedPrompt: unknown;
+    registerModelProvider("test", () => ({
+      provider: "test",
+      modelId: "test/denied-skill-loader",
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options: unknown) {
+        capturedPrompt = (options as { prompt?: unknown }).prompt;
+        return Promise.resolve({ stream: createTextStream() });
+      },
+    }));
+
+    try {
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+        options: {
+          projectId: "project-1",
+          authToken: "token-1",
+          instructions: "Plain hosted instructions",
+          model: "test/denied-skill-loader",
+          ...(denySkillLoader ? { deniedTools: ["load_skill"] } : { allowedTools: ["load_skill"] }),
+          liveProjectSteering: {
+            agent: {
+              id: "agent-1",
+              name: "Agent",
+              description: "Agent description",
+              instructions: "Plain hosted instructions",
+              tools: true,
+            },
+            initialSkills: [{
+              id: "deploy",
+              name: "Deploy",
+              description: "Deploy the project",
+              instructions: "Use the deployment checklist.",
+              allowedTools: [],
+            }],
+          },
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+
+      await withMockFetch(
+        () => Promise.resolve(Response.json({ tools: [] })),
+        async () => {
+          const result = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of result.toUIMessageStream()) {
+            // Consume the stream so provider dispatch completes.
+          }
+        },
+      );
+
+      const systemPrompt = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+        .filter((message) => message.role === "system" && typeof message.content === "string")
+        .map((message) => message.content)
+        .join("\n\n");
+      assertEquals(systemPrompt.includes("<available_skills>"), !denySkillLoader);
+      assertEquals(systemPrompt.includes('"skillId":"deploy"'), !denySkillLoader);
+    } finally {
+      Array.prototype.some = originalSome;
+      clearModelProviders();
+    }
+  });
+}
