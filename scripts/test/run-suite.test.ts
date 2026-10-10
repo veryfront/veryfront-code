@@ -522,6 +522,19 @@ describe("migration command surface", () => {
     );
   });
 
+  it("gives every binary e2e invocation its own run id", () => {
+    const first = buildDenoSuiteProcessEnv("e2e:binary", {
+      VERYFRONT_BINARY_E2E_RUN_ID: "inherited",
+    }).VERYFRONT_BINARY_E2E_RUN_ID;
+    const second = buildDenoSuiteProcessEnv("e2e:binary", {})
+      .VERYFRONT_BINARY_E2E_RUN_ID;
+    assert(first && second && first !== second && first !== "inherited");
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:serial", {}).VERYFRONT_BINARY_E2E_RUN_ID,
+      undefined,
+    );
+  });
+
   it("declares every isolation decision explicitly on every Deno suite", () => {
     // A field with a default is a field that can drift silently; the profile
     // type keeps them required and this pins the shape at runtime too.

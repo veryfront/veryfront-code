@@ -194,14 +194,23 @@ const DENO_SUITE_DEFAULT_ENV: Readonly<
   "e2e:binary": { DENO_JOBS: "4" },
 });
 
-/** The child env for a suite: defaults, then the caller's env, then the profile. */
+/**
+ * The child env for a suite: defaults, then the caller's env, then the profile.
+ * e2e:binary also gets a new run id per invocation, which its files share to
+ * reuse the one binary compiled for this run (see ensureBinaryCompiled).
+ */
 export function buildDenoSuiteProcessEnv(
   suite: DenoSuitePlanId,
   parentEnv: Readonly<Record<string, string>>,
 ): Record<string, string> {
   return buildTestProcessEnv(
     { ...DENO_SUITE_DEFAULT_ENV[suite], ...parentEnv },
-    DENO_SUITE_PROFILES[suite].env,
+    suite === "e2e:binary"
+      ? {
+        ...DENO_SUITE_PROFILES[suite].env,
+        VERYFRONT_BINARY_E2E_RUN_ID: crypto.randomUUID(),
+      }
+      : DENO_SUITE_PROFILES[suite].env,
   );
 }
 

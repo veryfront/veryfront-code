@@ -177,7 +177,10 @@ async function readProcessIdentity(pid: number): Promise<string | null | undefin
 }
 
 interface BinaryRecord {
+  /** pid and start time, or the pid alone when no start time is readable. */
   process: string;
+  /** VERYFRONT_BINARY_E2E_RUN_ID of the invocation, when the suite runner set one. */
+  run?: string;
   binaryPath: string;
 }
 
@@ -238,12 +241,15 @@ async function isBinaryHashCurrent(): Promise<boolean> {
 
 async function acquireBinary(): Promise<void> {
   await ensureCoordinationDir();
+  // The e2e:binary runner gives every invocation a run id that all its files
+  // share. Without one, the process start time identifies the invocation.
+  const run = Deno.env.get("VERYFRONT_BINARY_E2E_RUN_ID") || undefined;
   const startedIdentity = await readProcessIdentity(Deno.pid);
   // A pid-only record cannot tell this run from an earlier one with the same
   // pid, so it cannot prove the binary was compiled fresh for this run.
-  if (!startedIdentity && Deno.env.get("VERYFRONT_BINARY_FRESH") === "1") {
+  if (!run && !startedIdentity && Deno.env.get("VERYFRONT_BINARY_FRESH") === "1") {
     throw new Error(
-      "VERYFRONT_BINARY_FRESH=1 needs /proc or ps to identify the test process",
+      "VERYFRONT_BINARY_FRESH=1 needs the e2e:binary runner, /proc or ps to identify the run",
     );
   }
   const processIdentity = startedIdentity ?? String(Deno.pid);
@@ -252,15 +258,19 @@ async function acquireBinary(): Promise<void> {
   await lock.lock(true);
   await removeBinariesOfExitedProcesses();
   const record = await readBinaryRecord(recordPath);
-  if (
-    record?.process === processIdentity && record.binaryPath === RECORDED_BINARY_PATH &&
-    await exists(BINARY_PATH) && (startedIdentity || await isBinaryHashCurrent())
-  ) {
+  const sameRun = run
+    ? record?.run === run
+    : record?.process === processIdentity && (startedIdentity || await isBinaryHashCurrent());
+  if (sameRun && record?.binaryPath === RECORDED_BINARY_PATH && await exists(BINARY_PATH)) {
     console.log("✅ Using the binary compiled for this test run:", BINARY_PATH);
     return;
   }
   await compileBinary();
-  const compiled: BinaryRecord = { process: processIdentity, binaryPath: RECORDED_BINARY_PATH };
+  const compiled: BinaryRecord = {
+    process: processIdentity,
+    ...(run ? { run } : {}),
+    binaryPath: RECORDED_BINARY_PATH,
+  };
   await Deno.writeTextFile(recordPath, `${JSON.stringify(compiled)}\n`);
 }
 
