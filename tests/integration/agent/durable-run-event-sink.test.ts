@@ -764,6 +764,63 @@ describe("agent/hosted/durable-run-event-sink", () => {
     );
   });
 
+  it("omits an oversized response schema so the audit record still fits", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({ mirror: target.result });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      request: {
+        temperature: 0.2,
+        responseFormat: {
+          type: "json_schema",
+          name: "answer",
+          schema: {
+            type: "object",
+            description: "z".repeat(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+          },
+        },
+      },
+      messages: [{ role: "user", content: [{ type: "text", text: "latest question" }] }],
+    } as unknown as Parameters<typeof sink>[0];
+
+    await assertRejects(async () => await sink(event), DurableRunEventPersistenceError);
+
+    assertEquals(target.isDisposed(), false, "an oversized schema must not disable the mirror");
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(
+      getPrivateRunEventAppendRequestByteLength(persisted) <=
+        MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+      true,
+    );
+    assertEquals(isPrivateConversationRunEvent(persisted), true);
+    assertEquals(persisted.request, { temperature: 0.2 });
+    assertEquals(leadingNoticeText(persisted).includes("response schema omitted"), true);
+    const messages = persisted.messages as unknown[];
+    assertEquals(messages.length, 2, "the newest message is kept once the schema is omitted");
+  });
+
+  it("keeps a response schema that fits in the truncated audit record", async () => {
+    const target = mirror();
+    const responseFormat = {
+      type: "json_schema",
+      name: "answer",
+      schema: { type: "object" },
+    };
+    const event = {
+      ...createModelCallContextEventWithText(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES),
+      request: { responseFormat },
+    } as unknown as Parameters<ReturnType<typeof createDurableRunEventSink>>[0];
+
+    await assertRejects(
+      async () => await createDurableRunEventSink({ mirror: target.result })(event),
+      DurableRunEventPersistenceError,
+    );
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.request, { responseFormat });
+    assertEquals(leadingNoticeText(persisted).includes("response schema omitted"), false);
+  });
+
   it("serializes concurrent events that share a durable mirror", async () => {
     const firstAppendStarted = Promise.withResolvers<void>();
     const releaseFirstAppend = Promise.withResolvers<void>();
