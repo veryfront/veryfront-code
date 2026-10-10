@@ -14,8 +14,61 @@ import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
   join(E2E_BINARY_DIR, `veryfront-e2e-bin-${Deno.pid}`);
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+// `deno test --parallel` runs each file in its own isolate inside one process, so
+// sibling files share Deno.pid and BINARY_PATH but not module state. The lock
+// serializes them around the compile, and the users file counts the files still
+// running against the binary so the first one to finish does not delete it.
+// The lock sits beside the binary and is never removed: unlinking a lock file
+// while another isolate waits on it would let a third take a second lock.
+const BINARY_LOCK_PATH = join(dirname(BINARY_PATH), ".compiled-binary-e2e.lock");
+const BINARY_USERS_PATH = `${BINARY_PATH}.users`;
 
+/**
+ * The e2e:binary suite runs this many shard files side by side. The hosted CI
+ * runner has 4 vCPUs, and every test spawns a compiled server (and some a
+ * Chromium page), so three shards leave headroom for those child processes.
+ */
+export const COMPILED_BINARY_E2E_SHARD_COUNT = 3;
+
+/** Shared by every compiled-binary e2e suite: each test drives a spawned server. */
+export const COMPILED_BINARY_E2E_OPTIONS = {
+  sanitizeOps: false,
+  sanitizeResources: false,
+  timeout: 600_000,
+};
+
+let selectedShard: number | undefined;
 let binaryTestCacheRoot: string | undefined;
+
+/**
+ * Select the 1-based shard this test file runs. Call it before importing
+ * compiled-binary-e2e.test.ts, whose `it` then registers only every
+ * COMPILED_BINARY_E2E_SHARD_COUNT-th test, starting at this shard.
+ */
+export function selectCompiledBinaryE2EShard(shard: number): void {
+  if (!Number.isInteger(shard) || shard < 1 || shard > COMPILED_BINARY_E2E_SHARD_COUNT) {
+    throw new Error(`Shard must be 1..${COMPILED_BINARY_E2E_SHARD_COUNT}, got ${shard}`);
+  }
+  if (selectedShard !== undefined) throw new Error("A compiled-binary e2e shard is already set");
+  selectedShard = shard - 1;
+}
+
+/**
+ * Wrap `it` so a shard file registers its round-robin share of the tests, in
+ * declaration order, and every test lands in exactly one shard. With no shard
+ * selected, as when the test file runs directly, every test is registered.
+ */
+export function shardCompiledBinaryE2ETests<Args extends unknown[]>(
+  register: (...args: Args) => void,
+): (...args: Args) => void {
+  let declared = 0;
+  return (...args: Args) => {
+    const index = declared++;
+    if (selectedShard === undefined || index % COMPILED_BINARY_E2E_SHARD_COUNT === selectedShard) {
+      register(...args);
+    }
+  };
+}
 
 export function stripReactSSRMarkers(html: string): string {
   return html.replaceAll("<!-- -->", "");
@@ -31,12 +84,22 @@ export function getDirectiveSources(csp: string, directiveName: string): string[
   return directive.split(/\s+/).slice(1);
 }
 
-/** Get an available port using OS-assigned port 0. */
+/**
+ * Get an available port using OS-assigned port 0. A shard keeps only ports in
+ * its own residue class, so two shards running side by side never pick the
+ * same released port and poll each other's server for readiness.
+ */
 async function getAvailablePort(): Promise<number> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
+  while (true) {
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const { port } = listener.addr as Deno.NetAddr;
+    listener.close();
+    if (
+      selectedShard === undefined || port % COMPILED_BINARY_E2E_SHARD_COUNT === selectedShard
+    ) {
+      return port;
+    }
+  }
 }
 
 export interface TestServer {
@@ -56,8 +119,31 @@ export interface BrowserPageSession {
 
 let binaryCompiled: Promise<void> | undefined;
 
-function removeBinaryOnExit(): void {
-  for (const path of [BINARY_PATH, BINARY_HASH_PATH]) {
+/** Files of this process still using the binary; a count left by another process is stale. */
+function readBinaryUsers(): number {
+  let content: string;
+  try {
+    content = Deno.readTextFileSync(BINARY_USERS_PATH);
+  } catch {
+    return 0;
+  }
+  const match = /^(\d+) (\d+)$/.exec(content.trim());
+  return match && Number(match[1]) === Deno.pid ? Number(match[2]) : 0;
+}
+
+function writeBinaryUsers(count: number): void {
+  Deno.writeTextFileSync(BINARY_USERS_PATH, `${Deno.pid} ${count}\n`);
+}
+
+function releaseBinaryOnExit(): void {
+  using lock = Deno.openSync(BINARY_LOCK_PATH, { create: true, write: true });
+  lock.lockSync(true);
+  const users = readBinaryUsers() - 1;
+  if (users > 0) {
+    writeBinaryUsers(users);
+    return;
+  }
+  for (const path of [BINARY_PATH, BINARY_HASH_PATH, BINARY_USERS_PATH]) {
     try {
       Deno.removeSync(path);
     } catch {
@@ -67,16 +153,33 @@ function removeBinaryOnExit(): void {
 }
 
 /**
- * Compile the binary at most once per test process, shared by every suite in the file.
- * The binary is removed when the process exits, and only once a suite has set it up,
- * so importing the file without running a suite leaves an existing binary in place.
+ * Compile the binary at most once per test process, shared by every suite in
+ * every test file of that process. The first file to get here compiles it
+ * (honouring VERYFRONT_BINARY_FRESH and the source hash); files running beside
+ * it reuse that binary. The last file to exit removes it, and only once a suite
+ * has set it up, so importing the file without running a suite leaves an
+ * existing binary in place.
  */
 export function ensureBinaryCompiled(): Promise<void> {
-  if (!binaryCompiled) {
-    globalThis.addEventListener("unload", removeBinaryOnExit);
-    binaryCompiled = compileBinary();
-  }
+  binaryCompiled ??= acquireBinary();
   return binaryCompiled;
+}
+
+async function acquireBinary(): Promise<void> {
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
+  using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
+  await lock.lock(true);
+  const users = readBinaryUsers();
+  if (users === 0) {
+    await compileBinary();
+  } else {
+    console.log("✅ Using the binary compiled for this test run:", BINARY_PATH);
+  }
+  writeBinaryUsers(users + 1);
+  globalThis.addEventListener("unload", releaseBinaryOnExit);
 }
 
 async function compileBinary(): Promise<void> {
@@ -99,11 +202,6 @@ async function compileBinary(): Promise<void> {
 
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
-
-  // The parent of the path actually being written, not E2E_BINARY_DIR: with
-  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
-  // it would fail on a read-only checkout.
-  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");
@@ -150,9 +248,13 @@ function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
   })();
 }
 
+/** A fresh cache per server, so servers running side by side never share cache state. */
 async function getBinaryTestCacheDir(nodeEnv: string): Promise<string> {
   binaryTestCacheRoot ??= await Deno.makeTempDir({ prefix: "vf-e2e-binary-cache-" });
-  return join(binaryTestCacheRoot, nodeEnv === "production" ? "production" : "development");
+  return await Deno.makeTempDir({
+    dir: binaryTestCacheRoot,
+    prefix: nodeEnv === "production" ? "production-" : "development-",
+  });
 }
 
 export async function cleanupBinaryTestCache(): Promise<void> {

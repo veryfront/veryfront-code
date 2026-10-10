@@ -95,7 +95,12 @@ describe("suite planning parity", () => {
         "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
         "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
       ],
-      "e2e:binary": ["tests/integration/compiled-binary-e2e.test.ts"],
+      "e2e:binary": [
+        "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-3.test.ts",
+      ],
       "runtime:node": await legacyRuntimeFiles("node"),
       "runtime:bun": await legacyRuntimeFiles("bun"),
     };
@@ -863,7 +868,7 @@ async function legacyIntegrationRootFiles(): Promise<string[]> {
       .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !path.startsWith("tests/integration/compiled-binary-e2e.")
       ),
   );
 }

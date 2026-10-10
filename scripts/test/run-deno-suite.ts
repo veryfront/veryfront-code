@@ -109,7 +109,11 @@ export const DENO_SUITE_PROFILES: Readonly<
     // Belt and braces: the planner already excludes these, and the ignore
     // keeps a stray positional path from pulling them back in.
     extraFlags: [
-      "--ignore=tests/bun,tests/e2e,tests/integration/compiled-binary-e2e.test.ts",
+      "--ignore=tests/bun,tests/e2e,tests/integration/compiled-binary-e2e.test.ts," +
+      "tests/integration/compiled-binary-e2e.memory-recycle.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-1.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-2.test.ts," +
+      "tests/integration/compiled-binary-e2e.shard-3.test.ts",
     ],
   },
   "integration:cli": {
@@ -161,13 +165,17 @@ export const DENO_SUITE_PROFILES: Readonly<
   // shared test prefix stays off. VERYFRONT_BINARY* passthrough still works
   // because the spawned `deno test` inherits the parent env. The preload and
   // deny-net apply to the harness process only, never to the binary.
+  // The shard files run in parallel against one compiled binary. DENO_JOBS
+  // matches the file count so every file starts at once and holds the binary
+  // until the last one exits; the shards themselves are sized for the 4 vCPU
+  // CI runner (see COMPILED_BINARY_E2E_SHARD_COUNT).
   "e2e:binary": {
-    env: {},
+    env: { DENO_JOBS: "4" },
     network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
-    parallel: false,
+    parallel: true,
     heap: false,
     coverage: false,
     maxFilesPerProcess: null,
