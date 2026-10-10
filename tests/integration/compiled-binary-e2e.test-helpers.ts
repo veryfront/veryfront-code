@@ -17,10 +17,13 @@ export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 // `deno test --parallel` runs each file in its own isolate inside one process, so
 // sibling files share Deno.pid and BINARY_PATH but not module state. A lock
-// serializes them around the compile, and a users file counts the files still
-// running against the binary so the first one to finish does not delete it.
-// Both live in a private per-user temp directory rather than beside the binary,
-// which VERYFRONT_BINARY may place in a read-only directory. The lock is never
+// serializes them around the compile, and a record names the process instance
+// that compiled the binary, so every later file of that process reuses it,
+// whether the files run side by side or one after another. Isolates cannot tell
+// which of them exits last, so the binary outlives the process and the next
+// run removes binaries whose process has exited. The lock and records live in a
+// private per-user temp directory rather than beside the binary, which
+// VERYFRONT_BINARY may place in a read-only directory. The lock is never
 // removed: unlinking a lock file while another isolate waits on it would let a
 // third take a second lock.
 const COORDINATION_DIR = join(
@@ -28,7 +31,7 @@ const COORDINATION_DIR = join(
   `veryfront-compiled-binary-e2e-${Deno.uid() ?? "user"}`,
 );
 const BINARY_LOCK_PATH = join(COORDINATION_DIR, "compile.lock");
-const BINARY_USERS_PATH = join(COORDINATION_DIR, `${Deno.pid}.users`);
+const BINARY_RECORD_SUFFIX = ".binary.json";
 
 /**
  * The e2e:binary suite runs this many shard files side by side. The hosted CI
@@ -144,84 +147,74 @@ async function ensureCoordinationDir(): Promise<void> {
 }
 
 /**
- * Identify this process instance, not just its pid: a pid can be reused after a
- * run is killed before its unload handlers clean up. Every isolate of the
- * process sees the same pid and start time. Linux reads the start time from
- * /proc, other hosts from `ps`; without either, the pid alone identifies it.
+ * Identify a process instance, not just its pid, since a pid can be reused.
+ * Linux reads the start time from /proc, other hosts from `ps`. Returns null
+ * when the process does not exist and undefined when neither source exists.
  */
-async function getProcessIdentity(): Promise<string> {
+async function readProcessIdentity(pid: number): Promise<string | null | undefined> {
   try {
-    const stat = await Deno.readTextFile("/proc/self/stat");
+    const stat = await Deno.readTextFile(`/proc/${pid}/stat`);
     // Field 22 is the start time; fields restart after the parenthesized name.
     const startedAt = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-    if (startedAt) return `${Deno.pid} ${startedAt}`;
-  } catch {
-    // Not Linux; fall through to ps.
+    if (startedAt) return `${pid} ${startedAt}`;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound && await exists("/proc/self/stat")) return null;
   }
   try {
     const result = await new Deno.Command("ps", {
-      args: ["-o", "lstart=", "-p", String(Deno.pid)],
+      args: ["-o", "lstart=", "-p", String(pid)],
       stdout: "piped",
       stderr: "null",
     }).output();
     const startedAt = new TextDecoder().decode(result.stdout).trim();
-    if (result.success && startedAt) return `${Deno.pid} ${startedAt}`;
+    return result.success && startedAt ? `${pid} ${startedAt}` : null;
   } catch {
-    // ps is not installed.
+    return undefined;
   }
-  return String(Deno.pid);
 }
 
-let processIdentity = "";
-
-interface BinaryUsersRecord {
+interface BinaryRecord {
   process: string;
   binaryPath: string;
-  count: number;
 }
 
-/** Files of this process instance still using the binary; any other record is stale. */
-function readBinaryUsers(): number {
-  let record: Partial<BinaryUsersRecord>;
+async function readBinaryRecord(path: string): Promise<Partial<BinaryRecord> | undefined> {
   try {
-    record = JSON.parse(Deno.readTextFileSync(BINARY_USERS_PATH));
+    return JSON.parse(await Deno.readTextFile(path));
   } catch {
-    return 0;
+    return undefined;
   }
-  const { count } = record;
-  if (record.process !== processIdentity || record.binaryPath !== BINARY_PATH) return 0;
-  return typeof count === "number" && Number.isInteger(count) && count > 0 ? count : 0;
 }
 
-function writeBinaryUsers(count: number): void {
-  const record: BinaryUsersRecord = { process: processIdentity, binaryPath: BINARY_PATH, count };
-  Deno.writeTextFileSync(BINARY_USERS_PATH, `${JSON.stringify(record)}\n`);
-}
-
-function releaseBinaryOnExit(): void {
-  using lock = Deno.openSync(BINARY_LOCK_PATH, { create: true, write: true });
-  lock.lockSync(true);
-  const users = readBinaryUsers() - 1;
-  if (users > 0) {
-    writeBinaryUsers(users);
-    return;
-  }
-  for (const path of [BINARY_PATH, BINARY_HASH_PATH, BINARY_USERS_PATH]) {
-    try {
-      Deno.removeSync(path);
-    } catch {
-      // The binary may not exist or may already be cleaned up.
+/**
+ * Remove binaries compiled by test processes that have exited, except
+ * BINARY_PATH itself, which compileBinary checks against the source hash.
+ * A process whose liveness cannot be read keeps its binary.
+ */
+async function removeBinariesOfExitedProcesses(): Promise<void> {
+  for await (const entry of Deno.readDir(COORDINATION_DIR)) {
+    if (!entry.isFile || !entry.name.endsWith(BINARY_RECORD_SUFFIX)) continue;
+    const recordPath = join(COORDINATION_DIR, entry.name);
+    const record = await readBinaryRecord(recordPath);
+    const pid = Number.parseInt(record?.process ?? "", 10);
+    if (Number.isInteger(pid)) {
+      const current = await readProcessIdentity(pid);
+      if (current === undefined || current === record?.process) continue;
     }
+    if (record?.binaryPath && record.binaryPath !== BINARY_PATH) {
+      for (const path of [record.binaryPath, `${record.binaryPath}.srcHash`]) {
+        await Deno.remove(path).catch(() => {});
+      }
+    }
+    await Deno.remove(recordPath).catch(() => {});
   }
 }
 
 /**
  * Compile the binary at most once per test process, shared by every suite in
  * every test file of that process. The first file to get here compiles it
- * (honouring VERYFRONT_BINARY_FRESH and the source hash); files running beside
- * it reuse that binary. The last file to exit removes it, and only once a suite
- * has set it up, so importing the file without running a suite leaves an
- * existing binary in place.
+ * (honouring VERYFRONT_BINARY_FRESH and the source hash); later files of the
+ * same process reuse that binary.
  */
 export function ensureBinaryCompiled(): Promise<void> {
   binaryCompiled ??= acquireBinary();
@@ -230,17 +223,22 @@ export function ensureBinaryCompiled(): Promise<void> {
 
 async function acquireBinary(): Promise<void> {
   await ensureCoordinationDir();
-  processIdentity = await getProcessIdentity();
+  const processIdentity = await readProcessIdentity(Deno.pid) ?? String(Deno.pid);
+  const recordPath = join(COORDINATION_DIR, `${Deno.pid}${BINARY_RECORD_SUFFIX}`);
   using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
   await lock.lock(true);
-  const users = readBinaryUsers();
-  if (users === 0) {
-    await compileBinary();
-  } else {
+  await removeBinariesOfExitedProcesses();
+  const record = await readBinaryRecord(recordPath);
+  if (
+    record?.process === processIdentity && record.binaryPath === BINARY_PATH &&
+    await exists(BINARY_PATH)
+  ) {
     console.log("✅ Using the binary compiled for this test run:", BINARY_PATH);
+    return;
   }
-  writeBinaryUsers(users + 1);
-  globalThis.addEventListener("unload", releaseBinaryOnExit);
+  await compileBinary();
+  const compiled: BinaryRecord = { process: processIdentity, binaryPath: BINARY_PATH };
+  await Deno.writeTextFile(recordPath, `${JSON.stringify(compiled)}\n`);
 }
 
 async function compileBinary(): Promise<void> {

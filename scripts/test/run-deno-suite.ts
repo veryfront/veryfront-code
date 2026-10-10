@@ -185,8 +185,8 @@ export const DENO_SUITE_PROFILES: Readonly<
  * Env defaults a caller's own environment may override, unlike a profile's
  * `env`. e2e:binary runs its four files (three shards sized for the 4 vCPU CI
  * runner, see COMPILED_BINARY_E2E_SHARD_COUNT, plus the memory-recycle file)
- * at once so they share one compiled binary; a caller-set DENO_JOBS still
- * bounds that, at the cost of compiling again once every running file exits.
+ * at once; a caller-set DENO_JOBS still bounds that, and the files then share
+ * the one compiled binary one after another.
  */
 const DENO_SUITE_DEFAULT_ENV: Readonly<
   Partial<Record<DenoSuitePlanId, Readonly<Record<string, string>>>>
