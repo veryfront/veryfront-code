@@ -1,3 +1,4 @@
+import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
@@ -449,12 +450,13 @@ function withoutDeniedRemoteTools(
 function applyHostedHostToolPolicy(
   tools: HostToolSet,
   policy: HostedHostToolPolicy | undefined,
+  deniedToolNames: readonly string[] | undefined,
 ): HostToolSet {
   if (policy === undefined) {
     return tools;
   }
   const allowed = createPrivateSet(policy.allow);
-  return recordFromEntries(
+  const selectedTools = recordFromEntries(
     filterValues(ownEntries(tools), (entry) => {
       const shortName = ownDataValue(entry[1], "shortName");
       if (allowed.has(entry[0]) || (typeof shortName === "string" && allowed.has(shortName))) {
@@ -466,6 +468,11 @@ function applyHostedHostToolPolicy(
         !isProjectOwnedLocalToolName(tools, FORM_INPUT_TOOL_ID);
     }),
   );
+  return retainTrustedSkillLoaderAliases({
+    tools: selectedTools,
+    originalTools: tools,
+    deniedToolNames,
+  });
 }
 
 function activeProjectId(
@@ -863,7 +870,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   }
   const explicitAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const authorizedLocalTools = withoutDeniedHostTools(
-    applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
+    applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy, input.deniedToolNames),
     input.deniedToolNames,
     projectToolNames,
     explicitAllowedToolNames,
@@ -876,6 +883,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const normalizedAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(
     ownerScopedAllowedToolNames,
   );
+  const bootstrapAllowedToolNames = normalizedAllowedToolNames ??
+    (input.hostToolPolicy === undefined ? null : createPrivateSet(input.hostToolPolicy.allow));
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: ownKeys(authorizedLocalTools),
@@ -1109,7 +1118,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? selectHostedRuntimeBootstrapToolNames({
       toolNames: authorizedToolNames,
       runtimeTools: localRuntimeTools,
-      explicitAllowedToolNames: normalizedAllowedToolNames,
+      explicitAllowedToolNames: bootstrapAllowedToolNames,
     })
     : [];
   if (toolLoadingMode === "eager") {
@@ -1143,7 +1152,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
     toolNames: availableToolNames,
     runtimeTools: localRuntimeTools,
-    explicitAllowedToolNames: normalizedAllowedToolNames,
+    explicitAllowedToolNames: bootstrapAllowedToolNames,
   });
   const compatibleToolNames = createPrivateSet(availableToolNames);
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"

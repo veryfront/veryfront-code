@@ -1362,6 +1362,90 @@ it("prepareHostedChatRuntimeToolAssembly keeps the legacy loader executable for 
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
 });
 
+it("prepareHostedChatRuntimeToolAssembly retains the legacy loader executable under a canonical-only host policy", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["veryfront__load_skill"],
+    hostToolPolicy: { allow: ["veryfront__load_skill"] },
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["veryfront__load_skill"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["veryfront__load_skill"]);
+  assertEquals(isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.load_skill), true);
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly keeps the canonical-only host grant visible with no explicit selector", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    hostToolPolicy: { allow: ["veryfront__load_skill"] },
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["veryfront__load_skill"]);
+  assertEquals(isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.load_skill), true);
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
 it("prepareHostedChatRuntimeToolAssembly keeps the canonical loader executable for an eager legacy selector", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
@@ -1398,6 +1482,96 @@ it("prepareHostedChatRuntimeToolAssembly keeps the canonical loader executable f
   assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep", "veryfront__load_skill"]);
   assertEquals(toolAssembly.modelVisibleToolNames, ["load_skill", "sleep"]);
   assertEquals(providerDefinitions.map((tool) => tool.name), ["load_skill", "sleep"]);
+  assertEquals(
+    isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.veryfront__load_skill),
+    true,
+  );
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly retains the canonical loader executable under a legacy-only host policy", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["load_skill"],
+    hostToolPolicy: { allow: ["load_skill"] },
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["load_skill"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["load_skill"]);
+  assertEquals(
+    isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.veryfront__load_skill),
+    true,
+  );
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly keeps the legacy-only host grant visible with no explicit selector", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    hostToolPolicy: { allow: ["load_skill"] },
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["load_skill", "tool_search"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["load_skill"]);
   assertEquals(
     isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.veryfront__load_skill),
     true,
