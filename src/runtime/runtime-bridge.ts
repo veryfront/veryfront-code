@@ -12,6 +12,13 @@ import {
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
+  closePrivateStream,
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
+import {
   isAbortSignalAborted,
   throwIfAbortSignalAborted,
 } from "#veryfront/platform/compat/abort-signal.ts";
@@ -1546,7 +1553,7 @@ function observeProviderStreamSourceFailures(
   stream: ReadableStream<unknown>,
   observeFailure: (error: unknown) => Promise<never>,
 ): ReadableStream<unknown> {
-  const reader = stream.getReader();
+  const reader = getPrivateStreamReader(stream);
   let released = false;
   const release = () => {
     if (released) return;
@@ -1554,16 +1561,16 @@ function observeProviderStreamSourceFailures(
     reader.releaseLock();
   };
 
-  return new ReadableStream<unknown>({
+  return createPrivateReadableStream<unknown>({
     async pull(controller) {
       try {
         const part = await reader.read();
         if (part.done) {
-          controller.close();
+          closePrivateStream(controller);
           release();
           return;
         }
-        controller.enqueue(materializeProviderStreamPart(part.value));
+        enqueuePrivateStream(controller, materializeProviderStreamPart(part.value));
       } catch (error) {
         const providerFailure = createRuntimeProviderStreamFailure(error);
         void (async () => {
@@ -1578,7 +1585,7 @@ function observeProviderStreamSourceFailures(
         try {
           await observeFailure(providerFailure);
         } catch (observedError) {
-          controller.error(observedError);
+          errorPrivateStream(controller, observedError);
         }
       }
     },

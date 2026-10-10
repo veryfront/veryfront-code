@@ -13,12 +13,16 @@ import {
   type VeryfrontCloudModelFacts,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
-import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
+import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
-import { createGenerateModel } from "#veryfront/runtime/runtime-bridge.test-helpers.ts";
+import {
+  collectAsync,
+  createGenerateModel,
+  createStreamModel,
+} from "#veryfront/runtime/runtime-bridge.test-helpers.ts";
 
 function assertModelCallContextEvent(
   event: AgentRunEvent | undefined,
@@ -49,6 +53,99 @@ async function withSkippedCaptureControlIteration(
 }
 
 describe("runtime-bridge exact capture control intrinsic boundaries", () => {
+  it("keeps stream failure observation on captured stream intrinsics after provider dispatch", async () => {
+    const events: AgentRunEvent[] = [];
+    const NativeReadableStream = globalThis.ReadableStream;
+    const readableStreamDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ReadableStream");
+    const enqueueDescriptor = Object.getOwnPropertyDescriptor(
+      ReadableStreamDefaultController.prototype,
+      "enqueue",
+    );
+    const closeDescriptor = Object.getOwnPropertyDescriptor(
+      ReadableStreamDefaultController.prototype,
+      "close",
+    );
+    const errorDescriptor = Object.getOwnPropertyDescriptor(
+      ReadableStreamDefaultController.prototype,
+      "error",
+    );
+    const model = createStreamModel(
+      "test",
+      "test/post-dispatch-stream-intrinsic-mutation",
+      async () => {
+        const stream = new NativeReadableStream<unknown>({
+          start(controller) {
+            controller.enqueue({ type: "text-delta", delta: "ok" });
+            controller.close();
+          },
+        });
+        Object.defineProperty(globalThis, "ReadableStream", {
+          configurable: true,
+          writable: true,
+          value: function PoisonedReadableStream() {
+            throw new Error("poisoned global ReadableStream constructor was used");
+          },
+        });
+        Object.defineProperty(ReadableStreamDefaultController.prototype, "enqueue", {
+          configurable: true,
+          writable: true,
+          value() {
+            throw new Error("poisoned controller enqueue was used");
+          },
+        });
+        Object.defineProperty(ReadableStreamDefaultController.prototype, "close", {
+          configurable: true,
+          writable: true,
+          value() {
+            throw new Error("poisoned controller close was used");
+          },
+        });
+        Object.defineProperty(ReadableStreamDefaultController.prototype, "error", {
+          configurable: true,
+          writable: true,
+          value() {
+            throw new Error("poisoned controller error was used");
+          },
+        });
+        return { stream };
+      },
+    );
+
+    try {
+      const chunks = await runWithMandatoryRunEventSink(
+        (event) => {
+          events.push(event);
+        },
+        () =>
+          collectAsync(
+            streamText({ model, messages: [{ role: "user", content: "Hello" }] }).fullStream,
+          ),
+      );
+
+      assertEquals(chunks, [{ type: "text-delta", text: "ok" }]);
+      assertEquals(events.map((event) => event.type), [
+        "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      ]);
+    } finally {
+      if (readableStreamDescriptor) {
+        Object.defineProperty(globalThis, "ReadableStream", readableStreamDescriptor);
+      }
+      if (enqueueDescriptor) {
+        Object.defineProperty(
+          ReadableStreamDefaultController.prototype,
+          "enqueue",
+          enqueueDescriptor,
+        );
+      }
+      if (closeDescriptor) {
+        Object.defineProperty(ReadableStreamDefaultController.prototype, "close", closeDescriptor);
+      }
+      if (errorDescriptor) {
+        Object.defineProperty(ReadableStreamDefaultController.prototype, "error", errorDescriptor);
+      }
+    }
+  });
+
   it("refuses unrepresented provider controls after Array iterator replacement", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
