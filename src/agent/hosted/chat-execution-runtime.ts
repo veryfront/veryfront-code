@@ -72,7 +72,7 @@ import {
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import { isStreamTimeoutError } from "../streaming/stream-outcome.ts";
+import { isStreamTimeoutError } from "#veryfront/agent/streaming/stream-outcome.ts";
 import { finalizeHostedChatRun, isDurableRunKnownTerminal } from "./hosted-chat-finalization.ts";
 import {
   runWithMandatoryRunEventSink,
@@ -98,6 +98,16 @@ const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execu
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
 const DEFAULT_STREAM_BOOTSTRAP_KEEPALIVE_INTERVAL_MS = 30_000;
 const DEFAULT_STREAM_BOOTSTRAP_TIMEOUT_MS = DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS;
+
+type HostedChatExecutionStreamAbortSource = "caller" | "root" | "bootstrap";
+type HostedChatExecutionStreamAbortRecord = {
+  source: HostedChatExecutionStreamAbortSource;
+  reason: unknown;
+};
+type HostedChatExecutionStreamAbortTracker = {
+  first: () => HostedChatExecutionStreamAbortRecord | null;
+  dispose: () => void;
+};
 
 /** Public API contract for hosted chat execution runtime. */
 export interface HostedChatExecutionRuntime {
@@ -132,6 +142,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   capturedConversationId?: string;
   mirroredToolChunkState: MirroredToolChunkState;
   runEventSink?: AgentRunEventSink;
+  streamAbortTracker?: HostedChatExecutionStreamAbortTracker;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */
@@ -330,6 +341,51 @@ function createStreamBootstrapWatchdogKeepalive(input: {
   };
 }
 
+function createFirstStreamAbortSourceTracker(input: {
+  callerSignal: AbortSignal;
+  rootSignal: AbortSignal;
+  bootstrapSignal: AbortSignal;
+}): HostedChatExecutionStreamAbortTracker {
+  let firstAbort: HostedChatExecutionStreamAbortRecord | null = null;
+  const cleanupListeners: Array<() => void> = [];
+  const dispose = (): void => {
+    for (const cleanup of cleanupListeners.splice(0)) {
+      cleanup();
+    }
+  };
+  const record = (source: HostedChatExecutionStreamAbortSource, reason: unknown): void => {
+    if (firstAbort !== null) {
+      return;
+    }
+    firstAbort = { source, reason };
+    dispose();
+  };
+  const observe = (
+    signal: AbortSignal,
+    source: HostedChatExecutionStreamAbortSource,
+  ): void => {
+    if (firstAbort !== null) {
+      return;
+    }
+    if (signal.aborted) {
+      record(source, signal.reason);
+      return;
+    }
+    const listener = () => record(source, signal.reason);
+    signal.addEventListener("abort", listener, { once: true });
+    cleanupListeners.push(() => signal.removeEventListener("abort", listener));
+  };
+
+  observe(input.callerSignal, "caller");
+  observe(input.rootSignal, "root");
+  observe(input.bootstrapSignal, "bootstrap");
+
+  return {
+    first: () => firstAbort,
+    dispose,
+  };
+}
+
 function traceHostedChatRuntimeStream<T>(
   traceStream: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"],
   operation: () => Promise<T>,
@@ -345,7 +401,7 @@ function traceHostedChatRuntimeStream<T>(
 export async function createHostedChatExecutionRuntimeBootstrap(
   input: CreateHostedChatExecutionRuntimeBootstrapInput,
 ): Promise<HostedChatExecutionRuntimeBootstrap> {
-  const cleanup = createHostedChatExecutionCleanup(input.cleanup, input.lifecycleAdapter);
+  const runCleanup = createHostedChatExecutionCleanup(input.cleanup, input.lifecycleAdapter);
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
     throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
@@ -369,6 +425,15 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     rootStreamWatchdog.signal,
     bootstrapKeepalive.signal,
   ]);
+  const streamAbortTracker = createFirstStreamAbortSourceTracker({
+    callerSignal: input.abortSignal,
+    rootSignal: rootStreamWatchdog.signal,
+    bootstrapSignal: bootstrapKeepalive.signal,
+  });
+  const cleanup = async () => {
+    streamAbortTracker.dispose();
+    await runCleanup();
+  };
   const runEventSink = input.durableRunEventMirror
     ? createDurableRunEventSink({
       mirror: input.durableRunEventMirror,
@@ -403,6 +468,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
       () => undefined,
     );
   } catch (error) {
+    streamAbortTracker.dispose();
     rootStreamWatchdog.dispose();
     throw error;
   } finally {
@@ -419,6 +485,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
     mirroredToolChunkState: createMirroredToolChunkState(),
     ...(runEventSink ? { runEventSink } : {}),
+    streamAbortTracker,
   };
 }
 
@@ -835,8 +902,12 @@ export function createHostedChatExecutionRuntime(
       return null;
     }
     const rootStreamAbortSignal = input.bootstrap.rootStreamWatchdog.signal;
-    if (!input.abortSignal.aborted && rootStreamAbortSignal.aborted) {
-      const reason = rootStreamAbortSignal.reason;
+    const firstAbort = input.bootstrap.streamAbortTracker?.first() ?? null;
+    if (
+      (firstAbort?.source === "root" || firstAbort?.source === "bootstrap") ||
+      (firstAbort === null && rootStreamAbortSignal.aborted && !input.abortSignal.aborted)
+    ) {
+      const reason = firstAbort?.reason ?? rootStreamAbortSignal.reason;
       return isStreamTimeoutError(reason) ? reason : new DOMException(
         "Hosted chat stream stopped before producing a response",
         "AbortError",
@@ -844,6 +915,11 @@ export function createHostedChatExecutionRuntime(
     }
     return null;
   };
+
+  const isCallerAbortForDetachedFinalization = (): boolean =>
+    input.abortSignal.aborted &&
+    input.bootstrap.streamAbortTracker?.first()?.source !== "root" &&
+    input.bootstrap.streamAbortTracker?.first()?.source !== "bootstrap";
 
   const finalizeDetachedStreamEndIfNeeded = async () => {
     if (finishHandlerStarted) {
@@ -854,7 +930,7 @@ export function createHostedChatExecutionRuntime(
     await finalizeDetachedStreamEnd({
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
-      isAborted: input.abortSignal.aborted,
+      isAborted: isCallerAbortForDetachedFinalization(),
       lastStreamError: resolveDetachedStreamError(),
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
