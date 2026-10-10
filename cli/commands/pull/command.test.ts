@@ -1735,7 +1735,6 @@ describe("pullCommand", () => {
 
   it("writes referenced OKF companions without pruning unmanaged local Python files", async () => {
     const tempDir = await Deno.makeTempDir();
-    const originalFetch = globalThis.fetch;
     const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
     try {
@@ -1747,8 +1746,8 @@ describe("pullCommand", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
 
-      globalThis.fetch = ((input: string | URL | Request) => {
-        const url = new URL(String(input));
+      const mockFetch: typeof globalThis.fetch = (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
         if (url.pathname === "/projects/alpha") {
           return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
         }
@@ -1849,16 +1848,20 @@ describe("pullCommand", () => {
           );
         }
         throw new Error(`OKF companion pull fetched unexpected content: ${url}`);
-      }) as typeof fetch;
+      };
 
-      await pullCommand({
-        projectDir: tempDir,
-        projectSlug: "alpha",
-        branch: "studio-change",
-        prune: true,
-        force: true,
-        quiet: true,
-      });
+      await withMockFetch(
+        mockFetch,
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            branch: "studio-change",
+            prune: true,
+            force: true,
+            quiet: true,
+          }),
+      );
 
       assertEquals(
         await Deno.readTextFile(join(tempDir, "knowledge", "computations", "revenue-ytd.md")),
@@ -1897,7 +1900,6 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "scripts", "run.py")), false);
       assertEquals(await exists(join(tempDir, "app", "remove.ts")), false);
     } finally {
-      globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
