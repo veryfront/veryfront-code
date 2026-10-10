@@ -46,6 +46,7 @@ import type {
   EmbeddingRuntime,
   ModelRuntime,
   ModelRuntimeGenerateResult,
+  ModelRuntimeStreamResult,
   RuntimeResponseFormat,
 } from "#veryfront/provider/types.ts";
 import {
@@ -233,6 +234,7 @@ type ModelCallRequestSource = Pick<
 type DirectModelOptions = Record<string, unknown> & {
   prompt: DirectModelMessage[];
   tools?: ModelCallTool[];
+  abortSignal?: AbortSignal;
 } & ModelCallRequestSource;
 
 function readSystemProviderOptions(
@@ -797,12 +799,12 @@ function buildDirectModelOptions(
  * options validated and built for it, and the request recorded for it, match
  * the request then sent.
  */
-async function settleVeryfrontCloudModel(options: DirectTextOptions): Promise<void> {
-  if (
-    readVeryfrontCloudModelFacts(options.model) !== undefined &&
-    typeof options.model.prepare === "function"
-  ) {
-    await options.model.prepare(options.abortSignal);
+async function settleVeryfrontCloudModel(
+  model: ModelRuntime,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (readVeryfrontCloudModelFacts(model) !== undefined && typeof model.prepare === "function") {
+    await model.prepare(abortSignal);
   }
 }
 
@@ -926,7 +928,7 @@ function readModelCallCaptureReceipt(
 }
 
 async function emitModelCallContextEvent(
-  options: DirectTextOptions,
+  model: ModelRuntime,
   directOptions: DirectModelOptions,
 ): Promise<
   | {
@@ -937,11 +939,11 @@ async function emitModelCallContextEvent(
 > {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return undefined;
-  const request = buildModelCallContextRequest(options.model, directOptions);
+  const request = buildModelCallContextRequest(model, directOptions);
   const writerBinding = getRuntimeObservationWriterBinding(sinks.mandatory);
   const writerScope = writerBinding?.scope;
   const captureEnabled = writerBinding !== undefined &&
-    readVeryfrontCloudModelFacts(options.model) !== undefined;
+    readVeryfrontCloudModelFacts(model) !== undefined;
   if (captureEnabled) {
     writerBinding.assertActive();
     assertExactModelCallCaptureControlsSupported(directOptions);
@@ -951,12 +953,12 @@ async function emitModelCallContextEvent(
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     ...(modelCallId ? { modelCallId } : {}),
-    ...(options.model.modelId
+    ...(model.modelId
       ? {
         model: {
-          id: options.model.modelId,
-          ...(resolveModelCallProvider(options.model)
-            ? { modelProvider: resolveModelCallProvider(options.model) }
+          id: model.modelId,
+          ...(resolveModelCallProvider(model)
+            ? { modelProvider: resolveModelCallProvider(model) }
             : {}),
         },
       }
@@ -967,7 +969,9 @@ async function emitModelCallContextEvent(
   };
 
   const assertActive = () => {
-    if (options.abortSignal) throwIfAbortSignalAborted(options.abortSignal);
+    if (directOptions.abortSignal) {
+      throwIfAbortSignalAborted(directOptions.abortSignal);
+    }
     writerBinding?.assertActive();
   };
 
@@ -1573,39 +1577,71 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
   }
 }
 
+function snapshotDirectModelOptions(
+  model: ModelRuntime,
+  options: DirectModelOptions,
+): DirectModelOptions {
+  try {
+    return snapshotModelCallProviderOptions(model, options);
+  } catch (error) {
+    if (!getActiveRunEventSinks().mandatory) throw error;
+    recordErrorCount({ slug: "model-call-context-clone-failed", failure_class: "unknown" });
+    throw new DurableRunEventPersistenceError(
+      "Mandatory model call context event is not cloneable",
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
-    await settleVeryfrontCloudModel(options);
-    const directOptions = snapshotModelCallProviderOptions(
-      options.model,
+    const model = options.model;
+    await settleVeryfrontCloudModel(model, options.abortSignal);
+    const directOptions = snapshotDirectModelOptions(
+      model,
       buildDirectModelOptions(options, tools),
     );
-    const capture = await emitModelCallContextEvent(options, directOptions);
-    if (shouldGenerateViaStream(options.model)) {
+    const generateViaStream = shouldGenerateViaStream(model);
+    const dispatchMethod = generateViaStream ? model.doStream : model.doGenerate;
+    const abortSignal = directOptions.abortSignal;
+    const capture = await emitModelCallContextEvent(model, directOptions);
+    if (generateViaStream) {
       return observeGenerateFailure(() =>
         runWithModelCallCapture(
           capture,
-          () => options.model.doStream(directOptions),
-        ).then(({ stream }) => buildGenerateResultFromStream(stream)), options.abortSignal);
+          () =>
+            ReflectApply(dispatchMethod, model, [directOptions]) as Promise<
+              ModelRuntimeStreamResult
+            >,
+        ).then(({ stream }) => buildGenerateResultFromStream(stream)), abortSignal);
     }
 
     return observeGenerateFailure(() =>
       runWithModelCallCapture(
         capture,
-        () => options.model.doGenerate(directOptions),
-      ).then(buildDirectGenerateResult), options.abortSignal);
+        () =>
+          ReflectApply(dispatchMethod, model, [directOptions]) as Promise<
+            ModelRuntimeGenerateResult
+          >,
+      ).then(buildDirectGenerateResult), abortSignal);
   });
 }
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
-    await settleVeryfrontCloudModel(options);
-    const directOptions = snapshotModelCallProviderOptions(
-      options.model,
+    const model = options.model;
+    await settleVeryfrontCloudModel(model, options.abortSignal);
+    const directOptions = snapshotDirectModelOptions(
+      model,
       buildDirectModelOptions(options, tools),
     );
-    const capture = await emitModelCallContextEvent(options, directOptions);
-    return runWithModelCallCapture(capture, () => options.model.doStream(directOptions));
+    const dispatchMethod = model.doStream;
+    const dispatch = () =>
+      ReflectApply(dispatchMethod, model, [directOptions]) as Promise<ModelRuntimeStreamResult>;
+    const capture = await emitModelCallContextEvent(model, directOptions);
+    return runWithModelCallCapture(capture, dispatch);
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
   // branch is never consumed at all) and doStream rejects.

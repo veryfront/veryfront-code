@@ -4,6 +4,7 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import { unwrapToolInputSchema } from "#veryfront/provider/shared/index.ts";
+import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import {
   isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
@@ -23,6 +24,12 @@ import {
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
+import {
+  canIdentifyNonPlainBuiltinsWithoutHooks,
+  canIdentifyProxyWithoutHooks,
+  isNonPlainBuiltinWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import type { ModelCallRequest, ModelCallResponseFormat } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<
@@ -43,21 +50,27 @@ const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const MathMin = Math.min;
 const NativeWeakSet = WeakSet;
+const NativeDate = Date;
 const NativeNumber = Number;
 const NativeString = String;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeDelete = WeakSet.prototype.delete;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
+const DatePrototypeGetTime = Date.prototype.getTime;
 const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeIncludes = String.prototype.includes;
+const StructuredCloneValue = globalThis.structuredClone;
+const NativeArrayPrototype = Array.prototype;
+const NativeObjectPrototype = Object.prototype;
 const NativeOpenAIChatModelPattern = /^(gpt-|o[134](-|$)|chatgpt-)/;
 
 function regexpTest(pattern: RegExp, value: string): boolean {
@@ -136,6 +149,19 @@ function numberIsSafeInteger(value: number): boolean {
 
 function mathMin(...values: number[]): number {
   return ReflectApply(MathMin, Math, values) as number;
+}
+
+function cloneDate(value: unknown): Date | undefined {
+  try {
+    const time = ReflectApply(DatePrototypeGetTime, value, []) as number;
+    return new NativeDate(time);
+  } catch {
+    return undefined;
+  }
+}
+
+function objectGetPrototypeOf(value: SnapshotContainer): object | null {
+  return ReflectApply(ObjectGetPrototypeOf, Object, [value]) as object | null;
 }
 
 function readOwnEnumerableDataDescriptor(
@@ -678,6 +704,372 @@ function snapshotProviderBucket(providerName: string, bucket: unknown): unknown 
   );
 }
 
+const MaxModelCallInputSnapshotDepth = 64;
+const MaxModelCallInputSnapshotNodes = 65_536;
+
+type ModelCallInputSnapshotState = {
+  ancestors: WeakSet<SnapshotContainer>;
+  nodes: number;
+  valuesAreOwned: boolean;
+};
+
+type ModelCallInputPath =
+  | "semantic"
+  | "promptArray"
+  | "promptMessage"
+  | "messageContentArray"
+  | "messageContentPart"
+  | "toolOutput"
+  | "opaque"
+  | "providerToolCallsArray"
+  | "providerToolCall"
+  | "toolsArray"
+  | "toolDefinition";
+
+function snapshotModelCallInputNode(label: string, state: ModelCallInputSnapshotState): void {
+  if (state.nodes >= MaxModelCallInputSnapshotNodes) {
+    throw new TypeError(`Model call ${label} exceeded the snapshot node limit`);
+  }
+  state.nodes += 1;
+}
+
+function readRequiredModelCallInputArrayLength(label: string, value: SnapshotContainer): number {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, "length"]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError(`Model call ${label} could not be enumerated`);
+  }
+  if (!descriptor || !ObjectHasOwn(descriptor, "value") || !numberIsSafeInteger(descriptor.value)) {
+    throw new TypeError(`Model call ${label} contained an invalid array`);
+  }
+  const length = descriptor.value as number;
+  if (length > MaxModelCallInputSnapshotNodes - 1) {
+    throw new TypeError(`Model call ${label} exceeded the snapshot node limit`);
+  }
+  return length;
+}
+
+function readRequiredModelCallInputEntry(
+  label: string,
+  container: SnapshotContainer,
+  key: PropertyKey,
+): { present: boolean; descriptor: PropertyDescriptor | undefined } {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [container, key]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError(`Model call ${label} could not be enumerated`);
+  }
+  if (!descriptor) return { present: false, descriptor: undefined };
+  if (!ObjectHasOwn(descriptor, "value")) {
+    throw new TypeError(`Model call ${label} must contain data properties`);
+  }
+  return { present: true, descriptor };
+}
+
+function defineSnapshotDataProperty(
+  target: SnapshotContainer,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+  value: unknown,
+): void {
+  ReflectApply(ObjectDefineProperty, Object, [target, key, {
+    value,
+    writable: descriptor.writable === true,
+    enumerable: descriptor.enumerable === true,
+    configurable: descriptor.configurable === true,
+  }]);
+}
+
+function isJsonSnapshotArraySerializationGuardDescriptor(
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return descriptor !== undefined &&
+    descriptor.value === undefined &&
+    descriptor.configurable === false &&
+    descriptor.enumerable === false &&
+    descriptor.writable === false;
+}
+
+function hasJsonSnapshotArraySerializationGuard(value: SnapshotContainer): boolean {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, "toJSON"]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError("Model call input could not be enumerated");
+  }
+  return isJsonSnapshotArraySerializationGuardDescriptor(descriptor);
+}
+
+function shouldSkipModelCallInputProperty(
+  label: string,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+  validatedJsonSnapshotArrayGuard: boolean,
+): boolean {
+  if (
+    validatedJsonSnapshotArrayGuard &&
+    key === "toJSON" &&
+    isJsonSnapshotArraySerializationGuardDescriptor(descriptor)
+  ) {
+    return true;
+  }
+  if (key === "toJSON" && typeof descriptor.value === "function") {
+    throw new TypeError(`Model call ${label} must contain data properties`);
+  }
+  return false;
+}
+
+function assertInspectableModelCallInput(
+  label: string,
+  value: unknown,
+  valuesAreOwned: boolean,
+): void {
+  if (value === null || typeof value !== "object") return;
+  if (!valuesAreOwned && isProxyWithoutHooks(value)) {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+  if (!valuesAreOwned && !canIdentifyNonPlainBuiltinsWithoutHooks) {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+  if (!valuesAreOwned && isNonPlainBuiltinWithoutHooks(value)) {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+}
+
+function assertSupportedModelCallInputPrototype(
+  label: string,
+  value: SnapshotContainer,
+): void {
+  const prototype = objectGetPrototypeOf(value);
+  if (ArrayIsArray(value)) {
+    if (prototype === NativeArrayPrototype) return;
+  } else if (prototype === NativeObjectPrototype || prototype === null) {
+    return;
+  }
+  throw new TypeError(`Model call ${label} could not be inspected`);
+}
+
+function validateJsonSnapshotArrayGuard(
+  label: string,
+  value: SnapshotContainer,
+  state: ModelCallInputSnapshotState,
+  depth: number,
+): boolean {
+  if (!hasJsonSnapshotArraySerializationGuard(value)) return false;
+  try {
+    snapshotProviderJsonValue(value, {
+      maxDepth: MaxModelCallInputSnapshotDepth - depth,
+      maxNodes: MaxModelCallInputSnapshotNodes - state.nodes + 1,
+      sortObjectKeys: false,
+    });
+    return true;
+  } catch {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+}
+
+function structuredCloneModelCallInput(label: string, value: unknown): unknown {
+  if (typeof StructuredCloneValue !== "function") {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+  try {
+    return ReflectApply(StructuredCloneValue, globalThis, [value]) as unknown;
+  } catch {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+}
+
+function readModelCallInputString(container: SnapshotContainer, key: string): string | undefined {
+  const descriptor = readRequiredModelCallInputEntry("input", container, key).descriptor;
+  return typeof descriptor?.value === "string" ? descriptor.value : undefined;
+}
+
+function childModelCallInputPath(
+  path: ModelCallInputPath,
+  container: SnapshotContainer,
+  key: PropertyKey,
+): { path: ModelCallInputPath; semanticRoot: boolean } {
+  if (path === "semantic" || path === "opaque") return { path, semanticRoot: false };
+  if (path === "promptArray" && typeof key === "string" && key !== "length") {
+    return { path: "promptMessage", semanticRoot: false };
+  }
+  if (path === "messageContentArray" && typeof key === "string" && key !== "length") {
+    return { path: "messageContentPart", semanticRoot: false };
+  }
+  if (path === "providerToolCallsArray" && typeof key === "string" && key !== "length") {
+    return { path: "providerToolCall", semanticRoot: false };
+  }
+  if (path === "toolsArray" && typeof key === "string" && key !== "length") {
+    return { path: "toolDefinition", semanticRoot: false };
+  }
+  if (path === "promptMessage") {
+    const role = readModelCallInputString(container, "role");
+    if (key === "content" && (role === "user" || role === "assistant" || role === "tool")) {
+      return { path: "messageContentArray", semanticRoot: false };
+    }
+    if (key === "providerToolCalls") return { path: "providerToolCallsArray", semanticRoot: false };
+    if (role === "system" && key === "providerOptions") return { path, semanticRoot: true };
+  }
+  if (path === "messageContentPart") {
+    const type = readModelCallInputString(container, "type");
+    if (type === "tool-call" && key === "input") return { path, semanticRoot: true };
+    if (type === "tool-result" && key === "result") return { path, semanticRoot: true };
+    if (type === "tool-result" && key === "output") {
+      return { path: "toolOutput", semanticRoot: false };
+    }
+  }
+  if (path === "toolOutput" && key === "value") return { path, semanticRoot: true };
+  if (path === "providerToolCall" && key === "input") return { path, semanticRoot: true };
+  if (path === "promptMessage" && key === "providerMetadata") return { path, semanticRoot: true };
+  if (path === "toolDefinition") {
+    const type = readModelCallInputString(container, "type");
+    if (type === "function" && key === "inputSchema") return { path, semanticRoot: true };
+    if (type === "provider" && key === "args") return { path, semanticRoot: true };
+  }
+  return { path: "opaque", semanticRoot: false };
+}
+
+function snapshotModelCallSemanticInput(
+  label: string,
+  value: unknown,
+  state: ModelCallInputSnapshotState,
+): unknown {
+  return snapshotModelCallInputValue(
+    label,
+    value,
+    { ancestors: state.ancestors, nodes: 0, valuesAreOwned: state.valuesAreOwned },
+    0,
+    "semantic",
+  );
+}
+
+function snapshotModelCallInputChild(
+  label: string,
+  value: unknown,
+  state: ModelCallInputSnapshotState,
+  depth: number,
+  path: ModelCallInputPath,
+  container: SnapshotContainer,
+  key: PropertyKey,
+): unknown {
+  const child = childModelCallInputPath(path, container, key);
+  return child.semanticRoot
+    ? snapshotModelCallSemanticInput(label, value, state)
+    : snapshotModelCallInputValue(label, value, state, depth + 1, child.path);
+}
+
+function snapshotModelCallInputValue(
+  label: string,
+  value: unknown,
+  state: ModelCallInputSnapshotState,
+  depth: number,
+  path: ModelCallInputPath,
+): unknown {
+  snapshotModelCallInputNode(label, state);
+  if (depth > MaxModelCallInputSnapshotDepth) {
+    throw new TypeError(`Model call ${label} exceeded the snapshot depth limit`);
+  }
+  if (value === null || typeof value !== "object") return value;
+  const date = cloneDate(value);
+  if (date) return date;
+  assertInspectableModelCallInput(label, value, state.valuesAreOwned);
+  const container = value as SnapshotContainer;
+  assertSupportedModelCallInputPrototype(label, container);
+  if (weakSetHas(state.ancestors, container)) {
+    throw new TypeError(`Model call ${label} must not contain cycles`);
+  }
+
+  weakSetAdd(state.ancestors, container);
+  try {
+    let arrayLength: number | undefined;
+    if (ArrayIsArray(container)) {
+      arrayLength = readRequiredModelCallInputArrayLength(label, container);
+    }
+    let keys: PropertyKey[];
+    try {
+      keys = reflectOwnKeys(container);
+    } catch {
+      throw new TypeError(`Model call ${label} could not be enumerated`);
+    }
+
+    if (ArrayIsArray(container)) {
+      const validatedJsonSnapshotArrayGuard = validateJsonSnapshotArrayGuard(
+        label,
+        container,
+        state,
+        depth,
+      );
+      const output: unknown[] = [];
+      const length = arrayLength ?? 0;
+      output.length = length;
+      forEachPrivateArray(keys, (key) => {
+        if (key === "length") return;
+        const entry = readRequiredModelCallInputEntry(label, container, key);
+        if (!entry.present || !entry.descriptor) return;
+        if (
+          shouldSkipModelCallInputProperty(
+            label,
+            key,
+            entry.descriptor,
+            validatedJsonSnapshotArrayGuard,
+          )
+        ) return;
+        const nested = snapshotModelCallInputChild(
+          label,
+          entry.descriptor.value,
+          state,
+          depth,
+          path,
+          container,
+          key,
+        );
+        defineSnapshotDataProperty(output, key, entry.descriptor, nested);
+      });
+      return objectFreeze(output);
+    }
+
+    const output = createNullRecord();
+    forEachPrivateArray(keys, (key) => {
+      const entry = readRequiredModelCallInputEntry(label, container, key);
+      if (!entry.present || !entry.descriptor) return;
+      if (shouldSkipModelCallInputProperty(label, key, entry.descriptor, false)) return;
+      const nested = snapshotModelCallInputChild(
+        label,
+        entry.descriptor.value,
+        state,
+        depth,
+        path,
+        container,
+        key,
+      );
+      defineSnapshotDataProperty(output, key, entry.descriptor, nested);
+    });
+    return objectFreeze(output);
+  } finally {
+    weakSetDelete(state.ancestors, container);
+  }
+}
+
+function snapshotModelCallInput(label: string, value: unknown): unknown {
+  const valuesAreOwned = !canIdentifyProxyWithoutHooks;
+  const source = valuesAreOwned ? structuredCloneModelCallInput(label, value) : value;
+  return snapshotModelCallInputValue(
+    label,
+    source,
+    { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0, valuesAreOwned },
+    0,
+    label === "tools" ? "toolsArray" : "promptArray",
+  );
+}
+
 function snapshotNeutralReasoning(reasoning: RuntimeReasoningOption): RuntimeReasoningOption {
   const enabled = reasoning.enabled;
   const effort = reasoning.effort;
@@ -705,12 +1097,12 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
   const responseFormat = snapshotResponseFormat(options.responseFormat);
   const hasResponseFormat = options.responseFormat !== undefined;
   const protocol = resolveModelCallProtocol(model);
-  if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
-    return hasResponseFormat ? { ...options, responseFormat } as TOptions : options;
-  }
-
   const neutralOptions = {
     ...options,
+    prompt: snapshotModelCallInput("prompt", options.prompt),
+    ...(options.tools === undefined && !ObjectHasOwn(options, "tools")
+      ? {}
+      : { tools: snapshotModelCallInput("tools", options.tools) }),
     ...(hasResponseFormat ? { responseFormat } : {}),
     ...(options.stopSequences === undefined
       ? {}
@@ -719,6 +1111,10 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
       ? {}
       : { reasoning: snapshotNeutralReasoning(options.reasoning) }),
   };
+  if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
+    return neutralOptions;
+  }
+
   const providerOptions = options.providerOptions;
   if (providerOptions === undefined) return neutralOptions;
 

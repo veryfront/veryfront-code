@@ -5,7 +5,6 @@ import {
   assertInstanceOf,
   assertMatch,
   assertRejects,
-  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
@@ -1667,7 +1666,8 @@ describe("runtime-bridge", () => {
         "Mandatory model call context event is not cloneable",
       );
       assertInstanceOf(error, DurableRunEventPersistenceError);
-      assertStrictEquals(error.cause, cloneError);
+      assertInstanceOf(error.cause, TypeError);
+      assertEquals(cloneReads, 0);
     } finally {
       if (recorder && originalRecordError) recorder.recordError = originalRecordError;
     }
