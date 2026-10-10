@@ -1,3 +1,4 @@
+import { execPrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 
 export type OpenAIReasoningEffort = "low" | "medium" | "high";
@@ -12,18 +13,29 @@ export type ResolvedOpenAIReasoning = {
 };
 
 const DEFAULT_REASONING_EFFORT: OpenAIReasoningEffort = "medium";
+const ReflectApply = Reflect.apply;
+const NumberParseInt = Number.parseInt;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+
+function stringToLowerCase(value: string): string {
+  return ReflectApply(StringPrototypeToLowerCase, value, []) as string;
+}
+
+function numberParseInt(value: string, radix: number): number {
+  return ReflectApply(NumberParseInt, Number, [value, radix]) as number;
+}
 
 export function supportsDefaultReasoningParams(providerName: string): boolean {
-  const normalizedProvider = providerName.toLowerCase();
+  const normalizedProvider = stringToLowerCase(providerName);
   return normalizedProvider === "openai" || normalizedProvider === "veryfront-cloud";
 }
 
 function isGpt5ChatSnapshot(modelId: string): boolean {
-  return /^gpt-5-chat($|-)/.test(modelId);
+  return testPrivateRegExp(/^gpt-5-chat($|-)/, modelId);
 }
 
 function isGpt51(modelId: string): boolean {
-  return /^gpt-5\.1($|-)/.test(modelId);
+  return testPrivateRegExp(/^gpt-5\.1($|-)/, modelId);
 }
 
 function isReasoningCapableGpt5(modelId: string): boolean {
@@ -31,19 +43,19 @@ function isReasoningCapableGpt5(modelId: string): boolean {
     return false;
   }
 
-  if (/^gpt-5(-|$)/.test(modelId)) {
+  if (testPrivateRegExp(/^gpt-5(-|$)/, modelId)) {
     return true;
   }
 
-  const gpt5Version = /^gpt-5\.(\d+)(-|$)/.exec(modelId)?.[1];
-  return gpt5Version !== undefined && Number.parseInt(gpt5Version, 10) >= 2;
+  const gpt5Version = execPrivateRegExp(/^gpt-5\.(\d+)(-|$)/, modelId)?.[1];
+  return gpt5Version !== undefined && numberParseInt(gpt5Version, 10) >= 2;
 }
 
 export function getDefaultOpenAIReasoningEffort(
   modelId: string,
   providerName = "openai",
 ): OpenAIReasoningEffort | undefined {
-  const normalized = modelId.toLowerCase();
+  const normalized = stringToLowerCase(modelId);
   if (!supportsDefaultReasoningParams(providerName)) {
     return undefined;
   }
@@ -57,7 +69,9 @@ export function getDefaultOpenAIReasoningEffort(
     return undefined;
   }
 
-  if (/^o1($|-\d)/.test(normalized) || /^o[34](-|$)/.test(normalized)) {
+  if (
+    testPrivateRegExp(/^o1($|-\d)/, normalized) || testPrivateRegExp(/^o[34](-|$)/, normalized)
+  ) {
     return DEFAULT_REASONING_EFFORT;
   }
 
@@ -100,7 +114,7 @@ export function shouldRequestOpenAIReasoningSummary(
 ): boolean {
   // Default-reasoning BYOK "openai" requests must not ask for summaries:
   // unverified customer organizations get a 400 from the Responses API.
-  return reasoning.source === "explicit" || providerName.toLowerCase() === "veryfront-cloud";
+  return reasoning.source === "explicit" || stringToLowerCase(providerName) === "veryfront-cloud";
 }
 
 export function isOpenAIReasoningModel(modelId: string, providerName = "openai"): boolean {
@@ -108,7 +122,7 @@ export function isOpenAIReasoningModel(modelId: string, providerName = "openai")
 }
 
 export function rejectsOpenAISamplingParams(modelId: string): boolean {
-  const normalized = modelId.toLowerCase();
+  const normalized = stringToLowerCase(modelId);
 
-  return /^o[134]($|-)/.test(normalized) || isReasoningCapableGpt5(normalized);
+  return testPrivateRegExp(/^o[134]($|-)/, normalized) || isReasoningCapableGpt5(normalized);
 }

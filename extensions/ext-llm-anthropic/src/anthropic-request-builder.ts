@@ -40,6 +40,8 @@ const NativeArray = Array;
 const ArrayIsArray = Array.isArray;
 const booleanValueOf = Boolean.prototype.valueOf;
 const NativeSet = Set;
+const mathMin = Math.min;
+const numberIsSafeInteger = Number.isSafeInteger;
 const numberValueOf = Number.prototype.valueOf;
 const objectAssign = Object.assign;
 const objectDefineProperty = Object.defineProperty;
@@ -2622,7 +2624,7 @@ function resolveAnthropicThinkingBudget(
     return undefined;
   }
   if (option.budgetTokens !== undefined) {
-    if (!Number.isSafeInteger(option.budgetTokens) || option.budgetTokens < 1024) {
+    if (!numberIsSafeInteger(option.budgetTokens) || option.budgetTokens < 1024) {
       throw new TypeError(
         "Anthropic reasoning budgetTokens must be a safe integer of at least 1024",
       );
@@ -2672,7 +2674,7 @@ function resolveAnthropicProviderThinkingBudget(
   const budgetTokens = budgetTokensProperty.present ? budgetTokensProperty.value : undefined;
   if (
     budgetTokens !== undefined &&
-    (!Number.isSafeInteger(budgetTokens) || (budgetTokens as number) < 1024)
+    (!numberIsSafeInteger(budgetTokens) || (budgetTokens as number) < 1024)
   ) {
     throw new TypeError(
       "Anthropic provider thinking.budget_tokens must be a safe integer of at least 1024",
@@ -2807,7 +2809,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
 
   const baseMaxTokens = resolveAnthropicMaxTokens(modelId, options.maxOutputTokens);
   const maxTokens = thinkingEnabled
-    ? Math.min(
+    ? mathMin(
       baseMaxTokens + (effectiveThinkingBudget ?? 0),
       getAnthropicModelCapabilities(modelId).maxOutputTokens,
     )

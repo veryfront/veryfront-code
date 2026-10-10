@@ -21,6 +21,10 @@ import {
 } from "./google-content-parts.ts";
 import { readGoogleRawAssistantReplay } from "./google-thought-signatures.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectAssign = Object.assign;
+const objectKeys = Object.keys;
+
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   requestLabels?: Record<string, string>;
   googleCachedContent?: string;
@@ -550,14 +554,14 @@ function rejectUnknownKeys(
   allowedKeys: ReadonlySet<string>,
   subject: string,
 ): void {
-  if (Object.keys(record).some((key) => !allowedKeys.has(key))) {
+  if (objectKeys(record).some((key) => !allowedKeys.has(key))) {
     throw new TypeError(`${subject} contained an unsupported field`);
   }
 }
 
 function readEmptyGoogleToolObject(value: unknown, subject: string): Record<string, never> {
   const record = readRecord(value);
-  if (!record || Object.keys(record).length > 0) {
+  if (!record || objectKeys(record).length > 0) {
     throw new TypeError(`${subject} must be an empty object`);
   }
   return {};
@@ -841,7 +845,7 @@ function resolveGoogleThinkingConfig(
 ): Record<string, unknown> | undefined {
   if (
     option?.budgetTokens !== undefined &&
-    (!Number.isSafeInteger(option.budgetTokens) || option.budgetTokens < 0)
+    (!numberIsSafeInteger(option.budgetTokens) || option.budgetTokens < 0)
   ) {
     throw new TypeError(
       "Google reasoning budgetTokens must be a non-negative safe integer",
@@ -909,7 +913,7 @@ function buildGoogleGenerationConfig(
     ...buildGoogleStructuredOutputConfig(options.responseFormat),
   };
 
-  return Object.keys(config).length > 0 ? config : undefined;
+  return objectKeys(config).length > 0 ? config : undefined;
 }
 
 export function buildGoogleGenerateContentRequest(
@@ -938,7 +942,7 @@ export function buildGoogleGenerateContentRequest(
   const generationConfig = buildGoogleGenerationConfig(options);
   const tools = toGoogleTools(options.tools);
   const toolConfig = normalizeGoogleToolChoice(options.toolChoice);
-  const labels = options.requestLabels && Object.keys(options.requestLabels).length > 0
+  const labels = options.requestLabels && objectKeys(options.requestLabels).length > 0
     ? options.requestLabels
     : typeof options.userId === "string" && options.userId.length > 0
     ? { user_id: options.userId }
@@ -958,11 +962,11 @@ export function buildGoogleGenerateContentRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
+  objectAssign(body, readProviderOptions(options.providerOptions, "google", providerName));
   // Provider options replace `generationConfig` wholesale, so re-pin the
   // runtime-owned structured-output keys the caller asked for.
   const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
-  if (Object.keys(structuredOutput).length > 0) {
+  if (objectKeys(structuredOutput).length > 0) {
     const generationConfig = { ...(readRecord(body.generationConfig) ?? {}) };
     if ("responseJsonSchema" in structuredOutput) {
       delete generationConfig.responseSchema;
