@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/protocol.ts";
 import type { ConversationRunEventQueueController } from "./durable.ts";
@@ -752,6 +752,90 @@ describe("agent/conversation-run-chunk-mirror", () => {
       level: "warn",
       message: "Stopping durable run mirroring because the run is already terminal",
     }]);
+  });
+
+  it("persists an oversized model-call response schema as a non-receipted audit fallback", async () => {
+    const appendedRequests: unknown[] = [];
+    const schemaEnumValue = "x".repeat(11 * 1024 * 1024);
+    const appendFetch = (async (_input, init) => {
+      const bodyInit = init && typeof init === "object" && "body" in init ? init.body : undefined;
+      const body = typeof bodyInit === "string" ? JSON.parse(bodyInit) : undefined;
+      appendedRequests.push(body);
+      return Response.json({
+        run_id: "10000000-0000-4000-8000-000000000005",
+        latest_event_id: 11,
+        latest_external_event_sequence: 21,
+        appended_count: 1,
+      });
+    }) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "10000000-0000-4000-8000-000000000005",
+      latestEventId: 10,
+      latestExternalEventSequence: 20,
+      fetch: appendFetch,
+    });
+    const sink = createDurableRunEventSink({ mirror });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" as const,
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+      model: { id: "gpt-test", modelProvider: "openai" },
+      request: {
+        temperature: 0.2,
+        responseFormat: {
+          type: "json_schema" as const,
+          name: "large_result",
+          description: "d".repeat(4 * 1024 * 1024),
+          strict: true,
+          schema: {
+            type: "object",
+            properties: { answer: { type: "string", enum: [schemaEnumValue] } },
+            required: ["answer"],
+            additionalProperties: false,
+          },
+        },
+      },
+      messages: [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Return JSON" }],
+      }],
+    };
+
+    await assertRejects(
+      async () => {
+        await sink(event);
+      },
+      Error,
+      "Run event append request exceeds the supported payload size",
+    );
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "after" }]);
+    const snapshot = await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(snapshot.disabled, false);
+    assertEquals(appendedRequests.length, 2);
+    const firstRequest = appendedRequests[0] as { events?: Array<Record<string, unknown>> };
+    const firstEvent = firstRequest.events?.[0];
+    assertEquals(firstEvent?.modelCallId, undefined);
+    assertEquals(firstEvent?.request, {
+      temperature: 0.2,
+      responseFormat: {
+        type: "json_schema",
+        name: "large_result",
+        strict: true,
+        schema: {
+          description: "[veryfront] JSON response schema omitted from oversized audit record.",
+        },
+      },
+    });
+    assertEquals((firstEvent?.messages as unknown[] | undefined)?.length, 2);
+    assertEquals(event.request.responseFormat.schema.properties.answer.enum[0], schemaEnumValue);
+    assertEquals(event.modelCallId, "33333333-3333-4333-8333-333333333333");
+    const secondRequest = appendedRequests[1] as { events?: Array<Record<string, unknown>> };
+    assertEquals(secondRequest.events?.[0]?.type, "TEXT_MESSAGE_CONTENT");
+    assertEquals(secondRequest.events?.[0]?.delta, "after");
   });
 
   it("records an oversized-event stop instead of disabling mirroring silently", async () => {

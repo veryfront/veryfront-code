@@ -119,6 +119,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
 const OMITTED_MESSAGE_NOTICE = "[veryfront] Model call context truncated for audit.";
+const OMITTED_RESPONSE_SCHEMA_NOTICE =
+  "[veryfront] JSON response schema omitted from oversized audit record.";
+const MAX_OVERSIZED_RESPONSE_FORMAT_NAME_BYTES = 1024;
 
 function getUtf8ByteLength(value: string): number {
   return privateByteLength(encodePrivateText(value));
@@ -183,6 +186,28 @@ function truncateMessageTextParts(message: unknown, maxTextBytes: number): unkno
   };
 }
 
+function summarizeOversizedResponseFormat(responseFormat: unknown): unknown {
+  if (!isRecord(responseFormat) || responseFormat.type !== "json_schema") return responseFormat;
+  return {
+    type: "json_schema",
+    ...(typeof responseFormat.name === "string"
+      ? {
+        name: truncateTextToBytes(responseFormat.name, MAX_OVERSIZED_RESPONSE_FORMAT_NAME_BYTES),
+      }
+      : {}),
+    ...(typeof responseFormat.strict === "boolean" ? { strict: responseFormat.strict } : {}),
+    schema: {
+      description: OMITTED_RESPONSE_SCHEMA_NOTICE,
+    },
+  };
+}
+
+function summarizeOversizedModelCallRequest(request: unknown): unknown {
+  if (!isRecord(request) || !isRecord(request.responseFormat)) return request;
+  const responseFormat = summarizeOversizedResponseFormat(request.responseFormat);
+  return responseFormat === request.responseFormat ? request : { ...request, responseFormat };
+}
+
 function buildTruncationNotice(input: {
   originalByteLength: number;
   omittedMessageCount: number;
@@ -234,7 +259,9 @@ function truncatePrivateRunEventToLimit(
       // Clamped legacy audit records cannot acknowledge complete prepared input.
       // Deliberately exclude modelCallId so they cannot issue a capture receipt.
       ...(event.model === undefined ? {} : { model: event.model }),
-      ...(event.request === undefined ? {} : { request: event.request }),
+      ...(event.request === undefined
+        ? {}
+        : { request: summarizeOversizedModelCallRequest(event.request) }),
       messages: builtMessages,
       ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
       ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
