@@ -25462,7 +25462,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "greenhouse__move_application",
       "name": "Move Application",
-      "description": "Move application",
+      "description": "Move active application to stage",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
