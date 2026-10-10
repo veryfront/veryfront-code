@@ -93,6 +93,11 @@ name to load a deferred tool. A search miss directs the model to browse instead
 of repeatedly guessing resource display names. If the catalog changes and a
 cursor is outside the current inventory, restart without a cursor.
 
+For queries with three or more terms, a candidate supported only by parameter
+descriptions must match at least half the terms. One incidental field description
+does not identify a capability. Name and tool-description matches retain their
+existing ranking, including integration catalog navigation.
+
 ### Bounded reference results
 
 Agents can enable `toolResultContext` to replace oversized tool results with a

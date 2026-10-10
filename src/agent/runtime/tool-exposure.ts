@@ -545,11 +545,13 @@ function scoreToolExposureTerms(
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
+    let matchedCapabilityField = false;
     for (let index = 0; index < weightedTerms.length; index++) {
       const { term, documentFrequency, inverseDocumentFrequency } = weightedTerms[index]!;
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
       matchedTermCount += 1;
+      if (field !== "parameterDescription") matchedCapabilityField = true;
       score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
       if (documentFrequency <= averageDocumentFrequency) matchedSelectiveTerm = true;
     }
@@ -557,6 +559,11 @@ function scoreToolExposureTerms(
     // something better to prefer. A candidate matching *every* term is not filler
     // however common those terms are: in a one-tool catalog every term matches
     // everything, so the floor alone would report a certain match as a miss.
+    // A rare generic parameter field does not establish a multiword capability.
+    // Name and description evidence can still route to catalog navigation,
+    // such as an integration reader mentioning the requested provider.
+    const minimumMatchedTerms = terms.length >= 3 ? Math.ceil(terms.length / 2) : 1;
+    if (!matchedCapabilityField && matchedTermCount < minimumMatchedTerms) continue;
     if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
     pushPrivateArray(scored, { score, match: toSearchMatch(candidate) });
   }

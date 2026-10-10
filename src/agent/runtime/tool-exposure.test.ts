@@ -105,6 +105,39 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
+it("does not activate an unrelated tool from one generic field in a resource title", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "Lifecycle Audit Helper",
+    authorized: [
+      definition("finalize", "Finalize a run", "Lifecycle status for the target record"),
+      definition("get_audit", "Read an audit record"),
+      definition("list_audits", "List audit records"),
+      definition("create_audit", "Create an audit record"),
+    ],
+    state,
+  });
+  assertEquals(result.miss, true);
+  assertEquals(result.matches, []);
+  assertEquals([...state.loadedToolNames], []);
+});
+
+it("keeps a longer capability phrase that matches the resource and operation detail", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "retrieve saved agent",
+    authorized: [
+      definition("get_agent", "Read a saved project agent"),
+      definition("finalize", "Save run output"),
+      definition("get_log", "Read a saved log"),
+      definition("get_file", "Read a saved file"),
+    ],
+    state,
+  });
+  assertEquals(result.matches.map((match) => match.name), ["get_agent"]);
+  assertEquals(result.loadedCount, 1);
+});
+
 it("searches private catalog entries without invoking their iterator", () => {
   const authorized = [definition("lookup", "synthetic private search")];
   let reads = 0;
