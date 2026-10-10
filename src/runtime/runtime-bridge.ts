@@ -1,7 +1,9 @@
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
+  forEachPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
@@ -59,10 +61,7 @@ import type {
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
 import { getRuntimeObservationWriterBinding } from "./runtime-observation-carrier.ts";
-import {
-  type AgentRunModelCallCaptureReceipt,
-  getModelCallCaptureReceiptSchema,
-} from "./model-call-capture-receipt.ts";
+import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-receipt.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
@@ -80,7 +79,31 @@ const ReflectOwnKeys = Reflect.ownKeys;
 const IntrinsicCrypto = crypto;
 const CryptoRandomUUID = IntrinsicCrypto.randomUUID;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const SymbolIterator = Symbol.iterator;
+const EmptyStructuredCloneTransferList: Transferable[] = [];
+ObjectDefineProperty(EmptyStructuredCloneTransferList, SymbolIterator, {
+  configurable: false,
+  enumerable: false,
+  value() {
+    return {
+      next() {
+        return { done: true, value: undefined };
+      },
+    };
+  },
+  writable: false,
+});
+const EmptyStructuredCloneOptions: StructuredSerializeOptions = {
+  transfer: EmptyStructuredCloneTransferList,
+};
 const logger = serverLogger.component("runtime-bridge");
+
+function cloneStructured<T>(value: T): T {
+  return ReflectApply(cloneStructuredValue, globalThis, [
+    value,
+    EmptyStructuredCloneOptions,
+  ]) as T;
+}
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -823,17 +846,18 @@ function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
   const unsupportedControls: string[] = [];
-  for (
-    const field of [
+  forEachPrivateArray(
+    [
       "toolChoice",
       "headers",
       "providerOptions",
       "responseFormat",
       "includeRawChunks",
-    ] as const
-  ) {
-    if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
-  }
+    ] as const,
+    (field) => {
+      if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
+    },
+  );
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     pushPrivateArray(unsupportedControls, "system.providerOptions");
   }
@@ -850,6 +874,52 @@ function assertExactModelCallCaptureControlsSupported(
 
 function randomUUID(): string {
   return ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+}
+
+const CaptureReceiptUuidPattern =
+  /^(?:00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+const CaptureReceiptFields = ["eventId", "projectId", "runId", "modelCallId"] as const;
+
+function isPropertyRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return !!value && typeof value === "object" && !ArrayIsArray(value);
+}
+
+function readCaptureReceiptStringField(
+  value: Record<PropertyKey, unknown>,
+  key: string,
+): string | undefined {
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor?.enumerable === true && ObjectHasOwn(descriptor, "value") &&
+      typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function readModelCallCaptureReceipt(
+  value: unknown,
+): AgentRunModelCallCaptureReceipt | undefined {
+  if (!isPropertyRecord(value)) return undefined;
+  const keys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
+  if (keys.length !== CaptureReceiptFields.length) return undefined;
+  for (let index = 0; index < CaptureReceiptFields.length; index++) {
+    const field = CaptureReceiptFields[index];
+    if (field === undefined || !ObjectHasOwn(value, field)) return undefined;
+  }
+  const eventId = readCaptureReceiptStringField(value, "eventId");
+  const projectId = readCaptureReceiptStringField(value, "projectId");
+  const runId = readCaptureReceiptStringField(value, "runId");
+  const modelCallId = readCaptureReceiptStringField(value, "modelCallId");
+  if (
+    !eventId || !projectId || !runId || !modelCallId ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, projectId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, runId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, modelCallId)
+  ) {
+    return undefined;
+  }
+  return { eventId, projectId, runId, modelCallId };
 }
 
 async function emitModelCallContextEvent(
@@ -902,7 +972,7 @@ async function emitModelCallContextEvent(
     | { ok: true; event: AgentRunModelCallContextEvent }
     | { ok: false; error: unknown } => {
     try {
-      return { ok: true, event: cloneStructuredValue(event) };
+      return { ok: true, event: cloneStructured(event) };
     } catch (error) {
       const failureClass = error instanceof DOMException && error.name === "DataCloneError"
         ? "DataCloneError"
@@ -943,21 +1013,20 @@ async function emitModelCallContextEvent(
     }
     return { receipt: undefined, assertActive };
   }
-  const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
+  const receipt = readModelCallCaptureReceipt(acknowledgement);
   if (
-    !receipt.success ||
+    receipt === undefined ||
     modelCallId === undefined ||
-    privateTextToLowerCase(receipt.data.modelCallId) !== privateTextToLowerCase(modelCallId) ||
-    privateTextToLowerCase(receipt.data.runId) !==
-      privateTextToLowerCase(writerScope.canonicalRunId) ||
-    privateTextToLowerCase(receipt.data.projectId) !== privateTextToLowerCase(writerScope.projectId)
+    privateTextToLowerCase(receipt.modelCallId) !== privateTextToLowerCase(modelCallId) ||
+    privateTextToLowerCase(receipt.runId) !== privateTextToLowerCase(writerScope.canonicalRunId) ||
+    privateTextToLowerCase(receipt.projectId) !== privateTextToLowerCase(writerScope.projectId)
   ) {
     throw new DurableRunEventPersistenceError(
       "Model call capture receipt is missing or invalid",
     );
   }
   return {
-    receipt: ReflectApply(ObjectFreeze, Object, [receipt.data]) as AgentRunModelCallCaptureReceipt,
+    receipt: ReflectApply(ObjectFreeze, Object, [receipt]) as AgentRunModelCallCaptureReceipt,
     assertActive,
   };
 }
@@ -1007,9 +1076,9 @@ async function emitGenerateFailureObservation(error: unknown): Promise<void> {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return;
   const event = resolveGenerateFailureObservation(error);
-  const mandatoryEvent = sinks.mandatory ? cloneStructuredValue(event) : undefined;
+  const mandatoryEvent = sinks.mandatory ? cloneStructured(event) : undefined;
   const publicEvent = sinks.public && sinks.public !== sinks.mandatory
-    ? cloneStructuredValue(event)
+    ? cloneStructured(event)
     : undefined;
   if (sinks.mandatory && mandatoryEvent) await sinks.mandatory(mandatoryEvent);
   if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
@@ -1318,7 +1387,7 @@ async function buildGenerateResultFromStream(
 }
 
 function materializeProviderJsonField(value: unknown): unknown {
-  return value === undefined ? undefined : cloneStructuredValue(snapshotProviderJsonValue(value, {
+  return value === undefined ? undefined : cloneStructured(snapshotProviderJsonValue(value, {
     dropUndefinedMembers: true,
   }));
 }

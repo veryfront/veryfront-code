@@ -856,8 +856,8 @@ describe("runtime-bridge", () => {
   });
 
   it("installs exact Veryfront Cloud capture only after a matching mandatory receipt", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const projectId = "11111111-1111-7111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-7222-8222-222222222222";
     let recordedEvent: AgentRunEvent | undefined;
     let dispatchCapture: unknown;
     const sink: AgentRunEventSink = (event) => {
@@ -901,6 +901,70 @@ describe("runtime-bridge", () => {
       runId: canonicalRunId,
       modelCallId: recordedEvent.modelCallId,
     });
+  });
+
+  it("accepts nil and max UUIDs for exact capture scope receipts", async () => {
+    const cases = [
+      {
+        name: "nil",
+        projectId: "00000000-0000-0000-0000-000000000000",
+        canonicalRunId: "00000000-0000-0000-0000-000000000000",
+      },
+      {
+        name: "max",
+        projectId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        canonicalRunId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      },
+    ];
+
+    for (const receiptCase of cases) {
+      let recordedEvent: AgentRunEvent | undefined;
+      let dispatchCapture: unknown;
+      const sink: AgentRunEventSink = (event) => {
+        assertModelCallContextEvent(event);
+        recordedEvent = event;
+        if (!event.modelCallId) throw new Error(`expected model call id for ${receiptCase.name}`);
+        return {
+          eventId: "9007199254740993",
+          projectId: receiptCase.projectId,
+          runId: receiptCase.canonicalRunId,
+          modelCallId: event.modelCallId,
+        };
+      };
+      bindTestRuntimeObservationWriter({
+        sink,
+        runId: "33333333-3333-4333-8333-333333333333",
+        canonicalRunId: receiptCase.canonicalRunId,
+        projectId: receiptCase.projectId,
+      });
+      const model = registerVeryfrontCloudTestModel(
+        createGenerateModel(
+          "veryfront-cloud",
+          `veryfront-cloud/openai/gpt-test-${receiptCase.name}`,
+          async () => {
+            dispatchCapture = getCurrentVeryfrontCloudModelCallCapture();
+            return {
+              content: [{ type: "text", text: "done" }],
+              finishReason: "stop",
+              usage: {},
+            };
+          },
+        ),
+      );
+
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+
+      assertModelCallContextEvent(recordedEvent);
+      assertEquals(dispatchCapture, {
+        eventId: "9007199254740993",
+        projectId: receiptCase.projectId,
+        runId: receiptCase.canonicalRunId,
+        modelCallId: recordedEvent.modelCallId,
+      });
+    }
   });
 
   it("uses captured UUID generation for mandatory Veryfront Cloud capture IDs", async () => {
@@ -972,6 +1036,48 @@ describe("runtime-bridge", () => {
         modelCallId: event.modelCallId === undefined
           ? "33333333-3333-4333-8333-333333333333"
           : "44444444-4444-4444-8444-444444444444",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () => await generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+      DurableRunEventPersistenceError,
+      "Model call capture receipt is missing or invalid",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("refuses Veryfront Cloud dispatch when the mandatory capture receipt has an invalid UUID", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: "11111111-1111-9111-8111-111111111111",
       };
     };
     bindTestRuntimeObservationWriter({
