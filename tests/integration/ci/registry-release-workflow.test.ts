@@ -254,6 +254,8 @@ async function runReleaseScript({
   failedPublishAttempts = 0,
   publishedAssetsDir = "",
   publishedPrerelease = true,
+  releaseMode = "--prerelease",
+  latestReleaseTag = "",
 }: {
   stateDir: string;
   asset: string;
@@ -265,6 +267,8 @@ async function runReleaseScript({
   failedPublishAttempts?: number;
   publishedAssetsDir?: string;
   publishedPrerelease?: boolean;
+  releaseMode?: "--prerelease" | "--latest";
+  latestReleaseTag?: string;
 }): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
   const uploadCount = `${stateDir}/upload-count`;
@@ -284,6 +288,11 @@ async function runReleaseScript({
         "shift",
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
+        '  if [ "$1" = "api" ] && [ "$2" = "repos/veryfront/veryfront/releases/latest" ]; then',
+        '    [ -n "$LATEST_RELEASE_TAG" ] || return 1',
+        '    printf "%s\\n" "$LATEST_RELEASE_TAG"',
+        "    return 0",
+        "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
         '    if [[ "$*" == *"--json assets"* ]]; then',
         "      local remote_asset",
@@ -361,7 +370,7 @@ async function runReleaseScript({
         '  --tag "v1.2.3-rc.4" \\',
         '  --title "v1.2.3-rc.4" \\',
         '  --notes "Install notes" \\',
-        "  --prerelease \\",
+        '  "$RELEASE_MODE" \\',
         "  -- \\",
         '  "$@"',
       ].join("\n"),
@@ -381,6 +390,8 @@ async function runReleaseScript({
       FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
       PUBLISHED_ASSETS_DIR: publishedAssetsDir,
       PUBLISHED_PRERELEASE: String(publishedPrerelease),
+      RELEASE_MODE: releaseMode,
+      LATEST_RELEASE_TAG: latestReleaseTag,
     },
     stdout: "piped",
     stderr: "piped",
@@ -2364,6 +2375,46 @@ describe("immutable public release recovery", () => {
         );
         assertEquals(decoder.decode(output.stderr).includes("Retrying"), false);
         assertEquals(await Deno.readTextFile(`${stateDir}/release-state`), "published");
+      });
+    });
+  }
+});
+
+describe("immutable latest release recovery", () => {
+  for (
+    const [latestReleaseTag, expectedCode] of [
+      ["v1.2.3-rc.4", 0],
+      ["v1.2.2", 1],
+      ["", 1],
+    ] as const
+  ) {
+    it(`adopts an identical stable release only when latest is ${latestReleaseTag || "unreadable"}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const asset = `${stateDir}/veryfront-linux-x64`;
+        const publishedAssetsDir = `${stateDir}/published`;
+        await Deno.mkdir(publishedAssetsDir);
+        await Deno.writeTextFile(asset, "qualified binary");
+        await Deno.copyFile(asset, `${publishedAssetsDir}/veryfront-linux-x64`);
+        const output = await runReleaseScript({
+          stateDir,
+          asset,
+          initialReleaseState: "published",
+          publishedAssetsDir,
+          publishedPrerelease: false,
+          releaseMode: "--latest",
+          latestReleaseTag,
+        });
+        assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim().split("\n");
+        assert(
+          calls.includes("api repos/veryfront/veryfront/releases/latest --jq .tag_name"),
+          "a stable rerun must read the repository's latest release before adopting",
+        );
+        assertEquals(
+          calls.filter((call) => /^release (create|upload|edit|delete) /.test(call)),
+          [],
+        );
+        assertEquals(decoder.decode(output.stderr).includes("Retrying"), false);
       });
     });
   }

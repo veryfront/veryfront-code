@@ -2118,6 +2118,15 @@ jobs:
                   echo "::error::Existing public release mode differs for ${tag}." >&2
                   return "$retry_fatal_status"
                 fi
+                # Installers resolve the version through releases/latest, so adopt only the current one.
+                local latest_tag
+                if [[ "$latest" == true ]] && {
+                  ! latest_tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name')" ||
+                    [[ "$latest_tag" != "$tag" ]]
+                }; then
+                  echo "::error::Existing public release ${tag} is not the latest release." >&2
+                  return "$retry_fatal_status"
+                fi
                 existing_public_release_verified=true
                 echo "Verified identical existing public release ${tag}." >&2
                 return 0
