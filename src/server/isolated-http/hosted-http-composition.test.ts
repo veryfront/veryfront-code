@@ -1,0 +1,246 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
+import type { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
+import {
+  createHostedHttpComposition,
+  readHostedHttpCompositionConfig,
+} from "./hosted-http-composition.ts";
+
+const hostEnv: Record<string, string | undefined> = {
+  VERYFRONT_HOSTED_HTTP_ISOLATION: "1",
+  VERYFRONT_EXECUTOR_ALLOCATOR_URL: "https://allocator.internal.test",
+  VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE: "/host/ca.pem",
+  VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE: "/host/token",
+  VERYFRONT_EXECUTOR_BROKER_INSTANCE_ID: "3f0c9a52-0d0f-4e4a-8a52-1d2c3b4a5f60",
+  VERYFRONT_HOSTED_HTTP_SOURCE_RECORDS_FILE: "/host/records.json",
+  VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN: "https://source-api.veryfront.test",
+  VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY: "ghcr.io/veryfront/tenant-source",
+  VERYFRONT_API_BASE_URL: "https://api.veryfront.test",
+};
+const read = (env: Record<string, string | undefined>) => (key: string) => env[key];
+const config = readHostedHttpCompositionConfig(read(hostEnv))!;
+const record = {
+  schema_version: 1,
+  status: "resolved",
+  api_origin: "https://source-api.veryfront.test",
+  project_id: "11111111-1111-4111-8111-111111111111",
+  release_id: "22222222-2222-4222-8222-222222222222",
+  manifest_hash: "c".repeat(64),
+  image: `ghcr.io/veryfront/tenant-source@sha256:${"b".repeat(64)}`,
+};
+
+const allocator: HostedExecutorAllocatorClient = {
+  allocate: () => Promise.reject(new Error("not used")),
+  observe: () => Promise.reject(new Error("not used")),
+  renew: () => Promise.reject(new Error("not used")),
+  release: () => Promise.reject(new Error("not used")),
+};
+
+/** In-memory host files; a missing path rejects like the real reader. */
+function hostFiles(initial: Record<string, string | Uint8Array>) {
+  const files = new Map(Object.entries(initial));
+  return {
+    files,
+    readFile(path: string) {
+      const value = files.get(path);
+      if (value === undefined) return Promise.reject(new Error(`ENOENT ${path}`));
+      return Promise.resolve(typeof value === "string" ? new TextEncoder().encode(value) : value);
+    },
+  };
+}
+
+function defaultFiles() {
+  return hostFiles({
+    "/host/ca.pem": "-----BEGIN CERTIFICATE-----\nAA==\n",
+    "/host/token": "broker-token-1\n",
+    "/host/records.json": JSON.stringify([record]),
+  });
+}
+
+function fakeBroker(result: { release: "released" | "reaper-required"; pending: number }) {
+  let shutdowns = 0;
+  return {
+    broker: {
+      fetch: () => Promise.resolve(new Response("isolated")),
+      shutdown() {
+        shutdowns++;
+        return Promise.resolve(result);
+      },
+    },
+    get shutdowns() {
+      return shutdowns;
+    },
+  };
+}
+
+describe("hosted HTTP host composition", () => {
+  it("is off unless the host flag enables it", () => {
+    assertEquals(readHostedHttpCompositionConfig(read({})), undefined);
+    for (const value of ["", "0", "false", "off", "no", " OFF "]) {
+      assertEquals(
+        readHostedHttpCompositionConfig(read({ VERYFRONT_HOSTED_HTTP_ISOLATION: value })),
+        undefined,
+      );
+    }
+  });
+
+  it("refuses an unrecognized flag or an incomplete host configuration", () => {
+    assertThrows(
+      () =>
+        readHostedHttpCompositionConfig(
+          read({ ...hostEnv, VERYFRONT_HOSTED_HTTP_ISOLATION: "maybe" }),
+        ),
+      TypeError,
+    );
+    for (
+      const key of Object.keys(hostEnv).filter((key) =>
+        key !== "VERYFRONT_HOSTED_HTTP_ISOLATION" && key !== "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE"
+      )
+    ) {
+      assertThrows(
+        () => readHostedHttpCompositionConfig(read({ ...hostEnv, [key]: undefined })),
+        TypeError,
+        key,
+      );
+    }
+    for (
+      const invalid of [
+        { VERYFRONT_EXECUTOR_ALLOCATOR_URL: "http://allocator.internal.test" },
+        { VERYFRONT_EXECUTOR_BROKER_INSTANCE_ID: "../pod" },
+        { VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "0" },
+        { VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "257" },
+        { VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "1.5" },
+        { VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE: "relative/token" },
+        { VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE: "ca.pem" },
+      ]
+    ) {
+      assertThrows(
+        () => readHostedHttpCompositionConfig(read({ ...hostEnv, ...invalid })),
+        TypeError,
+      );
+    }
+  });
+
+  it("reads the host configuration with a bounded default admission limit", () => {
+    assertEquals(config.maxActive, 16);
+    assertEquals(config.allocatorCaFile, "/host/ca.pem");
+    const withoutCa = readHostedHttpCompositionConfig(
+      read({ ...hostEnv, VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE: undefined }),
+    )!;
+    assertEquals("allocatorCaFile" in withoutCa, false);
+    assertEquals(
+      readHostedHttpCompositionConfig(read({ ...hostEnv, VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "64" }))!
+        .maxActive,
+      64,
+    );
+    assert(Object.isFrozen(config));
+  });
+
+  it("refuses to start while the shared host execution override is set", async () => {
+    let built = 0;
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          isOverrideEnabled: () => true,
+          readFile: defaultFiles().readFile,
+          createAllocatorClient: () => {
+            built++;
+            return allocator;
+          },
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      TypeError,
+      "host project execution",
+    );
+    assertEquals(built, 0);
+  });
+
+  it("builds the allocator client from host files and rereads the rotated broker token", async () => {
+    const host = defaultFiles();
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    let brokerOptions: unknown;
+    const broker = fakeBroker({ release: "released", pending: 0 });
+    const composition = await createHostedHttpComposition(config, {
+      isOverrideEnabled: () => false,
+      readFile: host.readFile,
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker(options) {
+        brokerOptions = options;
+        return broker.broker;
+      },
+    });
+    assertEquals(allocatorOptions?.baseUrl, "https://allocator.internal.test");
+    assertEquals(allocatorOptions?.ca, "-----BEGIN CERTIFICATE-----\nAA==\n");
+    assertEquals(brokerOptions, { maxActive: 16 });
+    const signal = new AbortController().signal;
+    assertEquals(await allocatorOptions!.readBrokerToken(signal), "broker-token-1");
+    host.files.set("/host/token", "broker-token-2");
+    assertEquals(await allocatorOptions!.readBrokerToken(signal), "broker-token-2");
+    host.files.set("/host/token", " \n");
+    await assertRejects(() => allocatorOptions!.readBrokerToken(signal));
+    host.files.set("/host/token", "x".repeat(16 * 1024 + 1));
+    await assertRejects(() => allocatorOptions!.readBrokerToken(signal), TypeError, "too large");
+    assert(composition.ingress.broker === broker.broker);
+    assertEquals(typeof composition.ingress.resolve, "function");
+    await composition.shutdown();
+  });
+
+  it("omits the trust root when no CA file is configured", async () => {
+    let ca: string | undefined = "unset";
+    await createHostedHttpComposition({ ...config, allocatorCaFile: undefined }, {
+      isOverrideEnabled: () => false,
+      readFile: defaultFiles().readFile,
+      createAllocatorClient(options) {
+        ca = options.ca;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    assertEquals(ca, undefined);
+  });
+
+  it("refuses unreadable, invalid or undecodable host files at startup", async () => {
+    const cases: Record<string, string | Uint8Array>[] = [
+      { "/host/ca.pem": "ca", "/host/token": "t" },
+      { "/host/ca.pem": "ca", "/host/records.json": "{not json" },
+      { "/host/ca.pem": "ca", "/host/records.json": JSON.stringify([{ project_id: "p" }]) },
+      { "/host/ca.pem": "ca", "/host/records.json": new Uint8Array([0xff, 0xfe]) },
+      { "/host/ca.pem": "x".repeat(256 * 1024 + 1), "/host/records.json": "[]" },
+    ];
+    for (const files of cases) {
+      await assertRejects(() =>
+        createHostedHttpComposition(config, {
+          isOverrideEnabled: () => false,
+          readFile: hostFiles(files).readFile,
+          createAllocatorClient: () => allocator,
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        })
+      );
+    }
+  });
+
+  it("shuts the broker down once, however often the server stops", async () => {
+    for (
+      const result of [
+        { release: "released" as const, pending: 0 },
+        { release: "reaper-required" as const, pending: 1 },
+      ]
+    ) {
+      const broker = fakeBroker(result);
+      const composition = await createHostedHttpComposition(config, {
+        isOverrideEnabled: () => false,
+        readFile: defaultFiles().readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => broker.broker,
+      });
+      await Promise.all([composition.shutdown(), composition.shutdown()]);
+      await composition.shutdown();
+      assertEquals(broker.shutdowns, 1);
+    }
+  });
+});
