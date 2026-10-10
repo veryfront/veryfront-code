@@ -48,6 +48,7 @@ const UNIT_CWD_FILES = [
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
@@ -70,6 +71,27 @@ describe("child-run CPU measurement isolation", () => {
       assertEquals(
         buildDenoSuiteCommandArgs(suite, [summaryTest], {
           parallel: shouldRunDenoBatchInParallel(true, [summaryTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
+describe("native command deadline measurement isolation", () => {
+  it("runs native command latency assertions alone in unit and coverage batches", () => {
+    const commandTest = "src/platform/compat/process/command.test.ts";
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", commandTest, "src/b.test.ts"],
+        100,
+      ),
+      [["src/a.test.ts"], [commandTest], ["src/b.test.ts"]],
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [commandTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [commandTest]),
         }).includes("--parallel"),
         false,
       );
