@@ -1,6 +1,6 @@
 import {
   canIdentifyProxyWithoutHooks,
-  closeAnthropicOutputConfigSchema,
+  closeSchemaForOutputConfig,
   isProxyWithoutHooks,
   jsonValuesEqual,
   readProviderOptions,
@@ -2370,7 +2370,7 @@ function buildAnthropicOutputConfig(
   return {
     format: {
       type: "json_schema",
-      schema: closeAnthropicOutputConfigSchema(unwrapToolInputSchema(responseFormat.schema)),
+      schema: closeSchemaForOutputConfig(unwrapToolInputSchema(responseFormat.schema)),
     },
   };
 }

@@ -4,7 +4,7 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import {
-  closeAnthropicOutputConfigSchema,
+  closeSchemaForOutputConfig,
   unwrapToolInputSchema,
 } from "#veryfront/provider/shared/index.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
@@ -1512,7 +1512,7 @@ function snapshotAnthropicResponseFormat(
   if (snapshot?.type !== "json_schema") return snapshot;
   return {
     ...snapshot,
-    schema: closeAnthropicOutputConfigSchema(snapshot.schema),
+    schema: markPreservedResponseFormatSchema(closeSchemaForOutputConfig(snapshot.schema)),
   };
 }
 

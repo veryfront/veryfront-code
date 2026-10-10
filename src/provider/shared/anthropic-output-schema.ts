@@ -1,3 +1,11 @@
+/**
+ * Anthropic `output_config` schema closing, shared by the Messages request
+ * builder and durable model-call capture so both record the schema that is
+ * actually dispatched.
+ *
+ * @module provider/shared/anthropic-output-schema
+ */
+
 const apply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
@@ -200,7 +208,7 @@ function encodePointerToken(token: string): string {
  * an open object with a named 400, whereas an over-closed `allOf` is accepted
  * and then matches nothing, which surfaces as an empty generation.
  */
-export function closeAnthropicOutputConfigSchema(schema: unknown): unknown {
+export function closeSchemaForOutputConfig(schema: unknown): unknown {
   const openTargets: Set<string> = new NativeSet();
   collectAllOfRefTargets(schema, openTargets);
   return closeObjectSchemas(schema, true, "#", openTargets);
