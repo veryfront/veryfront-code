@@ -72,6 +72,7 @@ describe("integration endpoint specs", () => {
       ["deel", "review_timesheet", "Review timesheet (approval schedules payment)"],
       ["typeform", "get_me", "Get Typeform account profile"],
       ["figma", "get_me", "Get Figma user profile"],
+      ["webex", "list_people", "Find people by email or name"],
       ["greenhouse", "move_application", "Move active application to stage"],
       ["teams", "list_teams", "List joined teams"],
       ["todoist", "list_tasks", "List active tasks"],

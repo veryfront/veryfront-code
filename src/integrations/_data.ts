@@ -57162,7 +57162,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "webex__list_people",
       "name": "List People",
-      "description": "List people",
+      "description": "Find people by email or name",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
