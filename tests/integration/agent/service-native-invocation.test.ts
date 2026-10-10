@@ -516,6 +516,82 @@ const bodyMutations: readonly BodyMutation[] = [
     },
   })),
   {
+    name: "Array.prototype parent with an index setter",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "always",
+    padding: 70 * 1024,
+    install: (observe) => {
+      const parent = Object.getPrototypeOf(Array.prototype);
+      const inserted = Object.create(parent, {
+        0: {
+          configurable: true,
+          set(this: object, value: unknown) {
+            observe(value);
+            Object.defineProperty(this, "0", {
+              configurable: true,
+              enumerable: true,
+              value,
+              writable: true,
+            });
+          },
+        },
+      });
+      Object.setPrototypeOf(Array.prototype, inserted);
+      return () => Object.setPrototypeOf(Array.prototype, parent);
+    },
+  },
+  {
+    name: "Uint8Array.prototype parent with typed array getters",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "always",
+    install: (observe) => {
+      const parent = Object.getPrototypeOf(Uint8Array.prototype);
+      const byteLength = Object.getOwnPropertyDescriptor(parent, "byteLength")!;
+      const inserted = Object.create(parent, {
+        byteLength: {
+          configurable: true,
+          get(this: Uint8Array) {
+            observe(this);
+            return BodyApply(byteLength.get!, this, []);
+          },
+        },
+        then: {
+          configurable: true,
+          get(this: Uint8Array) {
+            observe(this);
+            return undefined;
+          },
+        },
+      });
+      Object.setPrototypeOf(Uint8Array.prototype, inserted);
+      return () => Object.setPrototypeOf(Uint8Array.prototype, parent);
+    },
+  },
+  {
+    name: "proxy in the Array.prototype chain",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "always",
+    padding: 70 * 1024,
+    install: (observe) => {
+      const parent = Object.getPrototypeOf(Array.prototype);
+      const proxy = new Proxy(parent, {
+        set(target, key, value, receiver) {
+          observe(value);
+          return Reflect.set(target, key, value, receiver);
+        },
+        get(target, key, receiver) {
+          observe(receiver);
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      Object.setPrototypeOf(Array.prototype, proxy);
+      return () => Object.setPrototypeOf(Array.prototype, parent);
+    },
+  },
+  {
     name: "Buffer concat after verification",
     nodeOnly: true,
     phase: "verification",
