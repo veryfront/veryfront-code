@@ -288,6 +288,9 @@ export async function createRefreshingSourceRecordLookup(options: {
   let lookup: Lookup | undefined;
   let loadedAt = 0;
   let loading: Promise<void> | undefined;
+  // One raw read at a time: a stalled read is shared until it settles, so a
+  // prolonged mount failure cannot accumulate open reads across refreshes.
+  let rawRead: Promise<string> | undefined;
   const readWithin = async (): Promise<string> => {
     const deadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -297,7 +300,10 @@ export async function createRefreshingSourceRecordLookup(options: {
         reject(new Error("Source records read timed out"));
       }, options.readTimeoutMs);
     });
-    const reading = options.readText(deadline.signal);
+    rawRead ??= options.readText(deadline.signal).finally(() => {
+      rawRead = undefined;
+    });
+    const reading = rawRead;
     reading.catch(() => {});
     try {
       return await Promise.race([reading, timedOut]);

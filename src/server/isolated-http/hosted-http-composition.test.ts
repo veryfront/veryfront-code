@@ -350,6 +350,38 @@ describe("hosted HTTP host composition", () => {
     assertEquals(built, 0);
   });
 
+  it("keeps one raw source records read while it stalls", async () => {
+    let clock = 0;
+    let reads = 0;
+    const stalled = Promise.withResolvers<string>();
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: () => {
+        reads++;
+        return reads === 1
+          ? Promise.resolve(JSON.stringify([record]))
+          : reads === 2
+          ? stalled.promise
+          : Promise.resolve(JSON.stringify([record]));
+      },
+      now: () => clock,
+      refreshMs: 1_000,
+      readTimeoutMs: 10,
+    });
+    const signal = new AbortController().signal;
+    const request = { projectId: record.project_id, releaseId: record.release_id };
+    for (const time of [1_000, 2_000, 3_000]) {
+      clock = time;
+      await assertRejects(() => lookup(request, signal), Error, "Source records are unavailable");
+    }
+    assertEquals(reads, 2);
+    stalled.resolve(JSON.stringify([record]));
+    await Promise.resolve();
+    await Promise.resolve();
+    clock = 4_000;
+    assertEquals(((await lookup(request, signal)) as { image: string }).image, record.image);
+    assertEquals(reads, 3);
+  });
+
   it("refuses releases while a source records read stalls, then retries", async () => {
     let clock = 0;
     let stall = false;
@@ -357,8 +389,13 @@ describe("hosted HTTP host composition", () => {
     const lookup = await createRefreshingSourceRecordLookup({
       readText: (readSignal) => {
         if (!stall) return Promise.resolve(JSON.stringify([record]));
-        readSignal.addEventListener("abort", () => aborts++, { once: true });
-        return new Promise(() => {}); // never settles, even after abort
+        // Settles only when the timeout aborts it, like a cancelable file read.
+        return new Promise((_resolve, reject) => {
+          readSignal.addEventListener("abort", () => {
+            aborts++;
+            reject(readSignal.reason);
+          }, { once: true });
+        });
       },
       now: () => clock,
       refreshMs: 1_000,
