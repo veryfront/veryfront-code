@@ -468,6 +468,58 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(cleanupCount, 1);
   });
 
+  it("classifies a bootstrapped internal watchdog abort as a stream error when caller is live", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const callerAbortController = new AbortController();
+    const watchdogAbortController = new AbortController();
+    const abortReason = new DOMException("Runtime watchdog stopped the stream", "AbortError");
+    let capturedAbortSignal: AbortSignal | undefined;
+    const lifecycleAdapter = createLifecycleAdapter({ terminalStates });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async (input) => {
+        capturedAbortSignal = input.abortSignal;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter,
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: callerAbortController.signal,
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          signal: watchdogAbortController.signal,
+        }),
+    });
+    watchdogAbortController.abort(abortReason);
+    assertEquals(capturedAbortSignal?.aborted, true);
+    assertEquals(callerAbortController.signal.aborted, false);
+
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: callerAbortController.signal,
+      bootstrap,
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "Runtime watchdog stopped the stream",
+    }]);
+  });
+
   it("rejects a conversation runtime bootstrap without a durable stream message id", async () => {
     let streamCalls = 0;
     const agent: HostedChatRuntimeAgent = {
@@ -2343,6 +2395,41 @@ describe("agent/hosted-chat-execution-runtime", () => {
         terminalErrorMessage: "stream failed",
       },
     ]);
+  });
+
+  it("records internal abort reasons before detached finalization fallback", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const internalAbort = new DOMException("Runtime watchdog stopped the stream", "AbortError");
+    const internalController = new AbortController();
+    internalController.abort(internalAbort);
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog({ signal: internalController.signal }),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "Runtime watchdog stopped the stream",
+    }]);
   });
 
   it("preserves coded canonical errors through the production stream callback", async () => {

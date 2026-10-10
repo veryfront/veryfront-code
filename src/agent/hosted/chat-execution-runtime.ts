@@ -826,6 +826,22 @@ export function createHostedChatExecutionRuntime(
     };
   };
 
+  const resolveDetachedStreamError = (): unknown => {
+    if (lastStreamError != null) {
+      return lastStreamError;
+    }
+    const rootStreamAbortSignal = input.bootstrap.rootStreamWatchdog.signal;
+    if (!input.abortSignal.aborted && rootStreamAbortSignal.aborted) {
+      return rootStreamAbortSignal.reason instanceof Error
+        ? rootStreamAbortSignal.reason
+        : new DOMException(
+          "Hosted chat stream stopped before producing a response",
+          "AbortError",
+        );
+    }
+    return null;
+  };
+
   const finalizeDetachedStreamEndIfNeeded = async () => {
     if (finishHandlerStarted) {
       return;
@@ -836,7 +852,7 @@ export function createHostedChatExecutionRuntime(
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
       isAborted: input.abortSignal.aborted,
-      lastStreamError,
+      lastStreamError: resolveDetachedStreamError(),
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
       mirroredDurableOutput,
