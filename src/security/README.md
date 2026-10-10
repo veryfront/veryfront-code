@@ -355,17 +355,13 @@ transport configured for the same origin. Redirects remain rejected, and all
 other internal destinations remain blocked. Project environment overlays
 cannot add origins to this host-owned list.
 
-The Veryfront Cloud gateway and billing transport has one more exception for
-local CLI commands. `veryfront eval` calls
-`trustOperatorConfiguredVeryfrontApiOrigins()` before it loads project config or
-agent modules. That call seals the origins of `VERYFRONT_API_URL` and
-`VERYFRONT_API_BASE_URL` read from the process environment, excluding values
-copied from a project `.env` file. Only
-`createVeryfrontApiOriginBoundOutboundFetch()` consults the sealed set, and only
-for an exact origin match. Redirects remain rejected, and every other transport
-keeps the private-address block. Hosted runtimes and `veryfront serve` never
-seal the set, because there `VERYFRONT_API_URL` names a cluster-internal
-service.
+The API transport permits exact operator-configured origins. CLI commands seal
+`VERYFRONT_API_URL` and `VERYFRONT_API_BASE_URL` before loading project config,
+excluding values copied from project `.env` files. Hosted runtimes and
+`veryfront serve` also permit the exact HTTP API origin captured at process boot.
+Only `createVeryfrontApiOriginBoundOutboundFetch()` uses these exceptions;
+project environment files and later writes cannot authorize HTTP origins.
+Redirects remain rejected, and other transports keep the private-address block.
 
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
