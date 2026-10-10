@@ -19,12 +19,13 @@ const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
 /**
- * A call that decides host execution, or any comparison of the capability flag:
- * `!allowHostProjectCodeExecution`, or `allowHostProjectCodeExecution` compared with
- * `true` or `false`.
+ * A call that decides host execution, or any branch on the capability flag:
+ * `!allowHostProjectCodeExecution`, a comparison with `true` or `false`, a ternary
+ * (`allowHostProjectCodeExecution ? ...`), `if (allowHostProjectCodeExecution)` or
+ * `&& allowHostProjectCodeExecution`.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b|\ballowHostProjectCodeExecution\s*\?(?![.?:])|\bif\s*\(\s*(?:[\w$]+\.)*allowHostProjectCodeExecution\s*\)|&&\s*(?:[\w$]+\.)*allowHostProjectCodeExecution\b(?!\s*[!=]=)/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
@@ -111,7 +112,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
     surface: "Project runtime context capability",
     guards: 1,
   },
-  "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware", guards: 1 },
+  "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware", guards: 2 },
   "src/server/services/rendering/ssr.service.ts": { surface: "SSR service", guards: 2 },
   "src/server/shared/renderer/adapter.ts": { surface: "Renderer adapter capability", guards: 1 },
   "src/server/services/rsc/endpoints/endpoint-router.ts": {
