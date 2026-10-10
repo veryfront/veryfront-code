@@ -42,8 +42,8 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
-const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
+const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** The platform's own namespace, which models also use as an alias for local platform tools. */
 const PLATFORM_TOOL_NAMESPACE = "veryfront";
@@ -684,10 +684,10 @@ export function createToolExposurePlan(input: {
 
   const hasCanonicalSkillLoader = somePrivateArray(
     authorized,
-    (tool) => tool.name === "load_skill",
+    (tool) => tool.name === "veryfront__load_skill",
   );
-  // Keep the legacy loader discoverable without sending both loader schemas
-  // in every initial request. Hosts without the canonical loader still bootstrap it.
+  // Match hosted inventory instructions and preserve the framework loader when
+  // a project owns the local name. Defer the local alias when both are authorized.
   const bootstrap = input.bootstrapToolNames ??
     (hasCanonicalSkillLoader ? DEFAULT_BOOTSTRAP_TOOL_NAMES : LEGACY_BOOTSTRAP_TOOL_NAMES);
   let bootstrapCount = 0;

@@ -736,22 +736,25 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
 });
 
-it("defers the compatibility skill loader when the canonical loader is authorized", () => {
+it("keeps the hosted framework loader visible when a local skill loader is also authorized", () => {
   const authorized = [
-    definition("load_skill", "Load a skill"),
-    definition("veryfront__load_skill", "Load a skill"),
+    definition("load_skill", "Project-owned loader"),
+    definition("veryfront__load_skill", "Framework skill loader"),
   ];
   const state = createToolExposureState();
   const initial = createToolExposurePlan({ authorized, mode: "deferred", state });
-  assertEquals(initial.visible.map((tool) => tool.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
-  assertEquals(initial.deferred.map((tool) => tool.name), ["veryfront__load_skill"]);
+  assertEquals(initial.visible.map((tool) => tool.name), [
+    TOOL_SEARCH_TOOL_NAME,
+    "veryfront__load_skill",
+  ]);
+  assertEquals(initial.deferred.map((tool) => tool.name), ["load_skill"]);
   const searched = searchToolExposure({
-    query: "veryfront__load_skill",
+    query: "load_skill",
     authorized: initial.deferred,
     available: initial.visible,
     state,
   });
-  assertEquals(searched.matches.map((tool) => tool.name), ["veryfront__load_skill"]);
+  assertEquals(searched.matches.map((tool) => tool.name), ["load_skill"]);
   const loaded = createToolExposurePlan({ authorized, mode: "deferred", state });
   assertEquals(loaded.visible.map((tool) => tool.name), ["load_skill", "veryfront__load_skill"]);
   assertEquals(
