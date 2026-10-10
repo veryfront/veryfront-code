@@ -946,6 +946,15 @@ describe("mcp/server", () => {
     );
     register("SchemaValidator", { ...validator, compileJsonSchema: undefined });
     try {
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((entry) => entry.name === "test:native-output")!,
+          "outputSchema",
+        ),
+        false,
+      );
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -965,6 +974,30 @@ describe("mcp/server", () => {
         params: { name: "test:native-output", arguments: {} },
       });
       assertEquals((invalid.result as { isError: boolean }).isError, true);
+      registerTool(
+        "test:legacy-json-output",
+        tool({
+          id: "test:legacy-json-output",
+          description: "Raw JSON output contract without a compiler",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: {
+            type: "object",
+            properties: { ok: { type: "boolean" } },
+            required: ["ok"],
+          },
+          execute: async () => ({ ok: true }),
+        }),
+      );
+      const legacy = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "test:legacy-json-output", arguments: {} },
+      });
+      assertEquals(legacy.result, {
+        content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+        isError: false,
+      });
     } finally {
       register("SchemaValidator", validator);
     }
@@ -1089,6 +1122,33 @@ describe("mcp/server", () => {
       structuredContent: { ok: true },
       isError: false,
     });
+  });
+
+  it("rejects native transformed output that violates the advertised contract", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:mismatched-transform",
+      tool<unknown, unknown>({
+        id: "test:mismatched-transform",
+        description: "Changes the native output shape",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.object({ a: v.string() }).transform(() => ({ b: 1 }))
+        )(),
+        execute: async () => ({ a: "accepted input" }),
+      }),
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:mismatched-transform", arguments: {} },
+    });
+    assertEquals((response.result as { isError: boolean }).isError, true);
+    assertEquals(Object.hasOwn(response.result!, "structuredContent"), false);
   });
 
   it("hides agent-owned tools from tools/list", async () => {

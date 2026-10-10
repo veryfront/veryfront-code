@@ -50,20 +50,30 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
     if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
       throw new Error(`Tool "${tool.id}" must serialize an object for its MCP output contract`);
     }
+    const validator = resolve<SchemaValidator>("SchemaValidator");
+    if (validator.compileJsonSchema) {
+      const contractValidation = await validator.compileJsonSchema(outputSchema)(snapshot);
+      if (!contractValidation.success) {
+        throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(contractValidation.value, null, 2) }],
+        structuredContent: contractValidation.value,
+        isError: false,
+      };
+    }
     return {
       content: [{ type: "text", text }],
       structuredContent: snapshot,
       isError: false,
     };
   }
-  if (result === null || typeof result !== "object" || Array.isArray(result)) {
-    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
-  }
   const validator = resolve<SchemaValidator>("SchemaValidator");
   if (!validator.compileJsonSchema) {
-    throw new Error(
-      "MCP output contracts require a SchemaValidator with compileJsonSchema support",
-    );
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
+  }
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
   }
   const validation = await validator.compileJsonSchema(outputSchema)(result);
   if (!validation.success) {
@@ -403,7 +413,11 @@ export class MCPServer {
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
       const outputSchema = mcpOutputSchema(tool);
-      if (outputSchema !== undefined) entry.outputSchema = outputSchema;
+      if (
+        outputSchema !== undefined && resolve<SchemaValidator>("SchemaValidator").compileJsonSchema
+      ) {
+        entry.outputSchema = outputSchema;
+      }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
       tools.push(entry);
