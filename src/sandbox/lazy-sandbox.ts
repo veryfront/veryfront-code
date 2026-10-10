@@ -1049,7 +1049,13 @@ export class LazySandbox {
     init: RequestInit = {},
     routeKind: DataPlaneRoute["kind"] = "proxy",
   ): Promise<Response> {
-    return fetchWithTimeout(url, this.controlRequestTimeoutMs, init, routeKind === "internal");
+    return fetchWithTimeout(
+      url,
+      this.controlRequestTimeoutMs,
+      init,
+      routeKind === "internal",
+      true,
+    );
   }
 
   private waitForExecStartRetry(): Promise<void> {
@@ -1211,11 +1217,23 @@ async function fetchWithTimeout(
   timeoutMs: number,
   init: RequestInit = {},
   allowInternalRuntime = false,
+  bufferResponseBody = false,
 ): Promise<Response> {
   const fetchUrl = allowInternalRuntime ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
   return await withSandboxRequestDeadline(
     timeoutMs,
-    (signal) => fetchUrl(url, signal ? { ...init, signal } : init),
+    async (signal) => {
+      const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+      // Control responses are finite receipts/data; consume their bytes while the
+      // request deadline can still abort a partial body. Exec streams stay streaming.
+      if (!bufferResponseBody || !response.body) return response;
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    },
   );
 }
 

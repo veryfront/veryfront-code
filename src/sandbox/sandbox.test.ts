@@ -343,6 +343,77 @@ describe("Sandbox", () => {
     assertEquals(calls.some((call) => call.init?.method === "GET"), false);
   });
 
+  for (const internal of [false, true]) {
+    for (const operation of ["write", "read", "output", "write-error"] as const) {
+      it(`bounds lazy control response bodies: internal=${internal}, operation=${operation}`, async () => {
+        using time = new FakeTime();
+        if (internal) setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+        let reportRead!: () => void;
+        const reading = new Promise<void>((resolve) => reportRead = resolve);
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        let bodySettled = false;
+        let signal: AbortSignal | null | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(value) {
+            controller = value;
+          },
+          pull() {
+            reportRead();
+          },
+        }, { highWaterMark: 0 });
+        mockFetch([
+          ...(internal ? [jsonResponse({ ok: true })] : []),
+          jsonResponse({ ok: true }),
+          (_input, init) => {
+            signal = init?.signal;
+            signal?.addEventListener("abort", () => {
+              bodySettled = true;
+              controller.error(new DOMException("aborted", "AbortError"));
+            }, { once: true });
+            return new Response(body, {
+              status: operation === "write-error" ? 503 : 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+        ]);
+        const sandbox = Sandbox.createLazy({
+          sandboxId: "deadline",
+          sandboxEndpoint: "https://deadline.sandbox.veryfront.org",
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          controlRequestTimeoutMs: 50,
+          ...(internal ? { resolveRuntimeEndpoint: resolveDefaultSandboxRuntimeEndpoint } : {}),
+        });
+        await sandbox.ensure();
+        const pending = operation.startsWith("write")
+          ? sandbox.writeFiles([{ path: "/workspace/a.txt", content: "hello" }])
+          : operation === "read"
+          ? sandbox.readFile("/workspace/a.txt")
+          : sandbox.getBackgroundCommandOutput("command-1");
+        try {
+          await reading;
+          time.tick(51);
+          assertEquals(signal?.aborted, true);
+          await assertRejects(() => pending, Error);
+        } finally {
+          if (!bodySettled) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                JSON.stringify({
+                  results: [{ path: "/workspace/a.txt", written: true }],
+                  content: "hello",
+                }),
+              ),
+            );
+            controller.close();
+          }
+          await pending.catch(() => {});
+          await sandbox.close();
+        }
+      });
+    }
+  }
+
   for (const lostResponse of [false, true]) {
     it(`eager automatic cleanup accepts an unavailable temporary workspace, lostResponse=${lostResponse}`, async () => {
       mockFetch([
