@@ -400,6 +400,11 @@ describe("hosted HTTP resolver", () => {
       }));
       await assertRejects(() => resolve(authority, signal()));
     }
+    // A custom lookup's record has the same per-record budget as the host list.
+    const oversized = createHostedHttpResolver(options({
+      lookupSourceImage: () => Promise.resolve(record({ note: "x".repeat(20 * 1024) })),
+    }));
+    await assertRejects(() => oversized(authority, signal()));
     const trailing = createHostedHttpResolver(options({
       lookupSourceImage: () => Promise.resolve(record({ api_origin: `${SOURCE_API}/` })),
     }));
@@ -507,6 +512,18 @@ describe("hosted HTTP resolver", () => {
           },
         }),
       TypeError,
+    );
+    assertThrows(
+      () =>
+        buildHostedHttpGenerationBindingInput({
+          ...resolved,
+          installation: {
+            ...resolved.installation,
+            source: { type: "release", releaseId: OTHER_RELEASE_ID },
+          },
+        }),
+      TypeError,
+      "one release",
     );
   });
 });
