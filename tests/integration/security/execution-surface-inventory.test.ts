@@ -24,7 +24,7 @@ const REGISTER_HEADING = "### Host execution grant register";
  * `allowHostProjectCodeExecution === false`.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==\s*true|===\s*false)\b/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==\s*true|===\s*false)\b/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/;
 
@@ -42,11 +42,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/routing/api/handler.ts": {
     surface: "API route ownership and host-realm selection",
-    guards: 5,
+    guards: 6,
   },
   "src/routing/api/module-loader/loader.ts": { surface: "API route module loading", guards: 1 },
   "src/routing/api/openapi/spec-generator.ts": { surface: "OpenAPI route evaluation", guards: 1 },
-  "src/routing/api/route-executor.ts": { surface: "API route execution", guards: 1 },
+  "src/routing/api/route-executor.ts": { surface: "API route execution", guards: 3 },
   "src/server/dev-server/middleware.ts": { surface: "Local development middleware", guards: 1 },
   "src/server/handlers/preview/markdown-preview.handler.ts": {
     surface: "Markdown preview",
@@ -107,7 +107,10 @@ function countGuards(code: string, pattern: RegExp = GUARD): number {
 }
 
 /** Definitions of the predicates themselves are not surfaces. */
-const PREDICATE_DEFINITIONS = new Set(["src/security/project-locality.ts"]);
+const PREDICATE_DEFINITIONS = new Set([
+  "src/security/project-locality.ts",
+  "src/security/sandbox/worker-pool.ts",
+]);
 
 /** Drop imports and comments so only real code counts. */
 function codeOf(source: string): string {
@@ -131,8 +134,8 @@ async function readSources(): Promise<Map<string, string>> {
         continue;
       }
       if (
-        !entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts") ||
-        entry.name.endsWith(".test-helpers.ts") || entry.name.endsWith(".d.ts")
+        !/\.tsx?$/.test(entry.name) || /\.(?:test|test-helpers)\.tsx?$/.test(entry.name) ||
+        entry.name.endsWith(".d.ts")
       ) continue;
       sources.set(relativePath, codeOf(await Deno.readTextFile(`${REPO_ROOT}${relativePath}`)));
     }
