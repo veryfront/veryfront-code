@@ -571,9 +571,6 @@ describe("merge quality gate workflow", () => {
         (path) => path === "src/eval/runner.ts",
       ),
       [
-        "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
-        "DA:2,7",
-        "end_of_record",
         "SF:src/eval/runner.ts",
         "DA:3,5",
         "end_of_record",

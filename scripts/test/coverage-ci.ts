@@ -29,6 +29,7 @@ interface LcovLineRecord {
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
 const GENERATED_MDX_CACHE_PREFIX =
   "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
+const GENERATED_VERYFRONT_CACHE_PREFIX = "/home/runner/.cache/veryfront/";
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -226,7 +227,7 @@ function normalizeLcovSource(
   sourceExists: (relativePath: string) => boolean,
 ): NormalizedLcovSource {
   const portable = source.replaceAll("\\", "/");
-  if (portable.startsWith(GENERATED_MDX_CACHE_PREFIX)) {
+  if (isGeneratedVeryfrontCacheSource(portable)) {
     return { kind: "drop-generated-cache" };
   }
 
@@ -280,6 +281,12 @@ function normalizeLcovSource(
   throw new Error(
     `LCOV source is outside a recognized repository checkout: ${source}`,
   );
+}
+
+function isGeneratedVeryfrontCacheSource(source: string): boolean {
+  return source.startsWith(GENERATED_MDX_CACHE_PREFIX) ||
+    (source.startsWith(GENERATED_VERYFRONT_CACHE_PREFIX) &&
+      source.endsWith(".mjs"));
 }
 
 function normalizeRelativeLcovPath(path: string): string {

@@ -6,7 +6,7 @@ import {
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 export {
   LOOPBACK_ALLOW_NET,
@@ -175,6 +175,28 @@ function rewriteJunitPath(
 export interface SplitJunitRewriteResult {
   commandArgGroups: string[][];
   requestedJunitPath?: string;
+}
+
+export interface TemporaryJunitPathOptions {
+  id?: string;
+  tempDirectory?: string;
+}
+
+export function buildTemporaryJunitPaths(
+  requestedJunitPath: string,
+  count: number,
+  {
+    id = crypto.randomUUID(),
+    tempDirectory = Deno.env.get("TMPDIR") ?? ".",
+  }: TemporaryJunitPathOptions = {},
+): string[] {
+  const temporaryPathPrefix = requestedJunitPath === "-"
+    ? join(tempDirectory, `veryfront-test-file-junit-${id}`)
+    : requestedJunitPath;
+  return Array.from(
+    { length: count },
+    (_, index) => `${temporaryPathPrefix}.part-${index}-${id}.xml`,
+  );
 }
 
 export function rewriteSplitJunitPathForCommandArgGroups(
@@ -410,6 +432,71 @@ await Promise.all(paths.map((path) => Deno.remove(path).catch(() => {})));
   return status.success ? 0 : status.code;
 }
 
+export interface TestFileCommandStatus {
+  code: number;
+  success: boolean;
+}
+
+export interface TestFileCommandRunOptions {
+  commandArgs: string[];
+  environment: Readonly<Record<string, string>>;
+  redirectTestStdoutToStderr: boolean;
+}
+
+export type TestFileCommandRunner = (
+  options: TestFileCommandRunOptions,
+) => Promise<TestFileCommandStatus>;
+
+async function runDenoTestFileCommand(
+  {
+    commandArgs,
+    environment,
+    redirectTestStdoutToStderr,
+  }: TestFileCommandRunOptions,
+): Promise<TestFileCommandStatus> {
+  const command = new Deno.Command("deno", {
+    args: commandArgs,
+    clearEnv: true,
+    env: buildTestProcessEnv(Deno.env.toObject(), environment),
+    stdout: redirectTestStdoutToStderr ? "piped" : "inherit",
+    stderr: "inherit",
+  });
+  return redirectTestStdoutToStderr
+    ? await (async () => {
+      const output = await command.output();
+      if (output.stdout.length > 0) await Deno.stderr.write(output.stdout);
+      return output;
+    })()
+    : await command.spawn().status;
+}
+
+export async function runTestFileCommandGroups(
+  {
+    commandArgGroups,
+    environment,
+    redirectTestStdoutToStderr,
+    runCommand = runDenoTestFileCommand,
+  }: {
+    commandArgGroups: string[][];
+    environment: Readonly<Record<string, string>>;
+    redirectTestStdoutToStderr: boolean;
+    runCommand?: TestFileCommandRunner;
+  },
+): Promise<number | undefined> {
+  let failedExitCode: number | undefined;
+  for (const commandArgs of commandArgGroups) {
+    const status = await runCommand({
+      commandArgs,
+      environment,
+      redirectTestStdoutToStderr,
+    });
+    if (!status.success && failedExitCode === undefined) {
+      failedExitCode = status.code;
+    }
+  }
+  return failedExitCode;
+}
+
 async function main(): Promise<void> {
   let targets: string[];
   let commandArgGroups: string[][];
@@ -429,8 +516,9 @@ async function main(): Promise<void> {
     requestedJunitPath && commandArgGroups.length > 1 &&
     !hasDenoNoRun(Deno.args)
   ) {
-    const temporaryPaths = commandArgGroups.map((_, index) =>
-      `${requestedJunitPath}.part-${index}-${crypto.randomUUID()}.xml`
+    const temporaryPaths = buildTemporaryJunitPaths(
+      requestedJunitPath,
+      commandArgGroups.length,
     );
     const rewritten = rewriteSplitJunitPathForCommandArgGroups(
       commandArgGroups,
@@ -447,27 +535,11 @@ async function main(): Promise<void> {
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
   const redirectTestStdoutToStderr = junitMerge?.requestedPath === "-";
-  let failedExitCode: number | undefined;
-  for (const commandArgs of commandArgGroups) {
-    const command = new Deno.Command("deno", {
-      args: commandArgs,
-      clearEnv: true,
-      env: buildTestProcessEnv(Deno.env.toObject(), environment),
-      stdout: redirectTestStdoutToStderr ? "piped" : "inherit",
-      stderr: "inherit",
-    });
-    const status = redirectTestStdoutToStderr
-      ? await (async () => {
-        const output = await command.output();
-        if (output.stdout.length > 0) await Deno.stderr.write(output.stdout);
-        return output;
-      })()
-      : await command.spawn().status;
-    if (!status.success) {
-      failedExitCode = status.code;
-      break;
-    }
-  }
+  const failedExitCode = await runTestFileCommandGroups({
+    commandArgGroups,
+    environment,
+    redirectTestStdoutToStderr,
+  });
   if (junitMerge) {
     const mergeExitCode = await mergeJunitReports(
       junitMerge.temporaryPaths,

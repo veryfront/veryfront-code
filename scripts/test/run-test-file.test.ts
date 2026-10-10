@@ -2,6 +2,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fileURLToPath } from "node:url";
 import {
+  buildTemporaryJunitPaths,
   buildTestFileCommandArgGroups,
   buildTestFileCommandArgs,
   hasDenoNoRun,
@@ -9,6 +10,7 @@ import {
   mergeDenoJunitReports,
   PROVIDER_EGRESS_DENY_NET,
   rewriteSplitJunitPathForCommandArgGroups,
+  runTestFileCommandGroups,
   TEST_FILE_ENV,
   type TestTargetFileSystem,
 } from "./run-test-file.ts";
@@ -176,6 +178,38 @@ describe("test:file task command", () => {
       ]),
       true,
     );
+  });
+
+  it("keeps running split target groups after the first failure", async () => {
+    const calls: string[][] = [];
+    const failedExitCode = await runTestFileCommandGroups({
+      commandArgGroups: [["source-group"], ["script-group"]],
+      environment: TEST_FILE_ENV,
+      redirectTestStdoutToStderr: false,
+      runCommand: ({ commandArgs }) => {
+        calls.push(commandArgs);
+        return Promise.resolve(
+          commandArgs[0] === "source-group"
+            ? { success: false, code: 7 }
+            : { success: true, code: 0 },
+        );
+      },
+    });
+
+    assertEquals(failedExitCode, 7);
+    assertEquals(calls, [["source-group"], ["script-group"]]);
+  });
+
+  it("uses safe temporary JUnit paths when merged reports print to stdout", () => {
+    const paths = buildTemporaryJunitPaths("-", 2, {
+      id: "fixed",
+      tempDirectory: "/tmp/sdk5015",
+    });
+
+    assertEquals(paths, [
+      "/tmp/sdk5015/veryfront-test-file-junit-fixed.part-0-fixed.xml",
+      "/tmp/sdk5015/veryfront-test-file-junit-fixed.part-1-fixed.xml",
+    ]);
   });
 
   it("merges split Deno JUnit reports without dropping either suite", () => {

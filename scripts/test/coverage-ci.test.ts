@@ -393,15 +393,19 @@ describe("coverage source paths", () => {
     );
   });
 
-  it("drops generated MDX cache records without dropping source records", () => {
+  it("drops generated Veryfront cache records without dropping source records", () => {
     const report = [
       "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
       "DA:1,99",
       "BRDA:1,0,0,99",
       "end_of_record",
+      "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+      "DA:2,7",
+      "BRDA:2,0,0,7",
+      "end_of_record",
       "SF:src/eval/runner.ts",
-      "DA:2,3",
-      "BRDA:2,0,0,1",
+      "DA:3,3",
+      "BRDA:3,0,0,1",
       "end_of_record",
     ].join("\n");
 
@@ -413,8 +417,8 @@ describe("coverage source paths", () => {
       ),
       [
         "SF:src/eval/runner.ts",
-        "DA:2,3",
-        "BRDA:2,0,0,1",
+        "DA:3,3",
+        "BRDA:3,0,0,1",
         "end_of_record",
       ].join("\n"),
     );
@@ -427,7 +431,7 @@ describe("coverage source paths", () => {
     assertEquals(normalizeLcovSourcePaths(relative, [root], exists), relative);
     for (
       const source of [
-        "/home/runner/.cache/veryfront/src/task.ts.mjs",
+        "/home/runner/.cache/veryfront/src/task.ts",
         "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
         "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
         "/foreign/src/task.ts",
