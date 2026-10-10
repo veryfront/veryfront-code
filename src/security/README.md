@@ -529,7 +529,9 @@ updated.
 ### Surfaces refused under hosted HTTP isolation
 
 The hosted ingress refuses these surfaces with a non-cacheable
-`project-execution-unavailable` 503. They never fall back to host execution.
+`project-execution-unavailable` 503. They never fall back to host execution. A
+refused WebSocket upgrade receives no 101 response; on Node.js the upgrade
+transport closes the connection instead of writing the 503 body.
 
 | Surface                                     | Status                                                   |
 | ------------------------------------------- | -------------------------------------------------------- |
