@@ -4,7 +4,9 @@ export type TailwindPluginPolicyEntry = Readonly<{
   name: string;
   version: string;
   importSpecifier: string;
+  /** Exact upstream npm identity; sourceSpecifier records the actual implementation. */
   npmSpecifier: string;
+  sourceSpecifier: string;
 }>;
 
 const apply = Reflect.apply;
@@ -23,12 +25,14 @@ const stringStartsWith = String.prototype.startsWith;
 function definePlugin(
   name: string,
   version: string,
+  sourceSpecifier = `npm:${name}@${version}`,
 ): TailwindPluginPolicyEntry {
   return freeze({
     name,
     version,
     importSpecifier: name,
     npmSpecifier: `npm:${name}@${version}`,
+    sourceSpecifier,
   });
 }
 
@@ -39,7 +43,7 @@ function definePlugin(
  */
 export const TAILWIND_PLUGIN_POLICY = freeze([
   definePlugin("tailwindcss-animate", "1.0.7"),
-  definePlugin("@tailwindcss/typography", "0.5.19"),
+  definePlugin("@tailwindcss/typography", "0.5.19", "./vendor/typography.js"),
   definePlugin("@tailwindcss/forms", "0.5.11"),
   definePlugin("tailwind-scrollbar-hide", "2.0.0"),
   definePlugin("daisyui", "5.5.14"),
@@ -104,7 +108,9 @@ type PluginIdentityEntry = {
   name: string;
   version: string;
   importSpecifier: string;
+  /** Exact upstream npm identity; sourceSpecifier records the actual implementation. */
   npmSpecifier: string;
+  sourceSpecifier: string;
 };
 
 const identityPlugins = apply(arrayMap, TAILWIND_PLUGIN_POLICY, [
@@ -113,6 +119,7 @@ const identityPlugins = apply(arrayMap, TAILWIND_PLUGIN_POLICY, [
     version: entry.version,
     importSpecifier: entry.importSpecifier,
     npmSpecifier: entry.npmSpecifier,
+    sourceSpecifier: entry.sourceSpecifier,
   }),
 ]) as PluginIdentityEntry[];
 apply(arraySort, identityPlugins, [
@@ -120,7 +127,7 @@ apply(arraySort, identityPlugins, [
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
 ]);
 export const TAILWIND_PLUGIN_POLICY_IDENTITY = apply(jsonStringify, JSON, [{
-  schema: "veryfront.tailwind-plugin-policy.v3",
-  resolution: "extension-owned-static-npm-imports",
+  schema: "veryfront.tailwind-plugin-policy.v4",
+  resolution: "extension-owned-static-imports",
   plugins: identityPlugins,
 }]) as string;

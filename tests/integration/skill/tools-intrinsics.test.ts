@@ -1,3 +1,4 @@
+import { filterToolsForSkill, isSkillToolAvailable } from "#veryfront/skill/allowed-tools.ts";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { createLoadSkillReferenceTool } from "#veryfront/skill/tools.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
@@ -92,3 +93,30 @@ describe("skill tool intrinsic isolation", () => {
     }
   });
 });
+
+for (const method of ["startsWith", "slice"] as const) {
+  it(`keeps canonical skill capabilities when String.prototype.${method} is replaced`, () => {
+    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, method)!;
+    const tools = [{ name: "veryfront__load_skill" }, { name: "veryfront__load_skill_reference" }, {
+      name: "veryfront__execute_skill_script",
+    }];
+    const availability = { hasActiveSkill: true, references: ["references/guide.md"], scripts: [] };
+    let filtered;
+    let loaderAvailable;
+    let scriptAvailable;
+    try {
+      Object.defineProperty(String.prototype, method, {
+        ...descriptor,
+        value: method === "startsWith" ? () => false : () => "project_tool",
+      });
+      filtered = filterToolsForSkill(tools, availability);
+      loaderAvailable = isSkillToolAvailable("veryfront__load_skill", availability);
+      scriptAvailable = isSkillToolAvailable("veryfront__execute_skill_script", availability);
+    } finally {
+      Object.defineProperty(String.prototype, method, descriptor);
+    }
+    assertEquals(filtered, tools.slice(0, 2));
+    assertEquals(loaderAvailable, true);
+    assertEquals(scriptAvailable, false);
+  });
+}

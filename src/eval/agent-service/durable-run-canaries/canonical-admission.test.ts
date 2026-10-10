@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { createDurableRunCanaryApiClient } from "./runner.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { createDurableRunCanaryApiClient, parseDurableRunCanaryRunSummary } from "./runner.ts";
 Deno.test("durable canary admits once and reads canonical identity with the real snapshot cursor", async () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const conversation = "22222222-2222-4222-8222-222222222222";
@@ -45,8 +45,39 @@ Deno.test("durable canary admits once and reads canonical identity with the real
   assertEquals(calls[0].body?.config, {
     agent_admission: { mode: "hosted", input_message_id: message, client_run_id: "canary-key" },
   });
+  assertEquals(calls[0].body?.input, {
+    messages: [{ id: message, role: "user", parts: [{ type: "text", text: "prove output" }] }],
+    context: { conversationId: conversation, projectId: id, branchId: null },
+    forwardedProps: {
+      veryfront: { client: { id: "veryfront-studio", type: "web", platform: "durable-canary" } },
+    },
+  });
   assert(calls[0].headers.get("Idempotency-Key"));
   assertEquals(summary.latestEventId, 7);
   assertEquals(summary.latestExternalEventSequence, null);
   assertEquals(summary.messageId, message);
+  assertEquals(summary.runId, "canary-key");
+  assertEquals(summary.canonicalRunId, id);
+  const { latestExternalEventSequence: _latestExternalEventSequence, ...parseInput } = summary;
+  assertEquals(parseDurableRunCanaryRunSummary(parseInput).canonicalRunId, id);
+  assertThrows(() =>
+    parseDurableRunCanaryRunSummary({ ...parseInput, canonicalRunId: "canary-key" })
+  );
+  const { canonicalRunId: _canonicalRunId, ...legacy } = parseInput;
+  assertEquals(parseDurableRunCanaryRunSummary(legacy).canonicalRunId, undefined);
+  const snake = {
+    run_id: "canary-key",
+    conversation_id: conversation,
+    message_id: message,
+    agent_id: "agent",
+    status: "completed",
+    latest_event_id: 7,
+  };
+  const legacySnake = parseDurableRunCanaryRunSummary(snake);
+  assertEquals(Object.hasOwn(legacySnake, "canonicalRunId"), false);
+  assertEquals(
+    parseDurableRunCanaryRunSummary({ ...snake, canonical_run_id: id }),
+    { ...legacySnake, canonicalRunId: id },
+  );
+  assertThrows(() => parseDurableRunCanaryRunSummary({ ...snake, canonical_run_id: "canary-key" }));
 });

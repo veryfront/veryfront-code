@@ -116,12 +116,11 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
-      label: "PurgeCSS platform and color discovery",
+      label: "PurgeCSS color discovery",
       packageName: "@veryfront/ext-css-purgecss",
       requiredCapabilities: [{
         type: "env:read",
         keys: [
-          "__MINIMATCH_TESTING_PLATFORM__",
           "NO_COLOR",
           "FORCE_COLOR",
           "TERM",

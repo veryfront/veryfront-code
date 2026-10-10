@@ -178,7 +178,9 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     installMockFetch(
       ((_input: RequestInfo | URL, init?: RequestInit) => {
         authorization = new Headers(init?.headers).get("authorization") ?? "";
-        return Promise.resolve(Response.json({ deleted: 1 }));
+        return Promise.resolve(
+          Response.json({ pattern: "agent:*", status: "deleted", deleted_count: 1 }),
+        );
       }) as typeof fetch,
     );
 

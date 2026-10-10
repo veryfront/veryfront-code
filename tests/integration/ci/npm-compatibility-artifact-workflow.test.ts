@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -34,7 +35,7 @@ async function readJobs(): Promise<YamlRecord> {
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "CI workflow",
   );
-  return asRecord(workflow.jobs, "CI workflow jobs");
+  return await inlinePublicPoolJobs(workflow);
 }
 
 function namedStep(job: YamlRecord, name: string): YamlRecord {
@@ -213,9 +214,14 @@ describe("canonical npm artifact workflow", () => {
       namedStep(smoke, "Check published package types").run,
       "deno task typecheck:consumer --skip-build",
     );
+    const runtimeFlow = namedStep(runtime, "Run runtime critical flow");
+    assertEquals(
+      asRecord(runtimeFlow.env, "runtime flow environment").RUNTIME,
+      "${{ matrix.runtime }}",
+    );
     assertStringIncludes(
-      String(namedStep(runtime, "Run runtime critical flow").run),
-      "scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility",
+      String(runtimeFlow.run),
+      'scripts/test/runtime-inference-critical-flow.ts --runtime="${RUNTIME}" --packed-dir=dist/npm-compatibility',
     );
     for (
       const [job, label] of [

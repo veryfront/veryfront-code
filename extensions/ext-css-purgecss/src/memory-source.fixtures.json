@@ -1,0 +1,140 @@
+[
+  {
+    "options": {
+      "css": [
+        {
+          "raw": ".keep {color:red}.drop{color:blue}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<p class=\"keep\">x</p>",
+          "extension": "html"
+        }
+      ],
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": ".keep {color:red}",
+        "rejectedCss": ".drop{color:blue}"
+      }
+    ]
+  },
+  {
+    "options": {
+      "css": [
+        {
+          "raw": "@supports(display:grid){.keep\\:focus[data-state=\"open\"]{color:red}.drop{color:blue}}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<button class=\"keep:focus\" data-state=\"open\">x</button>",
+          "extension": "html"
+        }
+      ],
+      "safelist": [
+        "keep:focus"
+      ],
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": "@supports(display:grid){.keep\\:focus[data-state=\"open\"]{color:red}}",
+        "rejectedCss": "@supports(display:grid){.drop{color:blue}}"
+      }
+    ]
+  },
+  {
+    "options": {
+      "css": [
+        {
+          "raw": ":root{--keep:red;--drop:blue}.keep{color:var(--keep)}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<p class=\"keep\">x</p>",
+          "extension": "html"
+        }
+      ],
+      "variables": true,
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": ":root{--keep:red}.keep{color:var(--keep)}",
+        "rejectedCss": ""
+      }
+    ]
+  },
+  {
+    "options": {
+      "css": [
+        {
+          "raw": "@keyframes spin{to{opacity:0}}@keyframes drop{to{opacity:1}}.keep{animation:spin 1s}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<p class=\"keep\">x</p>",
+          "extension": "html"
+        }
+      ],
+      "keyframes": true,
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": "@keyframes spin{to{opacity:0}}.keep{animation:spin 1s}",
+        "rejectedCss": ""
+      }
+    ]
+  },
+  {
+    "options": {
+      "css": [
+        {
+          "raw": "@font-face{font-family:Keep;src:url(keep.woff)}@font-face{font-family:Drop;src:url(drop.woff)}.keep{font-family:Keep}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<p class=\"keep\">x</p>",
+          "extension": "html"
+        }
+      ],
+      "fontFace": true,
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": "@font-face{font-family:Keep;src:url(keep.woff)}.keep{font-family:Keep}",
+        "rejectedCss": ""
+      }
+    ]
+  },
+  {
+    "options": {
+      "css": [
+        {
+          "raw": "div, .keep:is(.child,.absent){color:red}.other{color:blue}"
+        }
+      ],
+      "content": [
+        {
+          "raw": "<div class=\"keep child\">x</div>",
+          "extension": "html"
+        }
+      ],
+      "rejectedCss": true
+    },
+    "expected": [
+      {
+        "css": "div, .keep:is(.child){color:red}",
+        "rejectedCss": ".absent{color:red}.other{color:blue}"
+      }
+    ]
+  }
+]

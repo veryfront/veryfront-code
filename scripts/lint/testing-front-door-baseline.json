@@ -390,7 +390,6 @@
     "tests/integration/build/compiler/mdx-compiler/compiler.test.ts": 1,
     "tests/integration/build/embedded-json-output.test.ts": 2,
     "tests/integration/build/embedded-preset.test.ts": 5,
-    "tests/integration/compiled-binary-e2e.test.ts": 10,
     "tests/integration/routing/api/module-loader/decorator-metadata.test.ts": 4,
     "tests/integration/semantic-unit-boundary/scripts/lint/ratchet.test.ts": 2,
     "tests/integration/vfs-proxy-mode-e2e.test.ts": 2

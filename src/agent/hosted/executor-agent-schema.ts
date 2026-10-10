@@ -5,6 +5,7 @@ import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/sch
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
   AGENT_PROVIDER_AUTH_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
   registeredProviderFailure,
 } from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
@@ -43,6 +44,7 @@ const failureStatus = {
   AI_PROVIDER_BILLING_ERROR: 502,
   GATEWAY_PROJECT_REQUIRED: 400,
   PROVIDER_OUTPUT_TRUNCATED: 502,
+  PROVIDER_STREAM_PROTOCOL_ERROR: 502,
   MODEL_NOT_PERMITTED: 403,
   INFERENCE_POLICY_DENIED: 403,
   EXTERNAL_SERVICE_ERROR: 502,
@@ -77,6 +79,7 @@ export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
     "AI_PROVIDER_BILLING_ERROR",
     "GATEWAY_PROJECT_REQUIRED",
     "PROVIDER_OUTPUT_TRUNCATED",
+    "PROVIDER_STREAM_PROTOCOL_ERROR",
     "MODEL_NOT_PERMITTED",
     "INFERENCE_POLICY_DENIED",
     "EXTERNAL_SERVICE_ERROR",
@@ -96,6 +99,8 @@ export class ExecutorAgentError extends VeryfrontError {
   constructor(readonly code: FailureCode) {
     const message = code === AGENT_PROVIDER_AUTH_ERROR.code
       ? AGENT_PROVIDER_AUTH_ERROR.message
+      : code === PROVIDER_STREAM_PROTOCOL_ERROR.code
+      ? PROVIDER_STREAM_PROTOCOL_ERROR.message
       : code;
     const definition = defineError({
       slug: code.toLowerCase().replaceAll("_", "-"),

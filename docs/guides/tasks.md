@@ -324,8 +324,11 @@ To send business input over REST, add `input` to the request next to `config`:
 curl -X POST "$VERYFRONT_API_URL/runs" \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"kind":"task","owner":{"kind":"project","id":"<PROJECT_ID>"},"request":{"target":"task:sync-data","input":{"since":"2026-01-01"},"config":{"batchSize":100}}}'
+  -H "Idempotency-Key: <UNIQUE_REQUEST_ID>" \
+  -d '{"project_id":"<PROJECT_ID>","target":{"type":"task","id":"sync-data"},"input":{"since":"2026-01-01"},"config":{"batchSize":100}}'
 ```
+
+Reuse the same idempotency key when retrying one request. Use a new key for a new run.
 
 The value a task returns becomes the run's `output`. Its JSON serialization can
 be at most 1,048,576 bytes (1 MiB) of UTF-8. A larger successful result is not

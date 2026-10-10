@@ -3,7 +3,7 @@
  * @module sandbox/exec-stream
  */
 
-import type { ExecStreamEvent } from "./types.ts";
+import type { CommandStreamEvent } from "./types.ts";
 
 /**
  * Parses one NDJSON line, reporting null for anything unusable.
@@ -12,11 +12,11 @@ import type { ExecStreamEvent } from "./types.ts";
  * truncated network chunks, and aborting would discard every event already
  * buffered ahead of the bad line.
  */
-function parseExecStreamLine(line: string): ExecStreamEvent | null {
+function parseExecStreamLine(line: string): CommandStreamEvent | null {
   if (!line.trim()) return null;
 
   try {
-    return JSON.parse(line) as ExecStreamEvent;
+    return JSON.parse(line) as CommandStreamEvent;
   } catch (_) {
     /* expected: truncated or malformed NDJSON line, skipped to keep streaming */
     return null;
@@ -31,9 +31,9 @@ function parseExecStreamLine(line: string): ExecStreamEvent | null {
  * eager path skipped a bad line while the lazy one threw out of the generator
  * and dropped the output that had already arrived.
  */
-export async function* readExecStreamEvents(
+export async function* readCommandStreamEvents(
   body: ReadableStream<Uint8Array>,
-): AsyncGenerator<ExecStreamEvent> {
+): AsyncGenerator<CommandStreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
