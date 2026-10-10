@@ -521,52 +521,115 @@ describe("src/skill/executor", () => {
     }
 
     for (const flag of ["stdout_truncated", "stderr_truncated"]) {
-      for (const status of ["completed", "running"]) {
-        it(`reports ${status} background ${flag} as an output-limit failure`, async () => {
-          setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
-          setEnv("VERYFRONT_API_URL", "https://api.test.com");
-          const truncated = await backgroundCommandResponse(
-            status,
-            "partial",
-            status === "completed" ? 0 : null,
-          ).json();
-          truncated[flag] = true;
-          truncated.stderr = "partial error";
-          mockFetch([
-            jsonResponse({
-              id: "truncated-script",
-              endpoint: "https://sb.test",
-              status: "running",
-              workspace_storage: "ephemeral",
-            }),
-            (_input, init) =>
+      for (const status of ["completed", "pending", "running"]) {
+        for (const cancellationFails of status === "completed" ? [false] : [false, true]) {
+          it(`reports ${status} background ${flag} as an output-limit failure, cancellationFails=${cancellationFails}`, async () => {
+            setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+            setEnv("VERYFRONT_API_URL", "https://api.test.com");
+            const truncated = await backgroundCommandResponse(
+              status,
+              "partial",
+              status === "completed" ? 0 : null,
+            ).json();
+            truncated[flag] = true;
+            truncated.stderr = "partial error";
+            mockFetch([
               jsonResponse({
-                results: JSON.parse(String(init?.body)).files.map(
-                  (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
-                ),
+                id: "truncated-script",
+                endpoint: "https://sb.test",
+                status: "running",
+                workspace_storage: "ephemeral",
               }),
-            commandResponse([{ type: "exit", exitCode: 0 }]),
-            backgroundCommandResponse("running", "", null),
-            jsonResponse(truncated),
-            ...(status === "running" ? [backgroundCommandResponse("canceled", "", null)] : []),
-            textResponse(""),
-          ]);
-          const result = await getSkillScriptExecutor().execute({
-            scriptPath: "run.sh",
-            scriptContent: "echo partial",
-            timeoutMs: 60_000,
+              (_input, init) =>
+                jsonResponse({
+                  results: JSON.parse(String(init?.body)).files.map(
+                    (file: { path: string }) => ({
+                      path: file.path,
+                      status: "written",
+                      error: null,
+                    }),
+                  ),
+                }),
+              commandResponse([{ type: "exit", exitCode: 0 }]),
+              backgroundCommandResponse("running", "", null),
+              jsonResponse(truncated),
+              ...(status !== "completed"
+                ? [
+                  cancellationFails
+                    ? textResponse("cancel failed", 503)
+                    : backgroundCommandResponse("canceled", "", null),
+                ]
+                : []),
+              textResponse(""),
+            ]);
+            const result = await getSkillScriptExecutor().execute({
+              scriptPath: "run.sh",
+              scriptContent: "echo partial",
+              timeoutMs: 60_000,
+            });
+            assertEquals(result.stdout, "partial");
+            assertEquals(result.exitCode, 125);
+            assertStringIncludes(result.stderr, "truncated");
+            assertStringIncludes(result.stderr, "partial error");
+            if (status !== "completed") {
+              assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+            }
+            assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
           });
-          assertEquals(result.stdout, "partial");
-          assertEquals(result.exitCode, 125);
-          assertStringIncludes(result.stderr, "truncated");
-          assertStringIncludes(result.stderr, "partial error");
-          if (status === "running") {
-            assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
-          }
-          assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
-        });
+        }
       }
     }
+
+    it("preserves output-limit classification while cancellation stalls past the script deadline", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      using time = new FakeTime();
+      const output = await backgroundCommandResponse("running", "partial", null).json();
+      output.stdout_truncated = true;
+      let reportCleanup!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => reportCleanup = resolve);
+      let cancellationSignal: AbortSignal | null | undefined;
+      mockFetch([
+        jsonResponse({
+          id: "truncation-deadline",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        (_input, init) =>
+          jsonResponse({
+            results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        backgroundCommandResponse("running", "", null),
+        jsonResponse(output),
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            cancellationSignal = init?.signal;
+            cancellationSignal?.addEventListener("abort", () =>
+              reject(new Error("cancellation aborted")), { once: true });
+            reportCleanup();
+          }),
+        textResponse(""),
+      ]);
+      const execution = getSkillScriptExecutor().execute({
+        scriptPath: "run.sh",
+        scriptContent: "echo partial",
+        timeoutMs: 60_000,
+      });
+      await cleanupStarted;
+      time.tick(60_000);
+      const result = await execution;
+      assertEquals(result.exitCode, 125);
+      assertEquals(result.stdout, "partial");
+      assertEquals(cancellationSignal?.aborted, true);
+      assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
+    });
 
     for (
       const [status, elapsedMs, timedOut] of [

@@ -29,7 +29,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { CommandStreamEvent } from "./sandbox.ts";
-import { hasEphemeralSandboxStorage } from "./response.ts";
+import { hasTemporarySandboxPolicy } from "./response.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
@@ -96,15 +96,28 @@ describe("Sandbox", () => {
     __resetEnvLoaderForTests();
   });
 
-  for (const storage of [undefined, "persistant", "persistent", "ephemeral"]) {
-    for (const lazy of [false, true]) {
-      it(`enables close deletion only for explicit ephemeral creation storage: ${storage}, lazy=${lazy}`, async () => {
+  for (const lazy of [false, true]) {
+    for (
+      const policy of [
+        {},
+        { ttl_mode: null },
+        { ttl_mode: "future" },
+        { ttl_mode: "always_on" },
+        { ttl_mode: "duration" },
+        { ttl_mode: "duration", ttl_hours: null },
+        { ttl_mode: "default", ttl_hours: 0 },
+        { ttl_mode: "default", ttl_hours: -1 },
+        { ttl_mode: "default", ttl_hours: "4" },
+      ]
+    ) {
+      it(`retains an ephemeral creation without confirmed temporary lifetime: lazy=${lazy}, ${JSON.stringify(policy)}`, async () => {
         mockFetch([
           Response.json({
-            id: "policy-check",
+            id: "lifetime-policy",
             endpoint: "https://sb.test",
             status: "running",
-            ...(storage === undefined ? {} : { workspace_storage: storage }),
+            workspace_storage: "ephemeral",
+            ...policy,
           }),
           ...(lazy ? [jsonResponse({ ok: true })] : []),
           jsonResponse({ ok: true }),
@@ -114,15 +127,46 @@ describe("Sandbox", () => {
           const sandbox = Sandbox.createLazy(options);
           await sandbox.ensure();
           await sandbox.close();
+          assertEquals(sandbox.id, "lifetime-policy");
         } else {
           const sandbox = await Sandbox.create(options);
           await sandbox.close();
         }
-        assertEquals(
-          fetchCalls.some((call) => call.init?.method === "DELETE"),
-          storage === "ephemeral",
-        );
+        assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
       });
+    }
+  }
+
+  for (const storage of [undefined, "persistant", "persistent", "ephemeral"]) {
+    for (const lazy of [false, true]) {
+      for (const policy of [{ ttl_mode: "default" }, { ttl_mode: "duration", ttl_hours: 4 }]) {
+        it(`enables close deletion only for explicit ephemeral creation storage: ${storage}, lazy=${lazy}, lifetime=${policy.ttl_mode}`, async () => {
+          mockFetch([
+            Response.json({
+              id: "policy-check",
+              endpoint: "https://sb.test",
+              status: "running",
+              ...policy,
+              ...(storage === undefined ? {} : { workspace_storage: storage }),
+            }),
+            ...(lazy ? [jsonResponse({ ok: true })] : []),
+            jsonResponse({ ok: true }),
+          ]);
+          const options = { authToken: "token", apiUrl: "https://api.test.com" };
+          if (lazy) {
+            const sandbox = Sandbox.createLazy(options);
+            await sandbox.ensure();
+            await sandbox.close();
+          } else {
+            const sandbox = await Sandbox.create(options);
+            await sandbox.close();
+          }
+          assertEquals(
+            fetchCalls.some((call) => call.init?.method === "DELETE"),
+            storage === "ephemeral",
+          );
+        });
+      }
     }
   }
 
@@ -188,7 +232,7 @@ describe("Sandbox", () => {
 
   it("does not enable creation cleanup from inherited or accessor storage policy", () => {
     assertEquals(
-      hasEphemeralSandboxStorage(Object.create({ workspace_storage: "ephemeral" })),
+      hasTemporarySandboxPolicy(Object.create({ workspace_storage: "ephemeral" })),
       false,
     );
     let getterCalls = 0;
@@ -198,7 +242,7 @@ describe("Sandbox", () => {
         return "ephemeral";
       },
     });
-    assertEquals(hasEphemeralSandboxStorage(session), false);
+    assertEquals(hasTemporarySandboxPolicy(session), false);
     assertEquals(getterCalls, 0);
   });
 
@@ -294,6 +338,7 @@ describe("Sandbox", () => {
         project_id: null,
         access_scope: "project",
         workspace_storage: "ephemeral",
+        ttl_mode: "default",
       };
       mockFetch([
         jsonResponse({ id: details.id, endpoint: details.endpoint, status: details.status }),
@@ -501,6 +546,7 @@ describe("Sandbox", () => {
               id: "cleanup-policy",
               endpoint: "https://sb.test",
               status: "running",
+              ttl_mode: ttlMode,
               ...(storage === undefined ? {} : { workspace_storage: storage }),
             }),
             jsonResponse({ ok: true }),
@@ -1864,6 +1910,7 @@ describe("Sandbox", () => {
         endpoint: "https://sb.test",
         status: "running",
         workspace_storage: "ephemeral",
+        ttl_mode: "default",
       }),
       textResponse("Unavailable", 503),
       jsonResponse({ ok: true }),
@@ -1882,6 +1929,7 @@ describe("Sandbox", () => {
           endpoint: "https://sb.test",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ ok: true }),
       ]);
@@ -1901,6 +1949,7 @@ describe("Sandbox", () => {
           endpoint: "https://sb.test",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         textResponse("delete failed", 503),
       ]);
@@ -2133,6 +2182,7 @@ describe("Sandbox", () => {
           endpoint: "https://sandbox-1.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         textResponse("heartbeat failed", 503),
         jsonResponse({ ok: true }),
@@ -2141,6 +2191,7 @@ describe("Sandbox", () => {
           endpoint: "https://sandbox-2.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ ok: true }),
         jsonResponse({ path: "notes.txt", content: "file-body" }),
@@ -2236,6 +2287,7 @@ describe("Sandbox", () => {
           endpoint: "https://sandbox.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
       );
 
@@ -3040,6 +3092,7 @@ describe("Sandbox", () => {
           endpoint: "https://2826936518.sandbox.veryfront.org",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         () => {
           throw new TypeError("fetch failed");
@@ -3053,6 +3106,7 @@ describe("Sandbox", () => {
           endpoint: "https://1373820032.sandbox.veryfront.org",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),
@@ -3283,6 +3337,7 @@ describe("Sandbox", () => {
           endpoint: "https://1111111111.sandbox.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ ok: true }),
         () => {
@@ -3300,6 +3355,7 @@ describe("Sandbox", () => {
           endpoint: "https://2222222222.sandbox.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ ok: true }),
         ndjsonResponse([
@@ -3728,6 +3784,7 @@ describe("Sandbox", () => {
           endpoint: "https://sandbox-1.example.com",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
@@ -3817,6 +3874,7 @@ describe("Sandbox", () => {
           endpoint: "https://sandbox-1.sandbox.veryfront.org",
           status: "running",
           workspace_storage: "ephemeral",
+          ttl_mode: "default",
         }),
         jsonResponse({ status: "ok" }),
         jsonResponse({ ok: true }),

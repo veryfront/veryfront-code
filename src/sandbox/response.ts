@@ -15,12 +15,23 @@ import type {
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
-/** @internal Only explicit ephemeral storage permits automatic creation cleanup. */
-export function hasEphemeralSandboxStorage(value: unknown): boolean {
+/** @internal Automatic cleanup requires confirmed ephemeral storage and temporary lifetime. */
+export function hasTemporarySandboxPolicy(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
-  const descriptor = getOwnPropertyDescriptor(value, "workspace_storage");
-  return descriptor !== undefined && objectHasOwn(descriptor, "value") &&
-    descriptor.value === "ephemeral";
+  const storage = getOwnPropertyDescriptor(value, "workspace_storage");
+  const lifetime = getOwnPropertyDescriptor(value, "ttl_mode");
+  if (
+    !storage || !objectHasOwn(storage, "value") || storage.value !== "ephemeral" ||
+    !lifetime || !objectHasOwn(lifetime, "value")
+  ) return false;
+  const hours = getOwnPropertyDescriptor(value, "ttl_hours");
+  const validHours = !!hours && objectHasOwn(hours, "value") && typeof hours.value === "number" &&
+    Number.isInteger(hours.value) && hours.value > 0;
+  if (lifetime.value === "default") {
+    return hours === undefined || (objectHasOwn(hours, "value") && hours.value == null) ||
+      validHours;
+  }
+  return lifetime.value === "duration" && validHours;
 }
 
 function record(value: unknown): Record<string, unknown> {

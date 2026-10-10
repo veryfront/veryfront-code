@@ -1,7 +1,7 @@
 import {
   assertSandboxFilesWritten,
   assertSandboxRuntimeFilesWritten,
-  hasEphemeralSandboxStorage,
+  hasTemporarySandboxPolicy,
   parseSandboxBackgroundCommand,
   parseSandboxBackgroundCommandOutput,
   parseSandboxCommandResult,
@@ -671,7 +671,7 @@ export class LazySandbox {
 
     const session = await res.json();
     this.deleteOnClose = this.requestedDeleteOnClose ??
-      (hasEphemeralSandboxStorage(session) && this.creationPolicy.ttlMode !== "always_on");
+      (hasTemporarySandboxPolicy(session) && this.creationPolicy.ttlMode !== "always_on");
     this.sessionId = session.id;
     this.sessionProjectId = projectId;
 

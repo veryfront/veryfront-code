@@ -8,7 +8,7 @@
 
 import {
   assertSandboxFilesWritten,
-  hasEphemeralSandboxStorage,
+  hasTemporarySandboxPolicy,
   parseSandboxBackgroundCommand,
   parseSandboxBackgroundCommandOutput,
   parseSandboxCapabilities,
@@ -157,7 +157,7 @@ export class Sandbox {
       id,
       authToken,
       apiUrl,
-      options.ttlMode !== "always_on" && hasEphemeralSandboxStorage(session),
+      options.ttlMode !== "always_on" && hasTemporarySandboxPolicy(session),
       true,
     );
   }

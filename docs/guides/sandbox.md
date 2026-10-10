@@ -175,7 +175,7 @@ temporary workspace on close by default. Set `deleteOnClose: false` to retain it
 For a lazy client, set `deleteOnClose: true` to delete a persistent or always-on
 workspace on close.
 The explicit flag also applies when storage metadata is missing or unknown;
-without an override, cleanup requires confirmed ephemeral storage.
+without an override, cleanup requires confirmed ephemeral storage and a returned temporary lifetime. Missing or invalid lifetime metadata retains the workspace.
 Files and user-installed tools
 under `/workspace` survive runtime replacement. Running processes and changes
 outside `/workspace` do not persist. Use `sandbox.delete()` to delete the

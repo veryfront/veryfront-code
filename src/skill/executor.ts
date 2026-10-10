@@ -466,6 +466,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const timeoutSeconds = Math.ceil(timeoutMs / 1000);
       const polling = new AbortController();
       let backgroundCommandId: string | undefined;
+      let outputLimitCleanupRequired = false;
       const commandDeadline = performance.now() + timeoutMs;
       const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
         ? sandbox.runCommand(cmdString, { timeoutSeconds })
@@ -475,11 +476,8 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           while (!polling.signal.aborted) {
             const output = await sandbox.getBackgroundCommandOutput(command.id);
             if (output.stdoutTruncated || output.stderrTruncated) {
-              if (output.status === "pending" || output.status === "running") {
-                await boundedSandboxCleanup((signal) =>
-                  sandbox.cancelBackgroundCommand(command.id, { signal })
-                );
-              }
+              outputLimitCleanupRequired = output.status === "pending" ||
+                output.status === "running";
               return {
                 stdout: output.stdout,
                 stderr: `${output.stderr}\nScript output was truncated by the sandbox capture limit`
@@ -526,6 +524,19 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           logger.warn("[skill/executor] Failed to cancel sandbox command after timeout", error);
         }
         return timeoutResult(timeoutMs);
+      }
+
+      if (outputLimitCleanupRequired && backgroundCommandId !== undefined) {
+        try {
+          await boundedSandboxCleanup((signal) =>
+            sandbox.cancelBackgroundCommand(backgroundCommandId!, { signal })
+          );
+        } catch (error) {
+          logger.warn(
+            "[skill/executor] Failed to cancel sandbox command after output truncation",
+            error,
+          );
+        }
       }
 
       return {
