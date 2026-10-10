@@ -504,6 +504,11 @@ describe("hosted HTTP resolver", () => {
       TypeError,
       "conflict",
     );
+    // Canonically equivalent but distinct metadata keys, in opposite insertion orders.
+    createHostedHttpSourceRecordLookup([
+      { ...record(), "\u00e9": 1, "e\u0301": 2 },
+      { "e\u0301": 2, "\u00e9": 1, ...record() },
+    ]);
     // An identical duplicate, in any key order, is accepted.
     createHostedHttpSourceRecordLookup([record(), { ...record(), schema_version: 1 }]);
     createHostedHttpSourceRecordLookup([record(), record()]);
