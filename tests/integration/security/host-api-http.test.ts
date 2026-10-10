@@ -78,9 +78,11 @@ describe("loopback API permission at process boot", () => {
         endpoint,
         `
         requireHostPrivateApiHttps('${endpoint}');
-        const { createVeryfrontApiOriginBoundOutboundFetch } = await import(${
-          JSON.stringify(transportUrl)
-        });
+        const {
+          createVeryfrontApiOriginBoundOutboundFetch,
+          trustOperatorConfiguredVeryfrontApiOrigins,
+        } = await import(${JSON.stringify(transportUrl)});
+        trustOperatorConfiguredVeryfrontApiOrigins();
         const request = createVeryfrontApiOriginBoundOutboundFetch('${endpoint}');
         const init = { headers: { authorization: 'Bearer <LOCAL_TEST_TOKEN>' } };
         const response = await request('${endpoint}/health', init);
@@ -97,6 +99,40 @@ describe("loopback API permission at process boot", () => {
     } finally {
       await api.shutdown();
       await attacker.shutdown();
+    }
+  });
+
+  it("blocks the approved API outside a local CLI command", async () => {
+    let received = 0;
+    const api = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => {
+      received++;
+      return Response.json({ ok: true });
+    });
+    const endpoint = `http://127.0.0.1:${api.addr.port}`;
+    const transportUrl =
+      new URL("../../../src/security/http/outbound-fetch.ts", import.meta.url).href;
+    try {
+      // Hosted runtimes and `veryfront serve` never seal the operator origins.
+      const result = await boot(
+        endpoint,
+        `
+        const { createVeryfrontApiOriginBoundOutboundFetch } = await import(${
+          JSON.stringify(transportUrl)
+        });
+        let blocked = false;
+        try {
+          await createVeryfrontApiOriginBoundOutboundFetch('${endpoint}')('${endpoint}/health');
+        } catch (error) {
+          blocked = error?.name === 'OutboundRequestBlockedError';
+        }
+        console.log(JSON.stringify([accepted('${endpoint}'), blocked]));
+      `,
+        endpoint,
+      );
+      assertEquals(result, [true, true]);
+      assertEquals(received, 0);
+    } finally {
+      await api.shutdown();
     }
   });
 });

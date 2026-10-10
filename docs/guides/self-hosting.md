@@ -33,8 +33,11 @@ export VERYFRONT_HOST_HTTP_API_ORIGIN=http://127.0.0.1:4000
 
 The permission applies only to that exact origin and port. It accepts
 `127.0.0.1` or `[::1]`, not DNS names, remote hosts, or embedded credentials.
-Project environment files and later environment writes cannot enable or change
-it. API redirects remain rejected, and other outbound transports keep their
+It applies to local CLI commands only, such as `veryfront dev`; hosted runtimes
+and `veryfront serve` keep blocking the local API. Project env files loaded by Veryfront cannot
+enable it; do not load untrusted env files with wrapper tools such as
+`op run --env-file` or `docker --env-file`. Later environment writes cannot
+change it. API redirects remain rejected, and other outbound transports keep their
 existing restrictions. Use local development credentials: HTTP does not verify
 the identity of another process listening on the configured port. Leave this
 permission unset for remote APIs.

@@ -611,7 +611,10 @@ function createOriginBoundFetchWithTransport(
   const baseOrigin = readNativeURLString(base, URLOriginGet);
   const allowInternalEgress = allowHostInternalEgress ||
     (allowOperatorVeryfrontApiOrigin &&
-      (isOperatorVeryfrontApiOrigin(baseOrigin) || isHostHttpApiOrigin(baseUrl))) ||
+      (isOperatorVeryfrontApiOrigin(baseOrigin) ||
+        // The loopback HTTP permission applies only where a local CLI command
+        // sealed the operator origins, never in hosted runtimes or `veryfront serve`.
+        (operatorVeryfrontApiOrigins !== undefined && isHostHttpApiOrigin(baseUrl)))) ||
     isHostAllowedInternalProviderOrigin(base);
   // A primitive, not the URL object: passing `base` itself as the second URL()
   // argument would coerce it through a possibly-replaced URL.prototype.toString.

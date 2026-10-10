@@ -37,4 +37,11 @@ describe("runtime test process environment", () => {
       assertEquals(env[key], undefined);
     }
   });
+
+  it("scrubs the local HTTP API permission", () => {
+    const env = buildRuntimeTestProcessEnv({
+      VERYFRONT_HOST_HTTP_API_ORIGIN: "http://127.0.0.1:4000",
+    });
+    assertEquals(env.VERYFRONT_HOST_HTTP_API_ORIGIN, undefined);
+  });
 });

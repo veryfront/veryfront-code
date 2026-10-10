@@ -42,6 +42,14 @@ describe("leaf test suite registry", () => {
     for (const key of PROVIDER_ENV_KEYS) assertEquals(env[key], undefined);
   });
 
+  it("removes the local HTTP API permission", () => {
+    const env = buildTestProcessEnv(
+      { VERYFRONT_HOST_HTTP_API_ORIGIN: "http://127.0.0.1:4000" },
+      DENO_TEST_ENV,
+    );
+    assertEquals(env.VERYFRONT_HOST_HTTP_API_ORIGIN, undefined);
+  });
+
   it("scrubs credentials whose inherited names differ only by case", () => {
     // Windows environment names are case-insensitive, so an exact-case delete
     // would leave OpenAI_Api_Key readable through Deno.env.get("OPENAI_API_KEY").

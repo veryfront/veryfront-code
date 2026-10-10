@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -1265,6 +1265,20 @@ denoDescribe("explicit loopback host API transport", () => {
     VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "",
   };
 
+  // A local CLI command seals the operator origins at startup. Seal an empty
+  // set so these tests exercise the loopback permission, not an operator origin.
+  beforeEach(async () => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await withEnv(
+      { VERYFRONT_API_URL: "", VERYFRONT_API_BASE_URL: "" },
+      () => Promise.resolve(trustOperatorConfiguredVeryfrontApiOrigins()),
+    );
+  });
+
+  afterEach(() => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+  });
+
   it("sends credentials only to the approved API origin", async () => {
     await withEnv(environment, () =>
       withMockFetch(async (input, init) => {
@@ -1294,6 +1308,26 @@ denoDescribe("explicit loopback host API transport", () => {
           assertEquals(await response.json(), { ok: true });
         }),
     );
+  });
+
+  it("rejects the approved origin outside a local CLI command", async () => {
+    // Hosted runtimes and `veryfront serve` never seal the operator origins.
+    __resetOperatorVeryfrontApiOriginsForTests();
+    let calls = 0;
+    await withEnv(environment, () =>
+      withMockFetch(() => {
+        calls++;
+        return Promise.resolve(Response.json({ ok: true }));
+      }, async () => {
+        await assertRejects(
+          () =>
+            createVeryfrontApiOriginBoundOutboundFetch(origin)(`${origin}/runs`, {
+              headers: { authorization: "Bearer <TOKEN>" },
+            }),
+          OutboundRequestBlockedError,
+        );
+        assertEquals(calls, 0);
+      }));
   });
 
   it("rejects other origins before dispatch and does not authorize generic fetch", async () => {
