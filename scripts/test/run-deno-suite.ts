@@ -165,12 +165,10 @@ export const DENO_SUITE_PROFILES: Readonly<
   // shared test prefix stays off. VERYFRONT_BINARY* passthrough still works
   // because the spawned `deno test` inherits the parent env. The preload and
   // deny-net apply to the harness process only, never to the binary.
-  // The shard files run in parallel against one compiled binary. DENO_JOBS
-  // matches the file count so every file starts at once and holds the binary
-  // until the last one exits; the shards themselves are sized for the 4 vCPU
-  // CI runner (see COMPILED_BINARY_E2E_SHARD_COUNT).
+  // The shard files run in parallel against one compiled binary; see
+  // DENO_SUITE_DEFAULT_ENV for the worker count.
   "e2e:binary": {
-    env: { DENO_JOBS: "4" },
+    env: {},
     network: "provider-deny",
     preload: true,
     denyNet: true,
@@ -182,6 +180,30 @@ export const DENO_SUITE_PROFILES: Readonly<
     extraFlags: [],
   },
 });
+
+/**
+ * Env defaults a caller's own environment may override, unlike a profile's
+ * `env`. e2e:binary runs its four files (three shards sized for the 4 vCPU CI
+ * runner, see COMPILED_BINARY_E2E_SHARD_COUNT, plus the memory-recycle file)
+ * at once so they share one compiled binary; a caller-set DENO_JOBS still
+ * bounds that, at the cost of compiling again once every running file exits.
+ */
+const DENO_SUITE_DEFAULT_ENV: Readonly<
+  Partial<Record<DenoSuitePlanId, Readonly<Record<string, string>>>>
+> = Object.freeze({
+  "e2e:binary": { DENO_JOBS: "4" },
+});
+
+/** The child env for a suite: defaults, then the caller's env, then the profile. */
+export function buildDenoSuiteProcessEnv(
+  suite: DenoSuitePlanId,
+  parentEnv: Readonly<Record<string, string>>,
+): Record<string, string> {
+  return buildTestProcessEnv(
+    { ...DENO_SUITE_DEFAULT_ENV[suite], ...parentEnv },
+    DENO_SUITE_PROFILES[suite].env,
+  );
+}
 
 interface DenoSuiteCommandOptions {
   readonly coverageDir?: string;
@@ -313,7 +335,7 @@ if (import.meta.main) {
         passthroughArgs: flags.passthroughArgs,
       }),
       clearEnv: true,
-      env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+      env: buildDenoSuiteProcessEnv(suite, Deno.env.toObject()),
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",

@@ -15,6 +15,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import {
   buildDenoSuiteCommandArgs,
+  buildDenoSuiteProcessEnv,
   DENO_SUITE_PROFILES,
   handleDenoSuiteStatus,
   LOOPBACK_ALLOW_NET,
@@ -505,6 +506,19 @@ describe("migration command surface", () => {
       DENO_SUITE_PROFILES["unit:cwd-exclusion"].env.DENO_JOBS,
       "2",
       "the two-file exclusion probe must overlap even when the parent suite uses DENO_JOBS=1",
+    );
+  });
+
+  it("runs the binary e2e files together unless the caller bounds DENO_JOBS", () => {
+    assertEquals(buildDenoSuiteProcessEnv("e2e:binary", {}).DENO_JOBS, "4");
+    assertEquals(
+      buildDenoSuiteProcessEnv("e2e:binary", { DENO_JOBS: "1" }).DENO_JOBS,
+      "1",
+    );
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:cwd-exclusion", { DENO_JOBS: "1" })
+        .DENO_JOBS,
+      "2",
     );
   });
 
