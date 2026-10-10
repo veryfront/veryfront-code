@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 type SafeParseResult<T> = { success: true; data: T } | {
@@ -14,12 +15,17 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
-import { putRemoteFileFromLocal } from "../files/command.ts";
+import { type PublishedFileReceipt, putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { inspectOkfDocument } from "veryfront/knowledge";
+import {
+  type CanonicalKnowledgeIndexReceipt,
+  indexKnowledgeDocument,
+  type IndexKnowledgeDocumentInput,
+} from "./indexing.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
 import {
@@ -742,7 +748,11 @@ export async function ingestResolvedSources(
     projectSlug: string;
     outputDir: string;
     runParser: typeof runKnowledgeParser;
-    uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
+    uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<PublishedFileReceipt>;
+    destinationBranch?: string;
+    indexKnowledgeDocument?: (
+      input: IndexKnowledgeDocumentInput,
+    ) => Promise<CanonicalKnowledgeIndexReceipt>;
     eventLogger?: Logger | null;
     signal?: AbortSignal;
   },
@@ -768,6 +778,7 @@ export async function ingestResolvedSources(
     index: number,
     message: string,
     reason: KnowledgeIngestFailureReason,
+    published?: PublishedFileReceipt,
   ) => {
     deps.eventLogger?.error("Knowledge source failed", {
       phase: "file_failed",
@@ -777,12 +788,15 @@ export async function ingestResolvedSources(
       error: message,
     });
 
-    failed.push(createFailedKnowledgeSource({
-      source: sourceReference,
-      localSourcePath: source.localPath,
-      message,
-      reason,
-    }));
+    failed.push({
+      ...createFailedKnowledgeSource({
+        source: sourceReference,
+        localSourcePath: source.localPath,
+        message,
+        reason,
+      }),
+      ...(published ? { published } : {}),
+    });
   };
 
   for (const [index, source] of sources.entries()) {
@@ -833,6 +847,8 @@ export async function ingestResolvedSources(
       continue;
     }
 
+    let published: PublishedFileReceipt | undefined;
+    let failureReason: KnowledgeIngestFailureReason = "upload_error";
     try {
       const okfRelativePath = okfRelativePaths.get(source);
       const remotePath = okfRelativePath === undefined
@@ -843,7 +859,29 @@ export async function ingestResolvedSources(
         )
         : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
       const uploaded = await deps.uploadKnowledgeFile(remotePath, parser.sandbox_output_path);
+      published = uploaded;
       deps.signal?.throwIfAborted();
+
+      let canonicalIndex: CanonicalKnowledgeIndexReceipt | undefined;
+      if (
+        !options.okfBundle || parser.document_kind === "generated" ||
+        parser.document_kind === "okf_concept"
+      ) {
+        failureReason = "index_error";
+        deps.eventLogger?.info("Indexing knowledge source", {
+          phase: "file_indexing",
+          remote_path: uploaded.path,
+        });
+        canonicalIndex = await (deps.indexKnowledgeDocument ?? indexKnowledgeDocument)({
+          client: deps.client,
+          projectSlug: deps.projectSlug,
+          branch: deps.destinationBranch ?? "main",
+          published: uploaded,
+          localPath: parser.sandbox_output_path,
+          signal: deps.signal,
+        });
+        deps.signal?.throwIfAborted();
+      }
 
       deps.eventLogger?.info("Knowledge source ingested", {
         phase: "file_completed",
@@ -865,18 +903,21 @@ export async function ingestResolvedSources(
       }
 
       ingested.push(
-        createKnowledgeIngestResult({
-          source: sourceReference,
-          localSourcePath: source.localPath,
-          outputPath: parser.sandbox_output_path,
-          remotePath: uploaded.path,
-          parser,
-        }),
+        {
+          ...createKnowledgeIngestResult({
+            source: sourceReference,
+            localSourcePath: source.localPath,
+            outputPath: parser.sandbox_output_path,
+            remotePath: uploaded.path,
+            parser,
+          }),
+          ...(canonicalIndex ? { canonicalIndex } : {}),
+        },
       );
     } catch (error) {
       deps.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
-      recordSourceFailure(source, sourceReference, index, message, "upload_error");
+      recordSourceFailure(source, sourceReference, index, message, failureReason, published);
     }
   }
 
@@ -949,6 +990,13 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             outputDir,
             runParser: runKnowledgeParser,
             eventLogger,
+            indexKnowledgeDocument: (indexInput) =>
+              runWithVeryfrontCloudContextAsync({
+                apiBaseUrl: config.apiUrl,
+                apiToken: config.apiToken,
+                projectSlug: config.projectSlug,
+                serviceLayer: "cloud",
+              }, () => indexKnowledgeDocument(indexInput)),
             uploadKnowledgeFile: (remotePath, localPath) =>
               putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath),
           });

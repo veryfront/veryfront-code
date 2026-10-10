@@ -16,8 +16,29 @@ import { createVeryfrontCloudOpenAIEmbeddingModel } from "#veryfront/provider/ve
 const randomUUID = crypto.randomUUID.bind(crypto);
 
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
+  return createCloudEmbeddingModel(modelId);
+}
+
+/** @internal Build an embedding transport with private signed inference authority. */
+export function createVeryfrontCloudInferenceEmbeddingModel(
+  modelId: string,
+  inferenceCredential: string,
+  options: { apiBaseUrl: string; assertInferenceCredentialActive: () => void },
+): EmbeddingRuntime {
+  return createCloudEmbeddingModel(modelId, inferenceCredential, options);
+}
+
+function createCloudEmbeddingModel(
+  modelId: string,
+  inferenceCredential?: string,
+  options?: { apiBaseUrl: string; assertInferenceCredentialActive: () => void },
+): EmbeddingRuntime {
+  options?.assertInferenceCredentialActive();
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
-  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
+  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
+    inferenceCredential,
+    options?.apiBaseUrl,
+  );
   const { baseURL, neutral, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(
     apiBaseUrl,
     provider,
@@ -26,14 +47,19 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
     apiToken,
     baseURL,
     projectSlug,
-    neutral
-      ? { neutralRoute: true, ...(wireModelProvider ? { wireModelProvider } : {}) }
-      : undefined,
+    {
+      ...(neutral
+        ? { neutralRoute: true, ...(wireModelProvider ? { wireModelProvider } : {}) }
+        : {}),
+      inferenceCredential: inferenceCredential !== undefined,
+      ...(options
+        ? { assertInferenceCredentialActive: options.assertInferenceCredentialActive }
+        : {}),
+    },
   );
   const usesHostPrivateCredential = getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
-  const providerCredential = usesHostPrivateCredential
-    ? `vf-placeholder-${randomUUID()}`
-    : apiToken;
+  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential;
+  const providerCredential = usesPrivateCredential ? `vf-placeholder-${randomUUID()}` : apiToken;
 
   switch (provider) {
     case "openai":
@@ -44,7 +70,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
       });
 
     case "google": {
-      if (usesHostPrivateCredential) {
+      if (usesPrivateCredential) {
         return createGoogleProviderEmbedding(upstreamModelId, {
           credential: providerCredential,
           baseURL,

@@ -855,7 +855,7 @@ export interface ApiClient {
     params?: Record<string, string>,
     options?: ApiReadOptions,
   ): Promise<T>;
-  post<T>(path: string, body?: unknown): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -1005,8 +1005,8 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     ): Promise<T> {
       return request<T>("GET", path, undefined, params, options);
     },
-    post<T>(path: string, body?: unknown): Promise<T> {
-      return request<T>("POST", path, body);
+    post<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
+      return request<T>("POST", path, body, undefined, options);
     },
     put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
       return request<T>("PUT", path, body, undefined, options);

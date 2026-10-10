@@ -34,6 +34,7 @@ import {
 } from "./command.ts";
 import {
   createDownloadUploadsStub,
+  createIndexReceipt,
   createKnowledgeCommandArgs,
   createLocalSource,
   createMockClient,
@@ -801,6 +802,7 @@ describe("ingestResolvedSources", () => {
               controller.abort(new Error("run cancelled"));
               return createParserSuccess();
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async (remotePath) => {
               uploadCalls++;
               return { path: remotePath };
@@ -837,6 +839,7 @@ describe("ingestResolvedSources", () => {
               receivedSignal?.throwIfAborted();
               return createParserSuccess();
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async (remotePath) => {
               uploadCalls++;
               return { path: remotePath };
@@ -859,12 +862,14 @@ describe("ingestResolvedSources", () => {
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
         runParser: async () => createParserSuccess(),
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
 
     assertEquals(results, {
       ingested: [{
+        canonicalIndex: createIndexReceipt("knowledge/contracts-q1.md"),
         source: "uploads/contracts/q1.pdf",
         localSourcePath: "/workspace/uploads/contracts/q1.pdf",
         outputPath: "/workspace/knowledge/contracts-q1.md",
@@ -920,6 +925,7 @@ describe("ingestResolvedSources", () => {
             stats: { engine: "kreuzberg", characters: 80 },
           });
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
         eventLogger: createMemoryEventLogger(events),
       },
@@ -977,6 +983,7 @@ describe("ingestResolvedSources", () => {
           hasProgressCallback = typeof deps?.onProgress === "function";
           return createParserSuccess();
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1011,6 +1018,7 @@ describe("ingestResolvedSources", () => {
             warnings: [],
           };
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1039,11 +1047,13 @@ describe("ingestResolvedSources", () => {
             summary: "Parsed as text.",
             stats: { lines: 1 },
           }),
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
 
     assertEquals(results.ingested, [{
+      canonicalIndex: createIndexReceipt("knowledge/run-benchmark.md"),
       source: "/workspace/contracts/run_benchmark.py",
       localSourcePath: "/workspace/contracts/run_benchmark.py",
       outputPath: "/workspace/knowledge/run-benchmark.md",
@@ -1110,6 +1120,7 @@ describe("ingestResolvedSources", () => {
             warnings: [],
           };
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1119,6 +1130,7 @@ describe("ingestResolvedSources", () => {
       "/workspace/contracts/run_benchmark.py",
     ]);
     assertEquals(results.ingested, [{
+      canonicalIndex: createIndexReceipt("knowledge/run-benchmark.md"),
       source: "/workspace/contracts/run_benchmark.py",
       localSourcePath: "/workspace/contracts/run_benchmark.py",
       outputPath: "/workspace/knowledge/run-benchmark.md",
@@ -1167,6 +1179,7 @@ describe("ingestResolvedSources", () => {
         runParser: async () => {
           throw new Error("Unsupported file type: .bin");
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1216,6 +1229,7 @@ describe("ingestResolvedSources", () => {
             runParser: async () => {
               throw new Error("runParser should not be called");
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async () => {
               throw new Error("uploadKnowledgeFile should not be called");
             },
@@ -1559,6 +1573,7 @@ it("keeps the canonical 14-file GA4 OKF bundle paths and skips generated viewer 
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploads.push({ remotePath, content: await Deno.readTextFile(localPath) });
           return { path: remotePath };
@@ -1630,6 +1645,7 @@ it("preserves accepted uppercase Markdown bundle extensions", async () => {
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploads.push({ remotePath, content: await Deno.readTextFile(localPath) });
           return { path: remotePath };
@@ -1674,6 +1690,7 @@ it("reports legacy OKF diagnostics as partial failures without rewriting valid s
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => {
           uploads.push(remotePath);
           return { path: remotePath };
@@ -2041,6 +2058,7 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
       projectSlug: "my-project",
       outputDir,
       runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath, localPath) => {
         uploaded.set(remotePath, await Deno.readTextFile(localPath));
         return { path: remotePath };
@@ -2085,6 +2103,7 @@ it("fails referenced OKF companion assets that are not valid UTF-8", async () =>
       projectSlug: "my-project",
       outputDir,
       runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
     });
     assertEquals(result.ingested.map((item) => item.remotePath), ["knowledge/topic.md"]);
@@ -2239,6 +2258,7 @@ it("preserves a UTF-8 BOM-prefixed OKF document byte-for-byte", async () => {
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploads.push({ remotePath, bytes: await Deno.readFile(localPath) });
           return { path: remotePath };
@@ -2324,6 +2344,7 @@ for (const sourceKind of ["local", "upload"] as const) {
         projectSlug: "my-project",
         outputDir: join(root, "output"),
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploaded.set(remotePath, await Deno.readFile(localPath));
           return { path: remotePath };

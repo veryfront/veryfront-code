@@ -111,7 +111,12 @@ describe("putRemoteFileFromLocal", () => {
         put: (path, body) => {
           capturedPath = path;
           capturedBody = body;
-          return Promise.resolve({ path: "knowledge/q1-report.md" });
+          return Promise.resolve({
+            path: "knowledge/q1-report.md",
+            file_id: "file-1",
+            version_id: "version-1",
+            checksum: "checksum-1",
+          });
         },
       });
 
@@ -124,7 +129,12 @@ describe("putRemoteFileFromLocal", () => {
 
       assertEquals(capturedPath, "/projects/my-project/files/knowledge%2Fq1-report.md");
       assertEquals(capturedBody, { content: "# Q1 Report\n" });
-      assertEquals(result.path, "knowledge/q1-report.md");
+      assertEquals(result, {
+        path: "knowledge/q1-report.md",
+        file_id: "file-1",
+        version_id: "version-1",
+        checksum: "checksum-1",
+      });
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

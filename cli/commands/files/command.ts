@@ -174,6 +174,13 @@ export async function getRemoteFile(
   return getFileContent(client, projectSlug, normalizeProjectFilePath(remotePath), MAIN_SOURCE);
 }
 
+export interface PublishedFileReceipt {
+  path: string;
+  file_id?: string;
+  version_id?: string;
+  checksum?: string;
+}
+
 export async function putRemoteFileFromLocal(
   client: ApiClient,
   projectSlug: string,
@@ -181,7 +188,7 @@ export async function putRemoteFileFromLocal(
   localPath: string,
   signal?: AbortSignal,
   destination?: { branchId: string },
-): Promise<{ path: string }> {
+): Promise<PublishedFileReceipt> {
   if (
     destination && (!destination.branchId || destination.branchId.trim() !== destination.branchId)
   ) {
@@ -197,11 +204,16 @@ export async function putRemoteFileFromLocal(
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
   signal?.throwIfAborted();
-  const result = await client.put<{ path: string }>(destinationUrl, {
+  const result = await client.put<PublishedFileReceipt>(destinationUrl, {
     content,
   }, signal ? { signal, retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
-  return { path: result.path ?? normalizeProjectFilePath(remotePath) };
+  return {
+    path: result.path ?? normalizeProjectFilePath(remotePath),
+    ...(result.file_id ? { file_id: result.file_id } : {}),
+    ...(result.version_id ? { version_id: result.version_id } : {}),
+    ...(result.checksum ? { checksum: result.checksum } : {}),
+  };
 }
 
 export async function deleteRemoteFile(
