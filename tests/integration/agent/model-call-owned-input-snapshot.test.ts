@@ -1,3 +1,4 @@
+import { buildOpenAIResponsesRequest } from "../../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -325,6 +326,7 @@ for (const cloud of [false, true]) {
         "typed-array",
         "RegExp",
         "custom-class",
+        "boxed-BigInt",
       ] as const
     ) {
       it(`refuses ${location === "counterfeit-array" ? "counterfeit array guards" : location === "callable-toJSON" ? "callable toJSON payloads" : location === "tool-result" || location === "input" ? `${location} proxies before traps` : `${location} payloads`} in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
@@ -384,6 +386,19 @@ for (const cloud of [false, true]) {
           case "custom-class":
             unsupported = new CustomPayload();
             break;
+          case "boxed-BigInt": {
+            const boxed: object = Object(12n);
+            for (const key of ["valueOf", "toJSON"]) {
+              Object.defineProperty(boxed, key, {
+                get() {
+                  hookCalls++;
+                  throw new Error("Caller BigInt hooks must not run");
+                },
+              });
+            }
+            unsupported = boxed;
+            break;
+          }
         }
         const unsupportedValue = { nested: unsupported };
         if (unsupported !== undefined) {
@@ -392,6 +407,7 @@ for (const cloud of [false, true]) {
         const model: ModelRuntime<ModelRuntimeCallOptions> = {
           provider: cloud ? "veryfront-cloud" : "openai",
           modelId: "proxy-model",
+          ...(cloud ? { modelProvider: "openai" } : {}),
           specificationVersion: "v3",
           doGenerate() {
             dispatches++;
@@ -416,7 +432,7 @@ for (const cloud of [false, true]) {
         const sink: AgentRunEventSink = (event) => {
           if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
           captures++;
-          if (cloud) {
+          if (cloud && location !== "boxed-BigInt") {
             assert(event.modelCallId);
             return {
               eventId: "9007199254740993",
@@ -426,7 +442,7 @@ for (const cloud of [false, true]) {
             };
           }
         };
-        if (cloud) {
+        if (cloud && location !== "boxed-BigInt") {
           bindRuntimeObservationWriterCapability(
             sink,
             createRuntimeObservationWriterCapability({
@@ -465,6 +481,10 @@ for (const cloud of [false, true]) {
               }],
             }, { role: "user", content: "Continue" }],
         };
+        if (location === "boxed-BigInt") {
+          options.messages = [{ role: "user", content: "Hello" }];
+          options.providerOptions = { openai: { metadata: { value: unsupported } } };
+        }
         await assertRejects(() =>
           runWithMandatoryRunEventSink(sink, async () => {
             if (streaming) {
@@ -624,6 +644,244 @@ for (const cloud of [false, true]) {
           }
         }
         assertEquals(stringifyToolResultValue(sent), serialized);
+      });
+    }
+  }
+}
+
+for (const cloud of [false, true]) {
+  for (const streaming of [false, true]) {
+    for (const scalar of ["Date", "URL"] as const) {
+      it(`owns provider metadata ${scalar} in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+        const date = new Date("2026-10-10T12:00:00.000Z");
+        const url = new URL("https://example.com/resource");
+        let getterCalls = 0;
+        Object.defineProperty(url, "href", {
+          get() {
+            getterCalls++;
+            throw new Error("Caller href getter must not run");
+          },
+        });
+        Object.defineProperty(date, "getTime", {
+          get() {
+            getterCalls++;
+            throw new Error("Caller date getter must not run");
+          },
+        });
+        const metadata = { requested_at: scalar === "Date" ? date : url };
+        let dispatched: ModelRuntimeCallOptions | undefined;
+        const model: ModelRuntime<ModelRuntimeCallOptions> = {
+          provider: cloud ? "veryfront-cloud" : "openai",
+          modelId: "gpt-4.1-mini",
+          ...(cloud ? { modelProvider: "openai" } : {}),
+          specificationVersion: "v3",
+          doGenerate(options) {
+            dispatched = options;
+            return Promise.resolve({
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              usage: {},
+            });
+          },
+          doStream(options) {
+            dispatched = options;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        if (cloud) {
+          registerVeryfrontCloudModelFacts(
+            model,
+            () => ({
+              provider: "openai",
+              surface: "openai",
+              native: true,
+              transportPlan: { transport: "responses", pinned: true },
+            }),
+          );
+        }
+        let captures = 0;
+        const sink: AgentRunEventSink = async (event) => {
+          if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+          captures++;
+          await Promise.resolve();
+          date.setTime(Date.parse("2026-10-11T12:00:00.000Z"));
+          url.pathname = "/mutated";
+        };
+        const options: Parameters<typeof generateText>[0] = {
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions: { openai: { metadata } },
+        };
+        await runWithMandatoryRunEventSink(sink, async () => {
+          if (streaming) {
+            for await (const _part of streamText(options).fullStream) {
+              /* Drain dispatch. */
+            }
+          } else await generateText(options);
+        });
+        assert(dispatched);
+        assertEquals(captures, 1);
+        const bucket = dispatched.providerOptions?.openai;
+        assert(typeof bucket === "object" && bucket !== null && "metadata" in bucket);
+        const ownedMetadata = bucket.metadata;
+        assert(
+          typeof ownedMetadata === "object" && ownedMetadata !== null &&
+            "requested_at" in ownedMetadata,
+        );
+        const owned = ownedMetadata.requested_at;
+        if (scalar === "Date") {
+          if (owned instanceof Date) {
+            assert(owned !== date);
+            assertEquals(owned.toISOString(), "2026-10-10T12:00:00.000Z");
+          } else assertEquals(owned, "2026-10-10T12:00:00.000Z");
+        } else {
+          if (owned instanceof URL) {
+            assert(owned !== url);
+            assertEquals(owned.href, "https://example.com/resource");
+          } else assertEquals(owned, "https://example.com/resource");
+        }
+        const request = buildOpenAIResponsesRequest(
+          "gpt-4.1-mini",
+          "openai",
+          dispatched,
+          streaming,
+          {
+            push() {},
+            drain() {
+              return [];
+            },
+          },
+        );
+        assertEquals(
+          JSON.stringify(request.metadata),
+          JSON.stringify({
+            requested_at: scalar === "Date"
+              ? "2026-10-10T12:00:00.000Z"
+              : "https://example.com/resource",
+          }),
+        );
+        assertEquals(getterCalls, 0);
+        if (owned instanceof Date) {
+          owned.setTime(0);
+          assertEquals(Date.prototype.getTime.call(date), Date.parse("2026-10-11T12:00:00.000Z"));
+        } else if (owned instanceof URL) {
+          owned.pathname = "/owned-only";
+          assertEquals(url.pathname, "/mutated");
+        }
+      });
+    }
+  }
+}
+
+for (const cloud of [false, true]) {
+  for (const streaming of [false, true]) {
+    for (const scalar of ["String", "Number", "Boolean"] as const) {
+      it(`preserves boxed ${scalar} provider wire values in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+        const primitive = scalar === "String" ? "user-1" : scalar === "Number" ? 12 : true;
+        const boxed: object = Object(primitive);
+        let hooks = 0;
+        for (const key of ["valueOf", "toJSON"]) {
+          Object.defineProperty(boxed, key, {
+            get() {
+              hooks++;
+              throw new Error("Caller scalar hooks must not run");
+            },
+          });
+        }
+        Object.defineProperty(boxed, "marker", {
+          value: "before",
+          writable: true,
+          enumerable: true,
+        });
+        const control = scalar === "String"
+          ? "user"
+          : scalar === "Number"
+          ? "max_output_tokens"
+          : "parallel_tool_calls";
+        let dispatched: ModelRuntimeCallOptions | undefined;
+        let recorded: AgentRunEvent | undefined;
+        const model: ModelRuntime<ModelRuntimeCallOptions> = {
+          provider: cloud ? "veryfront-cloud" : "openai",
+          modelId: "gpt-4.1-mini",
+          ...(cloud ? { modelProvider: "openai" } : {}),
+          specificationVersion: "v3",
+          doGenerate(options) {
+            dispatched = options;
+            return Promise.resolve({
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              usage: {},
+            });
+          },
+          doStream(options) {
+            dispatched = options;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        if (cloud) {
+          registerVeryfrontCloudModelFacts(
+            model,
+            () => ({
+              provider: "openai",
+              surface: "openai",
+              native: true,
+              transportPlan: { transport: "responses", pinned: true },
+            }),
+          );
+        }
+        const sink: AgentRunEventSink = async (event) => {
+          if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+          recorded = event;
+          await Promise.resolve();
+          Object.defineProperty(boxed, "marker", { value: "after" });
+        };
+        const options: Parameters<typeof generateText>[0] = {
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions: { openai: { metadata: { value: boxed }, [control]: boxed } },
+        };
+        await runWithMandatoryRunEventSink(sink, async () => {
+          if (streaming) {
+            for await (const _part of streamText(options).fullStream) {
+              /* Drain actual dispatch. */
+            }
+          } else await generateText(options);
+        });
+        assert(dispatched);
+        assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        if (scalar === "Number") assertEquals(recorded.request?.maxOutputTokens, 12);
+        const bucket = dispatched.providerOptions?.openai;
+        assert(typeof bucket === "object" && bucket !== null && control in bucket);
+        assertEquals(Reflect.get(bucket, control), primitive);
+        const request = buildOpenAIResponsesRequest(
+          "gpt-4.1-mini",
+          "openai",
+          dispatched,
+          streaming,
+          {
+            push() {},
+            drain() {
+              return [];
+            },
+          },
+        );
+        assertEquals(JSON.stringify(request.metadata), JSON.stringify({ value: primitive }));
+        assertEquals(JSON.stringify(Reflect.get(request, control)), JSON.stringify(primitive));
+        assertEquals(hooks, 0);
       });
     }
   }

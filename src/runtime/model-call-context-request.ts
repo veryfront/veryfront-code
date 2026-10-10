@@ -65,10 +65,15 @@ const NativeDate = Date;
 const NativeNumber = Number;
 const NativeURL = URL;
 const NativeString = String;
+const BigIntPrototypeValueOf = BigInt.prototype.valueOf;
+const BooleanPrototypeValueOf = Boolean.prototype.valueOf;
+const NumberPrototypeValueOf = Number.prototype.valueOf;
+const StringPrototypeValueOf = String.prototype.valueOf;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeDelete = WeakSet.prototype.delete;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
 const DatePrototypeGetTime = Date.prototype.getTime;
+const DatePrototypeToISOString = Date.prototype.toISOString;
 const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
@@ -158,20 +163,67 @@ function mathMin(...values: number[]): number {
   return ReflectApply(MathMin, Math, values) as number;
 }
 
-function cloneDate(value: unknown): Date | undefined {
+function readDateTime(value: unknown): number | undefined {
   try {
-    const time = ReflectApply(DatePrototypeGetTime, value, []) as number;
-    return new NativeDate(time);
+    return ReflectApply(DatePrototypeGetTime, value, []) as number;
   } catch {
     return undefined;
   }
+}
+
+function isBoxedBigInt(value: unknown): boolean {
+  try {
+    ReflectApply(BigIntPrototypeValueOf, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readBoxedBoolean(value: unknown): boolean | undefined {
+  try {
+    return ReflectApply(BooleanPrototypeValueOf, value, []) as boolean;
+  } catch {
+    return undefined;
+  }
+}
+
+function readBoxedNumber(value: unknown): number | undefined {
+  try {
+    return ReflectApply(NumberPrototypeValueOf, value, []) as number;
+  } catch {
+    return undefined;
+  }
+}
+
+function readBoxedString(value: unknown): string | undefined {
+  try {
+    return ReflectApply(StringPrototypeValueOf, value, []) as string;
+  } catch {
+    return undefined;
+  }
+}
+
+function cloneDate(value: unknown): Date | undefined {
+  const time = readDateTime(value);
+  return time === undefined ? undefined : new NativeDate(time);
+}
+
+function readDateJsonValue(value: unknown): { present: boolean; value: string | null } {
+  const time = readDateTime(value);
+  if (time === undefined) return { present: false, value: null };
+  if (!numberIsFinite(time)) return { present: true, value: null };
+  return {
+    present: true,
+    value: ReflectApply(DatePrototypeToISOString, value, []) as string,
+  };
 }
 
 function readUrlHref(value: unknown): string | undefined {
   if (!URLHrefGetter) return undefined;
   try {
     const href = ReflectApply(URLHrefGetter, value, []) as unknown;
-    return typeof href === "string" ? new NativeURL(href).href : undefined;
+    return typeof href === "string" ? href : undefined;
   } catch {
     return undefined;
   }
@@ -655,6 +707,22 @@ function snapshotProviderOptionValue(
   if (typeof value !== "object") {
     throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
   }
+  if (isBoxedBigInt(value)) {
+    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
+  }
+  const boxedBoolean = readBoxedBoolean(value);
+  if (boxedBoolean !== undefined) return boxedBoolean;
+  const boxedNumber = readBoxedNumber(value);
+  if (boxedNumber !== undefined) {
+    if (numberIsFinite(boxedNumber)) return boxedNumber;
+    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
+  }
+  const boxedString = readBoxedString(value);
+  if (boxedString !== undefined) return boxedString;
+  const dateJson = readDateJsonValue(value);
+  if (dateJson.present) return dateJson.value;
+  const urlHref = readUrlHref(value);
+  if (urlHref !== undefined) return urlHref;
   const container = value as SnapshotContainer;
   if (depth >= MaxProviderOptionSnapshotDepth) {
     throw new TypeError(`Provider options for "${providerName}" exceeded the snapshot depth limit`);
