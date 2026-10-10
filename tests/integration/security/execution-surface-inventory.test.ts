@@ -24,7 +24,7 @@ const REGISTER_HEADING = "### Host execution grant register";
  * `true` or `false`.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==?\s*true|===?\s*(?:true|false))\b/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
