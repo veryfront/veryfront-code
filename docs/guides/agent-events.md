@@ -8,7 +8,31 @@ Use `veryfront/events` when a surface receives target Agent Events Protocol fram
 
 ## Prerequisites
 
-You need an existing Veryfront project with `veryfront` installed. Browser and SDK parser examples also use `@veryfront/ext-schema-zod` as the injected JSON Schema validator.
+You need an existing Node.js, Bun, or Deno project with `veryfront` installed. Browser and SDK parser examples also use `@veryfront/ext-schema-zod` as the injected JSON Schema validator. It is a separate package, so install it alongside `veryfront`:
+
+<CodeGroup>
+
+```bash npm
+npm install veryfront @veryfront/ext-schema-zod
+```
+
+```bash pnpm
+pnpm add veryfront @veryfront/ext-schema-zod
+```
+
+```bash yarn
+yarn add veryfront @veryfront/ext-schema-zod
+```
+
+```bash bun
+bun add veryfront @veryfront/ext-schema-zod
+```
+
+```bash deno
+deno add npm:veryfront npm:@veryfront/ext-schema-zod
+```
+
+</CodeGroup>
 
 ## Create a parser
 
@@ -98,26 +122,57 @@ Use `EVENT_TYPES` and `EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect th
 
 ## Verify it worked
 
-Run the event parser tests after changing parser behavior, schema artifacts, or generated payload types:
+Save this ES module as `verify-events.mjs` in your project. It checks a valid
+event and rejects an invalid payload using your installed SDK:
 
-```sh
-deno task test:file src/events/
+```js
+import assert from "node:assert/strict";
+import { createEventParser } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+const events = createEventParser(createZodAdapter());
+const outgoingEvent = {
+  specversion: "1.0",
+  id: "verify-stream-closed",
+  source: "https://example.test/producer",
+  type: "com.veryfront.stream.closed",
+  datacontenttype: "application/json",
+  dataschema: "urn:veryfront:run-events:target:payloads:1#/$defs/StreamClosed",
+  data: { reason: "completed" },
+};
+
+const parsed = events.parseEvent(outgoingEvent);
+assert.equal(parsed.type, "com.veryfront.stream.closed");
+assert.deepEqual(parsed.data, { reason: "completed" });
+
+const invalid = events.safeParseEvent({
+  ...outgoingEvent,
+  data: { reason: 123 },
+});
+assert.equal(invalid.success, false);
+console.log("Event parsing verified.");
 ```
 
-## Regenerate payload types
+Run it with your project's runtime:
 
-The payload types are generated from the committed target payload schema artifact. Run the repository generator after changing the target schema JSON:
+<CodeGroup>
 
-```sh
-deno task generate
+```bash node
+node verify-events.mjs
 ```
 
-To check only the Agent Events payload type artifact:
-
-```sh
-deno run -A src/events/generate-payload-types.mjs
-git diff --exit-code -- src/events/payload-types.generated.ts
+```bash bun
+bun verify-events.mjs
 ```
+
+```bash deno
+deno run verify-events.mjs
+```
+
+</CodeGroup>
+
+Successful verification prints `Event parsing verified.` and exits with code 0.
+This validates event shape; it does not prove producer authority or delivery.
 
 ## Next steps
 
