@@ -450,10 +450,12 @@ describe("createProject", () => {
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
+      // Run the available Deno installer against a local manifest without registry access.
       await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
 
       const result = await createProject({
         ...baseRequest(parentDir),
+        runtime: "deno",
         name: "install-events",
         conflictPolicy: "overwrite",
         installDependencies: true,
@@ -468,10 +470,10 @@ describe("createProject", () => {
 
       assertEquals(result.dependencyInstallation, "installed");
       assertEquals(events, [
-        { kind: "dependency-installation-started", packageManager: "npm" },
+        { kind: "dependency-installation-started", packageManager: "deno" },
         {
           kind: "dependency-installation-finished",
-          packageManager: "npm",
+          packageManager: "deno",
           status: "installed",
         },
       ]);
@@ -491,6 +493,7 @@ describe("createProject", () => {
 
       const result = await createProject({
         ...baseRequest(parentDir),
+        runtime: "deno",
         name: "install-failed",
         conflictPolicy: "overwrite",
         installDependencies: true,
@@ -505,10 +508,10 @@ describe("createProject", () => {
 
       assertEquals(result.dependencyInstallation, "failed");
       assertEquals(events, [
-        { kind: "dependency-installation-started", packageManager: "npm" },
+        { kind: "dependency-installation-started", packageManager: "deno" },
         {
           kind: "dependency-installation-finished",
-          packageManager: "npm",
+          packageManager: "deno",
           status: "failed",
         },
       ]);

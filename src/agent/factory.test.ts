@@ -1,5 +1,9 @@
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -13,9 +17,10 @@ import { type RemoteToolSource, tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { markRuntimeLocalTool } from "./runtime/local-tool.ts";
 import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
+import { agent, createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
@@ -28,6 +33,15 @@ import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
+const EXPECTED_SKILL_TOOL_NAMES = [
+  "execute_skill_script",
+  "load_skill",
+  "load_skill_reference",
+  "veryfront__execute_skill_script",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+];
+
 function createSkill(id: string, description: string) {
   return {
     id,
@@ -39,6 +53,23 @@ function createSkill(id: string, description: string) {
 async function resolveSystemText(system: AgentConfig["system"]): Promise<string> {
   const resolved = typeof system === "function" ? await system() : system;
   return typeof resolved === "string" ? resolved : flattenSystemInstructions(resolved);
+}
+
+function toolNamesFromModelOptions(options: ModelRuntimeCallOptions): string[] {
+  const tools = options.tools;
+  if (Array.isArray(tools)) {
+    return tools.map((entry) => entry.name).sort();
+  }
+  return Object.keys(tools ?? {}).sort();
+}
+
+function expectAgentToolMap(
+  tools: AgentConfig["tools"],
+): Exclude<AgentConfig["tools"], boolean | undefined> {
+  if (!tools || tools === true) {
+    throw new Error("Expected an agent tool map");
+  }
+  return tools;
 }
 
 function createLoadSkillModel(skillId: string): ModelRuntime {
@@ -542,11 +573,7 @@ describe("agent factory", () => {
     const assistant = agent({ id: "schema-bootstrap", system: "Stay helpful." });
 
     assertEquals(typeof tryResolve<{ object: unknown }>("SchemaValidator")?.object, "function");
-    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
   });
 
   it("does not attach skill tools to an agent that never mentioned skills", () => {
@@ -568,11 +595,7 @@ describe("agent factory", () => {
       tools: { load_skill: true },
     });
 
-    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
   });
 
   it("applies the same rule to a `tools: true` agent, per step", async () => {
@@ -605,11 +628,7 @@ describe("agent factory", () => {
     // skills later, and stripping the tools would silently break them.
     const optedIn = agent({ id: "opted-in-early", system: "Stay helpful.", skills: true });
 
-    assertEquals(Object.keys(optedIn.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(optedIn.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
   });
 
   it("enables skill infrastructure for skill-enabled agents and defaults to visible skills", async () => {
@@ -630,11 +649,7 @@ describe("agent factory", () => {
       system: "You are a custom agent.",
     });
 
-    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
     assertEquals(toolRegistry.has("load_skill"), true);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
     const prompt = await resolveSystemText(effectiveSystem);
@@ -854,11 +869,7 @@ description: Excluded skill
       skills: ["code-review"],
     });
 
-    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
     assertEquals(toolRegistry.has("load_skill"), true);
     assertEquals(toolRegistry.has("load-skill"), false);
   });
@@ -877,12 +888,271 @@ description: Excluded skill
       tools: { load_skill: runtimeLoadSkill },
     });
 
-    if (!assistant.config.tools || assistant.config.tools === true) {
-      throw new Error("Expected an agent tool map");
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertStrictEquals(tools.load_skill, runtimeLoadSkill);
+    assertEquals(typeof tools.load_skill_reference, "object");
+    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
+  });
+
+  it("advertises the canonical skill loader when a project load_skill collides", async () => {
+    for (let index = 0; index < 128; index++) {
+      const id = `support-triage-${index.toString().padStart(2, "0")}-${"x".repeat(220)}`;
+      registerSkill(id, createSkill(id, "Triage support requests"));
     }
-    assertStrictEquals(assistant.config.tools.load_skill, runtimeLoadSkill);
-    assertEquals(typeof assistant.config.tools.load_skill_reference, "object");
-    assertEquals(typeof assistant.config.tools.execute_skill_script, "object");
+    const runtimeLoadSkill = tool({
+      id: "load_skill",
+      description: "Project-owned skill-like loader.",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: ({ skillId }) => Promise.resolve({ skillId, owner: "project" }),
+    });
+
+    const assistant = agent({
+      id: "canonical-loader-prompt",
+      system: "Load matching skills.",
+      tools: { load_skill: runtimeLoadSkill },
+    });
+
+    const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+
+    assertStringIncludes(prompt, "Call veryfront__load_skill({ inventory:");
+    assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
+  });
+
+  it("advertises only platform-owned loader bindings when canonical project tools collide", async () => {
+    for (let index = 0; index < 128; index++) {
+      registerSkill(
+        `canonical-owner-${index}-${"x".repeat(220)}`,
+        createSkill(`canonical-owner-${index}-${"x".repeat(220)}`, "Owned skills"),
+      );
+    }
+    for (
+      const mode of [
+        "legacy fallback",
+        "legacy denied",
+        "trusted canonical",
+        "unrestricted trusted",
+        "unrestricted project",
+      ]
+    ) {
+      const canonical = markRuntimeLocalTool(tool({
+        id: "veryfront__load_skill",
+        description: "Canonical loader",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ owner: "project" }),
+      }));
+      if (mode === "trusted canonical") markTrustedHostToolProvenance(canonical);
+      if (mode === "unrestricted project") {
+        toolRegistry.register(
+          "load_skill",
+          tool({
+            id: "load_skill",
+            description: "Project loader",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({}),
+          }),
+        );
+      }
+      if (mode === "unrestricted trusted") {
+        assertEquals(hasTrustedHostToolProvenance(toolRegistry.get("load_skill")), true);
+      }
+      const assistant = agent({
+        id: `canonical-owner-${mode}`,
+        system: "Use skills.",
+        tools: mode.startsWith("unrestricted") ? true : {
+          veryfront__load_skill: canonical,
+          ...(mode !== "legacy fallback" ? { load_skill: false } : {}),
+        },
+      });
+      const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+      assertEquals(
+        prompt.includes("Call veryfront__load_skill({ inventory:"),
+        mode === "trusted canonical",
+      );
+      assertEquals(
+        prompt.includes("Call load_skill({ inventory:"),
+        mode === "legacy fallback" || mode === "unrestricted trusted",
+      );
+      if (mode === "unrestricted project") toolRegistry.delete("load_skill");
+    }
+  });
+
+  it("retains canonical skill loaders for replacement generate calls", async () => {
+    for (let index = 0; index < 128; index++) {
+      const id = `canonical-replacement-${index.toString().padStart(2, "0")}-${"x".repeat(220)}`;
+      registerSkill(id, createSkill(id, "Triage replacement requests"));
+    }
+    const runtimeLoadSkill = tool({
+      id: "load_skill",
+      description: "Project-owned skill-like loader.",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: ({ skillId }) => Promise.resolve({ skillId, owner: "project" }),
+    });
+    const replacementLookup = tool({
+      id: "lookup",
+      description: "Replacement-only lookup.",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => Promise.resolve({ query }),
+    });
+    const observedToolNames: string[][] = [];
+    const observedPrompts: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "hosted",
+      modelId: "hosted/canonical-replacement-loader",
+      async doGenerate(options) {
+        observedToolNames.push(toolNamesFromModelOptions(options));
+        observedPrompts.push(
+          flattenSystemInstructions(
+            options.prompt.filter((
+              message,
+            ): message is Extract<typeof message, { role: "system" }> => message.role === "system"),
+          ),
+        );
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+
+    const assistant = agent({
+      id: "canonical-loader-replacement",
+      model: "hosted/canonical-replacement-loader",
+      system: "Load matching skills.",
+      tools: { load_skill: runtimeLoadSkill },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: "Load the right skill",
+      tools: { lookup: replacementLookup },
+      retainSkillLoaderTools: true,
+    });
+    await assistant.generate({
+      input: "Do not retain skill loaders",
+      tools: { lookup: replacementLookup },
+      retainSkillLoaderTools: false,
+    });
+
+    assertStringIncludes(observedPrompts[0] ?? "", "Call veryfront__load_skill({ inventory:");
+    assertEquals(observedToolNames[0], [
+      "load_skill",
+      "load_skill_reference",
+      "lookup",
+      "veryfront__load_skill",
+      "veryfront__load_skill_reference",
+    ]);
+    assertEquals(observedToolNames[1], ["lookup"]);
+  });
+
+  it("preserves concrete canonical skill implementations supplied by the host", () => {
+    for (
+      const id of [
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
+        "veryfront__execute_skill_script",
+      ]
+    ) {
+      const supplied = markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id,
+        description: "Use the host's request-scoped skill implementation.",
+        inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+        execute: ({ skillId }) => Promise.resolve({ skillId, owner: "host" }),
+      })));
+      const assistant = agent({
+        id: `hosted-${id}`,
+        system: "Use request-scoped skills.",
+        tools: { [id]: supplied },
+      });
+      const tools = expectAgentToolMap(assistant.config.tools);
+      assertStrictEquals(tools[id], supplied);
+    }
+  });
+
+  it("preserves explicit canonical skill infrastructure denials", () => {
+    registerSkill("code-review", createSkill("code-review", "Review code"));
+
+    const assistant = agent({
+      id: "canonical-skill-denials",
+      system: "Use skills when they match the task.",
+      skills: ["code-review"],
+      tools: {
+        veryfront__load_skill: false,
+        veryfront__load_skill_reference: false,
+        veryfront__execute_skill_script: false,
+      },
+    });
+
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertEquals(typeof tools.load_skill, "object");
+    assertEquals(typeof tools.load_skill_reference, "object");
+    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.veryfront__load_skill, false);
+    assertEquals(tools.veryfront__load_skill_reference, false);
+    assertEquals(tools.veryfront__execute_skill_script, false);
+  });
+
+  it("marks generated canonical skill tools as runtime-local when rebuilding resolved configs", () => {
+    registerSkill("code-review", createSkill("code-review", "Review code"));
+
+    const assistant = agent({
+      id: "canonical-skill-rebuild",
+      system: "Use skills when they match the task.",
+      skills: ["code-review"],
+    });
+
+    const rebuilt = createEphemeralAgent(assistant.config);
+
+    const tools = expectAgentToolMap(rebuilt.config.tools);
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
+  });
+
+  it("preserves a canonical skill grant when the legacy platform spelling is denied", () => {
+    registerSkill("code-review", createSkill("code-review", "Review code"));
+
+    const assistant = agent({
+      id: "canonical-skill-grant",
+      system: "Use skills when they match the task.",
+      skills: ["code-review"],
+      tools: {
+        load_skill: false,
+        veryfront__load_skill: true,
+      },
+    });
+
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertEquals(tools.load_skill, false);
+    assertEquals(
+      typeof tools.veryfront__load_skill === "object" &&
+        tools.veryfront__load_skill.id,
+      "veryfront__load_skill",
+    );
+    assertEquals(hasTrustedHostToolProvenance(tools.veryfront__load_skill), true);
+  });
+
+  it("does not inject canonical skill tools when skills are disabled", () => {
+    const assistant = agent({
+      id: "canonical-disabled-skill-tools",
+      system: "Do not use skills.",
+      skills: false,
+      tools: { veryfront__load_skill: true },
+    });
+
+    assertEquals(assistant.config.tools, {});
+    assertEquals(assistant.config.skills, false);
   });
 
   it("treats legacy skills false as the explicit none selector", () => {
@@ -926,11 +1196,7 @@ description: Excluded skill
       skills: { "support-*": true, "support-internal": false },
     });
 
-    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
     assertEquals(resolveSkillToolDisposition(assistant.config, assistant.id), "inject");
   });
 

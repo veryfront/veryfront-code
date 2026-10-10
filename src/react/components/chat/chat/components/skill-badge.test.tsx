@@ -80,3 +80,39 @@ describe("SkillBadge — restyles", () => {
     assertStringIncludes(html, "vf-custom-skill");
   });
 });
+
+for (const prefix of ["", "veryfront__"]) {
+  for (
+    const [name, input, pending, complete] of [
+      [
+        "load_skill",
+        { skillId: "code-review" },
+        "Loading skill: code-review...",
+        "Skill: code-review",
+      ],
+      [
+        "load_skill_reference",
+        { reference: "assets/spec.md" },
+        "Reading: assets/spec.md...",
+        "Reference: assets/spec.md",
+      ],
+      ["execute_skill_script", { script: "build.sh" }, "Running: build.sh...", "Script: build.sh"],
+    ] as const
+  ) {
+    for (const state of ["input-available", "output-available"] as const) {
+      it(`renders ${prefix}${name} in ${state}`, () => {
+        const tool: ChatDynamicToolPart = {
+          type: "dynamic-tool",
+          toolCallId: "alias-call",
+          toolName: `${prefix}${name}`,
+          state,
+          input,
+        };
+        assertStringIncludes(
+          renderToString(<SkillBadge tool={tool} />),
+          state === "output-available" ? complete : pending,
+        );
+      });
+    }
+  }
+}

@@ -58,8 +58,14 @@ describe("coverage CI command", () => {
 
     // The unit suite runs cli/ tests on every shard; before cli/ was included
     // here that coverage was collected and then dropped at report time.
-    assert(args.includes("--include=src/"));
-    assert(args.includes("--include=cli/"));
+    const patterns = args.filter((arg) => arg.startsWith("--include="))
+      .map((arg) => new RegExp(arg.slice("--include=".length)));
+    const root = new URL("../../", import.meta.url).href;
+    assert(patterns.some((pattern) => pattern.test(`${root}src/task.ts`)));
+    assert(patterns.some((pattern) => pattern.test(`${root}cli/router.ts`)));
+    assert(
+      !patterns.some((pattern) => pattern.test("file:///cache/src/task.ts")),
+    );
   });
 
   it("keeps published modules whose name contains 'tests'", () => {
@@ -319,6 +325,26 @@ describe("coverage source paths", () => {
     }
   });
 
+  it("recognizes only supported legacy runner roots and retains extension records", () => {
+    for (
+      const root of [
+        "/home/runner/work/veryfront-code/veryfront-code",
+        "/home/runner/_work/veryfront-code/veryfront-code",
+        "D:/a/veryfront-code/veryfront-code",
+      ]
+    ) {
+      const source =
+        "extensions/ext-document-kreuzberg/src/node-native-extraction.ts";
+      const records = "\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n";
+      assertEquals(
+        normalizeLcovSourcePaths(`SF:${root}/${source}${records}`, [
+          "/aggregator/repo",
+        ], (path) => path === source),
+        `SF:${source}${records}`,
+      );
+    }
+  });
+
   it("coalesces the same source across checkout roots without losing hits", () => {
     const roots = ["/hosted/repo", "/self-hosted/repo"];
     const reports = roots.map((root, index) =>
@@ -336,27 +362,30 @@ describe("coverage source paths", () => {
     assert(merged.includes("BRDA:10,0,0,3\n"));
   });
 
-  it("preserves relative, external, foreign and nonexistent source records", () => {
+  it("preserves verified relative paths and rejects foreign or nonexistent sources", () => {
     const root = "/home/runner/_work/veryfront-code/veryfront-code";
-    const sources = [
-      "src/task.ts",
-      "/home/runner/.cache/veryfront/src/task.ts.mjs",
-      "/foreign/src/task.ts",
-      `${root}-other/src/task.ts`,
-      `${root}/src/missing.ts`,
-      `${root}/../outside.ts`,
-    ];
-    const report = sources.map((source) =>
-      `SF:${source}\nDA:10,2\nend_of_record\n`
-    ).join("");
-    assertEquals(
-      normalizeLcovSourcePaths(
-        report,
-        [root],
-        (path) => path === "src/task.ts",
-      ),
-      report,
-    );
+    const exists = (path: string) => path === "src/task.ts";
+    const relative = "SF:src/task.ts\nDA:10,2\nend_of_record\n";
+    assertEquals(normalizeLcovSourcePaths(relative, [root], exists), relative);
+    for (
+      const source of [
+        "/home/runner/.cache/veryfront/src/task.ts.mjs",
+        "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
+        "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
+        "/foreign/src/task.ts",
+        `${root}-other/src/task.ts`,
+        `${root}/src/missing.ts`,
+        `${root}/../outside.ts`,
+        "../src/task.ts",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:10,2\n`, [root], exists),
+        Error,
+        "LCOV source",
+      );
+    }
   });
 });
 
@@ -375,7 +404,7 @@ describe("coverage artifact producer provenance", () => {
       { path: "coverage-profiles/shard-10/lcov.info", content: record },
     ];
     const normalized = normalizeLcovArtifacts(
-      reports,
+      reports.slice(0, 3),
       "/aggregator/repo",
       (source) => source === "src/task.ts",
     );
@@ -386,7 +415,16 @@ describe("coverage artifact producer provenance", () => {
         ),
       );
     }
-    assertEquals(normalized[3], record);
+    assertThrows(
+      () =>
+        normalizeLcovArtifacts(
+          reports,
+          "/aggregator/repo",
+          (source) => source === "src/task.ts",
+        ),
+      Error,
+      "LCOV source",
+    );
   });
   it("rejects invalid or conflicting provenance without borrowing sibling roots", () => {
     const root = "/custom/checkouts/repo";
@@ -446,7 +484,7 @@ describe("coverage artifact producer provenance", () => {
           { path: "artifacts/native/lcov.info", content: native },
         ],
         "/aggregator/repo",
-        () => false,
+        (source) => source === "src/native.ts",
       ),
       [native],
     );

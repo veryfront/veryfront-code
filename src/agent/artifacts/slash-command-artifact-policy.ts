@@ -1,6 +1,10 @@
 import { flatMapPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
+import {
+  isFormInputToolName,
+  normalizeConversationPlatformToolName,
+} from "../platform-tool-names.ts";
 
 const regexpExec = RegExp.prototype.exec;
 const apply = Reflect.apply;
@@ -131,7 +135,7 @@ function hasToolCallOrResult(messages: readonly unknown[], toolName: string): bo
       }
 
       return (part.type === "tool-call" || part.type === "tool-result") &&
-        part.toolName === toolName;
+        normalizeConversationPlatformToolName(part.toolName) === toolName;
     });
   });
 }
@@ -185,7 +189,7 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
     if (isToolRoleMessage(message) && !arrayIsArray(message.content)) {
       const resolvedToolName = resolveToolName(toolCallNamesById, message);
 
-      if (resolvedToolName !== "form_input") {
+      if (!isFormInputToolName(resolvedToolName ?? "")) {
         return false;
       }
 
@@ -206,7 +210,7 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
 
       const resolvedToolName = resolveToolName(toolCallNamesById, part);
 
-      if (resolvedToolName !== "form_input") {
+      if (!isFormInputToolName(resolvedToolName ?? "")) {
         return false;
       }
 

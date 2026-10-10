@@ -24,7 +24,12 @@ import {
   type RuntimeToolFilterConfig,
 } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 
-const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
+const SKILL_LOADER_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+] as const;
 
 // The full skill infrastructure family the factory injects whenever skills stay
 // enabled. Kept as a local literal so this security boundary cannot be widened
@@ -33,6 +38,15 @@ const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
   "load_skill",
   "load_skill_reference",
   "execute_skill_script",
+  "veryfront__load_skill",
+  "veryfront__load_skill_reference",
+  "veryfront__execute_skill_script",
+] as const;
+
+const SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS = [
+  ["load_skill", "veryfront__load_skill"],
+  ["load_skill_reference", "veryfront__load_skill_reference"],
+  ["execute_skill_script", "veryfront__execute_skill_script"],
 ] as const;
 
 // Reflection intrinsics captured at module evaluation, before any project
@@ -137,6 +151,46 @@ function getConfiguredMcpToolNames(
     }
   }
   return configured;
+}
+
+function hasExplicitToolDenial(
+  tools: AgentConfig["tools"],
+  toolName: string,
+): boolean {
+  return tools !== undefined && tools !== true && tools[toolName] === false;
+}
+
+function hasConfiguredToolEntry(
+  tools: AgentConfig["tools"],
+  toolName: string,
+): boolean {
+  if (tools === undefined || tools === true) return false;
+  const names = ObjectKeys(tools);
+  for (let index = 0; index < names.length; index++) {
+    if (names[index] === toolName) return tools[toolName] !== undefined;
+  }
+  return false;
+}
+
+function hasExplicitSkillInfrastructureDenial(
+  tools: AgentConfig["tools"],
+  toolName: string,
+): boolean {
+  if (hasExplicitToolDenial(tools, toolName)) return true;
+  for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS.length; index++) {
+    const pair = SKILL_INFRASTRUCTURE_TOOL_NAME_PAIRS[index];
+    if (pair === undefined) continue;
+    const [legacyName, canonicalName] = pair;
+    if (toolName !== legacyName && toolName !== canonicalName) continue;
+    const siblingName = toolName === legacyName ? canonicalName : legacyName;
+    if (
+      !hasConfiguredToolEntry(tools, toolName) &&
+      hasExplicitToolDenial(tools, siblingName)
+    ) {
+      return true;
+    }
+  }
+  return hasExplicitToolDenial(tools, toolName);
 }
 
 /**
@@ -439,13 +493,32 @@ export function applyAgUiRuntimeRestrictionsForModel(
   let skillLoaderAllowed = false;
   for (let index = 0; index < SKILL_LOADER_TOOL_NAMES.length; index++) {
     const loaderToolName = SKILL_LOADER_TOOL_NAMES[index];
-    if (loaderToolName !== undefined && allowedTools[loaderToolName] === true) {
+    if (
+      loaderToolName !== undefined &&
+      allowedTools[loaderToolName] === true &&
+      !hasExplicitSkillInfrastructureDenial(config.tools, loaderToolName)
+    ) {
       skillLoaderAllowed = true;
       break;
     }
   }
   if (!skillLoaderAllowed) {
     restricted.skills = false;
+    const tools = restricted.tools === undefined || restricted.tools === true
+      ? {}
+      : { ...restricted.tools };
+    let stampedExplicitDenial = false;
+    for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
+      const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
+      if (
+        toolName !== undefined &&
+        hasExplicitSkillInfrastructureDenial(config.tools, toolName)
+      ) {
+        tools[toolName] = false;
+        stampedExplicitDenial = true;
+      }
+    }
+    if (stampedExplicitDenial) restricted.tools = tools;
   } else {
     // With skills enabled, the factory injects the whole skill infrastructure
     // family into the rebuilt agent's tool map unless an entry is explicitly
@@ -457,7 +530,12 @@ export function applyAgUiRuntimeRestrictionsForModel(
       : { ...restricted.tools };
     for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
       const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
-      if (toolName !== undefined && allowedTools[toolName] !== true) {
+      if (toolName === undefined) continue;
+      if (hasExplicitSkillInfrastructureDenial(config.tools, toolName)) {
+        tools[toolName] = false;
+      } else if (allowedTools[toolName] === true) {
+        tools[toolName] ??= true;
+      } else {
         tools[toolName] = false;
       }
     }

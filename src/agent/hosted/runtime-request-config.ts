@@ -1,4 +1,9 @@
+import {
+  readOwnDataProperty,
+  snapshotOwnDataPropertyArray,
+} from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
 import { type HostedChatRequest, hostedChatRuntimeOverridesSchema } from "./chat-request.ts";
 import type {
@@ -20,6 +25,8 @@ import {
 } from "../runtime/provider-replay.ts";
 
 const arrayIsArray = Array.isArray;
+const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
 
 export { getServerResolvedToolExposureCheckpoint };
 
@@ -212,6 +219,42 @@ export function resolveHostedRuntimeThinkingOverride(input: {
   };
 }
 
+function addConfiguredDelegateToolNames(
+  toolNames: Set<string>,
+  delegates: readonly string[],
+): void {
+  forEachPrivateArray(delegates, (id) => {
+    if (id !== undefined) toolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  });
+}
+
+function isLegacyDelegationToolName(toolName: string): boolean {
+  return toolName === INVOKE_AGENT_TOOL_ID || toolName === CANONICAL_INVOKE_AGENT_TOOL_ID;
+}
+
+/** Check only an own concrete configured grant, never an inherited binding or accessor. */
+export function hasExplicitHostedToolName(
+  config: Pick<RuntimeAgentMarkdownDefinition, "tools">,
+  name: string,
+): boolean {
+  try {
+    const value = readOwnDataProperty(config, "tools", "Agent config", false);
+    if (!arrayIsArray(value)) return false;
+    const names = snapshotOwnDataPropertyArray(value, {
+      label: "Agent tools",
+      maximumEntries: 10_000,
+      mapValue: (entry) => entry,
+    });
+    let matched = false;
+    forEachPrivateArray(names, (entry) => {
+      if (entry === name) matched = true;
+    });
+    return matched;
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
@@ -229,12 +272,11 @@ export function resolveHostedRuntimeAllowedTools(input: {
   }
 
   const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
-  if (isKnowledgeEnabled(input.configuredKnowledge)) configuredToolNames.add("search_knowledge");
-  const delegates = input.configuredDelegates ?? [];
-  for (let index = 0; index < delegates.length; index++) {
-    const id = delegates[index];
-    if (id !== undefined) configuredToolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  const deniedToolNames = createPrivateSet(input.configuredDeniedTools ?? []);
+  if (isKnowledgeEnabled(input.configuredKnowledge) && !deniedToolNames.has("search_knowledge")) {
+    configuredToolNames.add("search_knowledge");
   }
+  addConfiguredDelegateToolNames(configuredToolNames, input.configuredDelegates ?? []);
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
@@ -244,10 +286,17 @@ export function resolveHostedRuntimeAllowedTools(input: {
   );
   const selectedToolNames = createPrivateSet<string>();
   for (const toolName of createPrivateSet(input.requestedTools)) {
-    if (
-      configuredToolNames.has(toolName) ||
-      (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
-    ) selectedToolNames.add(toolName);
+    if (deniedToolNames.has(toolName)) continue;
+    if (configuredToolNames.has(toolName)) {
+      selectedToolNames.add(toolName);
+    } else if (
+      isLegacyDelegationToolName(toolName) && hasImplicitLegacyDelegation &&
+      !deniedToolNames.has(CANONICAL_INVOKE_AGENT_TOOL_ID) &&
+      !deniedToolNames.has(INVOKE_AGENT_TOOL_ID)
+    ) {
+      // An implicit grant belongs to the platform, never a project-owned legacy collision.
+      selectedToolNames.add(CANONICAL_INVOKE_AGENT_TOOL_ID);
+    }
   }
   return [...selectedToolNames];
 }

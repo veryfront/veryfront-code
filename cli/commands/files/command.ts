@@ -180,12 +180,24 @@ export async function putRemoteFileFromLocal(
   remotePath: string,
   localPath: string,
   signal?: AbortSignal,
+  destination?: { branchId: string },
 ): Promise<{ path: string }> {
+  if (
+    destination && (!destination.branchId || destination.branchId.trim() !== destination.branchId)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Knowledge output branch id must be non-empty and have no surrounding whitespace",
+    });
+  }
+  const url = buildRemoteFileUrl(projectSlug, remotePath);
+  const destinationUrl = destination
+    ? `${url}?branch_id=${encodeURIComponent(destination.branchId)}`
+    : url;
   const fs = createFileSystem();
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
   signal?.throwIfAborted();
-  const result = await client.put<{ path: string }>(buildRemoteFileUrl(projectSlug, remotePath), {
+  const result = await client.put<{ path: string }>(destinationUrl, {
     content,
   }, signal ? { signal, retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
