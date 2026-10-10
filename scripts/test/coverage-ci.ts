@@ -1,5 +1,5 @@
 import { walk } from "#std/fs/walk";
-import { dirname, resolve } from "#std/path";
+import { dirname, fromFileUrl, resolve, toFileUrl } from "#std/path";
 import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
@@ -70,16 +70,21 @@ export function buildDenoTestCommandArgs(
   ];
 }
 
-export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
+export function buildCoverageCommandArgs(
+  profileDirs: string[],
+  repositoryRoot = fromFileUrl(new URL("../../", import.meta.url)),
+): string[] {
+  const sourceRoot = toFileUrl(repositoryRoot.replace(/[\\/]+$/, "") + "/").href
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [
     "coverage",
     ...profileDirs,
-    "--include=src/",
+    `--include=^${sourceRoot}src/`,
     // cli/ ships as a published export and the unit suite already runs its 184
     // test files on every shard; without this their coverage was collected and
     // then discarded at report time. Adding it puts 267 cli/ source files and
     // 29,263 lines into the report and into the 80% gate.
-    "--include=cli/",
+    `--include=^${sourceRoot}cli/`,
     // `--exclude` takes a regex matched against the file URL, not a glob. Two
     // consequences, both verified against deno 2.7.7:
     //
@@ -108,8 +113,7 @@ export interface LcovArtifactReport {
 
 type NormalizedLcovSource =
   | { kind: "source"; path: string }
-  | { kind: "drop-generated-cache" }
-  | { kind: "external"; path: string };
+  | { kind: "drop-generated-cache" };
 
 function validateProducerWorkspace(value: unknown): string {
   if (
@@ -189,7 +193,7 @@ export function normalizeLcovSourcePaths(
   sourceExists: (relativePath: string) => boolean,
 ): string {
   const prefixes = producerRoots.map((root) =>
-    root.replaceAll("\\", "/").replace(/\/+$/, "") + "/"
+    validateProducerWorkspace(root) + "/"
   );
   const newline = report.includes("\r\n") ? "\r\n" : "\n";
   const output: string[] = [];
@@ -227,7 +231,13 @@ function normalizeLcovSource(
   }
 
   if (!portable.startsWith("/") && !/^[A-Za-z]:\//.test(portable)) {
-    return { kind: "source", path: normalizeRelativeLcovPath(portable) };
+    const relative = normalizeRelativeLcovPath(portable);
+    if (!sourceExists(relative)) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
+    }
+    return { kind: "source", path: relative };
   }
 
   const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
@@ -254,7 +264,22 @@ function normalizeLcovSource(
     return { kind: "source", path: relative };
   }
 
-  return { kind: "external", path: source };
+  const windowsGithubCheckout = /^[A-Za-z]:\/a\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
+  if (windowsGithubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(windowsGithubCheckout[2]);
+    if (!sourceExists(relative)) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
+    }
+    return { kind: "source", path: relative };
+  }
+
+  throw new Error(
+    `LCOV source is outside a recognized repository checkout: ${source}`,
+  );
 }
 
 function normalizeRelativeLcovPath(path: string): string {
@@ -579,22 +604,12 @@ async function runMerge(args: string[]): Promise<void> {
     Deno.cwd(),
     checkoutSourceExists,
   );
-  const retainedAbsoluteSources = normalizedReports.reduce(
-    (count, report) =>
-      count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
-    0,
-  );
-  if (retainedAbsoluteSources > 0) {
-    console.warn(
-      `LCOV retains ${retainedAbsoluteSources} external or unverified absolute source records; only verified checkout files are remapped.`,
-    );
-  }
   const lcov = mergeLcovReports(normalizedReports);
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([
     "run",
     "--allow-read",
-    "scripts/lint/check-coverage.ts",
+    fromFileUrl(new URL("../lint/check-coverage.ts", import.meta.url)),
     String(threshold),
   ]);
 }

@@ -873,6 +873,39 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(watchdogAbortListenerCount(), 0);
   });
 
+  it("default root stream watchdog exempts canonical delegated child tools", async () => {
+    using time = new FakeTime();
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () =>
+        createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+    };
+
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter(),
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: new AbortController().signal,
+    });
+
+    bootstrap.rootStreamWatchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "canonical-child-1",
+      toolName: "veryfront__invoke_agent",
+      input: {},
+    });
+    time.tick(5 * 60_000 + 1);
+
+    assertEquals(bootstrap.rootStreamWatchdog.signal.aborted, false);
+    bootstrap.rootStreamWatchdog.dispose();
+    await bootstrap.cleanup();
+  });
+
   it("rejects a conversation runtime bootstrap without a durable stream message id", async () => {
     let streamCalls = 0;
     const agent: HostedChatRuntimeAgent = {

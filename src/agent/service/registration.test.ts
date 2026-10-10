@@ -391,6 +391,7 @@ describe("agent/agent-service-registration", () => {
     let attempts = 0;
     const bodies: string[] = [];
     const fetch: typeof globalThis.fetch = (_input, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       attempts++;
       bodies.push(String(init && "body" in init ? init.body : undefined));
       return attempts === 1
@@ -410,6 +411,7 @@ describe("agent/agent-service-registration", () => {
     let attempts = 0;
     let aborts = 0;
     const fetch: typeof globalThis.fetch = (_input, init) => {
+      assert(init && "signal" in init, "fetch must receive request options");
       attempts++;
       const signal = init && "signal" in init ? init.signal : undefined;
       assert(signal, "startup requests must carry a deadline signal");

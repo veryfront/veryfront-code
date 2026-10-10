@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -234,9 +234,8 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
   const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
     [];
   const trustedFetch: typeof fetch = (input, init) => {
-    const headers = (init && "headers" in init ? init.headers : undefined) instanceof Headers
-      ? (init && "headers" in init ? init.headers : undefined)
-      : new Headers(init && "headers" in init ? init.headers : undefined);
+    assert(init && "headers" in init, "fetch must receive request options");
+    const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
     trusted.push({
       url: String(input),
       authorization: nativeApply(nativeHeadersGet, headers, ["Authorization"]) as string | null,
@@ -1027,6 +1026,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       return {} as never;
     },
     fetch: (async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       await acknowledgement;
       if (timeoutOnce && attempts++ === 0) {
         throw TIMEOUT_ERROR.create({ detail: "Synthetic retryable append timeout" });

@@ -2306,25 +2306,95 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
-  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+  for (const runtimeTargetKind of [undefined, "main_branch", "preview_branch"] as const) {
+    it(`uploads knowledge to the admitted writable runtime destination (${runtimeTargetKind ?? "omitted"})`, async () => {
+      const body = {
+        runId: "run_knowledge_default",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
+        ...(runtimeTargetKind === "preview_branch"
+          ? { runtimeTargetBranchId: "branch-proof" }
+          : {}),
+        config: {
+          paths: ["uploads/guide.md"],
+          slug: "guide",
+          branch_id: "untrusted-config-branch",
+        },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_default/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+      const result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("Accept"),
+              "application/octet-stream",
+            );
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              status: 200,
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true, JSON.stringify(payload));
+      assertEquals(payload.result.summary.ingested_count, 1);
+      assertEquals(uploads.length, 1);
+      assertEquals(
+        new URL(uploads[0]!.url).searchParams.get("branch_id"),
+        runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
+      );
+      assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    });
+  }
+
+  it("rejects knowledge ingest environment targets without an explicit writable branch", async () => {
     const body = {
-      runId: "run_knowledge_default",
+      runId: "run_knowledge_environment",
       kind: "task",
       target: "task:knowledge-ingest",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "environment-proof",
       config: { paths: ["uploads/guide.md"], slug: "guide" },
     };
     const signed = await signedRequest(
-      "/api/control-plane/runs/run_knowledge_default/execute",
+      "/api/control-plane/runs/run_knowledge_environment/execute",
       body,
       { "x-token": "test-token" },
     );
-    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
 
     const originalSplit = String.prototype.split;
     const originalTrim = String.prototype.trim;
     const originalToLowerCase = String.prototype.toLowerCase;
     let interceptedMime = false;
+    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
     let result;
     try {
       result = await withMockFetch(
@@ -2389,11 +2459,114 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(interceptedMime, false);
     assertExists(result.response);
     const payload = await result.response.json();
-    assertEquals(payload.success, true, JSON.stringify(payload));
-    assertEquals(payload.result.summary.ingested_count, 1);
-    assertEquals(uploads.length, 1);
-    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "explicit writable main_branch or preview_branch target");
   });
+
+  // The default executor/parser are real; this publisher models logical output
+  // persistence at the HTTP seam, not API database or staging persistence.
+  for (const cancel of [false, true]) {
+    it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
+      const sources = ["first", "second", "third"];
+      const outputs = new Map<string, string>();
+      const attempts: string[] = [];
+      const held = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let firstAttempt = true;
+      let stoppedAcknowledgements = 0;
+      const execute = async (runId: string, signal?: AbortSignal) => {
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+          runId,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "branch-retained",
+          config: { paths: sources.map((name) => `uploads/${name}.md`) },
+        }, { "x-token": "test-token", "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        const response = await new ProjectRunExecuteHandler().handle(
+          signal ? new Request(signed.request, { signal }) : signed.request,
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(response.response);
+        return await response.response.json();
+      };
+      await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/cancellation-ack")) {
+          stoppedAcknowledgements++;
+          return Response.json({ acknowledged: true });
+        }
+        const download = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md/url`));
+        if (download) {
+          return Response.json({ signed_url: `https://signed.example.test/${download}.md` });
+        }
+        const source = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md`));
+        if (source) {
+          return new Response(`# ${source}\n\nRetained source ${source}.`, {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        const destination = new URL(url);
+        assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
+        const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
+        assertStringIncludes(path, "knowledge/");
+        attempts.push(path);
+        if (firstAttempt && path.endsWith("second.md")) {
+          if (cancel) {
+            const signal = observeFetchRequestInit(init).signal;
+            assertExists(signal);
+            held.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          }
+          return Response.json({ error: "synthetic publication failure" }, { status: 500 });
+        }
+        const content = String(requestJsonBody(init)?.content);
+        outputs.set(path, content);
+        return Response.json({ path });
+      }, async () => {
+        const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
+        if (cancel) {
+          await Promise.race([
+            held.promise,
+            pending.then((result) => {
+              throw new Error(JSON.stringify(result));
+            }),
+          ]);
+          controller.abort(new Error("Run cancelled"));
+        }
+        const failed = await pending;
+        assertEquals(failed.success, false);
+        if (cancel) {
+          assertStringIncludes(failed.error, "Run cancelled");
+          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          assertEquals(outputs.size, 1);
+          assertEquals(stoppedAcknowledgements, 1);
+        } else {
+          assertExists(failed.result, JSON.stringify(failed));
+          assertEquals(failed.result.summary.failed_count, 1);
+          assertEquals(failed.result.summary.ingested_count, 2);
+          assertEquals(outputs.size, 2);
+        }
+        const previous = new Map(outputs);
+        firstAttempt = false;
+        const retried = await execute(`run_retained_retry_${cancel}`);
+        assertEquals(retried.success, true, JSON.stringify(retried));
+        assertEquals(retried.result.summary.ingested_count, 3);
+        assertEquals(outputs.size, 3);
+        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        for (const name of sources) {
+          assertStringIncludes(
+            outputs.get(`knowledge/${name}.md`) ?? "",
+            `Retained source ${name}.`,
+          );
+        }
+        assertStringIncludes(retried.logs, "file_completed");
+      });
+    });
+  }
 
   it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
     const controller = new AbortController();
@@ -2407,6 +2580,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { path_prefix: "uploads", recursive: true },
       },
       { "x-token": "test-token" },
@@ -12481,13 +12655,17 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     return { request: new Request(request, { signal: controller.signal }), controller };
   }
 
-  async function waitForBarrier<T>(promise: Promise<T>, message: string): Promise<T> {
+  async function waitForBarrier<T>(
+    promise: Promise<T>,
+    message: string,
+    timeoutMs = 1_000,
+  ): Promise<T> {
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         promise,
         new Promise<never>((_resolve, reject) => {
-          watchdog = setTimeout(() => reject(new Error(message)), 1_000);
+          watchdog = setTimeout(() => reject(new Error(message)), timeoutMs);
         }),
       ]);
     } finally {
@@ -12840,7 +13018,6 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         headers: result.response.headers,
       });
     }, { hostname: "127.0.0.1", port: 0 });
-    let clientResponse: Response | undefined;
 
     try {
       await withMockFetch(async (_input, init) => {
@@ -12861,39 +13038,51 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
             signal: clientController.signal,
           },
         );
-        await waitForBarrier(
-          responseBodyHeld.promise,
-          "native response stream did not reach its delivery barrier",
-        );
-        clientResponse = await waitForBarrier(
-          responsePending,
-          "native client did not receive response headers while the body was held",
-        );
-        assertEquals(clientResponse.status, 200);
-        assertEquals(taskSettled, true);
-        assertEquals(serialized, true);
-        assertExists(ingressSignal);
-        assertEquals(ingressSignal.aborted, false);
-        assertEquals(acknowledgements, []);
+        // Observe rejection before waiting for the server-side delivery barrier.
+        void responsePending.catch(() => undefined);
+        try {
+          await waitForBarrier(
+            responseBodyHeld.promise,
+            "native response stream did not reach its delivery barrier",
+            5_000,
+          );
+          const clientResponse = await waitForBarrier(
+            responsePending,
+            "native client did not receive response headers while the body was held",
+            5_000,
+          );
+          assertEquals(clientResponse.status, 200);
+          assertEquals(taskSettled, true);
+          assertEquals(serialized, true);
+          assertExists(ingressSignal);
+          assertEquals(ingressSignal.aborted, false);
+          assertEquals(acknowledgements, []);
 
-        clientController.abort(new Error("Client disconnected during response delivery"));
-        await waitForBarrier(
-          ingressAborted.promise,
-          "Deno did not abort the native ingress signal after the client disconnected",
-        );
-        await waitForBarrier(
-          acknowledged.promise,
-          "native late cancellation did not send a stop acknowledgement",
-        );
-        assertEquals(ingressSignal.aborted, true);
-        assertEquals(acknowledgements, [{
-          authorization: "Bearer native-stop-capability",
-          signalAborted: false,
-        }]);
+          clientController.abort(new Error("Client disconnected during response delivery"));
+          await waitForBarrier(
+            ingressAborted.promise,
+            "Deno did not abort the native ingress signal after the client disconnected",
+            5_000,
+          );
+          await waitForBarrier(
+            acknowledged.promise,
+            "native late cancellation did not send a stop acknowledgement",
+            5_000,
+          );
+          assertEquals(ingressSignal.aborted, true);
+          assertEquals(acknowledgements, [{
+            authorization: "Bearer native-stop-capability",
+            signalAborted: false,
+          }]);
+        } finally {
+          clientController.abort();
+          releaseResponseBody.resolve();
+          const response = await responsePending.catch(() => undefined);
+          if (response?.body) await response.body.cancel().catch(() => undefined);
+        }
       });
     } finally {
       releaseResponseBody.resolve();
-      if (clientResponse?.body) await clientResponse.body.cancel().catch(() => undefined);
       await server.stop();
     }
   });
@@ -13734,6 +13923,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { paths: ["uploads/first.md", "uploads/sibling.md"] },
       }, {
         "x-token": "test-token",

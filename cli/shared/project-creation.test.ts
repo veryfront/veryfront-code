@@ -8,10 +8,9 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { chmod, exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { formatCLIError, VeryfrontError } from "veryfront/errors";
-import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
   createProject,
@@ -57,90 +56,6 @@ async function withGitIdentity(action: () => Promise<void>): Promise<void> {
         else processEnv[key] = processValue;
       }
     }
-  }
-}
-
-interface FakeNpmInvocation {
-  cwd: string;
-  args: string[];
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\''`)}'`;
-}
-
-async function writeFakeNpmExecutable(binDir: string, launcherPath: string): Promise<string> {
-  const denoPath = Deno.execPath();
-  await Deno.writeTextFile(
-    launcherPath,
-    `const recordPath = Deno.env.get("VERYFRONT_FAKE_NPM_RECORD_PATH");
-if (!recordPath) throw new Error("Missing VERYFRONT_FAKE_NPM_RECORD_PATH");
-await Deno.writeTextFile(recordPath, JSON.stringify({ cwd: Deno.cwd(), args: Deno.args }) + "\\n");
-Deno.exit(Number(Deno.env.get("VERYFRONT_FAKE_NPM_EXIT_CODE") ?? "0"));
-`,
-  );
-
-  if (Deno.build.os === "windows") {
-    const executable = join(binDir, "npm.cmd");
-    await Deno.writeTextFile(
-      executable,
-      `@"${denoPath}" run --allow-env=VERYFRONT_FAKE_NPM_RECORD_PATH,VERYFRONT_FAKE_NPM_EXIT_CODE --allow-write "${launcherPath}" %*\r\n`,
-    );
-    return executable;
-  }
-
-  const executable = join(binDir, "npm");
-  await Deno.writeTextFile(
-    executable,
-    `#!/bin/sh\nexec ${
-      shellQuote(denoPath)
-    } run --allow-env=VERYFRONT_FAKE_NPM_RECORD_PATH,VERYFRONT_FAKE_NPM_EXIT_CODE --allow-write ${
-      shellQuote(launcherPath)
-    } "$@"\n`,
-  );
-  await chmod(executable, 0o755);
-  return executable;
-}
-
-async function withFakeNpmInstall(
-  statusCode: number,
-  action: () => Promise<void>,
-): Promise<FakeNpmInvocation> {
-  const binDir = await makeTempDir({ prefix: "veryfront-fake-npm-bin-" });
-  const recordPath = join(binDir, "npm-invocation.json");
-  const launcherPath = join(binDir, "fake-npm.ts");
-  const pathName = Deno.build.os === "windows" ? "Path" : "PATH";
-  const originalPath = getEnv(pathName);
-  const originalRecordPath = getEnv("VERYFRONT_FAKE_NPM_RECORD_PATH");
-  const originalExitCode = getEnv("VERYFRONT_FAKE_NPM_EXIT_CODE");
-
-  try {
-    await writeFakeNpmExecutable(binDir, launcherPath);
-    setEnv(
-      pathName,
-      originalPath ? `${binDir}${Deno.build.os === "windows" ? ";" : ":"}${originalPath}` : binDir,
-    );
-    setEnv("VERYFRONT_FAKE_NPM_RECORD_PATH", recordPath);
-    setEnv("VERYFRONT_FAKE_NPM_EXIT_CODE", String(statusCode));
-    await action();
-    const parsed = JSON.parse(await Deno.readTextFile(recordPath)) as unknown;
-    if (
-      !parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
-      typeof (parsed as { cwd?: unknown }).cwd !== "string" ||
-      !Array.isArray((parsed as { args?: unknown }).args) ||
-      !(parsed as { args: unknown[] }).args.every((arg) => typeof arg === "string")
-    ) {
-      throw new Error("Fake npm invocation record was malformed");
-    }
-    return parsed as FakeNpmInvocation;
-  } finally {
-    if (originalPath === undefined) deleteEnv(pathName);
-    else setEnv(pathName, originalPath);
-    if (originalRecordPath === undefined) deleteEnv("VERYFRONT_FAKE_NPM_RECORD_PATH");
-    else setEnv("VERYFRONT_FAKE_NPM_RECORD_PATH", originalRecordPath);
-    if (originalExitCode === undefined) deleteEnv("VERYFRONT_FAKE_NPM_EXIT_CODE");
-    else setEnv("VERYFRONT_FAKE_NPM_EXIT_CODE", originalExitCode);
-    await remove(binDir, { recursive: true }).catch(() => {});
   }
 }
 
@@ -535,33 +450,30 @@ describe("createProject", () => {
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
+      // Run the available Deno installer against a local manifest without registry access.
       await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
 
-      const invocation = await withFakeNpmInstall(0, async () => {
-        const result = await createProject({
-          ...baseRequest(parentDir),
-          name: "install-events",
-          conflictPolicy: "overwrite",
-          installDependencies: true,
-          includePackageMetadata: false,
-        }, {
-          observer: {
-            onEvent(event) {
-              events.push(event);
-            },
+      const result = await createProject({
+        ...baseRequest(parentDir),
+        runtime: "deno",
+        name: "install-events",
+        conflictPolicy: "overwrite",
+        installDependencies: true,
+        includePackageMetadata: false,
+      }, {
+        observer: {
+          onEvent(event) {
+            events.push(event);
           },
-        });
-
-        assertEquals(result.dependencyInstallation, "installed");
+        },
       });
 
-      assertEquals(invocation.args, ["install"]);
-      assertEquals(await Deno.realPath(invocation.cwd), await Deno.realPath(projectDir));
+      assertEquals(result.dependencyInstallation, "installed");
       assertEquals(events, [
-        { kind: "dependency-installation-started", packageManager: "npm" },
+        { kind: "dependency-installation-started", packageManager: "deno" },
         {
           kind: "dependency-installation-finished",
-          packageManager: "npm",
+          packageManager: "deno",
           status: "installed",
         },
       ]);
@@ -577,33 +489,29 @@ describe("createProject", () => {
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
+      await Deno.writeTextFile(join(projectDir, "package.json"), "{\n");
 
-      const invocation = await withFakeNpmInstall(17, async () => {
-        const result = await createProject({
-          ...baseRequest(parentDir),
-          name: "install-failed",
-          conflictPolicy: "overwrite",
-          installDependencies: true,
-          includePackageMetadata: false,
-        }, {
-          observer: {
-            onEvent(event) {
-              events.push(event);
-            },
+      const result = await createProject({
+        ...baseRequest(parentDir),
+        runtime: "deno",
+        name: "install-failed",
+        conflictPolicy: "overwrite",
+        installDependencies: true,
+        includePackageMetadata: false,
+      }, {
+        observer: {
+          onEvent(event) {
+            events.push(event);
           },
-        });
-
-        assertEquals(result.dependencyInstallation, "failed");
+        },
       });
 
-      assertEquals(invocation.args, ["install"]);
-      assertEquals(await Deno.realPath(invocation.cwd), await Deno.realPath(projectDir));
+      assertEquals(result.dependencyInstallation, "failed");
       assertEquals(events, [
-        { kind: "dependency-installation-started", packageManager: "npm" },
+        { kind: "dependency-installation-started", packageManager: "deno" },
         {
           kind: "dependency-installation-finished",
-          packageManager: "npm",
+          packageManager: "deno",
           status: "failed",
         },
       ]);

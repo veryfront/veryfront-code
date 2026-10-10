@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -176,6 +176,7 @@ for (
     const admit = hostedInheritedRunAdmitter(request, {
       apiUrl: "https://api.example.test",
       fetch: (input, init) => {
+        assert(init && "headers" in init, "fetch must receive request options");
         calls++;
         if (calls === 1) {
           return Promise.resolve(

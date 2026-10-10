@@ -3802,6 +3802,25 @@ export function createKnowledgeEventLogger(
   return logger;
 }
 
+function resolveKnowledgeOutputDestination(
+  request: ProjectRunExecuteRequest,
+): { branchId: string } | undefined {
+  if (request.runtimeTargetKind === "preview_branch") {
+    if (!request.runtimeTargetBranchId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Knowledge ingest preview targets require runtimeTargetBranchId",
+      });
+    }
+    return { branchId: request.runtimeTargetBranchId };
+  }
+  if (request.runtimeTargetKind === undefined || request.runtimeTargetKind === "main_branch") {
+    return undefined;
+  }
+  throw INVALID_ARGUMENT.create({
+    detail: "Knowledge ingest requires an explicit writable main_branch or preview_branch target",
+  });
+}
+
 async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
@@ -3846,6 +3865,9 @@ async function executeKnowledgeIngestRun(input: {
       "knowledge";
     const description = getStringConfig(config, ["description"]);
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
+    const okfBundle = getOwnDataProperty(config, "okf_bundle") === true ||
+      getOwnDataProperty(config, "okfBundle") === true;
+    const outputDestination = resolveKnowledgeOutputDestination(input.request);
 
     if (uploadPaths.length > 0 && pathPrefix) {
       throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
@@ -3864,6 +3886,7 @@ async function executeKnowledgeIngestRun(input: {
       slug: getStringConfig(config, ["slug"]),
       json: true,
       quiet: true,
+      okfBundle,
     };
     const downloadOutputDir = resolveKnowledgeDownloadOutputDir(outputDir);
     const sourceMode = pathPrefix ? "path_prefix" : "explicit_sources";
@@ -3910,6 +3933,7 @@ async function executeKnowledgeIngestRun(input: {
           remotePath,
           localPath,
           input.signal,
+          outputDestination,
         ),
       signal: input.signal,
     });
@@ -3921,6 +3945,7 @@ async function executeKnowledgeIngestRun(input: {
       ingested: results.ingested,
       skipped: collection.skipped,
       failed: results.failed,
+      okfBundle: options.okfBundle,
     });
     const failedCount = result.summary.failed_count;
     const ingestedCount = result.summary.ingested_count;

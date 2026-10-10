@@ -2289,6 +2289,7 @@ describe("agent/hosted-chat-request", () => {
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
           resumeToolCall: {
             id: "call-1:resume-1",
             name: "outlook__list_messages",
@@ -2319,6 +2320,9 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.serverResolvedProviderReplayCheckpoints, [
       serverResolvedProviderReplayCheckpoint,
     ]);
+    assertEquals(parsed.serverResolvedTrustedHostedHistoryMessageIds, [
+      "stored-assistant-message",
+    ]);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
       projectId,
@@ -2333,6 +2337,32 @@ describe("agent/hosted-chat-request", () => {
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected missing run-event token response");
+    }
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN",
+    });
+  });
+
+  it("rejects trusted hosted history message ids without a run-event append token", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
         }),
       }),
       {
@@ -2754,6 +2784,7 @@ describe("agent/hosted-chat-request", () => {
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
@@ -2780,6 +2811,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.serverResolvedProviderReplayCheckpoints, undefined);
+    assertEquals(parsed.serverResolvedTrustedHostedHistoryMessageIds, undefined);
     assertEquals(parsed.serverResolvedResumeToolCall, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });

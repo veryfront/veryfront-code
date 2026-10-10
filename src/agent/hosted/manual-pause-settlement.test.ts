@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createRunBoundAgentManualPause,
@@ -43,9 +43,8 @@ describe("hosted pause settlement transport", () => {
         token: "pause-test-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          if (JSON.parse(String(init && "body" in init ? init.body : undefined)).settled) {
-            confirmations++;
-          }
+          assert(init && "body" in init, "fetch must receive request options");
+          if (JSON.parse(String(init?.body)).settled) confirmations++;
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -127,7 +126,8 @@ describe("hosted pause settlement transport", () => {
         token: "pause-test-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          const body = JSON.parse(String(init && "body" in init ? init.body : undefined));
+          assert(init && "body" in init, "fetch must receive request options");
+          const body = JSON.parse(String(init?.body));
           bodies.push(body);
           if (!body.settled) return Promise.resolve(Response.json({ stop: true }));
           const reply = replies[confirmations++];

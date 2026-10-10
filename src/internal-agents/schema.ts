@@ -110,6 +110,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "forwardedProps must be less than 192 KB" },
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeResumeToolCallSchema().optional(),
   }).strict().superRefine((input, ctx) => {
     if (input.sourceProject || input.executionProject) {
@@ -450,6 +451,12 @@ export function toRuntimeRunAgentInput(
         serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
       }
       : {}),
+    ...(input.serverResolvedTrustedHostedHistoryMessageIds !== undefined
+      ? {
+        serverResolvedTrustedHostedHistoryMessageIds:
+          input.serverResolvedTrustedHostedHistoryMessageIds,
+      }
+      : {}),
     ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   } as RuntimeRunAgentInput;
 }
@@ -477,6 +484,7 @@ export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
   allowDelegation?: boolean;
   messageId?: string;
   serverResolvedProviderReplayCheckpoints?: unknown;
+  serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   resumeToolCall?: { id: string; name: string; input: Record<string, unknown> };
 };
 export type InternalAgentStreamRequest = InferSchema<
