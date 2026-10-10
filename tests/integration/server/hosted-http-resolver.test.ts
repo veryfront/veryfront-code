@@ -20,13 +20,26 @@ const RELEASE_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_RELEASE_ID = "33333333-3333-4333-8333-333333333333";
 const IMAGE = `${REPOSITORY}@sha256:${"b".repeat(64)}`;
 
+const SERVICE_ACCOUNT_ID = "service-account-renderer";
+
+/** Unsigned JWT with the given payload; the resolver reads claims, the API verifies. */
+function jwt(claims: Record<string, unknown>): string {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return `${encode({ alg: "RS256", typ: "JWT" })}.${encode(claims)}.signature`;
+}
+
+function serviceToken(projectId: string): string {
+  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+}
+
 const authority = Object.freeze({
   projectId: PROJECT_ID,
   projectSlug: "project-a",
   releaseId: RELEASE_ID,
   environmentId: "environment-a",
   environmentName: "staging",
-  sourceToken: "source-token",
+  sourceToken: serviceToken(PROJECT_ID),
 });
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -104,6 +117,7 @@ function options(overrides: Partial<HostedHttpResolverOptions> = {}): HostedHttp
     apiBaseUrl: API,
     sourceApiOrigin: SOURCE_API,
     sourceImageRepository: REPOSITORY,
+    serviceAccountId: SERVICE_ACCOUNT_ID,
     lookupSourceImage: createHostedHttpSourceRecordLookup([record()]),
     session: {
       expectedBrokerInstanceId: "broker-pod-uid",
@@ -123,9 +137,9 @@ describe("hosted HTTP resolver", () => {
     const resolved = await withMockFetch(api.fetch, () => resolve(authority, signal()));
 
     assertEquals(api.calls.map((call) => call.authorization), [
-      "Bearer source-token",
-      "Bearer source-token",
-      "Bearer source-token",
+      `Bearer ${authority.sourceToken}`,
+      `Bearer ${authority.sourceToken}`,
+      `Bearer ${authority.sourceToken}`,
     ]);
     assert(api.calls[2]!.url.includes("/environment-variables?environment_id=environment-a"));
     assertEquals(resolved.session.expectedImage, IMAGE);
@@ -255,6 +269,24 @@ describe("hosted HTTP resolver", () => {
         readsVariables,
         name,
       );
+    }
+  });
+
+  it("refuses a credential for another project, a user session or an API key without API calls", async () => {
+    for (
+      const sourceToken of [
+        serviceToken("99999999-9999-4999-8999-999999999999"),
+        jwt({ userId: "user-1", scope: ["projects:read"] }),
+        "vf_api_key_0123456789abcdef",
+      ]
+    ) {
+      const api = apiFetch();
+      const resolve = createHostedHttpResolver(options());
+      await withMockFetch(
+        api.fetch,
+        () => assertRejects(() => resolve({ ...authority, sourceToken }, signal())),
+      );
+      assertEquals(api.calls, []);
     }
   });
 });

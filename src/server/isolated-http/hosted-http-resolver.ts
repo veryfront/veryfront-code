@@ -52,6 +52,11 @@ export interface HostedHttpResolverOptions {
   /** Private repository that holds tenant-source images, without tag or digest. */
   sourceImageRepository: string;
   /**
+   * Service account that the edge's project-bound source credentials name as `userId`.
+   * Each request's credential must name this account and the exact requested project.
+   */
+  serviceAccountId: string;
+  /**
    * Host-owned explicit-reference lookup for one exact project release. Returns the
    * lookup's token-free record. Records are data; this resolver binds them to the
    * authorized identity and never accepts another project's or release's image.
@@ -159,6 +164,40 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
   return allowPath ? trimTrailingSlashes(value) : url.origin;
 }
 
+/**
+ * Accept only a project-bound service credential for exactly `projectId`. This reads
+ * the JWT payload without verifying the signature; the API verifies every credential.
+ * Opaque credentials, user sessions and credentials without a project are refused
+ * here, before any API call.
+ */
+function isProjectBoundServiceCredential(
+  token: string,
+  projectId: string,
+  serviceAccountId: string,
+): boolean {
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts[1]) return false;
+  let claims: unknown;
+  try {
+    const base64 = parts[1].replaceAll("-", "+").replaceAll("_", "/");
+    const binary = atob(base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "="));
+    claims = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+      ),
+    );
+  } catch {
+    return false;
+  }
+  if (claims === null || typeof claims !== "object" || Array.isArray(claims)) return false;
+  const { projectId: claimedProject, userId, scope } = claims as Record<string, unknown>;
+  const scopes = typeof scope === "string" ? scope.split(" ") : scope;
+  return typeof claimedProject === "string" && claimedProject === projectId &&
+    typeof userId === "string" && userId === serviceAccountId &&
+    Array.isArray(scopes) &&
+    scopes.every((entry) => typeof entry === "string" && !entry.startsWith("user_read_id_"));
+}
+
 function limit(value: number | undefined, fallback: number, maximum: number, name: string) {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < 1_000 || result > maximum) {
@@ -256,6 +295,10 @@ export function createHostedHttpResolver(
   if (typeof repository !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,255}$/.test(repository)) {
     throw new TypeError("Hosted HTTP resolver requires a source image repository");
   }
+  const serviceAccountId = options.serviceAccountId;
+  if (typeof serviceAccountId !== "string" || !serviceAccountId.trim()) {
+    throw new TypeError("Hosted HTTP resolver requires the source service account ID");
+  }
   if (typeof options.lookupSourceImage !== "function") {
     throw new TypeError("Hosted HTTP resolver requires a source image lookup");
   }
@@ -309,6 +352,9 @@ export function createHostedHttpResolver(
     const token = authority.sourceToken;
     if (typeof token !== "string" || !token || token.length > MAX_SOURCE_TOKEN_CHARS) {
       throw refuse("A source credential is required");
+    }
+    if (!isProjectBoundServiceCredential(token, authority.projectId, serviceAccountId)) {
+      throw refuse("The source credential is not bound to the requested project");
     }
     const identity = freeze({
       projectId: authority.projectId,
