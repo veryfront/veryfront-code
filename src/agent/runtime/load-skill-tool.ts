@@ -1450,12 +1450,12 @@ function buildRuntimeLoadSkillInputSchema(
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
-          `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+          `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
             loadedEnumValues.join(", ")
           }`,
         ),
-        file: getRuntimeLoadSkillReferenceFileInputSchema().describe(
-          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+        file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+          "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
         ),
       })
     )();
@@ -1486,12 +1486,12 @@ function buildRuntimeLoadSkillInputSchema(
         }),
         v.object({
           skillId: v.enum(loadedEnumValues).describe(
-            `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+            `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
               loadedEnumValues.join(", ")
             }`,
           ),
-          file: getRuntimeLoadSkillReferenceFileInputSchema().describe(
-            "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+          file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+            "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
           ),
         }),
       ])
@@ -2199,7 +2199,7 @@ export function createRuntimeLoadSkillTool(
       // generic schema so the tool definition is byte-identical across projects
       // (shared cache prefix, RFC 0001). The runtime validation schema is
       // still used for `.parse()` validation at execution, so all runtime
-      // enforcement (valid IDs, reload/body rules) is preserved; the model
+      // enforcement (valid IDs, reference authorization, compact repeat loads) is preserved; the model
       // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
       return createStaticRuntimeLoadSkillToolInputJsonSchema();

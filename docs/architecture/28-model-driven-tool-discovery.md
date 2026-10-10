@@ -148,3 +148,8 @@ measurement against a 64-tool fixture on Anthropic:
   (`activatedRemoteToolNames`, `toolDiscoveryContext`, `pinnedToolNames`,
   `getActivatedToolNames`) are retained and marked deprecated, because removing
   them would silently widen the catalog for callers that rely on them.
+
+The skill loader keeps its provider schema stable across load states. A repeated
+skill body request returns a compact already-loaded marker, including when the
+skill has references. The runtime validates skill IDs and authorizes reference
+paths before reading files. Repeated body requests do not read or resend the body.

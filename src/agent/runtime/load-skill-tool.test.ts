@@ -45,7 +45,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
 // baked into the tool definition, so the tools array can join the shared cache
-// prefix. Per-project validation (valid IDs, reload/body rules) still runs at
+// prefix. Per-project validation (valid IDs and reference authorization) still runs at
 // `.parse()` time and is covered by the execute() tests below. Every load state
 // must advertise this same schema. That invariance is what these assertions guard.
 const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
@@ -2001,7 +2001,7 @@ Deno.test("createRuntimeLoadSkillTool stores bounded reference markers without r
   assertEquals(JSON.stringify(loadedSkillReferenceResponses).includes("reference-secret"), false);
 });
 
-Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-loaded skills", async () => {
+Deno.test("createRuntimeLoadSkillTool advertises the static schema for mixed loaded skills", async () => {
   const context = createProjectContext({
     availableSkillIds: ["plan", "veryfront"],
     loadedSkillResponses: {
@@ -2046,11 +2046,47 @@ it("createRuntimeLoadSkillTool advertises a static provider schema unchanged acr
 
   await tool.execute({ skillId: "veryfront" });
 
-  // The advertised schema is state-independent; the body-reload guard stays at runtime.
+  // Repeated body loads return a compact marker without re-reading the skill.
   const afterLoad = toolToProviderDefinition(tool).parameters;
   assertEquals(afterLoad, STATIC_LOAD_SKILL_INPUT_SCHEMA);
   assertEquals(afterLoad, beforeLoad);
-  await assertRejects(() => tool.execute({ skillId: "veryfront" }));
+  const repeated = expectLoadedSkillResponse(
+    await tool.execute({ load: { skillId: "veryfront" } }),
+  );
+  assertStringIncludes(repeated.instructions, 'Skill "veryfront" is already loaded');
+  assertEquals(repeated.instructions.includes("# Veryfront"), false);
+  assertEquals(repeated.references, ["references/create-agent.md"]);
+});
+
+it("createRuntimeLoadSkillTool repeats a referenced body without reading it again while other skills remain unloaded", async () => {
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan", "other"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve(["references/guide.md"]),
+      loadProjectSkill: (_context, skillId) => {
+        bodyReads += 1;
+        return Promise.resolve({
+          skillId,
+          instructions: "private body",
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve("reference content"),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ load: { skillId: "plan" } });
+  const repeated = expectLoadedSkillResponse(await tool.execute({ load: { skillId: "plan" } }));
+  assertEquals(bodyReads, 1);
+  assertStringIncludes(repeated.instructions, 'Skill "plan" is already loaded');
+  assertEquals(repeated.instructions.includes("private body"), false);
+  assertEquals(await tool.execute({ load: { skillId: "plan", file: "references/guide.md" } }), {
+    skillId: "plan",
+    file: "references/guide.md",
+    content: "reference content",
+  });
 });
 
 it("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
@@ -2071,7 +2107,7 @@ it("createRuntimeLoadSkillTool advertises a static schema even when all known sk
     builtinStore: createBuiltinStore({}),
   });
 
-  // Reference-only-when-loaded is enforced at runtime (.parse/execute), not advertised.
+  // Reference authorization is enforced at runtime (.parse/execute), not advertised.
   assertEquals(tool.inputSchemaJson, STATIC_LOAD_SKILL_INPUT_SCHEMA);
 });
 
