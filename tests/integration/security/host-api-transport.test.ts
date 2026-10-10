@@ -16,6 +16,13 @@ import {
 import { dispatchIntegrationApiRequest } from "#veryfront/integrations/integration-transport.ts";
 import { fetchSandboxUrl } from "#veryfront/sandbox/config.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+  getEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { vfRemoteListFiles } from "../../../cli/mcp/remote-file-tools.ts";
 import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 
 const origin = "http://127.0.0.1:4000";
@@ -28,6 +35,54 @@ function configured(apiUrl: string | undefined, fn: () => void) {
 }
 
 describe("host credential API transport", () => {
+  it("uses the configured private HTTP API and rejects redirects", async () => {
+    const service = "http://api.svc.example:4000";
+    _setEnvironmentConfigForTesting({
+      ...getEnvironmentConfig(),
+      apiToken: "token-123",
+      apiUrl: service,
+      apiBaseUrl: `${service}/api`,
+    });
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = (input, init) => {
+      calls.push(String(input));
+      assertEquals(
+        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+        "Bearer token-123",
+      );
+      return Promise.resolve(
+        calls.length === 1 ? Response.json({ files: [] }) : new Response(null, {
+          status: 307,
+          headers: { location: "http://other.svc.example:4000/collect" },
+        }),
+      );
+    };
+    try {
+      await withEnv(
+        { VERYFRONT_API_URL: service, VERYFRONT_API_BASE_URL: `${service}/api` },
+        () =>
+          __runWithOutboundFetchTransportForTests({
+            fetch: fetchImpl,
+            pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+            resolveHost: () => Promise.resolve(["10.0.0.8"]),
+          }, async () => {
+            assertEquals(
+              (await vfRemoteListFiles.execute({ project: "my-project", limit: 50 })).success,
+              true,
+            );
+            assertEquals(
+              (await vfRemoteListFiles.execute({ project: "my-project", limit: 50 })).success,
+              false,
+            );
+            assertEquals(calls.length, 2);
+            assertEquals(calls.every((url) => url.startsWith(`${service}/api/`)), true);
+          }),
+      );
+    } finally {
+      _resetEnvironmentConfig();
+    }
+  });
+
   const apiRequests = {
     integration: (url: string) =>
       dispatchIntegrationApiRequest({
