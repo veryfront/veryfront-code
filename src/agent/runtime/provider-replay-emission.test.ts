@@ -25,12 +25,27 @@ import {
 import type { ProviderReplayTurnFailure, RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
 import { withLocalChildExecution } from "../composition/local-child-execution.ts";
+import { RuntimeEmptyResponseError } from "./empty-response-recovery.ts";
 
 const MESSAGE_ID = "assistant-message-1";
 const SIGNATURE = "test-signature";
 
 function metadata(...rawAssistantMessages: Record<string, unknown>[][]) {
   return { anthropic: { rawAssistantMessages } };
+}
+
+function observedEventType(event: unknown): string {
+  if (typeof event !== "object" || event === null || !("type" in event)) return "unknown";
+  const type = event.type;
+  return typeof type === "string" ? type : "unknown";
+}
+
+function isMessageFinishEvent(event: unknown): event is {
+  type: "message-finish";
+  finishReason?: unknown;
+  totalUsage?: unknown;
+} {
+  return observedEventType(event) === "message-finish";
 }
 
 function lookupTool(onExecute: () => void = () => {}) {
@@ -590,8 +605,9 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
-  it("persists replay checkpoints before generate empty-response recovery", async () => {
+  it("observes and persists replay checkpoints before generate empty-response recovery", async () => {
     const operations: string[] = [];
+    const observed: unknown[] = [];
     const checkpoints: ProviderReplayCheckpoint[] = [];
     const rawToolUse = {
       type: "tool_use",
@@ -655,21 +671,146 @@ describe("provider replay checkpoint emission", () => {
       },
     } as AgentConfig & RuntimeToolFilterConfig;
 
-    const response = await agent(config).generate({ input: "Look it up" });
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => agent(config).generate({ input: "Look it up" }),
+      (event) => {
+        operations.push(`observe:${observedEventType(event)}`);
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
 
-    assertEquals(response.text, "done");
+    const responseText = typeof response === "object" && response !== null && "text" in response
+      ? response.text
+      : undefined;
+    assertEquals(responseText, "done");
     assertEquals(operations.filter((operation) => operation === "persist").length, 3);
     assertEquals(operations.filter((operation) => operation === "turn:complete").length, 3);
-    assertEquals(
-      operations.indexOf("persist", operations.indexOf("model:2")) < operations.indexOf("model:3"),
-      true,
+    const emptyTurnStart = operations.indexOf(
+      "observe:message-start",
+      operations.indexOf("model:2"),
     );
+    const emptyTurnFinish = operations.indexOf(
+      "observe:message-finish",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnPersist = operations.indexOf("persist", operations.indexOf("model:2"));
+    assertEquals(emptyTurnStart >= 0, true);
+    assertEquals(emptyTurnStart < emptyTurnFinish, true);
+    assertEquals(emptyTurnFinish < emptyTurnPersist, true);
+    assertEquals(emptyTurnPersist < operations.indexOf("model:3"), true);
     assertEquals(checkpoints.length, 3);
     assertEquals(checkpoints[1]?.providerBlocks.map((entry) => entry.block), [
       { type: "thinking", thinking: "", signature: SIGNATURE },
       rawToolUse,
       emptyReasoning,
     ]);
+    const messageFinishes = observed.filter(isMessageFinishEvent);
+    const emptyFinish = messageFinishes[1];
+    assertEquals(emptyFinish?.finishReason, "stop");
+    assertEquals(emptyFinish?.totalUsage, { inputTokens: 1, outputTokens: 1, totalTokens: 2 });
+  });
+
+  it("observes a terminal generate empty-response turn before replay checkpoint recovery fails", async () => {
+    const operations: string[] = [];
+    const observed: unknown[] = [];
+    const checkpoints: ProviderReplayCheckpoint[] = [];
+    const rawToolUse = {
+      type: "tool_use",
+      id: "lookup-1",
+      name: "lookup",
+      input: { query: "value" },
+    };
+    const emptyReasoning = {
+      type: "thinking",
+      thinking: "",
+      signature: "terminal-empty-response-signature",
+    };
+    const model = scriptedModel([
+      () => {
+        operations.push("model:1");
+        return {
+          toolCalls: [{ id: "lookup-1", name: "lookup", input: { query: "value" } }],
+          providerMetadata: metadata([{
+            type: "thinking",
+            thinking: "",
+            signature: SIGNATURE,
+          }, rawToolUse]),
+        };
+      },
+      () => {
+        operations.push("model:2");
+        return {
+          text: "",
+          finishReason: "stop",
+          providerMetadata: metadata([emptyReasoning]),
+        };
+      },
+    ], {
+      modelId: "anthropic/generate-provider-replay-terminal-empty-response",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "generate-provider-replay-terminal-empty-response",
+      model: "anthropic/generate-provider-replay-terminal-empty-response",
+      system: "Use tools.",
+      skills: false,
+      tools: { lookup: lookupTool(() => operations.push("tool")) },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        checkpoints.push(checkpoint);
+        operations.push("persist");
+      },
+      __vfProviderReplayCheckpointTurnComplete: () => {
+        operations.push("turn:complete");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await agent(config).generate({ input: "Look it up" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected terminal empty response failure");
+      },
+      (event) => {
+        operations.push(`observe:${observedEventType(event)}`);
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertInstanceOf(error, RuntimeEmptyResponseError);
+    const emptyTurnStart = operations.indexOf(
+      "observe:message-start",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnFinish = operations.indexOf(
+      "observe:message-finish",
+      operations.indexOf("model:2"),
+    );
+    const emptyTurnPersist = operations.indexOf("persist", operations.indexOf("model:2"));
+    assertEquals(emptyTurnStart >= 0, true);
+    assertEquals(emptyTurnStart < emptyTurnFinish, true);
+    assertEquals(emptyTurnFinish < emptyTurnPersist, true);
+    assertEquals(checkpoints.length, 2);
+    assertEquals(checkpoints[1]?.providerBlocks.map((entry) => entry.block), [
+      { type: "thinking", thinking: "", signature: SIGNATURE },
+      rawToolUse,
+      emptyReasoning,
+    ]);
+    const messageFinishes = observed.filter(isMessageFinishEvent);
+    const emptyFinish = messageFinishes[1];
+    assertEquals(emptyFinish?.finishReason, "stop");
+    assertEquals(emptyFinish?.totalUsage, { inputTokens: 1, outputTokens: 1, totalTokens: 2 });
   });
 
   for (const mode of ["generate", "stream"] as const) {

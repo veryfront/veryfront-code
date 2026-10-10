@@ -3874,6 +3874,7 @@ export class AgentRuntime {
             generatedToolResults.size === 0 &&
             somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
           if (stoppedEmptyAfterCompletedTool) {
+            await observeGeneratedProviderTurnOnce(response);
             await persistGeneratedProviderReplayCheckpoint();
             throwIfAborted(abortSignal);
             if (recoveredEmptyResponse || step + 1 >= maxSteps) {

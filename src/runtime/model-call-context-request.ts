@@ -411,6 +411,14 @@ function resolvePersistedControls(
   return effective;
 }
 
+function resolveAnthropicMaxOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): number | undefined {
+  const native = readProviderControl(model, options, "max_tokens");
+  return native ? numberControl(native.value) : options.maxOutputTokens;
+}
+
 function resolveAnthropicControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -444,8 +452,9 @@ function resolveAnthropicControls(
     : options.stopSequences?.length
     ? slicePrivateArray(options.stopSequences, 0, 4)
     : undefined;
-  // maxOutputTokens remains the neutral output budget, independent of the
-  // provider's combined output/thinking max_tokens allowance.
+  // Native Anthropic options merge after the neutral request body, so a raw
+  // max_tokens override is the effective output limit recorded for replay.
+  effective.maxOutputTokens = resolveAnthropicMaxOutputTokens(model, options);
   return effective;
 }
 

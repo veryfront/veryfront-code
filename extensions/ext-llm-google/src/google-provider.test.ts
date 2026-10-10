@@ -8,6 +8,8 @@ import {
   ProviderRateLimitError,
   ProviderRequestError,
 } from "veryfront/provider/shared";
+import type { ModelRuntimeCallOptions } from "veryfront/provider/shared";
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 
 import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./google-provider.ts";
 import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
@@ -276,6 +278,70 @@ describe("ext-llm-google/google-provider", () => {
       fetch: () => Promise.reject(new Error("not called")),
     }, "gemini-2.0-flash");
     assertEquals(runtime.runtimeCapabilities?.structuredOutput, true);
+  });
+
+  it("records canonical Google provider metadata for custom labels", () => {
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      name: "custom-google-label",
+      fetch: () => Promise.reject(new Error("not called")),
+    }, "gemini-2.0-flash");
+    const options: ModelRuntimeCallOptions = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      maxOutputTokens: 64,
+      temperature: 0.4,
+      topP: 0.8,
+      topK: 9,
+      seed: 7,
+      stopSequences: ["neutral"],
+      providerOptions: {
+        google: {
+          generationConfig: {
+            maxOutputTokens: 128,
+            temperature: 0.2,
+            topP: 0.6,
+            stopSequences: ["generic"],
+          },
+        },
+        "custom-google-label": {
+          generationConfig: {
+            maxOutputTokens: 256,
+            temperature: 0.1,
+            topP: 0.5,
+            topK: 3,
+            seed: 11,
+            stopSequences: ["custom"],
+            thinkingConfig: { thinkingBudget: 4096, includeThoughts: true },
+          },
+        },
+      },
+    };
+
+    const body = buildGoogleGenerateContentRequest(
+      "custom-google-label",
+      options,
+      { push() {}, drain: () => [] },
+    );
+    const projected = buildModelCallContextRequest(runtime, options);
+
+    assertEquals(runtime.provider, "custom-google-label");
+    assertEquals(runtime.modelProvider, "google");
+    assertEquals(projected?.maxOutputTokens, body.generationConfig?.maxOutputTokens);
+    assertEquals(projected?.temperature, body.generationConfig?.temperature);
+    assertEquals(projected?.topP, body.generationConfig?.topP);
+    assertEquals(projected?.topK, body.generationConfig?.topK);
+    assertEquals(projected?.seed, body.generationConfig?.seed);
+    assertEquals(projected?.stopSequences, body.generationConfig?.stopSequences);
+    assertEquals(projected?.reasoning, { enabled: true, budgetTokens: 4096 });
+    assertEquals(projected, {
+      maxOutputTokens: 256,
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 3,
+      seed: 11,
+      stopSequences: ["custom"],
+      reasoning: { enabled: true, budgetTokens: 4096 },
+    });
   });
 
   it("sends image URL user parts as Google fileData content", async () => {
