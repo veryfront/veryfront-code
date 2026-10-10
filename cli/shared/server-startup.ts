@@ -246,11 +246,11 @@ async function startCliProductionServerWithHostedHttp(
   try {
     await ensureContentProcessor();
   } catch (error) {
-    // Do not leave a listener running after a failed startup.
-    try {
-      await result.stop();
-    } catch (stopError) {
-      throw new AggregateError([error, stopError], "Server startup failed and did not stop");
+    // Do not leave a listener running after a failed startup. Start broker
+    // shutdown at the same time, so a hung listener stop cannot hold allocations.
+    const [stopped] = await Promise.allSettled([result.stop(), hostedHttp?.shutdown()]);
+    if (stopped.status === "rejected") {
+      throw new AggregateError([error, stopped.reason], "Server startup failed and did not stop");
     }
     throw error;
   }
