@@ -2819,6 +2819,203 @@ describe("agent/hosted-chat-execution-runtime", () => {
     }]);
   });
 
+  it("classifies connected watchdog-first aborts that happen while detached finalization awaits final steps", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const callerAbortController = new AbortController();
+    const watchdogAbortController = new AbortController();
+    const pendingSteps = Promise.withResolvers<readonly unknown[]>();
+    const lifecycleAdapter = createLifecycleAdapter({ terminalStates });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => ({
+        steps: pendingSteps.promise,
+        toUIMessageStream: () => emptyStream(),
+      }),
+    };
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter,
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: callerAbortController.signal,
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          signal: watchdogAbortController.signal,
+        }),
+    });
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: callerAbortController.signal,
+      bootstrap,
+    });
+
+    const finished = runtime.waitForFinish();
+    const sharedAbortReason = new Error("shared abort token=secret");
+    watchdogAbortController.abort(sharedAbortReason);
+    callerAbortController.abort(sharedAbortReason);
+    pendingSteps.resolve([]);
+    await finished;
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "Hosted chat stream stopped before producing a response",
+    }]);
+  });
+
+  it("canonicalizes timeout aborts that happen while detached finalization awaits final steps", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const internalController = new AbortController();
+    const pendingSteps = Promise.withResolvers<readonly unknown[]>();
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog({ signal: internalController.signal }),
+        streamResult: {
+          steps: pendingSteps.promise,
+          toUIMessageStream: () => emptyStream(),
+        },
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    const finished = runtime.waitForFinish();
+    internalController.abort(new Error("stream timeout token=secret"));
+    pendingSteps.resolve([]);
+    await finished;
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_TIMEOUT",
+      terminalErrorMessage:
+        "This run timed out before the agent finished. Try again to continue, or narrow the request.",
+    }]);
+  });
+
+  it("keeps connected caller-first abort semantics while detached finalization awaits final steps", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const callerAbortController = new AbortController();
+    const watchdogAbortController = new AbortController();
+    const pendingSteps = Promise.withResolvers<readonly unknown[]>();
+    const lifecycleAdapter = createLifecycleAdapter({ terminalStates });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => ({
+        steps: pendingSteps.promise,
+        toUIMessageStream: () => emptyStream(),
+      }),
+    };
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter,
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: callerAbortController.signal,
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          signal: watchdogAbortController.signal,
+        }),
+    });
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: callerAbortController.signal,
+      bootstrap,
+    });
+
+    const finished = runtime.waitForFinish();
+    const sharedAbortReason = new Error("shared abort token=secret");
+    callerAbortController.abort(sharedAbortReason);
+    watchdogAbortController.abort(sharedAbortReason);
+    pendingSteps.resolve([]);
+    await finished;
+
+    assertEquals(terminalStates, [{
+      status: "cancelled",
+      terminalErrorCode: "ABORTED",
+      terminalErrorMessage: "Chat stream aborted",
+    }]);
+  });
+
+  it("keeps late confirmed manual pause nonterminal while detached finalization awaits final steps", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const flushes: string[] = [];
+    const lifecycleAdapter = createLifecycleAdapter({
+      terminalStates,
+      durableRunMirror: createDurableRunMirror({ chunks, flushes }),
+    });
+    const pauseLifetime = new AbortController();
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: pauseLifetime.signal,
+      fetch: () => Promise.resolve(Response.json({ stop: true })),
+    });
+    const internalController = new AbortController();
+    const pendingSteps = Promise.withResolvers<readonly unknown[]>();
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {
+          recordHostedAgentPauseCleanup(lifecycleAdapter, true);
+        },
+        lifecycleAdapter,
+        rootStreamWatchdog: createRootStreamWatchdog({ signal: internalController.signal }),
+        streamResult: {
+          steps: pendingSteps.promise,
+          toUIMessageStream: () => emptyStream(),
+        },
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    const finished = runtime.waitForFinish();
+    await capability.acknowledge({
+      version: 1,
+      nextStep: 0,
+      messages: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      latestAssistantText: "",
+      completed: false,
+      recoveredEmptyResponse: false,
+      recoveredInterruptedLocalToolBatch: false,
+    });
+    capability.persisted?.(true);
+    inheritHostedAgentPauseCapability(lifecycleAdapter, capability);
+    internalController.abort(new Error("internal watchdog token=secret"));
+    pendingSteps.resolve([]);
+    await finished;
+
+    assertEquals(terminalStates, []);
+    assertEquals(flushes, ["flush"]);
+    assertEquals(canSettleHostedAgentPause(lifecycleAdapter), true);
+  });
   it("keeps confirmed manual pause nonterminal when the internal watchdog aborts", async () => {
     const terminalStates: HostedLifecycleTerminalState[] = [];
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];

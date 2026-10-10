@@ -814,8 +814,7 @@ async function finalizeResponseFinish(input: {
 async function finalizeDetachedStreamEnd(input: {
   capturedMessageId: string | null;
   streamResult: { steps: PromiseLike<readonly unknown[]> };
-  isAborted: boolean;
-  lastStreamError: unknown;
+  resolveTerminalContext: () => { isAborted: boolean; streamError: unknown };
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
   mirroredToolChunkState: MirroredToolChunkState;
   mirroredDurableOutput: boolean;
@@ -824,9 +823,10 @@ async function finalizeDetachedStreamEnd(input: {
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
+  const initialTerminalContext = input.resolveTerminalContext();
   await finalizeHostedChatRun({
     kind: "detached",
-    isAborted: input.isAborted,
+    isAborted: initialTerminalContext.isAborted,
     mirroredDurableOutput: input.mirroredDurableOutput,
     mirroredMessage: input.mirroredMessage,
     streamResult: input.streamResult,
@@ -836,7 +836,8 @@ async function finalizeDetachedStreamEnd(input: {
     incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
     cleanup: input.cleanup,
     logger: input.logger,
-    streamError: input.lastStreamError,
+    streamError: initialTerminalContext.streamError,
+    resolveTerminalContext: input.resolveTerminalContext,
   });
 }
 
@@ -930,8 +931,10 @@ export function createHostedChatExecutionRuntime(
     await finalizeDetachedStreamEnd({
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
-      isAborted: isCallerAbortForDetachedFinalization(),
-      lastStreamError: resolveDetachedStreamError(),
+      resolveTerminalContext: () => ({
+        isAborted: isCallerAbortForDetachedFinalization(),
+        streamError: resolveDetachedStreamError(),
+      }),
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
       mirroredDurableOutput,
