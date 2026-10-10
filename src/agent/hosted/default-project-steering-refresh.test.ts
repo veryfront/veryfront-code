@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
