@@ -15,6 +15,8 @@ import {
 } from "#veryfront/security/http/outbound-fetch.ts";
 import { dispatchIntegrationApiRequest } from "#veryfront/integrations/integration-transport.ts";
 import { fetchSandboxUrl } from "#veryfront/sandbox/config.ts";
+import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
+import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 
 const origin = "http://127.0.0.1:4000";
 
@@ -35,6 +37,14 @@ describe("host credential API transport", () => {
       }),
     sandbox: (url: string) =>
       fetchSandboxUrl(url, { headers: { authorization: "Bearer <TOKEN>" } }),
+    tokenStorage: (url: string) =>
+      createVeryfrontApiTransport<Response>({
+        baseUrl: url,
+        getToken: () => "<TOKEN>",
+        retry: { maxRetries: 0, initialDelay: 1, maxDelay: 1 },
+        outboundPolicy: {},
+        onResponse: async (response) => response,
+      }).request(url),
   };
 
   for (const [name, request] of Object.entries(apiRequests)) {
@@ -93,6 +103,57 @@ describe("host credential API transport", () => {
         }));
     });
   }
+
+  it("persists replay checkpoints to the approved private API and rejects redirects", async () => {
+    const service = "http://api.svc.example:4000";
+    const calls: string[] = [];
+    let redirect = false;
+    const fetchImpl: typeof fetch = (input, init) => {
+      const request = new Request(input, init);
+      calls.push(request.url);
+      assertEquals(request.headers.get("authorization"), "Bearer <TOKEN>");
+      return Promise.resolve(
+        redirect
+          ? new Response(null, {
+            status: 307,
+            headers: { location: "http://other.svc.example/collect" },
+          })
+          : Response.json({ latestEventId: 1, appendedCount: 1 }),
+      );
+    };
+    await withEnv({
+      VERYFRONT_API_URL: service,
+      VERYFRONT_API_BASE_URL: "",
+      VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
+    }, () =>
+      __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        resolveHost: () => Promise.resolve(["10.0.0.8"]),
+      }, async () => {
+        const persist = createRunScopedProviderReplayCheckpointPersister({
+          apiUrl: service,
+          runId: "run_checkpoint",
+          runEventAppendToken: "<TOKEN>",
+        })!;
+        const checkpoint = {
+          version: 1 as const,
+          messageId: "10000000-1000-4000-8000-100000000001",
+          provider: "anthropic" as const,
+          providerBlocks: [],
+          providerBlockPositions: [],
+          providerMessageBlockCounts: [],
+          totalPartCount: 0,
+        };
+        await persist(checkpoint);
+        redirect = true;
+        await assertRejects(() => persist(checkpoint));
+        assertEquals(calls, [
+          `${service}/runs/run_checkpoint/events`,
+          `${service}/runs/run_checkpoint/events`,
+        ]);
+      }));
+  });
 
   it("accepts either host-configured API origin", async () => {
     await withEnv({ VERYFRONT_API_URL: "", VERYFRONT_API_BASE_URL: `${origin}/api` }, async () => {
