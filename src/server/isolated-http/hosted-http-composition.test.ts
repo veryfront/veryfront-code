@@ -21,6 +21,7 @@ const hostEnv: Record<string, string | undefined> = {
   VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN: "https://source-api.veryfront.test",
   VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY: "ghcr.io/veryfront/tenant-source",
   VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID: "service-account-renderer",
+  VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE: "/host/configuration-key",
   VERYFRONT_API_BASE_URL: "https://api.veryfront.test",
 };
 const read = (env: Record<string, string | undefined>) => (key: string) => env[key];
@@ -62,6 +63,7 @@ function defaultFiles() {
     "/host/ca.pem": "-----BEGIN CERTIFICATE-----\nAA==\n",
     "/host/token": "broker-token-1\n",
     "/host/records.json": JSON.stringify([record]),
+    "/host/configuration-key": "k".repeat(32),
   });
 }
 
@@ -513,6 +515,23 @@ describe("hosted HTTP host composition", () => {
         }),
       Error,
       "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE could not be read in time",
+    );
+  });
+
+  it("refuses a configuration key shorter than 32 bytes", async () => {
+    const host = defaultFiles();
+    host.files.set("/host/configuration-key", "short");
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
+          isOverrideEnabled: () => false,
+          readFile: host.readFile,
+          createAllocatorClient: () => allocator,
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      Error,
+      "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
     );
   });
 });
