@@ -1079,7 +1079,7 @@ for (
           if (neutral === "json-schema") {
             assertEquals(captured.name, "neutral");
             assertEquals(captured.description, "Neutral output");
-            assertEquals(captured.strict, true);
+            assertEquals(Object.hasOwn(captured, "strict"), false);
           }
           const selectedSchema = provider === "anthropic"
             ? Reflect.get(originalConstraint, "format")

@@ -865,6 +865,73 @@ describe("runtime-bridge", () => {
     assertEquals(JSON.stringify(events).includes(privateDetail), false);
   });
 
+  it("records a sanitized nonterminal stream dispatch failure after mandatory context persistence", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateDetail = "private upstream stream dispatch detail";
+    const model = createStreamModel("test", "test/sanitized-stream-dispatch-failure", async () => {
+      throw new Error(privateDetail);
+    });
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            collectAsync(
+              streamText({ model, messages: [{ role: "user", content: "Hello" }] }).fullStream,
+            ),
+        ),
+      Error,
+      privateDetail,
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateDetail), false);
+  });
+
+  it("preserves stream cancellation without recording a provider failure", async () => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("Stream cancelled", "AbortError");
+    const events: AgentRunEvent[] = [];
+    const model = createStreamModel("test", "test/cancelled-stream", async () => {
+      controller.abort(cancellation);
+      throw cancellation;
+    });
+
+    let rejection: unknown;
+    try {
+      await runWithMandatoryRunEventSink(
+        (event) => {
+          events.push(event);
+        },
+        () =>
+          collectAsync(
+            streamText({
+              model,
+              abortSignal: controller.signal,
+              messages: [{ role: "user", content: "Hello" }],
+            }).fullStream,
+          ),
+      );
+    } catch (error) {
+      rejection = error;
+    }
+
+    assertEquals(rejection, cancellation);
+    assertEquals(events.map((event) => event.type), ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"]);
+  });
+
   it("awaits the mandatory sink before the public sink and provider dispatch", async () => {
     const order: string[] = [];
     const model = createGenerateModel("test", "test/composed-run-event-sinks", async () => {
@@ -2749,6 +2816,117 @@ describe("runtime-bridge", () => {
     } finally {
       clearTimeout(timer);
     }
+  });
+
+  it("records one sanitized nonterminal stream error-part failure for concurrent consumers", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateMarker = "private-dual-stream-observed-provider-error";
+    const providerError = new ProviderQuotaError({
+      provider: "openai",
+      status: 429,
+      message: privateMarker,
+      retryable: false,
+    });
+    const model = createStreamModel(
+      "test",
+      "test/dual-stream-observed-provider-error",
+      async () => ({
+        stream: readableStreamFrom([
+          { type: "error", error: providerError },
+        ]),
+      }),
+    );
+
+    await runWithMandatoryRunEventSink(
+      (event) => {
+        events.push(event);
+      },
+      async () => {
+        const result = streamText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+        });
+        const settled = await Promise.allSettled([
+          collectAsync(result.textStream),
+          collectAsync(result.fullStream),
+        ]);
+        assertEquals(settled.map((outcome) => outcome.status), ["rejected", "rejected"]);
+      },
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: {
+        message:
+          "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+        code: "AI_PROVIDER_BILLING_ERROR",
+      },
+    });
+    assertEquals(JSON.stringify(events).includes(privateMarker), false);
+  });
+
+  it("records stream error-part failure without waiting for provider cleanup", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateMarker = "private-stalled-provider-cleanup-error";
+    let cleanupStarted = false;
+    const model = createStreamModel("test", "test/stalled-provider-cleanup-error", async () => ({
+      stream: new ReadableStream<unknown>({
+        start(controller) {
+          controller.enqueue({ type: "error", error: new Error(privateMarker) });
+        },
+        cancel() {
+          cleanupStarted = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+    }));
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => timeout.reject(new Error("provider cleanup delayed stream failure observation")),
+      1000,
+    );
+
+    try {
+      await Promise.race([
+        runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            assertRejects(
+              () =>
+                collectAsync(
+                  streamText({ model, messages: [{ role: "user", content: "Hello" }] })
+                    .fullStream,
+                ),
+              Error,
+              "Provider stream failed",
+            ),
+        ),
+        timeout.promise,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    assertEquals(cleanupStarted, true);
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateMarker), false);
   });
 
   it("rejects a second stream view started after direct consumption", async () => {

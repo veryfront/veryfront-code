@@ -2252,3 +2252,56 @@ describe("model call request projection", () => {
     );
   });
 });
+
+for (const provider of ["anthropic", "google", "openai"] as const) {
+  for (const cloud of [false, true]) {
+    for (const strict of [false, true]) {
+      it(`captures only ${provider} supported neutral schema strict ${strict} in ${cloud ? "Cloud" : "native"}`, () => {
+        const options: ModelRuntimeCallOptions = {
+          prompt,
+          responseFormat: {
+            type: "json_schema",
+            name: "answer",
+            strict,
+            schema: { type: "object", properties: { answer: { type: "string" } } },
+          },
+        };
+        const captured = buildModelCallContextRequest({
+          provider: cloud ? "veryfront-cloud" : provider,
+          modelProvider: provider,
+          modelId: "format-test",
+          openAITransport: "chat-completions",
+        }, options);
+        const warnings = createWarningCollector();
+        const body = provider === "anthropic"
+          ? buildAnthropicMessagesRequest("claude-test", provider, options, false, warnings)
+          : provider === "google"
+          ? buildGoogleGenerateContentRequest(provider, options, warnings)
+          : buildOpenAIChatRequest("gpt-4.1-mini", provider, options, false, warnings);
+        assert(captured?.responseFormat?.type === "json_schema");
+        if (provider === "openai") {
+          const response = Reflect.get(body, "response_format");
+          assert(typeof response === "object" && response !== null);
+          const format = Reflect.get(response, "json_schema");
+          assert(typeof format === "object" && format !== null);
+          assertEquals(captured.responseFormat.strict, Reflect.get(format, "strict"));
+          assertEquals(captured.responseFormat.strict, strict);
+        } else {
+          assertEquals(Object.hasOwn(captured.responseFormat, "strict"), false);
+          const config = Reflect.get(
+            body,
+            provider === "anthropic" ? "output_config" : "generationConfig",
+          );
+          assert(typeof config === "object" && config !== null);
+          const format = provider === "anthropic" ? Reflect.get(config, "format") : config;
+          assert(typeof format === "object" && format !== null);
+          assertEquals(Object.hasOwn(format, "strict"), false);
+          assertEquals(
+            captured.responseFormat.schema,
+            Reflect.get(format, provider === "anthropic" ? "schema" : "responseJsonSchema"),
+          );
+        }
+      });
+    }
+  }
+}

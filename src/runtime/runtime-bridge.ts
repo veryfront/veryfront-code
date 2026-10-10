@@ -1110,6 +1110,19 @@ function observeGenerateFailure<T>(
   });
 }
 
+function createGenerateFailureObserver(
+  abortSignal?: AbortSignal,
+): (error: unknown) => Promise<never> {
+  let observation: Promise<void> | undefined;
+  return async (error: unknown): Promise<never> => {
+    if (!abortSignal || !isAbortSignalAborted(abortSignal)) {
+      observation ??= emitGenerateFailureObservation(error);
+      await observation;
+    }
+    throw error;
+  };
+}
+
 function isDirectToolCallPart(
   part: unknown,
 ): part is { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
@@ -1529,6 +1542,56 @@ function materializeProviderStreamPart(part: unknown): unknown {
   }
 }
 
+function observeProviderStreamSourceFailures(
+  stream: ReadableStream<unknown>,
+  observeFailure: (error: unknown) => Promise<never>,
+): ReadableStream<unknown> {
+  const reader = stream.getReader();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+
+  return new ReadableStream<unknown>({
+    async pull(controller) {
+      try {
+        const part = await reader.read();
+        if (part.done) {
+          controller.close();
+          release();
+          return;
+        }
+        controller.enqueue(materializeProviderStreamPart(part.value));
+      } catch (error) {
+        const providerFailure = createRuntimeProviderStreamFailure(error);
+        void (async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Provider cleanup cannot replace or delay the terminal provider error.
+          } finally {
+            release();
+          }
+        })();
+        try {
+          await observeFailure(providerFailure);
+        } catch (observedError) {
+          controller.error(observedError);
+        }
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+}
+
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   const reader = stream.getReader();
   let completed = false;
@@ -1634,6 +1697,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 }
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
+  let observeStreamFailure = createGenerateFailureObserver(options.abortSignal);
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const model = options.model;
     await settleVeryfrontCloudModel(model, options.abortSignal);
@@ -1644,8 +1708,17 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
     const dispatchMethod = model.doStream;
     const dispatch = () =>
       ReflectApply(dispatchMethod, model, [directOptions]) as Promise<ModelRuntimeStreamResult>;
+    observeStreamFailure = createGenerateFailureObserver(directOptions.abortSignal);
     const capture = await emitModelCallContextEvent(model, directOptions);
-    return runWithModelCallCapture(capture, dispatch);
+    try {
+      const result = await runWithModelCallCapture(capture, dispatch);
+      return {
+        ...result,
+        stream: observeProviderStreamSourceFailures(result.stream, observeStreamFailure),
+      };
+    } catch (error) {
+      return await observeStreamFailure(error);
+    }
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
   // branch is never consumed at all) and doStream rejects.

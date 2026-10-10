@@ -1510,8 +1510,9 @@ function snapshotAnthropicResponseFormat(
 ): ModelCallRequestSource["responseFormat"] | undefined {
   const snapshot = snapshotResponseFormat(responseFormat);
   if (snapshot?.type !== "json_schema") return snapshot;
+  const { strict: _unsupportedStrict, ...supported } = snapshot;
   return {
-    ...snapshot,
+    ...supported,
     schema: markPreservedResponseFormatSchema(closeSchemaForOutputConfig(snapshot.schema)),
   };
 }
@@ -1622,7 +1623,10 @@ function resolveGoogleResponseFormat(
   nativeGenerationConfig: PropertyDescriptor | undefined,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource["responseFormat"] | undefined {
-  if (options.responseFormat?.type === "json_schema") return options.responseFormat;
+  if (options.responseFormat?.type === "json_schema") {
+    const { strict: _unsupportedStrict, ...supported } = options.responseFormat;
+    return supported;
+  }
   const native = readNativeGoogleResponseFormat(nativeGenerationConfig?.value, {
     forceJsonMimeType: options.responseFormat?.type === "json",
   });
