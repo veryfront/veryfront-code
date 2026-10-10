@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   cancelLiveEvalInputRequest,
   listOpenLiveEvalInputRequests,
@@ -11,11 +10,12 @@ import {
 const CANONICAL_INPUT_REQUEST_ID = "00000000-0000-4000-8000-000000000101";
 const LEGACY_INPUT_REQUEST_ID = "00000000-0000-4000-8000-000000000102";
 
-function createApiContext() {
+function createApiContext(data: unknown) {
   return {
     apiUrl: "https://api.example.test",
     authToken: "test-token",
     projectId: null,
+    fetch: () => Promise.resolve(Response.json({ data })),
   };
 }
 
@@ -56,80 +56,57 @@ Deno.test("live eval responses use the global input resource and a mutation idem
 });
 
 Deno.test("live eval input request polling accepts canonical input_request_id records", async () => {
-  await withMockFetch(
-    () =>
-      Promise.resolve(
-        Response.json({
-          data: [{ input_request_id: CANONICAL_INPUT_REQUEST_ID, status: "open" }],
-        }),
-      ),
-    async () => {
-      const inputRequestId = await waitForOpenLiveEvalInputRequest(createApiContext(), {
-        conversationId: "conversation",
-        requestTimeoutMs: 1000,
-        timeoutMs: 100,
-        pollIntervalMs: 0,
-        abortSignal: new AbortController().signal,
-      });
+  const context = createApiContext([
+    { input_request_id: CANONICAL_INPUT_REQUEST_ID, status: "open" },
+  ]);
+  const inputRequestId = await waitForOpenLiveEvalInputRequest(context, {
+    conversationId: "conversation",
+    requestTimeoutMs: 1000,
+    timeoutMs: 100,
+    pollIntervalMs: 0,
+    abortSignal: new AbortController().signal,
+  });
 
-      assertEquals(inputRequestId, CANONICAL_INPUT_REQUEST_ID);
-    },
-  );
+  assertEquals(inputRequestId, CANONICAL_INPUT_REQUEST_ID);
 });
 
 Deno.test("live eval input request listing keeps canonical and legacy open records", async () => {
-  await withMockFetch(
-    () =>
-      Promise.resolve(
-        Response.json({
-          data: [
-            { input_request_id: CANONICAL_INPUT_REQUEST_ID, status: "open" },
-            { id: LEGACY_INPUT_REQUEST_ID, status: "open" },
-            { input_request_id: "not-a-uuid", status: "open" },
-            { input_request_id: "00000000-0000-4000-8000-000000000103", status: "submitted" },
-            {
-              id: "00000000-0000-4000-8000-000000000104",
-              input_request_id: "00000000-0000-4000-8000-000000000105",
-              status: "open",
-            },
-          ],
-        }),
-      ),
-    async () => {
-      const inputRequests = await listOpenLiveEvalInputRequests(createApiContext(), {
-        conversationId: "conversation",
-        requestTimeoutMs: 1000,
-      });
-
-      assertEquals(inputRequests, [
-        { id: CANONICAL_INPUT_REQUEST_ID, status: "open" },
-        { id: LEGACY_INPUT_REQUEST_ID, status: "open" },
-      ]);
+  const context = createApiContext([
+    { input_request_id: CANONICAL_INPUT_REQUEST_ID, status: "open" },
+    { id: LEGACY_INPUT_REQUEST_ID, status: "open" },
+    { input_request_id: "not-a-uuid", status: "open" },
+    { input_request_id: "00000000-0000-4000-8000-000000000103", status: "submitted" },
+    {
+      id: "00000000-0000-4000-8000-000000000104",
+      input_request_id: "00000000-0000-4000-8000-000000000105",
+      status: "open",
     },
-  );
+  ]);
+  const inputRequests = await listOpenLiveEvalInputRequests(context, {
+    conversationId: "conversation",
+    requestTimeoutMs: 1000,
+  });
+
+  assertEquals(inputRequests, [
+    { id: CANONICAL_INPUT_REQUEST_ID, status: "open" },
+    { id: LEGACY_INPUT_REQUEST_ID, status: "open" },
+  ]);
 });
 
 Deno.test("live eval input request polling rejects malformed canonical records", async () => {
-  await withMockFetch(
+  const context = createApiContext([
+    { input_request_id: "not-a-uuid", status: "open" },
+  ]);
+  await assertRejects(
     () =>
-      Promise.resolve(
-        Response.json({
-          data: [{ input_request_id: "not-a-uuid", status: "open" }],
-        }),
-      ),
-    async () => {
-      await assertRejects(
-        () =>
-          waitForOpenLiveEvalInputRequest(createApiContext(), {
-            conversationId: "conversation",
-            requestTimeoutMs: 1000,
-            timeoutMs: 1,
-            pollIntervalMs: 0,
-            abortSignal: new AbortController().signal,
-          }),
-        Error,
-        "Timed out while waiting for an open input request",
-      );
-    },
+      waitForOpenLiveEvalInputRequest(context, {
+        conversationId: "conversation",
+        requestTimeoutMs: 1000,
+        timeoutMs: 1,
+        pollIntervalMs: 0,
+        abortSignal: new AbortController().signal,
+      }),
+    Error,
+    "Timed out while waiting for an open input request",
   );
 });
