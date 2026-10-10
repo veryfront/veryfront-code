@@ -33,6 +33,7 @@ export type {
   EmbeddingConfig,
   RagChunk,
   RagDocumentMeta,
+  RagDocumentScope,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,

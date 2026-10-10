@@ -132,6 +132,27 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("rejects caller-supplied semantic document scopes", async () => {
+    const knowledge = projectKnowledge({ model: "test/demo" });
+
+    await assertRejects(
+      () =>
+        knowledge.retrieve("policy", {
+          documentScope: {
+            version: 1,
+            path_flavor: "posix",
+            include_all: false,
+            includes: ["knowledge/public/**"],
+            excludes: [],
+            content_dir: "knowledge",
+            resolved_content_dir: "/repo/knowledge",
+          },
+        } as never),
+      Error,
+      "per-call documentScope is not supported",
+    );
+  });
+
   it("applies retrieve maxQueryChars overrides to the RAG query once", async () => {
     const embeddedValues: string[] = [];
     registerEmbeddingProvider("capture", () =>
