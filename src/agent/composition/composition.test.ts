@@ -13,6 +13,7 @@ import {
   assertEquals,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import {
@@ -574,6 +575,73 @@ describe("agentAsTool", () => {
     const finish = observed.at(-1) as Record<string, unknown>;
     assertEquals(finish.type, "message-finish");
     assertEquals(finish.object, { title: "Done", count: 2 });
+  });
+
+  it("observes raw generated-turn finish metadata before rethrowing outputSchema parse errors", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-invalid-structured",
+        usage: {
+          inputTokens: 4,
+          outputTokens: 6,
+          totalTokens: 10,
+          usageCaptureStatus: "complete",
+        },
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-invalid-structured", {
+      model: "custom/generated-turn-observer-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected outputSchema parse failure");
+      },
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error instanceof Error, true);
+    assertStringIncludes((error as Error).message, "failed outputSchema validation");
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+    ]);
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.finishReason, "stop");
+    assertEquals(finish.totalUsage, {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete",
+    });
+    assertEquals(Object.hasOwn(finish, "object"), false);
   });
 
   it("routes the real generic delegation through its request-scoped owner exactly once", async () => {

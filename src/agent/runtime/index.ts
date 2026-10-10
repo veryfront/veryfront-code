@@ -3763,9 +3763,15 @@ export class AgentRuntime {
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
-          const parsedObject = outputSchema
-            ? await outputSchema.parseOutput(response.text)
-            : undefined;
+          let parsedObject: unknown;
+          if (outputSchema) {
+            try {
+              parsedObject = await outputSchema.parseOutput(response.text);
+            } catch (error) {
+              await observeGeneratedAgentTurn(assistantMessage.id, response);
+              throw error;
+            }
+          }
           await observeGeneratedAgentTurn(assistantMessage.id, {
             ...response,
             ...(outputSchema ? { object: parsedObject } : {}),
