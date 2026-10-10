@@ -317,6 +317,11 @@ export type RuntimeLoadSkillToolOptions = {
   description?: string;
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
+  /**
+   * Reject reference reads when the execution context carries no provider-observed
+   * skill body snapshot. Hosts that execute this tool for a remote runtime set it.
+   */
+  requireProviderObservation?: boolean;
 };
 
 const getRuntimeLoadSkillReferenceFileInputSchema = defineSchema((v) =>
@@ -1558,7 +1563,10 @@ async function loadRuntimeSkillReferenceFile(
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
   }
-  if (hasProviderObservedSkillBody(executionContext, skillId) === false) {
+  const observed = hasProviderObservedSkillBody(executionContext, skillId);
+  if (
+    observed === false || (observed === undefined && options.requireProviderObservation === true)
+  ) {
     return {
       error:
         `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,

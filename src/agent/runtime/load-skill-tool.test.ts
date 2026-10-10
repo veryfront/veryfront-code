@@ -2597,6 +2597,43 @@ Deno.test("createRuntimeLoadSkillTool waits until provider observes body before 
   );
 });
 
+Deno.test("createRuntimeLoadSkillTool can require a provider observation snapshot", async () => {
+  const create = (requireProviderObservation?: boolean) =>
+    createRuntimeLoadSkillTool({
+      context: createProjectContext(),
+      skillsDir: "/skills",
+      projectSkillLoader: createProjectSkillLoader({
+        skills: new Map([
+          ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+        ]),
+        references: new Map([["plan/references/project.md", "project reference"]]),
+      }),
+      builtinStore: createBuiltinStore({}),
+      ...(requireProviderObservation === undefined ? {} : { requireProviderObservation }),
+    });
+  const read = { skillId: "plan", file: "references/project.md" };
+
+  const required = create(true);
+  await required.execute({ skillId: "plan" });
+  assertEquals(await required.execute(read, {}), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+  const observedContext = {};
+  setProviderObservedSkillBodies(observedContext, ["plan"]);
+  assertEquals(
+    (await required.execute(read, observedContext) as { content?: string }).content,
+    "project reference",
+  );
+
+  const direct = create();
+  await direct.execute({ skillId: "plan" });
+  assertEquals(
+    (await direct.execute(read, {}) as { content?: string }).content,
+    "project reference",
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects unadvertised references after body load", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),

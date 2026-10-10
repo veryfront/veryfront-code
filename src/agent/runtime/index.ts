@@ -4438,7 +4438,11 @@ export class AgentRuntime {
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-          trustedSkillLoadResultIds: getTrustedSkillLoadResultIds(currentMessages),
+          // Omitted when empty so checkpoints without trusted loads keep the prior shape.
+          ...(() => {
+            const ids = getTrustedSkillLoadResultIds(currentMessages);
+            return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
+          })(),
           resumeToolCallExecuted,
           agentWriteFinalResponseToolGuardEnabled,
           interruptedLocalToolBatchRecoveryStep,

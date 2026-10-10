@@ -14,6 +14,8 @@ import {
 } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
 import {
@@ -109,6 +111,68 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("rejects a skill reference read through a host facade before the provider saw the body", async () => {
+    const loadSkill = createRuntimeLoadSkillTool({
+      context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
+      skillsDir: "/skills",
+      projectSkillLoader: {
+        listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
+        loadProjectSkill: (_context, skillId) =>
+          Promise.resolve(
+            skillId === "review"
+              ? { instructions: "# Review", references: ["references/checklist.md"] }
+              : null,
+          ),
+        loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
+      },
+      builtinStore: {
+        readSkill: () => Promise.resolve(null),
+        readReferenceFile: () => Promise.resolve(null),
+        listReferences: () => Promise.resolve([]),
+      },
+    });
+    const source: RemoteToolSource = {
+      id: "skills",
+      async listTools() {
+        return [{ name: "load_skill", description: "Load a skill", parameters: {} }];
+      },
+      executeTool: (_name, args, context) => loadSkill.execute!(args as never, context),
+    };
+    const f = fixture({}, {
+      sources: new Map([[source.id, {
+        source,
+        allowedToolNames: new Set(["load_skill"]),
+        context: {},
+      }]]),
+    });
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      // Executor-side observation state does not cross the channel.
+      const executorContext: ToolExecutionContext = { toolCallId: "executor-call" };
+      setProviderObservedSkillBodies(executorContext, ["review"]);
+      const body = await facade.executeTool(
+        "load_skill",
+        { load: { skillId: "review" } },
+        executorContext,
+      );
+      assertEquals((body as { skillId?: string }).skillId, "review");
+      const reference = await facade.executeTool(
+        "load_skill",
+        { reference: { skillId: "review", file: "references/checklist.md" } },
+        executorContext,
+      ) as { error?: string };
+      assertEquals(
+        reference.error?.startsWith('Read the load_skill result for "review"'),
+        true,
+      );
+      assertEquals(JSON.stringify(reference).includes("Detailed checklist content"), false);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("requires an own data property to grant project context", async () => {
     let executions = 0;
     let grantReads = 0;

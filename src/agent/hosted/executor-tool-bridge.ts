@@ -9,6 +9,7 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
 import {
   type AdmitExecutorToolCall,
   runWithToolCallAdmissionReceipt,
@@ -466,6 +467,9 @@ async function* callWithProgress(options: {
       }
     },
   };
+  // The host never sees the remote runtime's provider history, so it attaches an
+  // empty snapshot: reference reads fail closed instead of skipping the check.
+  setProviderObservedSkillBodies(context, []);
   const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
