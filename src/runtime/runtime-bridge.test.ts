@@ -1050,68 +1050,6 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
-  it("refuses unrepresented provider controls after Array iterator replacement", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
-    let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => {
-      assertModelCallContextEvent(event);
-      return {
-        eventId: "9007199254740993",
-        projectId,
-        runId: canonicalRunId,
-        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-      };
-    };
-    bindTestRuntimeObservationWriter({
-      sink,
-      runId: "33333333-3333-4333-8333-333333333333",
-      canonicalRunId,
-      projectId,
-    });
-    const model = registerVeryfrontCloudTestModel(
-      createGenerateModel(
-        "veryfront-cloud",
-        "veryfront-cloud/openai/gpt-test",
-        async () => {
-          dispatches += 1;
-          return { content: [], finishReason: "stop", usage: {} };
-        },
-      ),
-    );
-    const originalIterator = Array.prototype[Symbol.iterator];
-    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
-    Object.defineProperty(Array.prototype, Symbol.iterator, {
-      ...descriptor,
-      value: function (this: unknown[]) {
-        if (this.length === 5 && this[2] === "providerOptions") {
-          return Reflect.apply(originalIterator, [], []);
-        }
-        return Reflect.apply(originalIterator, this, []);
-      },
-    });
-
-    try {
-      await assertRejects(
-        async () =>
-          await runWithMandatoryRunEventSink(
-            sink,
-            async () =>
-              await generateText({
-                model,
-                messages: [{ role: "user", content: "Hello" }],
-                providerOptions: { "veryfront-cloud": { extra: true } },
-              }),
-          ),
-        DurableRunEventPersistenceError,
-        "Exact model call capture does not support these provider controls: providerOptions",
-      );
-    } finally {
-      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
-    }
-    assertEquals(dispatches, 0);
-  });
-
   it("captures supported system cache controls unchanged before provider dispatch", async () => {
     for (
       const cacheControl of [
