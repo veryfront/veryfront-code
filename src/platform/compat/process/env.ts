@@ -342,6 +342,7 @@ function readHostProcessEnv(key: string): string | undefined {
 // Captured while this module loads, before a project env file is loaded or
 // project code runs, so neither can redirect credentials sent to these origins.
 const HOST_BOOT_ENV_KEYS = [
+  "VERYFRONT_HOST_HTTP_API_ORIGIN",
   "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_API_URL",
   "VERYFRONT_API_BASE_URL",

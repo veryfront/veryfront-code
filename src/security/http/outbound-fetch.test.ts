@@ -1250,3 +1250,85 @@ describe("authenticated download transport settlement", () => {
     assertEquals(await bound?.text(), "private");
   });
 });
+
+describe("explicit loopback host API transport", () => {
+  const origin = "http://127.0.0.1:4000";
+  const environment = {
+    VERYFRONT_HOST_HTTP_API_ORIGIN: origin,
+    VERYFRONT_API_URL: origin,
+    VERYFRONT_API_BASE_URL: undefined,
+    VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: undefined,
+    VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: undefined,
+  };
+
+  it("sends credentials only to the approved API origin", async () => {
+    await withEnv(environment, () =>
+      withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        assertEquals(request.url, `${origin}/runs`);
+        assertEquals(request.headers.get("authorization"), "Bearer <TOKEN>");
+        return Response.json({ ok: true });
+      }, async () => {
+        const response = await createVeryfrontApiOriginBoundOutboundFetch(origin)(
+          `${origin}/runs`,
+          {
+            headers: { authorization: "Bearer <TOKEN>" },
+          },
+        );
+        assertEquals(await response.json(), { ok: true });
+      }));
+  });
+
+  it("rejects other origins before dispatch and does not authorize generic fetch", async () => {
+    let calls = 0;
+    await withEnv(environment, () =>
+      withMockFetch(() => {
+        calls++;
+        return Promise.resolve(new Response());
+      }, async () => {
+        const apiFetch = createVeryfrontApiOriginBoundOutboundFetch(origin);
+        for (
+          const url of [
+            "http://127.0.0.1:4001/run",
+            "http://localhost:4000/run",
+            "https://api.example/run",
+          ]
+        ) {
+          await assertRejects(
+            () => apiFetch(url, { headers: { authorization: "Bearer <TOKEN>" } }),
+            OutboundRequestBlockedError,
+          );
+        }
+        await assertRejects(
+          () => guardedOutboundFetch(`${origin}/runs`),
+          OutboundRequestBlockedError,
+        );
+        await assertRejects(
+          () => createOriginBoundOutboundFetch(origin)(`${origin}/runs`),
+          OutboundRequestBlockedError,
+        );
+        assertEquals(calls, 0);
+      }));
+  });
+
+  it("rejects redirects without sending credentials to the redirect target", async () => {
+    let calls = 0;
+    await withEnv(environment, () =>
+      withMockFetch(() => {
+        calls++;
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://attacker.example/collect" },
+          }),
+        );
+      }, async () => {
+        await assertRejects(() =>
+          createVeryfrontApiOriginBoundOutboundFetch(origin)(`${origin}/runs`, {
+            headers: { authorization: "Bearer <TOKEN>" },
+          })
+        );
+        assertEquals(calls, 1);
+      }));
+  });
+});

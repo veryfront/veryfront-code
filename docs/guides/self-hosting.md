@@ -21,6 +21,24 @@ identity headers before setting its own. See
   built-in local model. See [Providers](./providers.md).
 - A host that supports the current Node.js LTS, Deno, Bun, or containers.
 
+## Connect to a local Veryfront API
+
+Host-private API credentials require HTTPS by default. For a local API, export
+one numeric loopback origin before you start the runtime:
+
+```sh
+export VERYFRONT_API_URL=http://127.0.0.1:4000
+export VERYFRONT_HOST_HTTP_API_ORIGIN=http://127.0.0.1:4000
+```
+
+The permission applies only to that exact origin and port. It accepts
+`127.0.0.1` or `[::1]`, not DNS names, remote hosts, or embedded credentials.
+Project environment files and later environment writes cannot enable or change
+it. API redirects remain rejected, and other outbound transports keep their
+existing restrictions. Use local development credentials: HTTP does not verify
+the identity of another process listening on the configured port. Leave this
+permission unset for remote APIs.
+
 ## Check capability support
 
 Choose substitutes for managed capabilities before you deploy.

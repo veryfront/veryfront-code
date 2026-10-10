@@ -1,5 +1,17 @@
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostBootEnv,
+  getHostEnvExcludingEnvFile,
+} from "#veryfront/platform/compat/process/env.ts";
 
+const NativeURL = URL;
+const urlOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const urlHostname = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")!.get!;
+const urlProtocol = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const urlUsername = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
+const urlPassword = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const urlPathname = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+const urlSearch = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")!.get!;
+const urlHash = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")!.get!;
 const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
 const applyIntrinsic = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -14,10 +26,40 @@ function normalizeHostApiEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-/** Require encrypted transport before attaching host-private credentials. */
+/** @internal Exact numeric loopback API origin authorized by the operator at process boot. */
+export function isHostHttpApiOrigin(value: string): boolean {
+  const permission = getHostBootEnv("VERYFRONT_HOST_HTTP_API_ORIGIN");
+  const configuredApi = normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_URL")) ??
+    normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_BASE_URL"));
+  if (!permission || !configuredApi) return false;
+  try {
+    const allowed = new NativeURL(permission);
+    const target = new NativeURL(value);
+    const configured = new NativeURL(configuredApi);
+    const hostname = applyIntrinsic(urlHostname, allowed, []) as string;
+    const origin = applyIntrinsic(urlOrigin, allowed, []) as string;
+    return applyIntrinsic(urlProtocol, allowed, []) === "http:" &&
+      (hostname === "127.0.0.1" || hostname === "[::1]") &&
+      applyIntrinsic(urlPathname, allowed, []) === "/" &&
+      applyIntrinsic(urlSearch, allowed, []) === "" &&
+      applyIntrinsic(urlHash, allowed, []) === "" &&
+      applyIntrinsic(urlUsername, allowed, []) === "" &&
+      applyIntrinsic(urlPassword, allowed, []) === "" &&
+      applyIntrinsic(urlUsername, target, []) === "" &&
+      applyIntrinsic(urlPassword, target, []) === "" &&
+      applyIntrinsic(urlUsername, configured, []) === "" &&
+      applyIntrinsic(urlPassword, configured, []) === "" &&
+      applyIntrinsic(urlOrigin, target, []) === origin &&
+      applyIntrinsic(urlOrigin, configured, []) === origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Require HTTPS or an explicitly authorized numeric loopback API before attaching host credentials. */
 export function requireHostPrivateApiHttps(value: string): string {
   const prefix = applyIntrinsic(stringSlice, value, [0, 8]) as string;
-  if (applyIntrinsic(stringToLowerCase, prefix, []) !== "https://") {
+  if (applyIntrinsic(stringToLowerCase, prefix, []) !== "https://" && !isHostHttpApiOrigin(value)) {
     throw new TypeError("Host-private credentials require an HTTPS API endpoint");
   }
   return value;
