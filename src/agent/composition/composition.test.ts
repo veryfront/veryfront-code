@@ -655,7 +655,7 @@ describe("agentAsTool", () => {
     assertEquals(Object.hasOwn(errorEvent, "totalUsage"), false);
   });
 
-  it("keeps the outputSchema parse error when failure observation rejects", async () => {
+  it("propagates observer failures during outputSchema rejection handling", async () => {
     const outputSchema = defineSchema((v) =>
       v.object({
         title: v.string(),
@@ -698,9 +698,7 @@ describe("agentAsTool", () => {
       },
     );
 
-    assertStrictEquals(error === observerFailure, false);
-    assertStrictEquals(error instanceof Error, true);
-    assertStringIncludes((error as Error).message, "failed outputSchema validation");
+    assertStrictEquals(error, observerFailure);
     assertEquals(observed.map((event) => (event as { type?: string }).type), [
       "message-start",
       "text-start",
