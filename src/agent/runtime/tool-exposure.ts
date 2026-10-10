@@ -680,7 +680,10 @@ export function createToolExposurePlan(input: {
     }
   }
 
-  const hasCanonicalSkillLoader = somePrivateArray(authorized, (tool) => tool.name === "load_skill");
+  const hasCanonicalSkillLoader = somePrivateArray(
+    authorized,
+    (tool) => tool.name === "load_skill",
+  );
   // Keep the legacy loader discoverable without sending both loader schemas
   // in every initial request. Hosts without the canonical loader still bootstrap it.
   const bootstrap = input.bootstrapToolNames ??
