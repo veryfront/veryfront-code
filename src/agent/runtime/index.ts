@@ -4,6 +4,7 @@ import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
   observeGeneratedAgentTurn,
+  observeGeneratedAgentTurnFinish,
   observeRuntimeStream,
   withLocalChildRuntime,
 } from "../composition/local-child-execution.ts";
@@ -4068,21 +4069,37 @@ export class AgentRuntime {
           timestamp: Date.now(),
         });
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
-        let generatedTurnObserved = false;
-        const observeGeneratedProviderTurnOnce = async (
+        let generatedTurnAdmissionObserved = false;
+        let generatedTurnFinishObserved = false;
+        const observeGeneratedProviderTurnAdmissionOnce = async (): Promise<void> => {
+          if (generatedTurnAdmissionObserved) return;
+          await observeGeneratedAgentTurn(assistantMessage.id, {
+            ...response,
+            finishReason: undefined,
+            usage: undefined,
+          });
+          generatedTurnAdmissionObserved = true;
+        };
+        const observeGeneratedProviderTurnFinishOnce = async (
           turn: RuntimeGenerateTextResult & { object?: unknown },
         ): Promise<void> => {
-          if (generatedTurnObserved) return;
-          await observeGeneratedAgentTurn(
-            assistantMessage.id,
-            withOutputSchemaObservationObject(turn),
-          );
-          generatedTurnObserved = true;
-        };
-        const parseMaxStepsOutputOnce = async (): Promise<MaxStepsOutputParse> => {
-          if (maxStepsParsedOutput !== undefined) return maxStepsParsedOutput;
-          maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
-          return maxStepsParsedOutput;
+          if (generatedTurnFinishObserved) return;
+          if (!generatedTurnAdmissionObserved) {
+            await observeGeneratedAgentTurn(
+              assistantMessage.id,
+              withOutputSchemaObservationObject(turn),
+            );
+            generatedTurnAdmissionObserved = true;
+          } else {
+            await observeGeneratedAgentTurnFinish({
+              finishReason: turn.finishReason,
+              usage: turn.usage,
+              ...("object" in turn
+                ? { object: createOutputSchemaObservationObject(turn.object) }
+                : {}),
+            });
+          }
+          generatedTurnFinishObserved = true;
         };
         let generatedProviderReplayCheckpointPersisted = false;
         const persistGeneratedProviderReplayCheckpoint = async (): Promise<void> => {
@@ -4101,7 +4118,7 @@ export class AgentRuntime {
         try {
           await persistMessage(assistantMessage);
         } catch (error) {
-          await observeGeneratedProviderTurnOnce(response);
+          await observeGeneratedProviderTurnFinishOnce(response);
           throw error;
         }
 
@@ -4162,7 +4179,7 @@ export class AgentRuntime {
               await persistGeneratedToolResult(generatedToolResult);
             }
           } catch (error) {
-            await observeGeneratedProviderTurnOnce(response);
+            await observeGeneratedProviderTurnFinishOnce(response);
             await persistGeneratedProviderReplayCheckpoint();
             throw error;
           }
@@ -4171,7 +4188,7 @@ export class AgentRuntime {
             generatedToolResults.size === 0 &&
             somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
           if (stoppedEmptyAfterCompletedTool) {
-            await observeGeneratedProviderTurnOnce(response);
+            await observeGeneratedProviderTurnFinishOnce(response);
             await persistGeneratedProviderReplayCheckpoint();
             throwIfAborted(abortSignal);
             if (recoveredEmptyResponse || step + 1 >= maxSteps) {
@@ -4205,7 +4222,7 @@ export class AgentRuntime {
               throw error;
             }
           }
-          await observeGeneratedProviderTurnOnce({
+          await observeGeneratedProviderTurnFinishOnce({
             ...response,
             ...(outputSchema ? { object: parsedObject } : {}),
           });
@@ -4225,193 +4242,127 @@ export class AgentRuntime {
           }, outputSchema);
         }
 
-        if (step + 1 >= maxSteps) {
-          const parsedOutput = await parseMaxStepsOutputOnce();
-          await observeGeneratedProviderTurnOnce({
-            ...response,
-            ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
-          });
-        } else {
-          await observeGeneratedProviderTurnOnce(response);
-        }
-        await persistGeneratedProviderReplayCheckpoint();
-        throwIfAborted(abortSignal);
-        this.status = "tool_execution";
-        addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
+        const isFinalMaxStepsToolTurn = step + 1 >= maxSteps;
 
-        for (let toolCallIndex = 0; toolCallIndex < response.toolCalls.length; toolCallIndex++) {
-          if (!ObjectHasOwn(response.toolCalls, toolCallIndex)) continue;
-          const tc = response.toolCalls[toolCallIndex]!;
-          throwIfAborted(abortSignal);
-          const toolCall: ToolCall = {
-            id: tc.toolCallId,
-            name: tc.toolName,
-            args: tc.input as Record<string, unknown>,
-            status: "pending",
-          };
-          const generatedToolResult = generatedToolResults.get(tc.toolCallId);
-
-          if (
-            generatedBatchCompletionDeferred && generatedToolResult === undefined &&
-            IntrinsicReflectApply(
-              IntrinsicSetHas,
-              providerReplayCheckpointEmission.invokeAgentToolNames,
-              [tc.toolName as ProviderReplayInvokeAgentToolName],
-            )
-          ) {
-            await completeDeferredProviderReplayCheckpointTurn(
-              providerReplayCheckpointEmission,
-              collectGeneratedParallelInvokeAgentToolCalls(
-                response.toolCalls,
-                generatedToolResults,
-                providerReplayCheckpointEmission.invokeAgentToolNames,
-                effectiveToolExposurePlan,
-                {
-                  activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-                  toolsConfig: runtimeToolsConfig,
-                  agentId: this.id,
-                  hasToolReplacements,
-                },
-              ),
-            );
-            generatedBatchCompletionDeferred = false;
+        try {
+          if (isFinalMaxStepsToolTurn) {
+            await observeGeneratedProviderTurnAdmissionOnce();
+          } else {
+            await observeGeneratedProviderTurnFinishOnce(response);
           }
+          await persistGeneratedProviderReplayCheckpoint();
+          throwIfAborted(abortSignal);
+          this.status = "tool_execution";
+          addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 
-          await withSpan("agent.tool_execute", async (toolSpan) => {
-            const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
-            setSpanAttributes(
-              toolSpan,
-              compactRuntimeTraceAttributes({
-                "tool.name": tc.toolName,
-                "tool.call.id": tc.toolCallId,
-                "tool.id": tc.toolCallId,
-                "tool.status": "executing",
-                "tool.input.size_bytes": inputSizeBytes,
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": tc.toolName,
-                "gen_ai.tool.type": "function",
-                "gen_ai.tool.call.id": tc.toolCallId,
-              }),
-            );
+          for (let toolCallIndex = 0; toolCallIndex < response.toolCalls.length; toolCallIndex++) {
+            if (!ObjectHasOwn(response.toolCalls, toolCallIndex)) continue;
+            const tc = response.toolCalls[toolCallIndex]!;
+            throwIfAborted(abortSignal);
+            const toolCall: ToolCall = {
+              id: tc.toolCallId,
+              name: tc.toolName,
+              args: tc.input as Record<string, unknown>,
+              status: "pending",
+            };
+            const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
-            const executionAuthority = resolveToolExecutionAuthority({
-              toolName: tc.toolName,
-              plan: effectiveToolExposurePlan,
-            });
             if (
-              generatedToolResult === undefined &&
-              shouldHandleToolResultRead({
+              generatedBatchCompletionDeferred && generatedToolResult === undefined &&
+              IntrinsicReflectApply(
+                IntrinsicSetHas,
+                providerReplayCheckpointEmission.invokeAgentToolNames,
+                [tc.toolName as ProviderReplayInvokeAgentToolName],
+              )
+            ) {
+              await completeDeferredProviderReplayCheckpointTurn(
+                providerReplayCheckpointEmission,
+                collectGeneratedParallelInvokeAgentToolCalls(
+                  response.toolCalls,
+                  generatedToolResults,
+                  providerReplayCheckpointEmission.invokeAgentToolNames,
+                  effectiveToolExposurePlan,
+                  {
+                    activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+                    toolsConfig: runtimeToolsConfig,
+                    agentId: this.id,
+                    hasToolReplacements,
+                  },
+                ),
+              );
+              generatedBatchCompletionDeferred = false;
+            }
+
+            await withSpan("agent.tool_execute", async (toolSpan) => {
+              const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.name": tc.toolName,
+                  "tool.call.id": tc.toolCallId,
+                  "tool.id": tc.toolCallId,
+                  "tool.status": "executing",
+                  "tool.input.size_bytes": inputSizeBytes,
+                  "gen_ai.operation.name": "execute_tool",
+                  "gen_ai.tool.name": tc.toolName,
+                  "gen_ai.tool.type": "function",
+                  "gen_ai.tool.call.id": tc.toolCallId,
+                }),
+              );
+
+              const executionAuthority = resolveToolExecutionAuthority({
                 toolName: tc.toolName,
                 plan: effectiveToolExposurePlan,
-                context: toolResultContext,
-              })
-            ) {
-              try {
-                if (toolResultContext === undefined) {
-                  throw new ReferenceError("Tool result context is not available");
-                }
-                const result = readToolResultContext(toolResultContext, toolCall.args);
-                toolCall.status = "completed";
-                toolCall.result = result;
-                setSpanAttributes(toolSpan, {
-                  "tool.status": "completed",
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
-                });
-                const toolResultMessage = createToolResultMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  result,
-                );
-                pushPrivateArray(currentMessages, toolResultMessage);
-                await persistMessage(toolResultMessage);
-              } catch (error) {
-                toolCall.status = "error";
-                toolCall.error = error instanceof Error ? error.message : String(error);
-                const errorMessage = createToolErrorMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  toolCall.error,
-                );
-                pushPrivateArray(currentMessages, errorMessage);
-                await persistMessage(errorMessage);
-              }
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              generatedToolResult === undefined &&
-              shouldBlockToolResultReadName({
-                toolName: tc.toolName,
-                context: toolResultContext,
-              })
-            ) {
-              toolCall.status = "error";
-              toolCall.error = toolResultReaderUnavailableError();
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              !hasToolReplacements &&
-              generatedToolResult === undefined &&
-              executionAuthority === undefined
-            ) {
-              toolCall.status = "error";
-              toolCall.error = toolNotVisibleError(tc.toolName);
-              setSpanAttributes(toolSpan, {
-                "tool.status": "blocked",
-                error: true,
-                "error.type": "ToolExposureBlocked",
               });
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              generatedToolResult === undefined &&
-              isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
-            ) {
-              let checkpoint: ToolExposureCheckpoint;
-              try {
-                const search = executeFrameworkToolSearch({
-                  args: toolCall.args,
+              if (
+                generatedToolResult === undefined &&
+                shouldHandleToolResultRead({
+                  toolName: tc.toolName,
                   plan: effectiveToolExposurePlan,
-                  state: toolExposureState,
-                });
-                if (didReloadProjectAgentWriteTool(search.result)) {
-                  agentWriteFinalResponseToolGuardEnabled = false;
+                  context: toolResultContext,
+                })
+              ) {
+                try {
+                  if (toolResultContext === undefined) {
+                    throw new ReferenceError("Tool result context is not available");
+                  }
+                  const result = readToolResultContext(toolResultContext, toolCall.args);
+                  toolCall.status = "completed";
+                  toolCall.result = result;
+                  setSpanAttributes(toolSpan, {
+                    "tool.status": "completed",
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                  });
+                  const toolResultMessage = createToolResultMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    result,
+                  );
+                  pushPrivateArray(currentMessages, toolResultMessage);
+                  await persistMessage(toolResultMessage);
+                } catch (error) {
+                  toolCall.status = "error";
+                  toolCall.error = error instanceof Error ? error.message : String(error);
+                  const errorMessage = createToolErrorMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    toolCall.error,
+                  );
+                  pushPrivateArray(currentMessages, errorMessage);
+                  await persistMessage(errorMessage);
                 }
-                toolCall.status = "completed";
-                toolCall.result = search.result;
-                setSpanAttributes(toolSpan, {
-                  "tool.status": "completed",
-                  "tool.search.result_count": search.result.resultCount,
-                  "tool.search.loaded_count": search.result.loadedCount,
-                  "tool.search.miss": search.result.miss,
-                });
-                const toolResultMessage = createToolResultMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  search.result,
-                );
-                pushPrivateArray(currentMessages, toolResultMessage);
-                await persistMessage(toolResultMessage);
-                checkpoint = search.checkpoint;
-              } catch (error) {
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+              if (
+                generatedToolResult === undefined &&
+                shouldBlockToolResultReadName({
+                  toolName: tc.toolName,
+                  context: toolResultContext,
+                })
+              ) {
                 toolCall.status = "error";
-                toolCall.error = error instanceof Error ? error.message : String(error);
+                toolCall.error = toolResultReaderUnavailableError();
                 const errorMessage = createToolErrorMessage(
                   tc.toolCallId,
                   tc.toolName,
@@ -4422,235 +4373,318 @@ export class AgentRuntime {
                 pushPrivateArray(toolCalls, toolCall);
                 return;
               }
-              await persistToolExposureCheckpointBeforeContinuation({
-                checkpoint,
-                persist: persistToolExposureCheckpoint,
-                required: requireToolExposureCheckpointPersistence,
-              });
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
+              if (
+                !hasToolReplacements &&
+                generatedToolResult === undefined &&
+                executionAuthority === undefined
+              ) {
+                toolCall.status = "error";
+                toolCall.error = toolNotVisibleError(tc.toolName);
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "blocked",
+                  error: true,
+                  "error.type": "ToolExposureBlocked",
+                });
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+              if (
+                generatedToolResult === undefined &&
+                isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
+              ) {
+                let checkpoint: ToolExposureCheckpoint;
+                try {
+                  const search = executeFrameworkToolSearch({
+                    args: toolCall.args,
+                    plan: effectiveToolExposurePlan,
+                    state: toolExposureState,
+                  });
+                  if (didReloadProjectAgentWriteTool(search.result)) {
+                    agentWriteFinalResponseToolGuardEnabled = false;
+                  }
+                  toolCall.status = "completed";
+                  toolCall.result = search.result;
+                  setSpanAttributes(toolSpan, {
+                    "tool.status": "completed",
+                    "tool.search.result_count": search.result.resultCount,
+                    "tool.search.loaded_count": search.result.loadedCount,
+                    "tool.search.miss": search.result.miss,
+                  });
+                  const toolResultMessage = createToolResultMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    search.result,
+                  );
+                  pushPrivateArray(currentMessages, toolResultMessage);
+                  await persistMessage(toolResultMessage);
+                  checkpoint = search.checkpoint;
+                } catch (error) {
+                  toolCall.status = "error";
+                  toolCall.error = error instanceof Error ? error.message : String(error);
+                  const errorMessage = createToolErrorMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    toolCall.error,
+                  );
+                  pushPrivateArray(currentMessages, errorMessage);
+                  await persistMessage(errorMessage);
+                  pushPrivateArray(toolCalls, toolCall);
+                  return;
+                }
+                await persistToolExposureCheckpointBeforeContinuation({
+                  checkpoint,
+                  persist: persistToolExposureCheckpoint,
+                  required: requireToolExposureCheckpointPersistence,
+                });
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
 
-            // Provider-executed tools (web_search/web_fetch) return results without skill-state
-            // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
-            // function tools that the runtime executes itself, so they never appear in
-            // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
-            // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
-            // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
-            if (generatedToolResult && !hasToolReplacements) {
-              if (generatedToolResult.providerExecuted === true) {
-                await traceProviderExecutedTool({
+              // Provider-executed tools (web_search/web_fetch) return results without skill-state
+              // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
+              // function tools that the runtime executes itself, so they never appear in
+              // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
+              // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
+              // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
+              if (generatedToolResult && !hasToolReplacements) {
+                if (generatedToolResult.providerExecuted === true) {
+                  await traceProviderExecutedTool({
+                    mode: "generate",
+                    agentId: this.id,
+                    toolName: tc.toolName,
+                    toolCallId: tc.toolCallId,
+                    context: {
+                      toolCallId: tc.toolCallId,
+                      ...toolContext,
+                      agentId: this.id,
+                    },
+                    args: tc.input,
+                    result: generatedToolResult.result,
+                    isError: generatedToolResult.isError === true,
+                  });
+                }
+                await persistGeneratedToolResult(generatedToolResult);
+                toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
+                toolCall.result = generatedToolResult.result;
+                toolCall.error = generatedToolResult.isError === true
+                  ? stringifyToolError(generatedToolResult.result)
+                  : undefined;
+                if (toolCall.error !== undefined) {
+                  setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
+                }
+                if (
+                  generatedToolResult.isError !== true &&
+                  shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
+                ) {
+                  agentWriteFinalResponseToolGuardEnabled = true;
+                }
+                setSpanAttributes(
+                  toolSpan,
+                  compactRuntimeTraceAttributes({
+                    "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
+                    "tool.provider_executed": generatedToolResult.providerExecuted === true,
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(
+                      generatedToolResult.result,
+                    ),
+                    ...(toolCall.error
+                      ? {
+                        error: true,
+                        "error.type": "ProviderExecutedToolError",
+                      }
+                      : {}),
+                  }),
+                );
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+
+              const policyCheck = enforceSkillPolicy(
+                tc.toolName,
+                {
+                  activeSkillId: skillState.activeSkillId,
+                  hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+                  skillToolAvailability: skillState.activeSkillToolAvailability,
+                  toolInput: tc.input,
+                  toolDefinition: executionAuthority?.toolDefinition,
+                },
+              );
+              if (!policyCheck.allowed) {
+                toolCall.status = "error";
+                toolCall.error = policyCheck.error;
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "blocked",
+                  error: true,
+                  "error.type": "ToolPolicyBlocked",
+                });
+
+                const errorMessage: Message = {
+                  id: `tool_error_${tc.toolCallId}`,
+                  role: "tool",
+                  parts: [{
+                    type: "tool-result",
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
+                    result: { error: policyCheck.error },
+                  }],
+                  timestamp: Date.now(),
+                };
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+
+              try {
+                toolCall.status = "executing";
+                const startTime = Date.now();
+
+                const cacheCtx = tryGetCacheKeyContext();
+                toolCall.args = applySkillDelegationOverridesToToolInput(
+                  tc.toolName,
+                  toolCall.args,
+                  hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
+                  hasToolReplacements
+                    ? undefined
+                    : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, {
+                      agentId: this.id,
+                    }) ??
+                      undefined,
+                );
+                const executionContext = applicationExecutionContext(toolContext);
+                executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
+                throwIfAborted(abortSignal);
+                const result = await traceConfiguredToolExecution({
                   mode: "generate",
                   agentId: this.id,
                   toolName: tc.toolName,
                   toolCallId: tc.toolCallId,
-                  context: {
-                    toolCallId: tc.toolCallId,
-                    ...toolContext,
-                    agentId: this.id,
-                  },
-                  args: tc.input,
-                  result: generatedToolResult.result,
-                  isError: generatedToolResult.isError === true,
+                  args: toolCall.args,
+                  admittedTurn,
+                  owner: currentMessages,
+                  prepareTerminalDispatch,
+                  toolsConfig: runtimeToolsConfig,
+                  context: executionContext,
+                  allowedRemoteToolNames,
+                  remoteToolSources,
+                  sourceIntegrationPolicy,
+                  strictConfiguredToolsOnly: hasToolReplacements,
+                  frameworkLocalTools,
                 });
-              }
-              await persistGeneratedToolResult(generatedToolResult);
-              toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
-              toolCall.result = generatedToolResult.result;
-              toolCall.error = generatedToolResult.isError === true
-                ? stringifyToolError(generatedToolResult.result)
-                : undefined;
-              if (toolCall.error !== undefined) {
-                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
-              }
-              if (
-                generatedToolResult.isError !== true &&
-                shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
-              ) {
-                agentWriteFinalResponseToolGuardEnabled = true;
-              }
-              setSpanAttributes(
-                toolSpan,
-                compactRuntimeTraceAttributes({
-                  "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
-                  "tool.provider_executed": generatedToolResult.providerExecuted === true,
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(generatedToolResult.result),
-                  ...(toolCall.error
-                    ? {
-                      error: true,
-                      "error.type": "ProviderExecutedToolError",
-                    }
-                    : {}),
-                }),
-              );
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-
-            const policyCheck = enforceSkillPolicy(
-              tc.toolName,
-              {
-                activeSkillId: skillState.activeSkillId,
-                hasSubmittedFormInput: skillState.hasSubmittedFormInput,
-                skillToolAvailability: skillState.activeSkillToolAvailability,
-                toolInput: tc.input,
-                toolDefinition: executionAuthority?.toolDefinition,
-              },
-            );
-            if (!policyCheck.allowed) {
-              toolCall.status = "error";
-              toolCall.error = policyCheck.error;
-              setSpanAttributes(toolSpan, {
-                "tool.status": "blocked",
-                error: true,
-                "error.type": "ToolPolicyBlocked",
-              });
-
-              const errorMessage: Message = {
-                id: `tool_error_${tc.toolCallId}`,
-                role: "tool",
-                parts: [{
-                  type: "tool-result",
-                  toolCallId: tc.toolCallId,
+                await this.notifyToolResult({
+                  mode: "generate",
                   toolName: tc.toolName,
-                  result: { error: policyCheck.error },
-                }],
-                timestamp: Date.now(),
-              };
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
+                  toolCallId: tc.toolCallId,
+                  input: toolCall.args,
+                  result,
+                  context: executionContext,
+                });
 
-            try {
-              toolCall.status = "executing";
-              const startTime = Date.now();
-
-              const cacheCtx = tryGetCacheKeyContext();
-              toolCall.args = applySkillDelegationOverridesToToolInput(
-                tc.toolName,
-                toolCall.args,
-                hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
-                hasToolReplacements
-                  ? undefined
-                  : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
-                    undefined,
-              );
-              const executionContext = applicationExecutionContext(toolContext);
-              executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
-              throwIfAborted(abortSignal);
-              const result = await traceConfiguredToolExecution({
-                mode: "generate",
-                agentId: this.id,
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                args: toolCall.args,
-                admittedTurn,
-                owner: currentMessages,
-                prepareTerminalDispatch,
-                toolsConfig: runtimeToolsConfig,
-                context: executionContext,
-                allowedRemoteToolNames,
-                remoteToolSources,
-                sourceIntegrationPolicy,
-                strictConfiguredToolsOnly: hasToolReplacements,
-                frameworkLocalTools,
-              });
-              await this.notifyToolResult({
-                mode: "generate",
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                input: toolCall.args,
-                result,
-                context: executionContext,
-              });
-
-              const resultError = getToolResultError(result);
-              if (resultError !== undefined) {
-                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
-              }
-              toolCall.status = resultError === undefined ? "completed" : "error";
-              toolCall.result = result;
-              toolCall.error = resultError;
-              toolCall.executionTime = Date.now() - startTime;
-              setSpanAttributes(
-                toolSpan,
-                compactRuntimeTraceAttributes({
-                  "tool.status": resultError === undefined ? "completed" : "failed",
-                  "tool.provider_executed": false,
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
-                  ...(resultError === undefined ? {} : {
-                    error: true,
-                    "error.type": "ToolResultError",
+                const resultError = getToolResultError(result);
+                if (resultError !== undefined) {
+                  setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
+                }
+                toolCall.status = resultError === undefined ? "completed" : "error";
+                toolCall.result = result;
+                toolCall.error = resultError;
+                toolCall.executionTime = Date.now() - startTime;
+                setSpanAttributes(
+                  toolSpan,
+                  compactRuntimeTraceAttributes({
+                    "tool.status": resultError === undefined ? "completed" : "failed",
+                    "tool.provider_executed": false,
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                    ...(resultError === undefined ? {} : {
+                      error: true,
+                      "error.type": "ToolResultError",
+                    }),
                   }),
-                }),
-              );
+                );
 
-              if (resultError === undefined) {
-                if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
-                  agentWriteFinalResponseToolGuardEnabled = true;
+                if (resultError === undefined) {
+                  if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
+                    agentWriteFinalResponseToolGuardEnabled = true;
+                  }
+                  // Track skill policy only from successful framework-owned load_skill results.
+                  if (
+                    isLoadSkillToolName(tc.toolName) &&
+                    hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+                  ) {
+                    skillState.applySuccessfulResult(result);
+                  }
+                  const submittedFormInput = isSubmittedFormInputExecutionResult(
+                    tc.toolName,
+                    result,
+                    executionAuthority?.toolDefinition,
+                  );
+                  skillState.markFormInputSubmitted(submittedFormInput);
+                  if (submittedFormInput) {
+                    currentRuntimeContext = markSubmittedFormInputRuntimeContext(
+                      currentRuntimeContext,
+                    );
+                  }
                 }
-                // Track skill policy only from successful framework-owned load_skill results.
-                if (
-                  isLoadSkillToolName(tc.toolName) &&
-                  hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
-                ) {
-                  skillState.applySuccessfulResult(result);
-                }
-                const submittedFormInput = isSubmittedFormInputExecutionResult(
+
+                const toolResultMessage = createPolicyAwareToolResultMessage(
+                  tc.toolCallId,
                   tc.toolName,
                   result,
                   executionAuthority?.toolDefinition,
+                  false,
+                  true,
                 );
-                skillState.markFormInputSubmitted(submittedFormInput);
-                if (submittedFormInput) {
-                  currentRuntimeContext = markSubmittedFormInputRuntimeContext(
-                    currentRuntimeContext,
-                  );
-                }
+                pushPrivateArray(currentMessages, toolResultMessage);
+                await persistMessage(toolResultMessage);
+              } catch (error) {
+                await this.recordTerminalToolResult(
+                  error,
+                  toolCall,
+                  persistMessage,
+                  currentMessages,
+                  toolCalls,
+                  totalUsage,
+                );
+                throwIfAborted(abortSignal);
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "failed",
+                  error: true,
+                  "error.type": telemetryErrorType(error),
+                });
+
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
               }
 
-              const toolResultMessage = createPolicyAwareToolResultMessage(
-                tc.toolCallId,
-                tc.toolName,
-                result,
-                executionAuthority?.toolDefinition,
-                false,
-                true,
-              );
-              pushPrivateArray(currentMessages, toolResultMessage);
-              await persistMessage(toolResultMessage);
-            } catch (error) {
-              await this.recordTerminalToolResult(
-                error,
-                toolCall,
-                persistMessage,
-                currentMessages,
-                toolCalls,
-                totalUsage,
-              );
-              throwIfAborted(abortSignal);
-              toolCall.status = "error";
-              toolCall.error = error instanceof Error ? error.message : String(error);
-              setSpanAttributes(toolSpan, {
-                "tool.status": "failed",
-                error: true,
-                "error.type": telemetryErrorType(error),
-              });
+              pushPrivateArray(toolCalls, toolCall);
+            });
+            throwIfAborted(abortSignal);
+          }
+        } catch (error) {
+          if (generatedTurnAdmissionObserved) {
+            await observeGeneratedProviderTurnFinishOnce(response);
+          }
+          throw error;
+        }
 
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-            }
-
-            pushPrivateArray(toolCalls, toolCall);
+        if (isFinalMaxStepsToolTurn) {
+          maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
+          await observeGeneratedProviderTurnFinishOnce({
+            ...response,
+            ...(maxStepsParsedOutput.parsed ? { object: maxStepsParsedOutput.object } : {}),
           });
-          throwIfAborted(abortSignal);
         }
       }
 
@@ -4677,7 +4711,7 @@ export class AgentRuntime {
             ? { outputSchemaError: parsedOutput.outputSchemaError }
             : {}),
         }),
-      }, outputSchema);
+      }, withCachedMaxStepsOutputParse(outputSchema, parsedOutput, finalText));
     });
   }
 
@@ -6641,6 +6675,22 @@ async function tryParseMaxStepsOutput(
       outputSchemaError: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function withCachedMaxStepsOutputParse(
+  outputSchema: ResolvedAgentOutputSchema | undefined,
+  parsedOutput: MaxStepsOutputParse,
+  finalText: string,
+): ResolvedAgentOutputSchema | undefined {
+  if (!outputSchema || !parsedOutput.parsed) return outputSchema;
+  return {
+    responseFormat: outputSchema.responseFormat,
+    enforcement: outputSchema.enforcement,
+    parseOutput(text: string): Promise<unknown> {
+      if (text === finalText) return Promise.resolve(parsedOutput.object);
+      return outputSchema.parseOutput(text);
+    },
+  };
 }
 
 /** Text of the latest assistant message, or empty when no assistant turn exists. */

@@ -17,6 +17,9 @@ import {
   readOpenAIProviderOptions,
 } from "./openai-provider-options.ts";
 
+const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
+
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   serviceTier?: "auto" | "default" | "flex" | "scale";
   parallelToolCalls?: boolean;
@@ -80,7 +83,7 @@ export function buildOpenAIChatRequest(
       ),
     );
   }
-  const finalTools = Object.hasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
+  const finalTools = ObjectHasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
   const resolvedReasoning = resolveOpenAIReasoningConfig(
     modelId,
     providerName,
@@ -212,10 +215,11 @@ export function buildOpenAIChatRequest(
 }
 
 function hasOpenAIFunctionTools(value: unknown): boolean {
-  if (!Array.isArray(value)) {
+  if (!ArrayIsArray(value)) {
     return false;
   }
-  for (const tool of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const tool = value[index];
     if (
       typeof tool === "object" &&
       tool !== null &&

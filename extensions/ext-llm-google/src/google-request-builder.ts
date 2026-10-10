@@ -85,7 +85,9 @@ function mergeGoogleProviderOptions(
   target: GoogleCompatibleRequest,
   providerOptions: Record<string, unknown>,
 ): void {
-  for (const optionName of objectKeys(providerOptions)) {
+  const optionNames = objectKeys(providerOptions);
+  for (let index = 0; index < optionNames.length; index++) {
+    const optionName = optionNames[index]!;
     const descriptor = objectGetOwnPropertyDescriptor(providerOptions, optionName);
     if (!descriptor || !descriptor.enumerable || !objectHasOwn(descriptor, "value")) continue;
     defineGoogleProviderOption(target, optionName, descriptor.value);
@@ -99,7 +101,8 @@ function readGoogleProviderOptions(
   const output: Record<string, unknown> = {};
   if (!providerOptions) return output;
 
-  for (const providerName of providerNames) {
+  for (let providerIndex = 0; providerIndex < providerNames.length; providerIndex++) {
+    const providerName = providerNames[providerIndex]!;
     let bucketDescriptor: PropertyDescriptor | undefined;
     try {
       bucketDescriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
@@ -119,7 +122,8 @@ function readGoogleProviderOptions(
     } catch {
       throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
     }
-    for (const optionName of keys) {
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const optionName = keys[keyIndex]!;
       let optionDescriptor: PropertyDescriptor | undefined;
       try {
         optionDescriptor = objectGetOwnPropertyDescriptor(bucket, optionName);

@@ -31,6 +31,8 @@ import {
 } from "./openai-web-search.ts";
 import type { OpenAIWebSearchDescriptor } from "./openai-web-search.ts";
 
+const ObjectHasOwn = Object.hasOwn;
+
 export type OpenAIResponsesInputItem = Record<string, unknown>;
 
 export type OpenAIResponsesRequest = {
@@ -596,7 +598,7 @@ export function buildOpenAIResponsesRequest(
       ]),
     ];
   }
-  if (Object.hasOwn(body, "background")) {
+  if (ObjectHasOwn(body, "background")) {
     delete body.background;
     warnings.push({
       type: "unsupported-setting",

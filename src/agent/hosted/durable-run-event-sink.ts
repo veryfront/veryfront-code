@@ -187,6 +187,8 @@ function buildTruncationNotice(input: {
   originalByteLength: number;
   omittedMessageCount: number;
   omittedResponseSchema: boolean;
+  omittedRequestControls: boolean;
+  omittedModelMetadata: boolean;
 }): unknown {
   return {
     role: "system",
@@ -196,7 +198,9 @@ function buildTruncationNotice(input: {
       } exceeded the ${
         formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
       } append limit; ${input.omittedMessageCount} message(s) omitted` +
-      `${input.omittedResponseSchema ? "; response schema omitted" : ""}. The model call was not ` +
+      `${input.omittedResponseSchema ? "; response schema omitted" : ""}` +
+      `${input.omittedRequestControls ? "; request controls omitted" : ""}` +
+      `${input.omittedModelMetadata ? "; model metadata omitted" : ""}. The model call was not ` +
       `dispatched — this record is an excerpt, not the context that was sent.`,
   };
 }
@@ -225,6 +229,9 @@ function truncatePrivateRunEventToLimit(
   const tools = ArrayIsArray(event.tools) ? event.tools : undefined;
   let request = event.request;
   let omittedResponseSchema = false;
+  let omittedRequestControls = false;
+  let omittedModelMetadata = false;
+  let model = event.model;
 
   const build = (
     kept: unknown[],
@@ -232,14 +239,20 @@ function truncatePrivateRunEventToLimit(
     keepTools: boolean,
   ): Record<string, unknown> => {
     const builtMessages = [
-      buildTruncationNotice({ originalByteLength, omittedMessageCount, omittedResponseSchema }),
+      buildTruncationNotice({
+        originalByteLength,
+        omittedMessageCount,
+        omittedResponseSchema,
+        omittedRequestControls,
+        omittedModelMetadata,
+      }),
     ];
     appendPrivateArray(builtMessages, kept);
     return {
       type: event.type,
       // Clamped legacy audit records cannot acknowledge complete prepared input.
       // Deliberately exclude modelCallId so they cannot issue a capture receipt.
-      ...(event.model === undefined ? {} : { model: event.model }),
+      ...(model === undefined ? {} : { model }),
       ...(request === undefined ? {} : { request }),
       messages: builtMessages,
       ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
@@ -252,12 +265,34 @@ function truncatePrivateRunEventToLimit(
     getPrivateRunEventAppendRequestByteLength(candidate) <=
       MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES;
 
+  if (model !== undefined && !fits(build([], 0, false))) {
+    const savedRequest = request;
+    request = undefined;
+    const modelAloneFits = fits(build([], 0, false));
+    request = savedRequest;
+    if (!modelAloneFits) {
+      model = undefined;
+      omittedModelMetadata = true;
+    }
+  }
+
   // A response schema is kept unchanged when it fits. When it alone keeps even a
   // message-free record over the limit, omit it so the audit record can be written.
   if (isRecord(request) && request.responseFormat !== undefined && !fits(build([], 0, false))) {
     const { responseFormat: _omitted, ...requestWithoutResponseFormat } = request;
     request = requestWithoutResponseFormat;
     omittedResponseSchema = true;
+  }
+
+  // Keep controls and identity intact unless even the metadata-only record cannot fit.
+  // Omitted audit metadata never substitutes a fabricated identity or capture receipt.
+  if (request !== undefined && !fits(build([], 0, false))) {
+    request = undefined;
+    omittedRequestControls = true;
+  }
+  if (model !== undefined && !fits(build([], 0, false))) {
+    model = undefined;
+    omittedModelMetadata = true;
   }
 
   // Clamp message text progressively; each pass quarters the per-part budget.

@@ -205,14 +205,24 @@ export async function observeGeneratedAgentTurn(
       input: call.input,
     });
   }
-  if (turn.finishReason !== undefined || turn.usage !== undefined || turn.object !== undefined) {
-    await observe({
-      type: "message-finish",
-      ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
-      ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
-      ...(turn.object !== undefined ? { object: turn.object } : {}),
-    });
+  await observeGeneratedAgentTurnFinish(turn);
+}
+
+/** Observe only the generated turn finish for a message whose content was admitted earlier. */
+export async function observeGeneratedAgentTurnFinish(
+  turn: Pick<RuntimeGenerateTextResult, "finishReason" | "usage"> & { object?: unknown },
+): Promise<void> {
+  const scope: Scope | undefined = apply(getStore, scopes, []);
+  if (!scope?.active || !scope.observe) return;
+  if (turn.finishReason === undefined && turn.usage === undefined && turn.object === undefined) {
+    return;
   }
+  await scope.observe({
+    type: "message-finish",
+    ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
+    ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
+    ...(turn.object !== undefined ? { object: turn.object } : {}),
+  });
 }
 
 /** Observe only committed tool outcomes, never credentials or provider metadata. */

@@ -834,6 +834,146 @@ describe("agent/conversation-run-chunk-mirror", () => {
     assertEquals(secondRequest.events?.[0]?.delta, "after");
   });
 
+  it("persists oversized model-call request controls without a response format as a non-receipted audit fallback", async () => {
+    const appendedRequests: unknown[] = [];
+    const schemaEnumValue = "x".repeat(11 * 1024 * 1024);
+    const appendFetch = (async (_input, init) => {
+      const bodyInit = init && typeof init === "object" && "body" in init ? init.body : undefined;
+      const body = typeof bodyInit === "string" ? JSON.parse(bodyInit) : undefined;
+      appendedRequests.push(body);
+      return Response.json({
+        run_id: "10000000-0000-4000-8000-000000000005",
+        latest_event_id: 11,
+        latest_external_event_sequence: 21,
+        appended_count: 1,
+      });
+    }) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "10000000-0000-4000-8000-000000000005",
+      latestEventId: 10,
+      latestExternalEventSequence: 20,
+      fetch: appendFetch,
+    });
+    const sink = createDurableRunEventSink({ mirror });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" as const,
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+      model: { id: "gpt-test", modelProvider: "openai" },
+      request: { stopSequences: [schemaEnumValue], temperature: 0.2 },
+      messages: [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Return JSON" }],
+      }],
+    };
+
+    await assertRejects(
+      async () => {
+        await sink(event);
+      },
+      Error,
+      "Run event append request exceeds the supported payload size",
+    );
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "after" }]);
+    const snapshot = await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(snapshot.disabled, false);
+    assertEquals(appendedRequests.length, 2);
+    const firstRequest = appendedRequests[0] as { events?: Array<Record<string, unknown>> };
+    const firstEvent = firstRequest.events?.[0];
+    assertEquals(firstEvent?.modelCallId, undefined);
+    assertEquals(firstEvent?.request, undefined);
+    const messages = firstEvent?.messages as Array<{ content?: unknown }> | undefined;
+    assertEquals(messages?.length, 2);
+    assertEquals(
+      typeof messages?.[0]?.content === "string" &&
+        messages[0].content.includes("request controls omitted"),
+      true,
+    );
+    assertEquals(event.request.stopSequences[0], schemaEnumValue);
+    assertEquals(event.modelCallId, "33333333-3333-4333-8333-333333333333");
+    const secondRequest = appendedRequests[1] as { events?: Array<Record<string, unknown>> };
+    assertEquals(secondRequest.events?.[0]?.type, "TEXT_MESSAGE_CONTENT");
+    assertEquals(secondRequest.events?.[0]?.delta, "after");
+  });
+
+  it("persists oversized model-call model identity metadata as a non-receipted audit fallback", async () => {
+    const appendedRequests: unknown[] = [];
+    const schemaEnumValue = "x".repeat(11 * 1024 * 1024);
+    const appendFetch = (async (_input, init) => {
+      const bodyInit = init && typeof init === "object" && "body" in init ? init.body : undefined;
+      const body = typeof bodyInit === "string" ? JSON.parse(bodyInit) : undefined;
+      appendedRequests.push(body);
+      return Response.json({
+        run_id: "10000000-0000-4000-8000-000000000005",
+        latest_event_id: 11,
+        latest_external_event_sequence: 21,
+        appended_count: 1,
+      });
+    }) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "10000000-0000-4000-8000-000000000005",
+      latestEventId: 10,
+      latestExternalEventSequence: 20,
+      fetch: appendFetch,
+    });
+    const sink = createDurableRunEventSink({ mirror });
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" as const,
+      modelCallId: "33333333-3333-4333-8333-333333333333",
+      model: { id: schemaEnumValue, modelProvider: "openai" },
+      request: {
+        temperature: 0.2,
+        responseFormat: {
+          type: "json_schema" as const,
+          name: "answer",
+          schema: { type: "object" },
+        },
+      },
+      messages: [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Return JSON" }],
+      }],
+    };
+
+    await assertRejects(
+      async () => {
+        await sink(event);
+      },
+      Error,
+      "Run event append request exceeds the supported payload size",
+    );
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "after" }]);
+    const snapshot = await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(snapshot.disabled, false);
+    assertEquals(appendedRequests.length, 2);
+    const firstRequest = appendedRequests[0] as { events?: Array<Record<string, unknown>> };
+    const firstEvent = firstRequest.events?.[0];
+    assertEquals(firstEvent?.modelCallId, undefined);
+    assertEquals(firstEvent?.request, event.request);
+    assertEquals(firstEvent?.model, undefined);
+    const messages = firstEvent?.messages as Array<{ content?: unknown }> | undefined;
+    assertEquals(messages?.length, 2);
+    assertEquals(
+      typeof messages?.[0]?.content === "string" &&
+        messages[0].content.includes("model metadata omitted"),
+      true,
+    );
+    assertEquals(event.model.id, schemaEnumValue);
+    assertEquals(event.modelCallId, "33333333-3333-4333-8333-333333333333");
+    const secondRequest = appendedRequests[1] as { events?: Array<Record<string, unknown>> };
+    assertEquals(secondRequest.events?.[0]?.type, "TEXT_MESSAGE_CONTENT");
+    assertEquals(secondRequest.events?.[0]?.delta, "after");
+  });
+
   it("records an oversized-event stop instead of disabling mirroring silently", async () => {
     const errors: Array<{ message: string; metadata: Record<string, unknown> }> = [];
     const oversizedEventFetch = (() =>

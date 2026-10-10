@@ -14,6 +14,10 @@ const prompt: ModelRuntimeCallOptions["prompt"] = [{
   content: [{ type: "text", text: "Synthetic request" }],
 }];
 const sampling = { temperature: 0.4, topP: 0.8, presencePenalty: 0.3, frequencyPenalty: 0.1 };
+const nativeOpenAIFunctionTools = [{
+  type: "function",
+  function: { name: "lookup", parameters: { type: "object", properties: {} } },
+}];
 
 describe("model call request projection intrinsic boundaries", () => {
   beforeEach(seedServedCatalogForTests);
@@ -65,6 +69,81 @@ describe("model call request projection intrinsic boundaries", () => {
     assert(expected?.responseFormat?.type === "json_schema");
     assert(projected?.responseFormat?.type === "json_schema");
     assertEquals(projected.responseFormat.schema, expected.responseFormat.schema);
+  });
+
+  it("drops OpenAI Chat reasoning after capture when Array iteration changes", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      providerOptions: {
+        "veryfront-cloud": { tools: nativeOpenAIFunctionTools },
+      },
+    };
+    const model = { provider: "veryfront-cloud", modelProvider: "openai", modelId: "gpt-5.4" };
+    const captured = buildModelCallContextRequest(model, options);
+    const originalIterator = Array.prototype[Symbol.iterator];
+    Array.prototype[Symbol.iterator] = function (this: unknown[]): ArrayIterator<unknown> {
+      if (
+        this.length > 0 &&
+        typeof this[0] === "object" &&
+        this[0] !== null &&
+        "type" in this[0] &&
+        this[0].type === "function"
+      ) {
+        return [][Symbol.iterator]();
+      }
+      return originalIterator.call(this);
+    };
+
+    try {
+      const body = buildOpenAIChatRequest(
+        "gpt-5.4",
+        "veryfront-cloud",
+        options,
+        false,
+        createWarningCollector(),
+        { reasoningWithFunctionTools: false },
+      );
+
+      assertEquals(captured?.reasoning, { enabled: false });
+      assertEquals(body.reasoning_effort, undefined);
+      assertEquals(body.tools?.[0]?.function.name, "lookup");
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+    }
+  });
+
+  it("drops OpenAI Responses background after capture when Object.hasOwn changes", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      providerOptions: {
+        openai: { background: true, max_output_tokens: 12 },
+      },
+    };
+    const captured = buildModelCallContextRequest(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "responses" },
+      options,
+    );
+    const originalHasOwn = Object.hasOwn;
+    Object.hasOwn = function (value: object, key: PropertyKey): boolean {
+      if (key === "background") return false;
+      return originalHasOwn(value, key);
+    } as typeof Object.hasOwn;
+
+    try {
+      const body = buildOpenAIResponsesRequest(
+        "gpt-4o",
+        "openai",
+        options,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals(captured, { maxOutputTokens: 12 });
+      assertEquals(originalHasOwn(body, "background"), false);
+      assertEquals(body.max_output_tokens, 12);
+    } finally {
+      Object.hasOwn = originalHasOwn;
+    }
   });
 
   it("records provider controls when Object.keys is replaced before dispatch", () => {
