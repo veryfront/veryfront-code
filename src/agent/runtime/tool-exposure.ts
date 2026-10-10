@@ -536,7 +536,9 @@ function rankToolExposureMatches(input: {
       const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
       const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
         (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
-      if (identity !== null && !isPlatformCatalogReader) return false;
+      const isLocalCatalogReader = candidate.name === "get_integration" ||
+        candidate.name === "list_integrations";
+      if (!isPlatformCatalogReader && !isLocalCatalogReader) return false;
       // A non-canonical tool carrying the namespace in its *name* is a
       // normalization coincidence, not the integration, whatever its description
       // happens to mention: `jira_list_projects` is a local tool, not Jira.

@@ -587,7 +587,7 @@ function buildAlreadyLoadedSkillResponse(
   const copied = copyLoadedSkillResponse(response);
   const references = copied.references;
   const referenceGuidance = references !== undefined && references.length > 0
-    ? `To read a listed reference file, call load_skill with skillId "${skillId}" and file. `
+    ? `To read a listed reference file, use this same exposed skill-loader tool with skillId "${skillId}" and file. `
     : "";
   return {
     ...copied,

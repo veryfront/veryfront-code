@@ -1362,3 +1362,14 @@ it("an unavailable exact action preserves the canonical platform catalog reader"
   });
   assertEquals(result.matches.map((match) => match.name), ["veryfront__get_integration"]);
 });
+
+it("does not load an unrelated local action for a missing canonical query", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [definition("archive_messages", "Archive Gmail messages")],
+    state,
+  });
+  assertEquals(result.matches, []);
+  assertEquals([...state.loadedToolNames], []);
+});
