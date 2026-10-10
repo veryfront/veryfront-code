@@ -1,4 +1,8 @@
 import type { HostedHttpIngressOptions } from "./isolated-http/hosted-http-ingress.ts";
+import {
+  HOSTED_HTTP_ISOLATION_ENV,
+  isHostedHttpIsolationEnabled,
+} from "./isolated-http/hosted-http-flag.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -200,6 +204,8 @@ export interface StartProductionServerOptions extends ServerOptions {
 }
 
 interface DirectProductionServerDependencies {
+  /** Host isolation flag reader; defaults to the host environment. */
+  isHostedHttpIsolationEnabled?: () => boolean;
   flush: () => Promise<unknown>;
   captureError: (error: unknown, context: { boundary: string }) => void;
   initializeErrorReporting?: () => Promise<unknown>;
@@ -567,6 +573,13 @@ export async function runDirectProductionServer(
 
   await runProductionProcessOwner({
     start: async ({ signal, onMemoryRecycle }) => {
+      // This entry has no hosted HTTP composition. Refuse the flag rather than
+      // serve without the isolation the operator asked for.
+      if ((dependencies.isHostedHttpIsolationEnabled ?? isHostedHttpIsolationEnabled)()) {
+        throw new TypeError(
+          `${HOSTED_HTTP_ISOLATION_ENV} is supported only by veryfront serve; unset it for this entry`,
+        );
+      }
       await dependencies.initializeErrorReporting?.();
       if (dependencies.initializeRuntime) {
         await dependencies.initializeRuntime();

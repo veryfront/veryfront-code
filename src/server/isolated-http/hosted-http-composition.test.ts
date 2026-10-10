@@ -5,6 +5,8 @@ import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/exec
 import type { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
 import {
   createHostedHttpComposition,
+  createRefreshingSourceRecordLookup,
+  isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
 } from "./hosted-http-composition.ts";
 
@@ -186,6 +188,7 @@ describe("hosted HTTP host composition", () => {
     host.files.set("/host/token", "x".repeat(16 * 1024 + 1));
     await assertRejects(() => allocatorOptions!.readBrokerToken(signal), TypeError, "too large");
     assert(composition.ingress.broker === broker.broker);
+    assertEquals(composition.ingress.maxPreparing, 16);
     assertEquals(typeof composition.ingress.resolve, "function");
     await composition.shutdown();
   });
@@ -242,5 +245,73 @@ describe("hosted HTTP host composition", () => {
       await composition.shutdown();
       assertEquals(broker.shutdowns, 1);
     }
+  });
+
+  it("throws on an unrecognized flag value from the host reader", () => {
+    assertEquals(
+      isHostedHttpIsolationEnabled(read({ VERYFRONT_HOSTED_HTTP_ISOLATION: "on" })),
+      true,
+    );
+    assertThrows(
+      () => isHostedHttpIsolationEnabled(read({ VERYFRONT_HOSTED_HTTP_ISOLATION: "enabled" })),
+      TypeError,
+    );
+  });
+
+  it("rereads source records after the refresh interval and fails closed on a broken file", async () => {
+    let clock = 0;
+    let text = JSON.stringify([record]);
+    let reads = 0;
+    const other = {
+      ...record,
+      release_id: "33333333-3333-4333-8333-333333333333",
+      image: `ghcr.io/veryfront/tenant-source@sha256:${"e".repeat(64)}`,
+    };
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: () => {
+        reads++;
+        return Promise.resolve(text);
+      },
+      now: () => clock,
+      refreshMs: 60_000,
+    });
+    const signal = new AbortController().signal;
+    const first = { projectId: record.project_id, releaseId: record.release_id };
+    const second = { projectId: other.project_id, releaseId: other.release_id };
+    assertEquals(((await lookup(first, signal)) as { image: string }).image, record.image);
+
+    text = JSON.stringify([record, other]);
+    clock = 59_999;
+    await assertRejects(() => lookup(second, signal));
+    clock = 60_000;
+    assertEquals(((await lookup(second, signal)) as { image: string }).image, other.image);
+    assertEquals(reads, 2);
+
+    text = "{broken";
+    clock = 120_000;
+    await assertRejects(() => lookup(first, signal), Error, "Source records are unavailable");
+    clock = 130_000;
+    await assertRejects(() => lookup(first, signal));
+    text = JSON.stringify([record]);
+    clock = 180_000;
+    assertEquals(((await lookup(first, signal)) as { image: string }).image, record.image);
+  });
+
+  it("reads the source records file once for concurrent refreshes", async () => {
+    let clock = 0;
+    let reads = 0;
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: () => {
+        reads++;
+        return Promise.resolve(JSON.stringify([record]));
+      },
+      now: () => clock,
+      refreshMs: 1_000,
+    });
+    clock = 5_000;
+    const signal = new AbortController().signal;
+    const request = { projectId: record.project_id, releaseId: record.release_id };
+    await Promise.all([lookup(request, signal), lookup(request, signal), lookup(request, signal)]);
+    assertEquals(reads, 2);
   });
 });

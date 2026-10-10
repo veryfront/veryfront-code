@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { serverLogger as logger } from "#veryfront/utils";
+import { PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/errors";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
@@ -12,12 +13,15 @@ import {
   createHostedHttpSourceRecordLookup,
 } from "./hosted-http-resolver.ts";
 
-/** Host flag that enables isolated hosted HTTP execution. Default off. */
-export const HOSTED_HTTP_ISOLATION_ENV = "VERYFRONT_HOSTED_HTTP_ISOLATION";
+import { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled } from "./hosted-http-flag.ts";
+
+export { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled };
 
 const MAX_TOKEN_BYTES = 16 * 1024;
 const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
+/** How long one read of the source records file is used before it is read again. */
+const SOURCE_RECORDS_REFRESH_MS = 60_000;
 const BROKER_INSTANCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** Host-owned settings, read once from the host process environment. */
@@ -59,6 +63,8 @@ interface HostedHttpCompositionDependencies {
   readFile?: (path: string, options: { signal?: AbortSignal }) => Promise<Uint8Array>;
   /** @internal Host override check; replaced in hermetic tests. */
   isOverrideEnabled?: () => boolean;
+  /** @internal Monotonic clock for the source records refresh; replaced in hermetic tests. */
+  now?: () => number;
   createAllocatorClient?: typeof createHostedExecutorAllocatorClient;
   createBroker?: (options: HostedExecutorSessionPoolOptions) => HostedHttpCompositionBroker;
 }
@@ -78,11 +84,7 @@ function absolutePath(value: string | undefined, key: string): string {
 export function readHostedHttpCompositionConfig(
   read: (key: string) => string | undefined = getHostEnvExcludingEnvFile,
 ): HostedHttpCompositionConfig | undefined {
-  const flag = read(HOSTED_HTTP_ISOLATION_ENV)?.trim().toLowerCase() ?? "";
-  if (["", "0", "false", "no", "off"].includes(flag)) return undefined;
-  if (!["1", "true", "yes", "on"].includes(flag)) {
-    throw new TypeError(`${HOSTED_HTTP_ISOLATION_ENV} must be 1 or 0`);
-  }
+  if (!isHostedHttpIsolationEnabled(read)) return undefined;
   const required = (key: string): string => {
     const value = read(key)?.trim();
     if (!value) throw new TypeError(`${key} is required when ${HOSTED_HTTP_ISOLATION_ENV} is on`);
@@ -145,9 +147,54 @@ async function readBoundedText(
 }
 
 /**
+ * Serve tenant-source records from a host file that is read again at most once per
+ * refresh interval. Until the first lookup after the interval, releases published since
+ * the last read are refused. A failed read or parse refuses every lookup until a later
+ * read succeeds; stale records are never served after a failed read.
+ * @internal
+ */
+export async function createRefreshingSourceRecordLookup(options: {
+  readText(): Promise<string>;
+  now(): number;
+  refreshMs: number;
+}): Promise<Parameters<typeof createHostedHttpResolver>[0]["lookupSourceImage"]> {
+  type Lookup = ReturnType<typeof createHostedHttpSourceRecordLookup>;
+  let lookup: Lookup | undefined;
+  let loadedAt = 0;
+  let loading: Promise<void> | undefined;
+  const load = async () => {
+    try {
+      lookup = createHostedHttpSourceRecordLookup(JSON.parse(await options.readText()));
+    } catch {
+      lookup = undefined;
+    } finally {
+      loadedAt = options.now();
+    }
+  };
+  await load();
+  if (!lookup) throw new TypeError("Hosted HTTP source records file is unreadable");
+  return async (request, signal) => {
+    signal.throwIfAborted();
+    if (options.now() - loadedAt >= options.refreshMs) {
+      loading ??= load().finally(() => {
+        loading = undefined;
+      });
+      await loading;
+      signal.throwIfAborted();
+    }
+    if (!lookup) {
+      throw PROJECT_EXECUTION_UNAVAILABLE.create({ detail: "Source records are unavailable" });
+    }
+    return await lookup(request, signal);
+  };
+}
+
+/**
  * Compose the hosted HTTP allocator client, TLS transport, broker, resolver and ingress
  * from host configuration only. Refuses to start while the shared host-execution override
- * is set. The broker token file is read on every allocator call so rotation applies.
+ * is set. The broker token file is read on every allocator call so rotation applies. The
+ * source records file is read at startup and again at most once a minute, so a newly
+ * published release is refused for up to one minute and a broken file refuses every release.
  */
 export async function createHostedHttpComposition(
   config: HostedHttpCompositionConfig,
@@ -160,13 +207,11 @@ export async function createHostedHttpComposition(
   const ca = config.allocatorCaFile
     ? await readBoundedText(read, config.allocatorCaFile, MAX_CA_BYTES)
     : undefined;
-  let records: unknown;
-  try {
-    records = JSON.parse(await readBoundedText(read, config.sourceRecordsFile, MAX_RECORDS_BYTES));
-  } catch {
-    throw new TypeError("Hosted HTTP source records file is unreadable");
-  }
-  const lookupSourceImage = createHostedHttpSourceRecordLookup(records as unknown[]);
+  const lookupSourceImage = await createRefreshingSourceRecordLookup({
+    readText: () => readBoundedText(read, config.sourceRecordsFile, MAX_RECORDS_BYTES),
+    now: dependencies.now ?? (() => performance.now()),
+    refreshMs: SOURCE_RECORDS_REFRESH_MS,
+  });
   const tokenFile = config.brokerTokenFile;
   const allocator = (dependencies.createAllocatorClient ?? createHostedExecutorAllocatorClient)({
     baseUrl: config.allocatorUrl,
@@ -193,7 +238,7 @@ export async function createHostedHttpComposition(
   });
   let stopped: Promise<void> | undefined;
   return Object.freeze({
-    ingress: Object.freeze({ broker, resolve }),
+    ingress: Object.freeze({ broker, resolve, maxPreparing: config.maxActive }),
     shutdown() {
       stopped ??= broker.shutdown().then(({ release, pending }) => {
         if (release === "reaper-required" || pending > 0) {

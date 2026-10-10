@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { BootstrapResult } from "./bootstrap.ts";
@@ -608,5 +608,30 @@ describe("direct production server owner", () => {
 
     assertEquals(captured, [undefined]);
     assertEquals(events, ["exit:0"]);
+  });
+
+  it("refuses the hosted HTTP isolation flag before bootstrap", async () => {
+    let bootstraps = 0;
+    let starts = 0;
+    const outcome = await runDirectProductionServer({
+      isHostedHttpIsolationEnabled: () => true,
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(createMockAdapter()),
+      bootstrap: () => {
+        bootstraps++;
+        return Promise.reject(new Error("must not bootstrap"));
+      },
+      startServer: () => {
+        starts++;
+        return Promise.reject(new Error("must not start"));
+      },
+      registerSignals: () => {},
+      flush: () => Promise.resolve(),
+      captureError: () => {},
+      exit: () => {},
+    }).then(() => undefined, (error: unknown) => error);
+    assert(outcome instanceof TypeError);
+    assertStringIncludes(outcome.message, "VERYFRONT_HOSTED_HTTP_ISOLATION");
+    assertEquals([bootstraps, starts], [0, 0]);
   });
 });
