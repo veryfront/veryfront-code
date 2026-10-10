@@ -37,6 +37,7 @@ import {
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "#veryfront/agent/runtime/local-tool.ts";
 
 describe("private host tool metadata", () => {
   it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
@@ -1276,6 +1277,173 @@ it("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical loader 
 
   assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
   assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
+});
+
+it("prepareHostedChatRuntimeToolAssembly keeps a trusted legacy loader executable for a deferred canonical selector", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["veryfront__load_skill", "sleep"],
+    toolLoading: "deferred",
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["sleep", "veryfront__load_skill"]);
+  assertEquals(isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.load_skill), true);
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly keeps the legacy loader executable for an eager canonical selector", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["veryfront__load_skill", "sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["sleep", "veryfront__load_skill"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["sleep", "veryfront__load_skill"]);
+  assertEquals(isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.load_skill), true);
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly keeps the canonical loader executable for an eager legacy selector", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    {
+      sleep: localTool("Sleep"),
+    },
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["load_skill", "sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
+    includeSkillTools: true,
+    includeIntegrationTools: false,
+    strictConfiguredToolsOnly: true,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep", "veryfront__load_skill"]);
+  assertEquals(toolAssembly.modelVisibleToolNames, ["load_skill", "sleep"]);
+  assertEquals(providerDefinitions.map((tool) => tool.name), ["load_skill", "sleep"]);
+  assertEquals(
+    isRuntimeProviderSchemaHiddenTool(toolAssembly.runtimeTools.veryfront__load_skill),
+    true,
+  );
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
+});
+
+it("prepareHostedChatRuntimeToolAssembly does not spend eager provider capacity on a hidden loader sibling", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "openai/gpt-4.1",
+    availableSkillIds: ["plan"],
+  };
+  const manyTools: Record<string, ReturnType<typeof localTool>> = {};
+  const allowedToolNames = ["veryfront__load_skill"];
+  for (let index = 0; index < 127; index++) {
+    const toolName = `tool_${String(index).padStart(3, "0")}`;
+    manyTools[toolName] = localTool(`Tool ${index}`);
+    allowedToolNames.push(toolName);
+  }
+  const localTools = withPlatformHostToolAliases(
+    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+    manyTools,
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames.includes("load_skill"), true);
+  assertEquals(toolAssembly.modelVisibleToolNames.includes("load_skill"), false);
+  assertEquals(toolAssembly.modelVisibleToolNames.includes("veryfront__load_skill"), true);
+  assertEquals(toolAssembly.modelVisibleToolNames.length, 128);
+  assertEquals(toolAssembly.modelVisibleToolNames.includes("tool_126"), true);
+  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
 });
 
 it("prepareHostedChatRuntimeToolAssembly does not leak hidden loader alias state across assemblies", async () => {

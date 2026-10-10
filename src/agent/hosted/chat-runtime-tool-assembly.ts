@@ -41,7 +41,10 @@ import {
 } from "#veryfront/agent/hosted/project-remote-tool-source.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
+import {
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "../runtime/local-tool.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
@@ -591,6 +594,15 @@ function isHostedLocalToolSelected(input: {
 }): boolean {
   if (input.allowedToolNames === null) return true;
   if (input.allowedToolNames.has(input.toolName)) return true;
+  const siblingToolName = siblingHostedRuntimeSkillLoaderToolName(input.toolName);
+  if (
+    siblingToolName !== undefined &&
+    input.allowedToolNames.has(siblingToolName) &&
+    hasTrustedHostToolProvenance(input.tool) &&
+    !isProjectOwnedLocalToolName(input.tools, siblingToolName)
+  ) {
+    return true;
+  }
   return input.toolName === CANONICAL_FORM_INPUT_TOOL_ID &&
     input.allowedToolNames.has(FORM_INPUT_TOOL_ID) &&
     hasTrustedHostToolProvenance(input.tool) &&
@@ -658,6 +670,17 @@ function selectHostedRuntimeBootstrapToolNames(input: {
 
 function isHostedRuntimeSkillLoaderToolName(toolName: string): boolean {
   return toolName === LOAD_SKILL_TOOL_ID || toolName === CANONICAL_LOAD_SKILL_TOOL_ID;
+}
+
+function siblingHostedRuntimeSkillLoaderToolName(toolName: string): string | undefined {
+  switch (toolName) {
+    case LOAD_SKILL_TOOL_ID:
+      return CANONICAL_LOAD_SKILL_TOOL_ID;
+    case CANONICAL_LOAD_SKILL_TOOL_ID:
+      return LOAD_SKILL_TOOL_ID;
+    default:
+      return undefined;
+  }
 }
 
 function hideUnselectedHostedRuntimeSkillLoaderSchema(
@@ -1082,14 +1105,40 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ...createPrivateSet([...localToolNames, ...providerToolNames, ...remoteToolNames]),
   ];
   sortValues(authorizedToolNames, compareStrings);
+  const eagerBootstrapToolNames = toolLoadingMode === "eager"
+    ? selectHostedRuntimeBootstrapToolNames({
+      toolNames: authorizedToolNames,
+      runtimeTools: localRuntimeTools,
+      explicitAllowedToolNames: normalizedAllowedToolNames,
+    })
+    : [];
+  if (toolLoadingMode === "eager") {
+    hideUnselectedHostedRuntimeSkillLoaderSchema(localRuntimeTools, eagerBootstrapToolNames);
+  }
+  const providerVisibleLocalToolNames = filterValues(
+    localToolNames,
+    (toolName) => !isRuntimeProviderSchemaHiddenTool(localRuntimeTools[toolName]),
+  );
+  const providerVisibleAuthorizedToolNames = toolLoadingMode === "deferred"
+    ? authorizedToolNames
+    : sortValues(
+      [
+        ...createPrivateSet([
+          ...providerVisibleLocalToolNames,
+          ...providerToolNames,
+          ...remoteToolNames,
+        ]),
+      ],
+      compareStrings,
+    );
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
-    : selectProviderCompatibleToolNames(authorizedToolNames, {
+    : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
       model: input.taskContext.model,
-      requiredToolNames: localToolNames,
+      requiredToolNames: providerVisibleLocalToolNames,
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
     toolNames: availableToolNames,
@@ -1100,7 +1149,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"
     ? hideUnselectedHostedRuntimeSkillLoaderSchema(localRuntimeTools, bootstrapToolNames)
     : recordFromEntries(
-      filterValues(ownEntries(localRuntimeTools), (entry) => compatibleToolNames.has(entry[0])),
+      filterValues(
+        ownEntries(localRuntimeTools),
+        (entry) =>
+          compatibleToolNames.has(entry[0]) ||
+          (isRuntimeProviderSchemaHiddenTool(entry[1]) && hasTrustedHostToolProvenance(entry[1])),
+      ),
     );
   const compatibleLocalToolNames = ownKeys(compatibleLocalRuntimeTools);
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
