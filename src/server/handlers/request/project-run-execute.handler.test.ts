@@ -660,6 +660,47 @@ function createStyleArtifactFetchRecorder(): {
         : input instanceof Request
         ? input.url
         : input.toString();
+      if (url.includes("/releases/release-1/files?")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "config",
+                  version_id: "v-config",
+                  path: "veryfront.config.ts",
+                  type: "file",
+                  content: 'export default { tailwind: { stylesheet: "src/styles.css" } };',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "page",
+                  version_id: "v-page",
+                  path: "pages/index.tsx",
+                  type: "page",
+                  content: 'export default () => <main className="px-4 text-red-500">Hi</main>;',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "css",
+                  version_id: "v-css",
+                  path: "src/styles.css",
+                  type: "file",
+                  content: "@tailwind utilities; .from-css { color: red; }",
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+              ],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
       if (url.endsWith("/projects/demo-project/style-artifacts/current")) {
         const body = requestJsonBody(init) ?? {};
         upserts.push(body);
@@ -3018,6 +3059,186 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
+  it("fails release style sources closed on authorization, missing release, and partial content", async () => {
+    for (const status of [401, 403, 404, 200]) {
+      const body = {
+        runId: "run_release_denied",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", style_profile_hash: "queued-release-profile" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_release_denied/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+        stylesheet: "@tailwind utilities;",
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+      const result = await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.includes("/releases/release-1/files?")) {
+          if (status === 200) {
+            return new Response(
+              JSON.stringify({
+                data: [{
+                  id: "missing",
+                  version_id: "v-missing",
+                  path: "pages/index.tsx",
+                  type: "page",
+                  size: 1,
+                  updated_at: "2026-10-10T00:00:00Z",
+                }],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return new Response("Unavailable", { status });
+        }
+        return await recorder.fetch(input, init);
+      }, () => new ProjectRunExecuteHandler().handle(request, ctx));
+      assertExists(result.response);
+      const json = await result.response.json();
+      assertEquals(json.success, false);
+      assertEquals(typeof json.error, "string");
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(readCalls, []);
+      assertEquals(recorder.upserts.filter((upsert) => upsert.status === "ready"), []);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.status, "failed");
+      assertEquals(recorder.upserts[0]?.style_profile_hash, "queued-release-profile");
+    }
+  });
+
+  it("owns release style sources independently of ambient main", async () => {
+    const { createStyleScopeProfile } = await import(
+      "#veryfront/html/styles-builder/style-scope-profile.ts"
+    );
+    const expectedProfile = createStyleScopeProfile({ tailwind: { stylesheet: "release.css" } });
+    const hashes: unknown[] = [];
+    for (const ambient of ['@import "tw-animate-css";', ".changed-main { color: blue; }"]) {
+      const body = {
+        runId: "run_release_snapshot",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_release_snapshot/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+        stylesheet: ambient,
+        stylesheetPath: "main.css",
+        contentContext: { sourceType: "branch", projectSlug: "demo-project", branch: "main" },
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+      let releaseReads = 0;
+      const result = await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.includes("/releases/release-1/files?")) {
+          releaseReads++;
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
+            "Bearer test-token",
+          );
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "config",
+                  version_id: "config-version",
+                  path: "veryfront.config.ts",
+                  type: "file",
+                  content: 'export default { tailwind: { stylesheet: "release.css" } };',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "css",
+                  version_id: "css-version",
+                  path: "release.css",
+                  type: "file",
+                  content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "page",
+                  version_id: "page-version",
+                  path: "pages/index.tsx",
+                  type: "page",
+                  content: 'export default () => <div className="text-red-500" />;',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+              ],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return await recorder.fetch(input, init);
+      }, () => new ProjectRunExecuteHandler().handle(request, ctx));
+      assertExists(result.response);
+      const json = await result.response.json();
+      assertEquals(json.success, true);
+      assertEquals(releaseReads, 1);
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(readCalls, []);
+      assertEquals(recorder.upserts[0]?.release_id, "release-1");
+      assertEquals(recorder.upserts[0]?.style_profile_hash, expectedProfile.hash);
+      const { acquireCSSGenerationSession, extractCandidatesFromFiles } = await import(
+        "#veryfront/html/styles-builder/tailwind-compiler.ts"
+      );
+      const { hashCandidates } = await import("#veryfront/html/styles-builder/css-identity.ts");
+      const { createPreparedProjectCSSContext, tryGetPreparedProjectCSS } = await import(
+        "#veryfront/html/styles-builder/prepared-project-css-cache.ts"
+      );
+      const candidates = extractCandidatesFromFiles([{
+        path: "veryfront.config.ts",
+        content: 'export default { tailwind: { stylesheet: "release.css" } };',
+      }, {
+        path: "release.css",
+        content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+      }, {
+        path: "pages/index.tsx",
+        content: 'export default () => <div className="text-red-500" />;',
+      }], { projectDir: ctx.projectDir, styleProfile: expectedProfile });
+      const prepared = await tryGetPreparedProjectCSS(
+        createPreparedProjectCSSContext(
+          "demo-project",
+          "release:release-1",
+          '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+          expectedProfile.hash,
+          {
+            cssPipelineIdentity: acquireCSSGenerationSession(true).cacheIdentity,
+            candidatesHash: hashCandidates(candidates),
+            minify: true,
+            environment: "preview",
+            buildMode: "production",
+          },
+        ),
+      );
+      assertExists(prepared);
+      assertEquals(prepared.hash, recorder.upserts[0]?.artifact_hash);
+      hashes.push(recorder.upserts[0]?.artifact_hash);
+    }
+    assertEquals(typeof hashes[0], "string");
+    assertEquals(hashes[0], hashes[1]);
+  });
+
   it("uses an explicit release selector instead of the preview request context", async () => {
     const body = {
       runId: "run_style_artifact_explicit_release",
@@ -3056,8 +3277,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const json = await result.response.json();
     assertEquals(json.success, true);
-    assertEquals(sourceFileCalls.count, 1);
-    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
     assertEquals(recorder.upserts.length, 1);
     assertEquals(recorder.upserts[0]?.release_id, "release-1");
     assertEquals(recorder.upserts[0]?.environment_name, undefined);
@@ -3122,8 +3343,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const json = await result.response.json();
     assertEquals(json.success, true);
-    assertEquals(sourceFileCalls.count, 1);
-    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
     assertEquals(recorder.upserts.length, 1);
     assertEquals(recorder.upserts[0]?.release_id, "release-1");
     assertEquals(recorder.upserts[0]?.environment_name, undefined);
