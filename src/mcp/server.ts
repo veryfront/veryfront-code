@@ -23,9 +23,14 @@ const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
-async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
+function mcpOutputSchema(tool: Tool) {
   const outputSchema = tool.outputSchemaJson ??
     (tool.outputSchema === undefined ? undefined : zodToJsonSchema(tool.outputSchema));
+  return outputSchema?.type === "object" ? outputSchema : undefined;
+}
+
+async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
+  const outputSchema = mcpOutputSchema(tool);
   const content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
   if (outputSchema === undefined) return { content, isError: false };
   if (result === null || typeof result !== "object" || Array.isArray(result)) {
@@ -41,7 +46,11 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
   if (!validation.success) {
     throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
   }
-  return { content, structuredContent: result, isError: false };
+  return {
+    content: [{ type: "text", text: JSON.stringify(validation.value, null, 2) }],
+    structuredContent: validation.value,
+    isError: false,
+  };
 }
 
 class JsonRpcError extends Error {
@@ -370,11 +379,8 @@ export class MCPServer {
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
-      if (tool.outputSchemaJson !== undefined) {
-        entry.outputSchema = tool.outputSchemaJson;
-      } else if (tool.outputSchema !== undefined) {
-        entry.outputSchema = zodToJsonSchema(tool.outputSchema);
-      }
+      const outputSchema = mcpOutputSchema(tool);
+      if (outputSchema !== undefined) entry.outputSchema = outputSchema;
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
       tools.push(entry);

@@ -849,6 +849,82 @@ describe("mcp/server", () => {
     }
   });
 
+  it("keeps primitive and array outputs compatible with text-only MCP results", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const cases: Array<{ id: string; schema: JsonSchema; value: unknown }> = [
+      { id: "test:string-output", schema: { type: "string" }, value: "accepted" },
+      {
+        id: "test:array-output",
+        schema: { type: "array", items: { type: "number" } },
+        value: [1, 2],
+      },
+    ];
+    for (const entry of cases) {
+      registerTool(
+        entry.id,
+        tool({
+          id: entry.id,
+          description: "Returns a non-object value",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: entry.schema,
+          execute: async () => entry.value,
+        }),
+      );
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((definition) => definition.name === entry.id)!,
+          "outputSchema",
+        ),
+        false,
+      );
+      const called = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(called.result, {
+        content: [{ type: "text", text: JSON.stringify(entry.value, null, 2) }],
+        isError: false,
+      });
+    }
+  });
+
+  it("returns the validated snapshot when a tool mutates its retained result", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const retained: Record<string, unknown> = { ok: true };
+    registerTool(
+      "test:retained-output",
+      tool({
+        id: "test:retained-output",
+        description: "Retains its result object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+        execute: async () => retained,
+      }),
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:retained-output", arguments: {} },
+    });
+    retained.ok = "no longer valid";
+    assertEquals(called.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
   it("hides agent-owned tools from tools/list", async () => {
     const server = createMCPServer({
       enabled: true,
