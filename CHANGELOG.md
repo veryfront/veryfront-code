@@ -6,6 +6,32 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: PurgeCSS uses a verified in-memory distribution and patched parser
+
+The CSS purging extension now uses PurgeCSS 8's in-memory algorithm with exact
+selector-parser 7.1.6. Upstream 8's file-glob dependency would reintroduce the
+unpatched braces High advisory, so a verified source distribution removes file
+and glob handling while preserving the existing raw-input contract. Unsupported
+file/config inputs fail explicitly. The MIT license, pinned upstream source and
+reversible edits are retained and verified; SBOMs identify the modified source
+and its upstream origin.
+
+The extension keeps four color environment keys and removes the obsolete
+minimatch key. CPU-information permission is no longer needed. The distribution
+version and source digest change the CSS cache identity.
+
+### Changed: Typography uses the patched selector parser
+
+The Tailwind extension retains Typography 0.5.19's styles and selector algorithm
+in a verified source distribution bound to selector-parser 7.1.6. The upstream npm
+package still requires affected 6.0.10, so it is removed from the runtime graph.
+All three original module hashes, reversible module-binding edits and MIT license
+are retained; SBOMs and cache identity bind the modified source. Eight captured
+upstream CSS output hashes remain unchanged. Plugin/config admission and runtime
+capabilities are unchanged. Typography's configuration merge also rejects prototype-affecting
+keys and copies only own properties, fixing the upstream helper's prototype-pollution
+behavior. Invalid configuration throws before producing components.
+
 ### Changed: a malformed provider stream reports `PROVIDER_STREAM_PROTOCOL_ERROR`
 
 When a provider answers with a successful status but its response stream breaks
