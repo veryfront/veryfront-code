@@ -149,16 +149,14 @@ export class Sandbox {
       });
     }
 
-    const session = await res.json();
-    const { id, endpoint, status } = session;
-
-    // If not yet running, poll until ready
-    if (status !== "running") {
-      await Sandbox.#waitForReady(apiUrl, id, authToken);
-    }
+    const created = await res.json();
+    const { id, endpoint } = created;
+    const session = created.status === "running"
+      ? created
+      : await Sandbox.#waitForReady(apiUrl, id, authToken);
 
     return new Sandbox(
-      endpoint,
+      typeof session.endpoint === "string" ? session.endpoint : endpoint,
       id,
       authToken,
       apiUrl,
@@ -311,8 +309,8 @@ export class Sandbox {
     authToken: string,
     maxWaitMs = 60_000,
     pollIntervalMs = 2_000,
-  ): Promise<void> {
-    await waitForSandboxReady({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
+  ): Promise<Record<string, unknown>> {
+    return await waitForSandboxReadyRecord({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
   }
 
   /** Create a client that provisions its sandbox when first used. */
@@ -614,6 +612,12 @@ export async function waitForSandboxReady(input: {
   maxWaitMs?: number;
   pollIntervalMs?: number;
 }): Promise<void> {
+  await waitForSandboxReadyRecord(input);
+}
+
+async function waitForSandboxReadyRecord(
+  input: Parameters<typeof waitForSandboxReady>[0],
+): Promise<Record<string, unknown>> {
   const maxWaitMs = input.maxWaitMs ?? 60_000;
   const pollIntervalMs = input.pollIntervalMs ?? 2_000;
   const start = Date.now();
@@ -633,7 +637,7 @@ export async function waitForSandboxReady(input: {
     }
 
     const data = await res.json();
-    if (data.status === "running") return;
+    if (data.status === "running") return data;
     if (data.status === "error" || data.status === "deleting") {
       throw INITIALIZATION_ERROR.create({
         detail: `Sandbox failed to start: status=${data.status}`,

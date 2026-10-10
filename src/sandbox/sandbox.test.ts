@@ -238,6 +238,100 @@ describe("Sandbox", () => {
     await assertRejects(() => sandbox.delete(), Error, "Delete sandbox failed: 404");
   });
 
+  for (const lazy of [false, true]) {
+    for (
+      const change of [
+        {
+          name: "always-on",
+          initial: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          ready: { workspace_storage: "ephemeral", ttl_mode: "always_on" },
+          cleanup: false,
+        },
+        {
+          name: "persistent",
+          initial: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          ready: { workspace_storage: "persistent", ttl_mode: "default" },
+          cleanup: false,
+        },
+        {
+          name: "unknown-lifetime",
+          initial: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          ready: { workspace_storage: "ephemeral" },
+          cleanup: false,
+        },
+        {
+          name: "temporary",
+          initial: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          ready: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          cleanup: true,
+        },
+        {
+          name: "confirmed-temporary",
+          initial: {},
+          ready: { workspace_storage: "ephemeral", ttl_mode: "default" },
+          cleanup: true,
+        },
+      ]
+    ) {
+      it(`uses final readiness policy for cleanup: lazy=${lazy}, ${change.name}`, async () => {
+        mockTimers();
+        mockFetch([
+          jsonResponse({
+            id: "policy-race",
+            endpoint: "https://pending.test",
+            status: "pending",
+            ...change.initial,
+          }),
+          jsonResponse({
+            id: "policy-race",
+            endpoint: "https://ready.test",
+            status: "running",
+            ...change.ready,
+          }),
+          ...(lazy ? [jsonResponse({ ok: true })] : []),
+          jsonResponse({ ok: true }),
+        ]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com" };
+        if (lazy) {
+          const sandbox = Sandbox.createLazy(options);
+          await sandbox.ensure();
+          await sandbox.close();
+        } else {
+          const sandbox = await Sandbox.create(options);
+          await sandbox.close();
+          assertEquals(sandbox.url, "https://ready.test");
+        }
+        assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), change.cleanup);
+      });
+    }
+  }
+
+  it("retains a newly always-on lazy workspace when readiness subsequently fails", async () => {
+    mockTimers();
+    mockFetch([
+      jsonResponse({
+        id: "protected-startup",
+        endpoint: "https://pending.test",
+        status: "pending",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      }),
+      jsonResponse({
+        id: "protected-startup",
+        endpoint: "https://pending.test",
+        status: "error",
+        workspace_storage: "ephemeral",
+        ttl_mode: "always_on",
+      }),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = Sandbox.createLazy({ authToken: "token", apiUrl: "https://api.test.com" });
+    await assertRejects(() => sandbox.ensure(), Error);
+    await sandbox.close();
+    assertEquals(sandbox.id, "protected-startup");
+    assertEquals(fetchCalls.some((call) => call.init?.method === "DELETE"), false);
+  });
+
   for (const storage of [undefined, "persistant", "persistent", "ephemeral"]) {
     for (const lazy of [false, true]) {
       for (const policy of [{ ttl_mode: "default" }, { ttl_mode: "duration", ttl_hours: 4 }]) {

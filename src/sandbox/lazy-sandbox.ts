@@ -692,7 +692,10 @@ export class LazySandbox {
     this.sessionProjectId = projectId;
 
     try {
-      const endpoint = await this.resolveReadyEndpoint(session);
+      const endpoint = await this.resolveReadyEndpoint(session, (readySession) => {
+        this.deleteOnClose = this.requestedDeleteOnClose ??
+          (hasTemporarySandboxPolicy(readySession) && this.creationPolicy.ttlMode !== "always_on");
+      });
       this.endpoint = endpoint;
       await this.heartbeat(true);
       this.startHeartbeatLoop();
@@ -710,10 +713,13 @@ export class LazySandbox {
     }
   }
 
-  private async resolveReadyEndpoint(session: SandboxSessionRecord): Promise<string> {
+  private async resolveReadyEndpoint(
+    session: SandboxSessionRecord,
+    onSession?: (session: SandboxSessionRecord) => void,
+  ): Promise<string> {
     const readySession = session.status === "running"
       ? session
-      : await this.waitForReadySession(session.id);
+      : await this.waitForReadySession(session.id, onSession);
 
     if (this.#shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
       await this.waitForRuntimeDataPlaneReady(readySession);
@@ -756,7 +762,10 @@ export class LazySandbox {
     return await res.json() as SandboxSessionRecord;
   }
 
-  private async waitForReadySession(sessionId: string): Promise<SandboxSessionRecord> {
+  private async waitForReadySession(
+    sessionId: string,
+    onSession?: (session: SandboxSessionRecord) => void,
+  ): Promise<SandboxSessionRecord> {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
@@ -774,6 +783,7 @@ export class LazySandbox {
       }
 
       const session = await res.json() as SandboxSessionRecord;
+      onSession?.(session);
       if (session.status === "running") {
         return session;
       }
