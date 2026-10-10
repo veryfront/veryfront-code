@@ -3,7 +3,10 @@ import type {
   RuntimeMetadata,
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
-import { unwrapToolInputSchema } from "#veryfront/provider/shared/index.ts";
+import {
+  closeAnthropicOutputConfigSchema,
+  unwrapToolInputSchema,
+} from "#veryfront/provider/shared/index.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import {
   isOpenAIReasoningModel,
@@ -1502,11 +1505,24 @@ function readNativeAnthropicResponseFormat(
   };
 }
 
+function snapshotAnthropicResponseFormat(
+  responseFormat: ModelCallRequestSource["responseFormat"],
+): ModelCallRequestSource["responseFormat"] | undefined {
+  const snapshot = snapshotResponseFormat(responseFormat);
+  if (snapshot?.type !== "json_schema") return snapshot;
+  return {
+    ...snapshot,
+    schema: closeAnthropicOutputConfigSchema(snapshot.schema),
+  };
+}
+
 function resolveAnthropicResponseFormat(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource["responseFormat"] | undefined {
-  if (options.responseFormat?.type === "json_schema") return options.responseFormat;
+  if (options.responseFormat?.type === "json_schema") {
+    return snapshotAnthropicResponseFormat(options.responseFormat);
+  }
   return readNativeAnthropicResponseFormat(model, options) ??
     (options.responseFormat?.type === "json" ? undefined : options.responseFormat);
 }

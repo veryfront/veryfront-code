@@ -1420,3 +1420,105 @@ for (const surface of ["openai-chat", "openai-responses"] as const) {
     }
   }
 }
+
+for (const nativeFormat of [false, true]) {
+  for (const cloud of [false, true]) {
+    for (const streaming of [false, true]) {
+      it(`captures effective ${nativeFormat ? "native" : "neutral"} Anthropic nested object schema in ${cloud ? "Cloud" : "native"} ${streaming ? "stream" : "generate"}`, async () => {
+        const schema = {
+          type: "object",
+          properties: {
+            answer: { type: "object", properties: { value: { type: "string" } } },
+            rows: {
+              type: "array",
+              items: { type: "object", properties: { id: { type: "number" } } },
+            },
+            open: { type: "object", properties: {}, additionalProperties: true },
+          },
+        };
+        const provider = "anthropic";
+        const transport = "chat-completions";
+        let dispatched: ModelRuntimeCallOptions | undefined;
+        let recorded: AgentRunEvent | undefined;
+        const model: ModelRuntime<ModelRuntimeCallOptions> = {
+          provider: cloud ? "veryfront-cloud" : provider,
+          modelProvider: provider,
+          modelId: "format-test",
+          openAITransport: transport,
+          specificationVersion: "v3",
+          runtimeCapabilities: { structuredOutput: true },
+          doGenerate(options) {
+            dispatched = options;
+            return Promise.resolve({
+              content: [{ type: "text", text: "ok" }],
+              finishReason: "stop",
+              usage: {},
+            });
+          },
+          doStream(options) {
+            dispatched = options;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        if (cloud) {
+          registerVeryfrontCloudModelFacts(model, () => ({
+            provider,
+            surface: provider,
+            native: true,
+            transportPlan: { transport, pinned: true },
+          }));
+        }
+        const options: Parameters<typeof generateText>[0] = {
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          ...(nativeFormat
+            ? {
+              providerOptions: {
+                anthropic: { output_config: { format: { type: "json_schema", schema } } },
+              },
+            }
+            : { responseFormat: { type: "json_schema", name: "neutral", schema } }),
+        };
+        await runWithMandatoryRunEventSink((event) => {
+          if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") recorded = event;
+        }, async () => {
+          if (streaming) {
+            for await (const _part of streamText(options).fullStream) { /* Drain dispatch. */ }
+          } else await generateText(options);
+        });
+        assert(dispatched);
+        assert(recorded?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+        const captured = recorded.request?.responseFormat;
+        assert(captured?.type === "json_schema");
+        const warnings = {
+          push() {},
+          drain() {
+            return [];
+          },
+        };
+        const body = buildAnthropicMessagesRequest(
+          "claude-test",
+          "anthropic",
+          dispatched,
+          streaming,
+          warnings,
+        );
+        const config = Reflect.get(body, "output_config");
+        assert(typeof config === "object" && config !== null);
+        const format = Reflect.get(config, "format");
+        assert(typeof format === "object" && format !== null);
+        const effectiveSchema = Reflect.get(format, "schema");
+        assert(effectiveSchema !== undefined);
+        assertEquals(captured.schema, effectiveSchema);
+        if (nativeFormat) assertEquals(effectiveSchema, schema);
+      });
+    }
+  }
+}

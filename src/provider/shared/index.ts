@@ -26,6 +26,9 @@ export {
   createOpenAIRequestInit,
 } from "../runtime-loader/provider-request-init.ts";
 
+// Provider-specific schema transforms shared by request builders and capture projection.
+export { closeAnthropicOutputConfigSchema } from "./anthropic-output-schema.ts";
+
 // Tool-input status transitions
 export {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
