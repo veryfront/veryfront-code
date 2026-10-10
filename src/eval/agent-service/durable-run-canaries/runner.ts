@@ -85,6 +85,7 @@ export interface DurableRunCanaryRunSummary {
 const getSnakeRunSummarySchema = defineSchema((v) =>
   v.object({
     run_id: v.string(),
+    canonical_run_id: v.string().uuid().optional(),
     conversation_id: v.string().uuid(),
     message_id: v.string().uuid(),
     agent_id: v.string(),
@@ -131,6 +132,9 @@ export function parseDurableRunCanaryRunSummary(value: unknown): DurableRunCanar
   if (snake.success) {
     return {
       runId: snake.data.run_id,
+      ...(snake.data.canonical_run_id === undefined
+        ? {}
+        : { canonicalRunId: snake.data.canonical_run_id }),
       conversationId: snake.data.conversation_id,
       messageId: snake.data.message_id,
       agentId: snake.data.agent_id,

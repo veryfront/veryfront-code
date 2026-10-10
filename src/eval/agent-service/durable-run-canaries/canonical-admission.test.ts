@@ -65,4 +65,19 @@ Deno.test("durable canary admits once and reads canonical identity with the real
   );
   const { canonicalRunId: _canonicalRunId, ...legacy } = parseInput;
   assertEquals(parseDurableRunCanaryRunSummary(legacy).canonicalRunId, undefined);
+  const snake = {
+    run_id: "canary-key",
+    conversation_id: conversation,
+    message_id: message,
+    agent_id: "agent",
+    status: "completed",
+    latest_event_id: 7,
+  };
+  const legacySnake = parseDurableRunCanaryRunSummary(snake);
+  assertEquals(Object.hasOwn(legacySnake, "canonicalRunId"), false);
+  assertEquals(
+    parseDurableRunCanaryRunSummary({ ...snake, canonical_run_id: id }),
+    { ...legacySnake, canonicalRunId: id },
+  );
+  assertThrows(() => parseDurableRunCanaryRunSummary({ ...snake, canonical_run_id: "canary-key" }));
 });
