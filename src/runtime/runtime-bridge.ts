@@ -1696,7 +1696,10 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
   });
 }
 
-export function streamText(options: StreamTextOptions): RuntimeStreamResult {
+function streamTextInternal(
+  options: StreamTextOptions,
+  shouldObserveStreamFailure: boolean,
+): RuntimeStreamResult {
   let observeStreamFailure = createGenerateFailureObserver(options.abortSignal);
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const model = options.model;
@@ -1714,9 +1717,12 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
       const result = await runWithModelCallCapture(capture, dispatch);
       return {
         ...result,
-        stream: observeProviderStreamSourceFailures(result.stream, observeStreamFailure),
+        stream: shouldObserveStreamFailure
+          ? observeProviderStreamSourceFailures(result.stream, observeStreamFailure)
+          : result.stream,
       };
     } catch (error) {
+      if (!shouldObserveStreamFailure) throw error;
       return await observeStreamFailure(error);
     }
   });
@@ -1759,6 +1765,14 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
       yield* getPrivateAsyncIterator(textDeltasFromStream(await acquire("text")));
     })(),
   };
+}
+
+export function streamText(options: StreamTextOptions): RuntimeStreamResult {
+  return streamTextInternal(options, true);
+}
+
+export function streamTextForObservedAgentRuntime(options: StreamTextOptions): RuntimeStreamResult {
+  return streamTextInternal(options, false);
 }
 
 export function embed(options: EmbedOptions) {

@@ -158,7 +158,10 @@ import {
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
-import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
+import {
+  generateText,
+  streamTextForObservedAgentRuntime,
+} from "#veryfront/runtime/runtime-bridge.ts";
 import { resolveAgentSystem } from "./effective-agent-system.ts";
 import {
   resolveActiveProviderReplayProvider,
@@ -5237,7 +5240,7 @@ export class AgentRuntime {
         { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
       );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
-        streamText({
+        streamTextForObservedAgentRuntime({
           model: streamModel,
           system: providerSystemPrompt,
           messages: providerMessages,
