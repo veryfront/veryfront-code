@@ -329,9 +329,9 @@ Veryfront blocks private network destinations by default. CLI API transports
 permit the exact API origin configured by the operator. Hosted runtimes and
 `veryfront serve` also permit an HTTP API origin set through `VERYFRONT_API_URL`
 or `VERYFRONT_API_BASE_URL` before startup. Project `.env` files and later writes
-cannot authorize HTTP origins. Redirects remain rejected, and other outbound
-requests keep their existing restrictions. Use HTTPS unless the API is on a
-private network you control.
+cannot authorize HTTP origins. Origin-bound API transports reject redirects;
+other outbound requests keep their existing policies. Use HTTPS unless the API
+is on a private network you control.
 
 In CI, set the API URL variable used by the command next to
 `VERYFRONT_API_TOKEN` in the job environment whenever the project uses a

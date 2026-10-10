@@ -361,7 +361,8 @@ excluding values copied from project `.env` files. Hosted runtimes and
 `veryfront serve` also permit the exact HTTP API origin captured at process boot.
 Only `createVeryfrontApiOriginBoundOutboundFetch()` uses these exceptions;
 project environment files and later writes cannot authorize HTTP origins.
-Redirects remain rejected, and other transports keep the private-address block.
+These origin-bound transports reject redirects; other transports keep their
+existing policies.
 
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
