@@ -79,7 +79,7 @@ describe("host credential API transport", () => {
     it(`rejects ${name} API redirects without forwarding credentials`, async () => {
       const service = "http://api.svc.example:4000";
       const calls: string[] = [];
-      const fetchImpl: typeof fetch = (input) => {
+      const fetchImpl: typeof fetch = (input, _init) => {
         calls.push(String(input));
         return Promise.resolve(
           new Response(null, {
