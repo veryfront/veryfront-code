@@ -3382,8 +3382,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               if (poison === "find") {
                 Array.prototype.find = function (...args: Parameters<typeof find>) {
                   if (
-                    this[0]?.path === "veryfront.config.ts" && this[0]?.version_id === undefined &&
-                    args[0](this[0], 0, this)
+                    this[0]?.path === "veryfront.config.ts" && this[0]?.version_id === undefined
                   ) {
                     replacements++;
                     throw new Error("Tenant replaced release config find");
