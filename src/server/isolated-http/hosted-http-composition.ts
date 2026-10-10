@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import process from "node:process";
+import { isDeno, isDenoCompiled, isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/errors";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
@@ -65,10 +67,33 @@ interface HostedHttpCompositionDependencies {
   readFile?: (path: string, options: { signal?: AbortSignal }) => Promise<Uint8Array>;
   /** @internal Host override check; replaced in hermetic tests. */
   isOverrideEnabled?: () => boolean;
+  /** @internal Runtime support check; replaced in hermetic tests. */
+  runtime?: () => HostedHttpRuntimeSupport;
   /** @internal Monotonic clock for the source records refresh; replaced in hermetic tests. */
   now?: () => number;
   createAllocatorClient?: typeof createHostedExecutorAllocatorClient;
   createBroker?: (options: HostedExecutorSessionPoolOptions) => HostedHttpCompositionBroker;
+}
+
+/** Whether this process can run the hosted HTTP host, and how to name it in errors. */
+export interface HostedHttpRuntimeSupport {
+  supported: boolean;
+  name: string;
+}
+
+/**
+ * The allocator client and the TLS pre-shared-key transport need Node.js 22 or newer.
+ * Deno, including the compiled Deno binary, and Bun are unsupported.
+ */
+export function detectHostedHttpRuntime(): HostedHttpRuntimeSupport {
+  if (isDeno) {
+    return { supported: false, name: isDenoCompiled ? "the compiled Deno binary" : "Deno" };
+  }
+  if (!isNodeRuntime() || process.release?.name !== "node") {
+    return { supported: false, name: "this runtime" };
+  }
+  const version = process.versions.node;
+  return { supported: Number(version.split(".")[0]) >= 22, name: `Node.js ${version}` };
 }
 
 function absolutePath(value: string | undefined, key: string): string {
@@ -194,7 +219,8 @@ export async function createRefreshingSourceRecordLookup(options: {
 
 /**
  * Compose the hosted HTTP allocator client, TLS transport, broker, resolver and ingress
- * from host configuration only. Refuses to start while the shared host-execution override
+ * from host configuration only. Node.js 22 or newer only: on any other runtime it refuses to
+ * start rather than serve without isolation. Refuses to start while the shared host-execution override
  * is set. The broker token file is read on every allocator call so rotation applies. The
  * source records file is read at startup and again at most once a minute, so a newly
  * published release is refused for up to one minute and a broken file refuses every release.
@@ -203,6 +229,12 @@ export async function createHostedHttpComposition(
   config: HostedHttpCompositionConfig,
   dependencies: HostedHttpCompositionDependencies = {},
 ): Promise<HostedHttpComposition> {
+  const runtime = (dependencies.runtime ?? detectHostedHttpRuntime)();
+  if (!runtime.supported) {
+    throw new TypeError(
+      `${HOSTED_HTTP_ISOLATION_ENV} requires Node.js 22 or newer and is unsupported on ${runtime.name}`,
+    );
+  }
   if ((dependencies.isOverrideEnabled ?? isHostProjectExecutionOverrideEnabled)()) {
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }

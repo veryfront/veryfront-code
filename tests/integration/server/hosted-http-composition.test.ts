@@ -11,6 +11,7 @@ import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/exec
 import type { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
 import {
   createHostedHttpComposition,
+  detectHostedHttpRuntime,
   type HostedHttpCompositionConfig,
   isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
@@ -32,6 +33,8 @@ const hostEnv: Record<string, string> = {
 };
 
 const read = (env: Record<string, string | undefined>) => (key: string) => env[key];
+
+const nodeRuntime = () => ({ supported: true, name: "Node.js 22.0.0" });
 
 const allocator: HostedExecutorAllocatorClient = {
   allocate: () => Promise.reject(new Error("not used")),
@@ -85,6 +88,7 @@ describe("hosted HTTP host composition", () => {
         await assertRejects(
           () =>
             createHostedHttpComposition(config, {
+              runtime: nodeRuntime,
               createAllocatorClient: () => {
                 built++;
                 return allocator;
@@ -106,6 +110,7 @@ describe("hosted HTTP host composition", () => {
       let brokerOptions: unknown;
       const broker = fakeBroker();
       const composition = await createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
         createAllocatorClient(options) {
           allocatorOptions = options;
           return allocator;
@@ -133,6 +138,7 @@ describe("hosted HTTP host composition", () => {
     await withTempDir(async (dir) => {
       const config = await writeHostFiles(dir);
       const composition = await createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
         createAllocatorClient: () => allocator,
         createBroker: () => fakeBroker().broker,
       });
@@ -165,6 +171,22 @@ describe("hosted HTTP host composition", () => {
         clearEnvFileValueSource("VERYFRONT_HOSTED_HTTP_ISOLATION");
       }
       return Promise.resolve();
+    });
+  });
+
+  it("detects Deno as unsupported and refuses to compose there", async () => {
+    await withTempDir(async (dir) => {
+      const config = await writeHostFiles(dir);
+      assertEquals(detectHostedHttpRuntime(), { supported: false, name: "Deno" });
+      await assertRejects(
+        () =>
+          createHostedHttpComposition(config, {
+            createAllocatorClient: () => allocator,
+            createBroker: () => fakeBroker().broker,
+          }),
+        TypeError,
+        "unsupported on Deno",
+      );
     });
   });
 });

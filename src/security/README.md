@@ -520,11 +520,11 @@ updated.
 
 ### Host execution gates
 
-| Gate                                                   | Consumer                                             | Contract                                                                               |
-| ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`               | Operator-granted shared execution                    | See [Operator-granted shared execution](#operator-granted-shared-execution)            |
-| `VERYFRONT_HOSTED_HTTP_ISOLATION`                      | `veryfront serve` production renderers in proxy mode | Off by default. Refuses to start while `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` is set |
-| `security/sandbox/worker-pool.ts` host-realm admission | Worker pool when the operator grant is set           | Follows the operator grant                                                             |
+| Gate                                                   | Consumer                                             | Contract                                                                                                                               |
+| ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`               | Operator-granted shared execution                    | See [Operator-granted shared execution](#operator-granted-shared-execution)                                                            |
+| `VERYFRONT_HOSTED_HTTP_ISOLATION`                      | `veryfront serve` production renderers in proxy mode | Off by default. Node.js 22 or newer only. Refuses to start while `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` is set or on another runtime |
+| `security/sandbox/worker-pool.ts` host-realm admission | Worker pool when the operator grant is set           | Follows the operator grant                                                                                                             |
 
 ### Host execution grant register
 

@@ -1,6 +1,6 @@
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 
-/** Host flag that enables isolated hosted HTTP execution. Default off. */
+/** Host flag that enables isolated hosted HTTP execution. Default off. Node.js 22 or newer only. */
 export const HOSTED_HTTP_ISOLATION_ENV = "VERYFRONT_HOSTED_HTTP_ISOLATION";
 
 /**

@@ -34,6 +34,8 @@ const record = {
   image: `ghcr.io/veryfront/tenant-source@sha256:${"b".repeat(64)}`,
 };
 
+const nodeRuntime = () => ({ supported: true, name: "Node.js 22.0.0" });
+
 const allocator: HostedExecutorAllocatorClient = {
   allocate: () => Promise.reject(new Error("not used")),
   observe: () => Promise.reject(new Error("not used")),
@@ -146,6 +148,7 @@ describe("hosted HTTP host composition", () => {
     await assertRejects(
       () =>
         createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
           isOverrideEnabled: () => true,
           readFile: defaultFiles().readFile,
           createAllocatorClient: () => {
@@ -166,6 +169,7 @@ describe("hosted HTTP host composition", () => {
     let brokerOptions: unknown;
     const broker = fakeBroker({ release: "released", pending: 0 });
     const composition = await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
       isOverrideEnabled: () => false,
       readFile: host.readFile,
       createAllocatorClient(options) {
@@ -197,6 +201,7 @@ describe("hosted HTTP host composition", () => {
   it("omits the trust root when no CA file is configured", async () => {
     let ca: string | undefined = "unset";
     await createHostedHttpComposition({ ...config, allocatorCaFile: undefined }, {
+      runtime: nodeRuntime,
       isOverrideEnabled: () => false,
       readFile: defaultFiles().readFile,
       createAllocatorClient(options) {
@@ -219,6 +224,7 @@ describe("hosted HTTP host composition", () => {
     for (const files of cases) {
       await assertRejects(() =>
         createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
           isOverrideEnabled: () => false,
           readFile: hostFiles(files).readFile,
           createAllocatorClient: () => allocator,
@@ -237,6 +243,7 @@ describe("hosted HTTP host composition", () => {
     ) {
       const broker = fakeBroker(result);
       const composition = await createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
         isOverrideEnabled: () => false,
         readFile: defaultFiles().readFile,
         createAllocatorClient: () => allocator,
@@ -314,5 +321,25 @@ describe("hosted HTTP host composition", () => {
     const request = { projectId: record.project_id, releaseId: record.release_id };
     await Promise.all([lookup(request, signal), lookup(request, signal), lookup(request, signal)]);
     assertEquals(reads, 2);
+  });
+
+  it("refuses to start on a runtime without the Node.js transport", async () => {
+    let built = 0;
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          runtime: () => ({ supported: false, name: "the compiled Deno binary" }),
+          isOverrideEnabled: () => false,
+          readFile: defaultFiles().readFile,
+          createAllocatorClient: () => {
+            built++;
+            return allocator;
+          },
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      TypeError,
+      "VERYFRONT_HOSTED_HTTP_ISOLATION requires Node.js 22 or newer and is unsupported on the compiled Deno binary",
+    );
+    assertEquals(built, 0);
   });
 });
