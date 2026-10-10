@@ -1,7 +1,9 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import type { RemoteToolSource } from "#veryfront/tool";
+import type { RemoteToolSource, Tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { DefaultHostedChatRuntimeSystemRefreshInput } from "./default-chat-runtime.ts";
 import {
   createDefaultHostedProjectSteeringRefresh,
@@ -11,6 +13,8 @@ import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { AgentSystem } from "../types.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
+import { defineSchema } from "../../schemas/define.ts";
 
 function systemText(system: AgentSystem): string {
   return typeof system === "string" ? system : flattenSystemInstructions(system);
@@ -23,6 +27,16 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
     description: "Agent description",
     instructions: "Base instructions",
     tools: true,
+  };
+}
+
+function runtimeTool(id: string, description: string): Tool<unknown, unknown> {
+  return {
+    id,
+    type: "function",
+    description,
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: async () => ({ ok: true }),
   };
 }
 
@@ -175,6 +189,94 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Current run tool inventory:"), true);
   });
 
+  it("keeps the selected canonical loader during live steering refresh", async () => {
+    const runtimeTools = {
+      load_skill: markTrustedHostToolProvenance(
+        runtimeTool("load_skill", "Platform load skill"),
+      ),
+      veryfront__load_skill: markTrustedHostToolProvenance(
+        runtimeTool("veryfront__load_skill", "Platform load skill"),
+      ),
+    };
+    const legacyLoader = runtimeTools.load_skill;
+    if (legacyLoader === undefined) throw new Error("Expected legacy loader alias");
+    markRuntimeProviderSchemaHiddenTool(legacyLoader);
+    let visibleToolNames: readonly string[] | undefined;
+    let visibleSkillIds: readonly string[] | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) => {
+        visibleToolNames = input.availableToolNames;
+        visibleSkillIds = input.skills.map((skill) => skill.id);
+        return input.instructions;
+      },
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "veryfront__load_skill"],
+        modelVisibleToolNames: ["veryfront__load_skill"],
+        toolLoadingMode: "deferred",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    await refresh(input);
+
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__load_skill"]);
+    assertEquals(visibleToolNames, ["veryfront__load_skill"]);
+    assertEquals(visibleSkillIds, ["build"]);
+  });
+
+  it("keeps a project legacy load_skill collision deferred during live steering refresh", async () => {
+    const runtimeTools = {
+      load_skill: runtimeTool("load_skill", "Project custom loader"),
+      sleep: runtimeTool("sleep", "Sleep"),
+      veryfront__load_skill: markTrustedHostToolProvenance(
+        runtimeTool("veryfront__load_skill", "Platform load skill"),
+      ),
+    };
+    let visibleToolNames: readonly string[] | undefined;
+    let visibleSkillIds: readonly string[] | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) => {
+        visibleToolNames = input.availableToolNames;
+        visibleSkillIds = input.skills.map((skill) => skill.id);
+        return input.instructions;
+      },
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "sleep", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "sleep", "veryfront__load_skill"],
+        modelVisibleToolNames: ["tool_search", "veryfront__load_skill"],
+        toolLoadingMode: "deferred",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    await refresh(input);
+
+    assertEquals(input.taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
+    assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
+    assertEquals(visibleSkillIds, ["build"]);
+  });
+
   it("keeps source-denied integration tools out of refreshed inventory", async () => {
     const remoteToolSource: RemoteToolSource = {
       id: "api",
@@ -282,6 +384,99 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       true,
       "source-allowed tools must be advertised in eager mode",
     );
+  });
+
+  it("keeps schema-hidden local tools executable but out of eager steering inventory", async () => {
+    const hiddenLoader = markRuntimeProviderSchemaHiddenTool(
+      runtimeTool("load_skill", "Hidden loader alias"),
+    );
+    const visibleLoader = markTrustedHostToolProvenance(
+      runtimeTool("veryfront__load_skill", "Visible loader"),
+    );
+    const runtimeTools = {
+      load_skill: hiddenLoader,
+      veryfront__load_skill: visibleLoader,
+    };
+    let buildVisibleToolNames: readonly string[] | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) => {
+        buildVisibleToolNames = input.availableToolNames;
+        return `${input.instructions}:${(input.availableToolNames ?? []).join(",")}`;
+      },
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "veryfront__load_skill"],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(input.toolAssembly.runtimeTools.load_skill, hiddenLoader);
+    assertEquals(await input.toolAssembly.runtimeTools.load_skill?.execute?.({}, {}), { ok: true });
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__load_skill"]);
+    assertEquals(buildVisibleToolNames, ["veryfront__load_skill"]);
+    assertEquals(system.includes("- load_skill\n"), false);
+    assertStringIncludes(system, "veryfront__load_skill");
+  });
+
+  it("does not let schema-hidden local tools consume eager provider capacity", async () => {
+    const runtimeTools: Record<string, Tool<unknown, unknown>> = {
+      hidden_alias: markRuntimeProviderSchemaHiddenTool(
+        runtimeTool("hidden_alias", "Hidden alias"),
+      ),
+    };
+    const visibleToolNames = Array.from(
+      { length: 128 },
+      (_, index) => `visible_tool_${index.toString().padStart(3, "0")}`,
+    );
+    for (const toolName of visibleToolNames) {
+      runtimeTools[toolName] = runtimeTool(toolName, "Visible tool");
+    }
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => (input.availableToolNames ?? []).join(","),
+    });
+    const input = createRefreshInput({
+      taskContext: {
+        authToken: "auth-token",
+        projectId: "project-1",
+        branchId: "branch-1",
+        model: "openai/gpt-test",
+      },
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["hidden_alias", ...visibleToolNames],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["hidden_alias", ...visibleToolNames],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(input.taskContext.availableToolNames?.length, 128);
+    assertEquals(input.taskContext.availableToolNames?.includes("hidden_alias"), false);
+    assertEquals(input.taskContext.availableToolNames?.includes("visible_tool_127"), true);
+    assertEquals(system.includes("hidden_alias"), false);
+    assertStringIncludes(system, "visible_tool_127");
   });
 
   it("keeps an explicitly empty advertised skill catalog during refresh", async () => {

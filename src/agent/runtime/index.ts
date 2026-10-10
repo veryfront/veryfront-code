@@ -110,6 +110,7 @@ import {
   markProviderReplayDelivered,
   readAttachedProviderMetadata,
 } from "./provider-metadata.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -1680,6 +1681,31 @@ function toolNotVisibleError(toolName: string): string {
   return `Tool "${toolName}" is not available in the current model step`;
 }
 
+function isHiddenTrustedToolDefinition(
+  toolName: string,
+  toolDefinition: ToolDefinition | undefined,
+): toolDefinition is ToolDefinition {
+  return toolDefinition !== undefined &&
+    toolDefinition.name === toolName &&
+    isRuntimeProviderSchemaHiddenTool(toolDefinition) &&
+    hasTrustedPlatformPolicyToolDefinition(toolDefinition);
+}
+
+function collectAcceptedRuntimeToolNames(
+  runtimeTools: ReturnType<typeof convertToolsToRuntimeTools>,
+  plan: ToolExposurePlan,
+): string[] {
+  const names = createPrivateSet(Object.keys(runtimeTools ?? {}));
+  for (let index = 0; index < plan.authorized.length; index++) {
+    if (!ObjectHasOwn(plan.authorized, index)) continue;
+    const toolDefinition = plan.authorized[index];
+    if (isHiddenTrustedToolDefinition(toolDefinition?.name ?? "", toolDefinition)) {
+      names.add(toolDefinition.name);
+    }
+  }
+  return [...names].sort(compareStrings);
+}
+
 function resolveToolExecutionAuthority(input: {
   toolName: string;
   plan: ToolExposurePlan;
@@ -1688,6 +1714,13 @@ function resolveToolExecutionAuthority(input: {
     if (!ObjectHasOwn(input.plan.visible, index)) continue;
     const toolDefinition = input.plan.visible[index];
     if (toolDefinition !== undefined && toolDefinition.name === input.toolName) {
+      return { kind: "visible", toolDefinition };
+    }
+  }
+  for (let index = 0; index < input.plan.authorized.length; index++) {
+    if (!ObjectHasOwn(input.plan.authorized, index)) continue;
+    const toolDefinition = input.plan.authorized[index];
+    if (isHiddenTrustedToolDefinition(input.toolName, toolDefinition)) {
       return { kind: "visible", toolDefinition };
     }
   }
@@ -2150,7 +2183,8 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
     return true;
   }
 
-  return error instanceof DOMException && error.name === "AbortError";
+  return abortSignal?.aborted === true &&
+    error instanceof DOMException && error.name === "AbortError";
 }
 
 function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
@@ -4735,6 +4769,10 @@ export class AgentRuntime {
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
+      const acceptedRuntimeToolNames = collectAcceptedRuntimeToolNames(
+        runtimeTools,
+        effectiveToolExposurePlan,
+      );
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
@@ -4989,7 +5027,7 @@ export class AgentRuntime {
         requireProviderFinish:
           languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
-        availableToolNames: runtimeToolNames,
+        availableToolNames: acceptedRuntimeToolNames,
         streamLifecycleMode,
         traceSpanName: `chat ${effectiveModel}`,
         traceAttributes: {

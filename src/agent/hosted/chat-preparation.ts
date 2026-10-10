@@ -487,10 +487,13 @@ function resolveInitialModelVisibleToolNames(input: {
   };
   const visibleLoadSkillToolNames = isPlatformPairDenied("load_skill")
     ? []
-    : ["load_skill", "veryfront__load_skill"].filter(isHostAllowed);
+    : ["veryfront__load_skill", "load_skill"].filter(isHostAllowed).slice(0, 1);
   const visibleFormInputToolNames = isPlatformPairDenied("form_input")
     ? []
     : ["form_input", "veryfront__form_input"].filter(isHostAllowed);
+  const requestedLoadSkillToolNames = input.runtimeConfig.requestedAllowedTools?.filter(
+    isLoadSkillToolName,
+  ) ?? [];
 
   if (input.runtimeConfig.requestedAllowedTools === undefined) {
     return [
@@ -500,13 +503,21 @@ function resolveInitialModelVisibleToolNames(input: {
     ].sort(compareStrings);
   }
 
+  const selectedLoadSkillToolName = visibleLoadSkillToolNames[0];
+  const shouldNormalizeLoadSkillAlias = input.selectedSkills.length > 0 &&
+    selectedLoadSkillToolName !== undefined && requestedLoadSkillToolNames.length > 1;
   const visibleToolNames = new Set(
-    input.runtimeConfig.requestedAllowedTools.filter(isHostAllowed),
+    input.runtimeConfig.requestedAllowedTools.filter((toolName) =>
+      isHostAllowed(toolName) &&
+      (!shouldNormalizeLoadSkillAlias || !isLoadSkillToolName(toolName) ||
+        toolName === selectedLoadSkillToolName)
+    ),
   );
   if (
     input.selectedSkills.length > 0 &&
     visibleLoadSkillToolNames.length > 0 &&
-    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty)
+    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty) &&
+    !somePrivateArray([...visibleToolNames], isLoadSkillToolName)
   ) {
     for (const toolName of visibleLoadSkillToolNames) {
       visibleToolNames.add(toolName);

@@ -1,3 +1,4 @@
+import { assertNativeAwait } from "#veryfront/security/http/native-body-processing.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
 
@@ -437,7 +438,18 @@ async function readBodyBytesRecord(
   try {
     while (true) {
       if (abortReason !== undefined) throw abortReason;
-      const { done, value } = await IntrinsicReflectApply(ReaderRead, reader, []);
+      const pendingRead = IntrinsicReflectApply(ReaderRead, reader, []) as Promise<
+        ReadableStreamReadResult<Uint8Array>
+      >;
+      // Checked after the read starts and before it is awaited. The first read
+      // is also the first await of every caller awaiting this read.
+      try {
+        assertNativeAwait();
+      } catch (error) {
+        cancelReader(reader, error);
+        throw error;
+      }
+      const { done, value } = await pendingRead;
       if (abortReason !== undefined) throw abortReason;
       if (done) break;
       if (!IntrinsicReflectApply(FunctionHasInstance, NativeUint8Array, [value])) {

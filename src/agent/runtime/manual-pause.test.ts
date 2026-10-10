@@ -469,7 +469,16 @@ it("holds an oversized pause until its dispatch stops without claiming confirmat
     resolveModelTransport: () => ({ model }),
   }, { manualPause: authority });
   let settled = false;
-  const response = new Response(await runtime.stream(userMessage("x".repeat(2 * 1024 * 1024))))
+  const response = new Response(
+    await runtime.stream(
+      userMessage("x".repeat(2 * 1024 * 1024)),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      cancellation.signal,
+    ),
+  )
     .text();
   void response.then(() => settled = true);
   let watchdog: ReturnType<typeof setTimeout> | undefined;

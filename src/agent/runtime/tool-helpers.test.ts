@@ -26,6 +26,10 @@ import {
   hasTrustedPlatformPolicyToolDefinition,
 } from "./skill-policy-enforcement.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import {
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 /**
  * Remote integration discovery goes through `guardedOutboundFetch`, which reads
@@ -680,6 +684,33 @@ describe("tool-helpers", () => {
       }
 
       assertEquals(definitions.map((definition) => definition.name), ["allowed_lookup"]);
+    });
+
+    it("hides provider-schema-hidden local tools unless the runtime planner opts in", async () => {
+      const hiddenTool = markTrustedHostToolProvenance(
+        markRuntimeProviderSchemaHiddenTool(tool({
+          id: "load_skill",
+          description: "Hidden legacy platform loader",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: async () => ({ ok: true }),
+        })),
+      );
+
+      assertEquals(
+        await getAvailableTools({ load_skill: hiddenTool }, { includeIntegrationTools: false }),
+        [],
+      );
+
+      const [definition] = await getAvailableTools(
+        { load_skill: hiddenTool },
+        {
+          includeIntegrationTools: false,
+          includeProviderSchemaHiddenTools: true,
+        },
+      );
+      assertEquals(definition?.name, "load_skill");
+      assertEquals(isRuntimeProviderSchemaHiddenTool(definition), true);
+      assertEquals(hasTrustedPlatformPolicyToolDefinition(definition), true);
     });
 
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
