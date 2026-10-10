@@ -1570,7 +1570,7 @@ function executeFrameworkToolSearch(input: {
     result: {
       ...result,
       nextStep: alreadyVisible
-        ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
+        ? "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it."
         : result.loadedCount > 0
         ? toolSearchLoadedNextStep(result.matches)
         : somePrivateArray(
