@@ -239,6 +239,13 @@ async function isBinaryHashCurrent(): Promise<boolean> {
 async function acquireBinary(): Promise<void> {
   await ensureCoordinationDir();
   const startedIdentity = await readProcessIdentity(Deno.pid);
+  // A pid-only record cannot tell this run from an earlier one with the same
+  // pid, so it cannot prove the binary was compiled fresh for this run.
+  if (!startedIdentity && Deno.env.get("VERYFRONT_BINARY_FRESH") === "1") {
+    throw new Error(
+      "VERYFRONT_BINARY_FRESH=1 needs /proc or ps to identify the test process",
+    );
+  }
   const processIdentity = startedIdentity ?? String(Deno.pid);
   const recordPath = join(COORDINATION_DIR, `${Deno.pid}${BINARY_RECORD_SUFFIX}`);
   using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
