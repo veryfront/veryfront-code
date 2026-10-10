@@ -24,7 +24,7 @@ const REGISTER_HEADING = "### Host execution grant register";
  * `true` or `false`.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
@@ -98,7 +98,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
     surface: "CORS preflight route inspection",
     guards: 2,
   },
-  "src/server/production-server.ts": { surface: "Startup execution posture", guards: 1 },
+  "src/server/production-server.ts": { surface: "Startup execution posture", guards: 3 },
   "src/server/runtime-handler/adapter-factory.ts": {
     surface: "Preview configuration refresh",
     guards: 1,
@@ -126,6 +126,7 @@ function countGuards(code: string, pattern: RegExp = GUARD): number {
 
 /** Definitions of the predicates themselves are not surfaces. */
 const PREDICATE_DEFINITIONS = new Set([
+  "src/security/host-execution-policy.ts",
   "src/security/project-locality.ts",
   "src/security/sandbox/worker-pool.ts",
 ]);
