@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { isDeno, isDenoCompiled, isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/errors";
+import { CONFIG_INVALID, PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/errors";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
@@ -31,6 +31,8 @@ const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
+/** Bound on one read of the source records file, below the resolver's 10 s deadline. */
+const SOURCE_RECORDS_READ_TIMEOUT_MS = 5_000;
 /** Broker shutdown and per-session cleanup bounds, inside the default 4 s process cleanup budget. */
 const SHUTDOWN_TIMEOUT_MS = 3_000;
 const BROKER_INSTANCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -168,16 +170,33 @@ export function readHostedHttpCompositionConfig(
   });
 }
 
+/**
+ * Read a bounded UTF-8 host file. Failures name the setting, never the host path,
+ * so file system errors do not reach user-facing output or error reporting.
+ */
 async function readBoundedText(
   read: NonNullable<HostedHttpCompositionDependencies["readFile"]>,
+  setting: string,
   path: string,
   maxBytes: number,
   signal?: AbortSignal,
 ) {
-  const bytes = await read(path, { signal });
+  let bytes: Uint8Array;
   try {
-    if (bytes.byteLength > maxBytes) throw new TypeError("Hosted HTTP host file is too large");
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    bytes = await read(path, { signal });
+  } catch {
+    signal?.throwIfAborted();
+    throw CONFIG_INVALID.create({ detail: `The file named by ${setting} could not be read` });
+  }
+  try {
+    if (bytes.byteLength > maxBytes) {
+      throw CONFIG_INVALID.create({ detail: `The file named by ${setting} is too large` });
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw CONFIG_INVALID.create({ detail: `The file named by ${setting} is not UTF-8` });
+    }
   } finally {
     bytes.fill(0);
   }
@@ -191,17 +210,36 @@ async function readBoundedText(
  * @internal
  */
 export async function createRefreshingSourceRecordLookup(options: {
-  readText(): Promise<string>;
+  readText(signal: AbortSignal): Promise<string>;
   now(): number;
   refreshMs: number;
+  /** Bound on one read. A read still pending at the bound is aborted and treated as failed. */
+  readTimeoutMs: number;
 }): Promise<Parameters<typeof createHostedHttpResolver>[0]["lookupSourceImage"]> {
   type Lookup = ReturnType<typeof createHostedHttpSourceRecordLookup>;
   let lookup: Lookup | undefined;
   let loadedAt = 0;
   let loading: Promise<void> | undefined;
+  const readWithin = async (): Promise<string> => {
+    const deadline = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        deadline.abort();
+        reject(new Error("Source records read timed out"));
+      }, options.readTimeoutMs);
+    });
+    const reading = options.readText(deadline.signal);
+    reading.catch(() => {});
+    try {
+      return await Promise.race([reading, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const load = async () => {
     try {
-      lookup = createHostedHttpSourceRecordLookup(JSON.parse(await options.readText()));
+      lookup = createHostedHttpSourceRecordLookup(JSON.parse(await readWithin()));
     } catch {
       lookup = undefined;
     } finally {
@@ -249,10 +287,23 @@ export async function createHostedHttpComposition(
   }
   const read = dependencies.readFile ?? readFile;
   const ca = config.allocatorCaFile
-    ? await readBoundedText(read, config.allocatorCaFile, MAX_CA_BYTES)
+    ? await readBoundedText(
+      read,
+      "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
+      config.allocatorCaFile,
+      MAX_CA_BYTES,
+    )
     : undefined;
   const lookupSourceImage = await createRefreshingSourceRecordLookup({
-    readText: () => readBoundedText(read, config.sourceRecordsFile, MAX_RECORDS_BYTES),
+    readText: (signal) =>
+      readBoundedText(
+        read,
+        "VERYFRONT_HOSTED_HTTP_SOURCE_RECORDS_FILE",
+        config.sourceRecordsFile,
+        MAX_RECORDS_BYTES,
+        signal,
+      ),
+    readTimeoutMs: SOURCE_RECORDS_READ_TIMEOUT_MS,
     now: dependencies.now ?? (() => performance.now()),
     refreshMs: SOURCE_RECORDS_REFRESH_MS,
   });
@@ -261,7 +312,13 @@ export async function createHostedHttpComposition(
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
-      const token = (await readBoundedText(read, tokenFile, MAX_TOKEN_BYTES, signal)).trim();
+      const token = (await readBoundedText(
+        read,
+        "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
+        tokenFile,
+        MAX_TOKEN_BYTES,
+        signal,
+      )).trim();
       if (!token) throw new Error("Executor broker token is unavailable");
       return token;
     },
