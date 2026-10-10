@@ -70,13 +70,14 @@ redirects to sign-in.
 
 ## Deployment dependency
 
-The Cloud API must be deployed before a CLI release that performs the exchange:
-an older API answers the exchange with `404`, which the CLI reports as
-`unsupported` and degrades to `gated`. The exchange path also answers `404` for
-an unknown project or environment and for a key without access, so the CLI
-reports those as `unsupported` as well. The gate change is backward compatible
-with existing session cookies, so the proxy can ship in either order relative
-to the CLI.
+The Cloud API must be deployed before a CLI release that performs the exchange.
+The exchange path answers `404` not_found for an unknown project or environment,
+a key for another project and a key without access, and an older API without
+the path answers the same `404` problem document, so the CLI cannot tell them
+apart. It reports every `404` as `refused`, with the remedy that names the API
+key's project access, and degrades to `gated`. Only `405` and `501` are reported
+as `unsupported`. The gate change is backward compatible with existing session
+cookies, so the proxy can ship in either order relative to the CLI.
 
 ## Change checks
 
