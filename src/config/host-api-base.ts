@@ -26,34 +26,54 @@ function normalizeHostApiEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-/** @internal Exact numeric loopback API origin authorized by the operator at process boot. */
-export function isHostHttpApiOrigin(value: string): boolean {
-  const permission = getHostBootEnv("VERYFRONT_HOST_HTTP_API_ORIGIN");
-  const configuredApi = normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_URL")) ??
-    normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_BASE_URL"));
-  if (!permission || !configuredApi) return false;
+function isCredentialFreeOrigin(value: string | undefined, origin: string): boolean {
+  if (!value) return false;
   try {
-    const allowed = new NativeURL(permission);
-    const target = new NativeURL(value);
-    const configured = new NativeURL(configuredApi);
-    const hostname = applyIntrinsic(urlHostname, allowed, []) as string;
-    const origin = applyIntrinsic(urlOrigin, allowed, []) as string;
-    return applyIntrinsic(urlProtocol, allowed, []) === "http:" &&
-      (hostname === "127.0.0.1" || hostname === "[::1]") &&
-      applyIntrinsic(urlPathname, allowed, []) === "/" &&
-      applyIntrinsic(urlSearch, allowed, []) === "" &&
-      applyIntrinsic(urlHash, allowed, []) === "" &&
-      applyIntrinsic(urlUsername, allowed, []) === "" &&
-      applyIntrinsic(urlPassword, allowed, []) === "" &&
-      applyIntrinsic(urlUsername, target, []) === "" &&
-      applyIntrinsic(urlPassword, target, []) === "" &&
-      applyIntrinsic(urlUsername, configured, []) === "" &&
-      applyIntrinsic(urlPassword, configured, []) === "" &&
-      applyIntrinsic(urlOrigin, target, []) === origin &&
-      applyIntrinsic(urlOrigin, configured, []) === origin;
+    const url = new NativeURL(value);
+    return applyIntrinsic(urlUsername, url, []) === "" &&
+      applyIntrinsic(urlPassword, url, []) === "" &&
+      applyIntrinsic(urlOrigin, url, []) === origin;
   } catch {
     return false;
   }
+}
+
+/**
+ * @internal Exact numeric loopback API origin authorized by the operator at process boot.
+ * It must also be the origin of `VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL`,
+ * since stored-login and source-client requests select different variables.
+ */
+export function isHostHttpApiOrigin(value: string): boolean {
+  const permission = getHostBootEnv("VERYFRONT_HOST_HTTP_API_ORIGIN");
+  if (!permission) return false;
+  let origin: string;
+  try {
+    const allowed = new NativeURL(permission);
+    const hostname = applyIntrinsic(urlHostname, allowed, []) as string;
+    if (
+      applyIntrinsic(urlProtocol, allowed, []) !== "http:" ||
+      (hostname !== "127.0.0.1" && hostname !== "[::1]") ||
+      applyIntrinsic(urlPathname, allowed, []) !== "/" ||
+      applyIntrinsic(urlSearch, allowed, []) !== "" ||
+      applyIntrinsic(urlHash, allowed, []) !== "" ||
+      applyIntrinsic(urlUsername, allowed, []) !== "" ||
+      applyIntrinsic(urlPassword, allowed, []) !== ""
+    ) {
+      return false;
+    }
+    origin = applyIntrinsic(urlOrigin, allowed, []) as string;
+  } catch {
+    return false;
+  }
+  return isCredentialFreeOrigin(value, origin) &&
+    (isCredentialFreeOrigin(
+      normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_URL")),
+      origin,
+    ) ||
+      isCredentialFreeOrigin(
+        normalizeHostApiEnv(getHostBootEnv("VERYFRONT_API_BASE_URL")),
+        origin,
+      ));
 }
 
 /** Require HTTPS or an explicitly authorized numeric loopback API before attaching host credentials. */

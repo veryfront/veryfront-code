@@ -2,6 +2,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import {
   guardedEgressFetch,
@@ -1251,14 +1252,17 @@ describe("authenticated download transport settlement", () => {
   });
 });
 
-describe("explicit loopback host API transport", () => {
+// Boot-captured host variables can only be overridden through the Deno test env overlay.
+const denoDescribe = isDeno ? describe : describe.skip;
+
+denoDescribe("explicit loopback host API transport", () => {
   const origin = "http://127.0.0.1:4000";
   const environment = {
     VERYFRONT_HOST_HTTP_API_ORIGIN: origin,
     VERYFRONT_API_URL: origin,
-    VERYFRONT_API_BASE_URL: undefined,
-    VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: undefined,
-    VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: undefined,
+    VERYFRONT_API_BASE_URL: "",
+    VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
+    VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "",
   };
 
   it("sends credentials only to the approved API origin", async () => {
@@ -1277,6 +1281,19 @@ describe("explicit loopback host API transport", () => {
         );
         assertEquals(await response.json(), { ok: true });
       }));
+  });
+
+  it("accepts the approved origin when only the API base URL names it", async () => {
+    await withEnv(
+      { ...environment, VERYFRONT_API_URL: "https://api.example", VERYFRONT_API_BASE_URL: origin },
+      () =>
+        withMockFetch(() => Promise.resolve(Response.json({ ok: true })), async () => {
+          const response = await createVeryfrontApiOriginBoundOutboundFetch(origin)(
+            `${origin}/runs`,
+          );
+          assertEquals(await response.json(), { ok: true });
+        }),
+    );
   });
 
   it("rejects other origins before dispatch and does not authorize generic fetch", async () => {

@@ -138,3 +138,72 @@ describe("host credential API transport", () => {
     });
   });
 });
+
+describe("host credential API transport with both API variables", () => {
+  it("accepts the permission when it matches the source-client API base URL", async () => {
+    await withEnv(
+      {
+        [option]: origin,
+        VERYFRONT_API_URL: "https://api.example",
+        VERYFRONT_API_BASE_URL: `${origin}/api`,
+      },
+      async () => assertEquals(requireHostPrivateApiHttps(`${origin}/api`), `${origin}/api`),
+    );
+  });
+
+  it("rejects the permission when neither API variable names it", async () => {
+    await withEnv(
+      {
+        [option]: origin,
+        VERYFRONT_API_URL: "https://api.example",
+        VERYFRONT_API_BASE_URL: "http://127.0.0.1:4001",
+      },
+      async () => assertThrows(() => requireHostPrivateApiHttps(origin), TypeError),
+    );
+  });
+
+  it("rejects an approved origin configured with embedded credentials", async () => {
+    await withEnv(
+      {
+        [option]: origin,
+        VERYFRONT_API_URL: "https://api.example",
+        VERYFRONT_API_BASE_URL: "http://user:pass@127.0.0.1:4000",
+      },
+      async () => assertThrows(() => requireHostPrivateApiHttps(origin), TypeError),
+    );
+  });
+});
+
+describe("host credential API transport with ambiguous loopback forms", () => {
+  for (
+    const value of [
+      "http://[::ffff:127.0.0.1]:4000",
+      "http://[::ffff:7f00:1]:4000",
+      "http://0.0.0.0:4000",
+      "http://localhost:4000",
+      "http://api.localhost:4000",
+      "http://127.0.0.1.nip.io:4000",
+      "http://127.0.0.1:4000@api.example",
+      "http://api.example#@127.0.0.1:4000",
+      "https://127.0.0.1:4000",
+    ]
+  ) {
+    it(`rejects ${value} as the permission and as the target`, async () => {
+      await configured(
+        value,
+        () => {
+          assertThrows(() => requireHostPrivateApiHttps(origin), TypeError);
+          if (!value.startsWith("https:")) {
+            assertThrows(() => requireHostPrivateApiHttps(value), TypeError);
+          }
+        },
+        value,
+      );
+      await configured(origin, () => {
+        if (!value.startsWith("https:")) {
+          assertThrows(() => requireHostPrivateApiHttps(value), TypeError);
+        }
+      });
+    });
+  }
+});
