@@ -1,3 +1,4 @@
+import type { ProviderObservedSkillBody } from "./provider-observed-skill-bodies.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -407,17 +408,18 @@ export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
 }
 
 /** Snapshot successful skill bodies from trusted results already in provider history. */
-export function getProviderObservedSkillBodyIds(messages: readonly Message[]): readonly string[] {
-  const skillIds: string[] = [];
-  const seen = createPrivateSet<string>();
+export function getProviderObservedSkillBodies(
+  messages: readonly Message[],
+): readonly ProviderObservedSkillBody[] {
+  const bodies: ProviderObservedSkillBody[] = [];
   forEachTrustedSkillLoadResult(messages, (result) => {
     const skillId = extractSkillId(result);
-    if (skillId !== undefined && !seen.has(skillId)) {
-      seen.add(skillId);
-      skillIds.push(skillId);
+    const references = extractSkillToolAvailability(result)?.references;
+    if (skillId !== undefined && references !== undefined) {
+      bodies.push(Object.freeze({ skillId, references }));
     }
   });
-  return skillIds;
+  return bodies;
 }
 
 /**

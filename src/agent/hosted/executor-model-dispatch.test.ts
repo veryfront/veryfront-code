@@ -151,7 +151,7 @@ describe("hosted executor model dispatch", () => {
         observePrompt(prompt) {
           observed.push(structuredClone(prompt));
         },
-        observedSkillIds: () => [],
+        observedSkillBodies: () => [],
       },
     }));
     try {

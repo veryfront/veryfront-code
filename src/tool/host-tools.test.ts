@@ -137,7 +137,7 @@ describe("tool/host-tools", () => {
     });
 
     const observedContext: ToolExecutionContext = {};
-    setProviderObservedSkillBodies(observedContext, ["review"]);
+    setProviderObservedSkillBodies(observedContext, [{ skillId: "review", references: [] }]);
     await tools.load_skill?.execute({}, observedContext);
     await tools.load_skill?.execute({}, {});
 

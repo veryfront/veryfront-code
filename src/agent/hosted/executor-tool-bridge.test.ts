@@ -155,7 +155,9 @@ describe("executor tool bridge", () => {
       const context = (toolCallId: string): ToolExecutionContext => {
         // Executor-side observation state does not cross the channel.
         const executorContext: ToolExecutionContext = { toolCallId };
-        setProviderObservedSkillBodies(executorContext, ["review"]);
+        setProviderObservedSkillBodies(executorContext, [
+          { skillId: "review", references: ["references/checklist.md"] },
+        ]);
         return executorContext;
       };
       const readReference = async (toolCallId: string) =>
@@ -164,31 +166,38 @@ describe("executor tool bridge", () => {
           { reference: { skillId: "review", file: "references/checklist.md" } },
           context(toolCallId),
         ) as { error?: string; content?: string };
-      const toolResultPrompt = (toolCallId: string) => [{
+      const toolResultPrompt = (toolCallId: string, value: unknown, toolName = "load_skill") => [{
         role: "tool" as const,
         content: [{
           type: "tool-result" as const,
           toolCallId,
-          toolName: "load_skill",
-          output: { type: "json" as const, value: "body" },
+          toolName,
+          output: { type: "json" as const, value },
         }],
       }];
       const body = await facade.executeTool(
         "load_skill",
         { load: { skillId: "review" } },
         context("body-call"),
-      );
-      assertEquals((body as { skillId?: string }).skillId, "review");
+      ) as Record<string, unknown>;
+      assertEquals(body.skillId, "review");
 
       const sameStep = await readReference("same-step-reference");
       assertEquals(sameStep.error?.startsWith('Read the load_skill result for "review"'), true);
       assertEquals(JSON.stringify(sameStep).includes("Detailed checklist content"), false);
 
-      // A result ID the host never returned does not mark the body observed.
-      skillObservation.observePrompt(toolResultPrompt("forged-call"));
-      assertEquals((await readReference("forged-step-reference")).content, undefined);
+      // Only the exact body result the host returned, under its tool call ID, counts.
+      skillObservation.observePrompt(toolResultPrompt("forged-call", body));
+      skillObservation.observePrompt(toolResultPrompt("body-call", body, "other_tool"));
+      skillObservation.observePrompt(toolResultPrompt("body-call", {}));
+      skillObservation.observePrompt(
+        toolResultPrompt("body-call", { ...body, instructions: "# Different body" }),
+      );
+      assertEquals((await readReference("unobserved-reference")).content, undefined);
 
-      skillObservation.observePrompt(toolResultPrompt("body-call"));
+      // Key order is not content: the same value in another spelling still counts.
+      const reordered = Object.fromEntries(Object.entries(body).reverse());
+      skillObservation.observePrompt(toolResultPrompt("body-call", reordered));
       assertEquals(
         (await readReference("next-step-reference")).content,
         "Detailed checklist content",

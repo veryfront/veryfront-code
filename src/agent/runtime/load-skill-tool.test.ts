@@ -2382,6 +2382,59 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(secondResult.references, ["references/project-2.md"]);
 });
 
+Deno.test("createRuntimeLoadSkillTool binds provider observation to the current skill scope", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: (activeContext) =>
+        Promise.resolve([`references/${activeContext.projectId}.md`, "references/shared.md"]),
+      loadProjectSkill: (activeContext, skillId) =>
+        Promise.resolve({
+          instructions: `# ${activeContext.projectId} ${skillId}`,
+          references: [`references/${activeContext.projectId}.md`, "references/shared.md"],
+        }),
+      loadProjectSkillReference: (activeContext, _skillId, file) =>
+        Promise.resolve(`${activeContext.projectId} ${file}`),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+  const read = { skillId: "plan", file: "references/shared.md" };
+
+  const firstBody = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  const observedFirstScope = {};
+  setProviderObservedSkillBodies(observedFirstScope, [
+    { skillId: "plan", references: firstBody.references ?? [] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedFirstScope) as { content?: string }).content,
+    "project-1 references/shared.md",
+  );
+
+  context.projectId = "project-2";
+  context.branchId = null;
+  // Same provider step: the second scope's body load and reference read share one snapshot.
+  const secondBody = expectLoadedSkillResponse(
+    await tool.execute({ skillId: "plan" }, observedFirstScope),
+  );
+  assertEquals(secondBody.references, ["references/project-2.md", "references/shared.md"]);
+  assertEquals(await tool.execute(read, observedFirstScope), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const observedSecondScope = {};
+  setProviderObservedSkillBodies(observedSecondScope, [
+    { skillId: "plan", references: firstBody.references ?? [] },
+    { skillId: "plan", references: secondBody.references ?? [] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedSecondScope) as { content?: string }).content,
+    "project-2 references/shared.md",
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -2583,7 +2636,9 @@ Deno.test("createRuntimeLoadSkillTool waits until provider observes body before 
   );
 
   const nextProviderStepContext = {};
-  setProviderObservedSkillBodies(nextProviderStepContext, ["plan"]);
+  setProviderObservedSkillBodies(nextProviderStepContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
   assertEquals(
     await tool.execute(
       { skillId: "plan", file: "references/project.md" },
@@ -2620,7 +2675,9 @@ Deno.test("createRuntimeLoadSkillTool can require a provider observation snapsho
       'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
   });
   const observedContext = {};
-  setProviderObservedSkillBodies(observedContext, ["plan"]);
+  setProviderObservedSkillBodies(observedContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
   assertEquals(
     (await required.execute(read, observedContext) as { content?: string }).content,
     "project reference",

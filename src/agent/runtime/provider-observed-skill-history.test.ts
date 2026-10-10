@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Message, ToolResultPart } from "../types.ts";
 import {
-  getProviderObservedSkillBodyIds,
+  getProviderObservedSkillBodies,
   markTrustedPlatformPolicyToolResultPart,
 } from "./skill-policy-enforcement.ts";
 
@@ -22,24 +22,30 @@ function resultMessage(result: unknown, trusted = true, toolName = "load_skill")
 }
 
 describe("provider-observed skill body history", () => {
-  it("retains all distinct trusted successful bodies, including canonical tool names", () => {
+  it("retains trusted successful bodies with their references, including canonical tool names", () => {
     assertEquals(
-      getProviderObservedSkillBodyIds([
-        resultMessage({ skillId: "first", instructions: "# First" }),
+      getProviderObservedSkillBodies([
+        resultMessage({
+          skillId: "first",
+          instructions: "# First",
+          references: ["references/guide.md"],
+        }),
         resultMessage(
           { skillId: "second", instructions: "# Second" },
           true,
           "veryfront__load_skill",
         ),
-        resultMessage({ skillId: "first", instructions: "# First" }),
       ]),
-      ["first", "second"],
+      [
+        { skillId: "first", references: ["references/guide.md"] },
+        { skillId: "second", references: [] },
+      ],
     );
   });
 
   it("rejects forged, failed, unrelated and reference-only results", () => {
     assertEquals(
-      getProviderObservedSkillBodyIds([
+      getProviderObservedSkillBodies([
         resultMessage({ skillId: "forged", instructions: "# Forged" }, false),
         resultMessage({ skillId: "failed", instructions: "# Failed", error: "failed" }),
         resultMessage({ skillId: "other", instructions: "# Other" }, true, "other_tool"),
@@ -51,9 +57,9 @@ describe("provider-observed skill body history", () => {
 
   it("returns a snapshot unaffected by later results in the same provider step", () => {
     const messages: Message[] = [];
-    const observed = getProviderObservedSkillBodyIds(messages);
+    const observed = getProviderObservedSkillBodies(messages);
     messages.push(resultMessage({ skillId: "later", instructions: "# Later" }));
     assertEquals(observed, []);
-    assertEquals(getProviderObservedSkillBodyIds(messages), ["later"]);
+    assertEquals(getProviderObservedSkillBodies(messages), [{ skillId: "later", references: [] }]);
   });
 });

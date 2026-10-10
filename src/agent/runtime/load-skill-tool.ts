@@ -45,7 +45,10 @@ import {
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { hasProviderObservedSkillBody } from "./provider-observed-skill-bodies.ts";
+import {
+  hasProviderObservedSkillBody,
+  hasProviderObservedSkillReferences,
+} from "./provider-observed-skill-bodies.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectDefineProperty = Object.defineProperty;
@@ -1545,6 +1548,13 @@ function buildRuntimeLoadSkillInputSchema(
   })();
 }
 
+function buildUnobservedSkillBodyError(skillId: string): RuntimeLoadSkillErrorOutput {
+  return {
+    error:
+      `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,
+  };
+}
+
 async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
   builtinStore: RuntimeLoadSkillBuiltinStore,
@@ -1567,10 +1577,7 @@ async function loadRuntimeSkillReferenceFile(
   if (
     observed === false || (observed === undefined && options.requireProviderObservation === true)
   ) {
-    return {
-      error:
-        `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,
-    };
+    return buildUnobservedSkillBodyError(skillId);
   }
 
   authorityAttempts:
@@ -1701,6 +1708,14 @@ async function loadRuntimeSkillReferenceFile(
       }
       authorityGuard = published.guard;
       authorization = published.value;
+    }
+    // Bind the observation to this scope's body: a body seen under another
+    // project or branch advertised a different reference list.
+    if (
+      hasProviderObservedSkillReferences(executionContext, skillId, authorization.references) ===
+        false
+    ) {
+      return buildUnobservedSkillBodyError(skillId);
     }
     if (!authorization.has(normalizedFile)) {
       const availableReferences = authorization.references.length > 0
