@@ -792,6 +792,93 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
     });
 
+    for (const method of ["map", "push"]) {
+      it(`keeps paginated release source bytes outside tenant ${method} replacements`, async () => {
+        const map = Array.prototype.map;
+        const push = Array.prototype.push;
+        const apply = Reflect.apply;
+        let intercepted = 0;
+        let pages = 0;
+        stubJsonFetch((url) => {
+          pages++;
+          const cursor = new URL(url).searchParams.get("cursor");
+          return {
+            data: [{
+              id: cursor === null ? "config" : "style",
+              version_id: cursor === null ? "config-version" : "style-version",
+              path: cursor === null ? "veryfront.config.ts" : "app/globals.css",
+              content: cursor === null ? "export default {}" : "body { color: blue; }",
+              size: 20,
+              type: "file",
+              updated_at: "2026-10-10T00:00:00.000Z",
+            }],
+            page_info: {
+              self: null,
+              first: null,
+              next: cursor === null ? "page-2" : null,
+              prev: null,
+            },
+            release_id: "release-id",
+            release_version: "v1",
+          };
+        });
+        let files;
+        try {
+          if (method === "map") {
+            Array.prototype.map = function <T, U>(
+              this: T[],
+              callback: (value: T, index: number, array: T[]) => U,
+              thisArg?: unknown,
+            ): U[] {
+              const file: unknown = this[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through map");
+              }
+              return apply(map, this, [callback, thisArg]) as U[];
+            };
+          } else {
+            Array.prototype.push = function <T>(this: T[], ...items: T[]): number {
+              const file: unknown = items[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through push");
+              }
+              return apply(push, this, items);
+            };
+          }
+          files = await createOps().listAllReleaseFiles("project-slug", "release-id");
+        } finally {
+          Array.prototype.map = map;
+          Array.prototype.push = push;
+        }
+        assertEquals(intercepted, 0);
+        assertEquals(pages, 2);
+        assertEquals(
+          files.map((file) => ({
+            path: file.path,
+            content: file.content,
+          })),
+          [
+            {
+              path: "veryfront.config.ts",
+              content: "export default {}",
+            },
+            {
+              path: "app/globals.css",
+              content: "body { color: blue; }",
+            },
+          ],
+        );
+      });
+    }
+
     it("requests release file lists with server functions for runtime route discovery", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {

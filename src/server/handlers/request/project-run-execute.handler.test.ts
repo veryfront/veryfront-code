@@ -3304,10 +3304,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
-  for (const poisonMode of ["map", "find"]) {
+  for (const poisonMode of ["map", "find", "push"]) {
     it(`keeps release bytes and config selection after tenant ${poisonMode} replacement`, async () => {
       const map = Array.prototype.map;
       const find = Array.prototype.find;
+      const push = Array.prototype.push;
       const apply = Reflect.apply;
       let baselineHash: unknown;
       let baselineProfile: unknown;
@@ -3341,19 +3342,30 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                   callback: (value: T, index: number, array: T[]) => U,
                   thisArg?: unknown,
                 ): U[] {
-                  const mapped = apply(map, this, [callback, thisArg]) as U[];
                   const source: unknown = this[0];
-                  const projection: unknown = mapped[0];
                   if (
-                    typeof source === "object" && source !== null && "version_id" in source &&
-                    source.version_id === "v-config" && typeof projection === "object" &&
-                    projection !== null && !("version_id" in projection) && "path" in projection &&
-                    projection.path === "veryfront.config.ts"
+                    typeof source === "object" && source !== null && "path" in source &&
+                    source.path === "veryfront.config.ts" && "content" in source
                   ) {
                     replacements++;
                     throw new Error("Tenant replaced release snapshot map");
                   }
-                  return mapped;
+                  return apply(map, this, [callback, thisArg]) as U[];
+                };
+              }
+              if (poison === "push") {
+                Array.prototype.push = function <T>(this: T[], ...items: T[]): number {
+                  for (let index = 0; index < items.length; index++) {
+                    const source: unknown = items[index];
+                    if (
+                      typeof source === "object" && source !== null && "path" in source &&
+                      source.path === "veryfront.config.ts" && "content" in source
+                    ) {
+                      replacements++;
+                      throw new Error("Tenant replaced release snapshot push");
+                    }
+                  }
+                  return apply(push, this, items);
                 };
               }
               if (poison === "find") {
@@ -3374,6 +3386,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         } finally {
           Array.prototype.map = map;
           Array.prototype.find = find;
+          Array.prototype.push = push;
         }
         assertExists(result.response);
         const json = await result.response.json();
