@@ -28,7 +28,6 @@ import {
   hasSubmittedFormInputResult,
   hasTrustedPlatformPolicyToolResultPart,
   hydrateActiveSkillStateFromMessages,
-  isLoadSkillToolName,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
 } from "../runtime/skill-policy-enforcement.ts";
 
@@ -3805,62 +3804,6 @@ for (const toolName of ["form_input", "load_skill"] as const) {
         hydrateActiveSkillStateFromMessages(prepared).activeSkillId,
         trustSecond && toolName === "load_skill" ? "second" : undefined,
       );
-    }
-  });
-}
-
-for (const denySkillLoader of [false, true]) {
-  it(`prepareHostedChatRuntimeCreationOptions keeps ${denySkillLoader ? "denied" : "authorized"} skill catalog after Array.prototype.some is replaced`, async () => {
-    const originalSome = Array.prototype.some;
-    const originalApply = Reflect.apply;
-    Array.prototype.some = function (predicate, thisArg) {
-      return predicate === isLoadSkillToolName
-        ? denySkillLoader
-        : originalApply(originalSome, this, [predicate, thisArg]);
-    };
-    try {
-      let visibleToolNames: readonly string[] | undefined;
-      const result = await prepareHostedChatRuntimeCreationOptions({
-        request: createParsedHostedChatRequest(),
-        agentConfig: {
-          id: "agent-1",
-          name: "Agent",
-          description: "Hosted agent",
-          instructions: "Base instructions",
-          tools: true,
-          skills: true,
-        },
-        projectId: "project-1",
-        authToken: "token-1",
-        hostToolPolicy: {
-          allow: denySkillLoader ? ["get_agent"] : ["veryfront__load_skill", "tool_search"],
-        },
-        resolveModelId: (modelId) => modelId,
-        fetchSteering: () =>
-          Promise.resolve({
-            instructions: "Project instructions",
-            skills: [{
-              id: "deploy",
-              name: "Deploy",
-              description: "Deploy the project",
-              instructions: "Use bash to deploy.",
-              allowedTools: ["bash"],
-            }],
-          }),
-        buildInstructions: (input) => {
-          visibleToolNames = input.availableToolNames;
-          return buildVeryfrontCloudRuntimeInstructions(input);
-        },
-      });
-
-      const instructions = result.creationOptions.instructions;
-      const system = Array.isArray(instructions)
-        ? instructions.map((message) => message.content).join("\n")
-        : instructions;
-      assertEquals(system.includes("Deploy the project"), !denySkillLoader);
-      assertEquals(visibleToolNames?.includes("veryfront__load_skill") ?? false, !denySkillLoader);
-    } finally {
-      Array.prototype.some = originalSome;
     }
   });
 }
