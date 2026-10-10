@@ -8,7 +8,31 @@ Use `veryfront/events` when a surface receives target Agent Events Protocol fram
 
 ## Prerequisites
 
-You need an existing Veryfront project with `veryfront` installed. Browser and SDK parser examples also use `@veryfront/ext-schema-zod` as the injected JSON Schema validator.
+You need an existing Node.js, Bun, or Deno project with `veryfront` installed. Browser and SDK parser examples also use `@veryfront/ext-schema-zod` as the injected JSON Schema validator. It is a separate package, so install it alongside `veryfront`:
+
+<CodeGroup>
+
+```bash npm
+npm install veryfront @veryfront/ext-schema-zod
+```
+
+```bash pnpm
+pnpm add veryfront @veryfront/ext-schema-zod
+```
+
+```bash yarn
+yarn add veryfront @veryfront/ext-schema-zod
+```
+
+```bash bun
+bun add veryfront @veryfront/ext-schema-zod
+```
+
+```bash deno
+deno add npm:veryfront npm:@veryfront/ext-schema-zod
+```
+
+</CodeGroup>
 
 ## Create a parser
 
@@ -98,8 +122,8 @@ Use `EVENT_TYPES` and `EVENT_SCHEMA_BY_TYPE` when a producer needs to inspect th
 
 ## Verify it worked
 
-Save this as `verify-events.mjs` in your project and run `node verify-events.mjs`.
-It checks a valid event and rejects an invalid payload using your installed SDK:
+Save this ES module as `verify-events.mjs` in your project. It checks a valid
+event and rejects an invalid payload using your installed SDK:
 
 ```js
 import assert from "node:assert/strict";
@@ -128,6 +152,24 @@ const invalid = events.safeParseEvent({
 assert.equal(invalid.success, false);
 console.log("Event parsing verified.");
 ```
+
+Run it with your project's runtime:
+
+<CodeGroup>
+
+```bash node
+node verify-events.mjs
+```
+
+```bash bun
+bun verify-events.mjs
+```
+
+```bash deno
+deno run verify-events.mjs
+```
+
+</CodeGroup>
 
 Successful verification prints `Event parsing verified.` and exits with code 0.
 This validates event shape; it does not prove producer authority or delivery.
