@@ -103,6 +103,41 @@ describe("knowledgeCommand", () => {
     }
   });
 
+  it("parses --branch before the ingest subcommand", () => {
+    const args = parseCliArgs([
+      "knowledge",
+      "--branch",
+      "chore/context-knowledge-proof-20261007",
+      "ingest",
+      "--path",
+      "/workspace/okf-bundle",
+      "--all",
+    ]);
+
+    assertEquals(args._, ["knowledge", "ingest"]);
+    assertEquals(args.branch, "chore/context-knowledge-proof-20261007");
+    const parsed = parseKnowledgeIngestArgs(args);
+    assertEquals(parsed.success, true);
+    if (parsed.success) {
+      assertEquals(parsed.data.branch, "chore/context-knowledge-proof-20261007");
+      assertEquals(parsed.data.path, "/workspace/okf-bundle");
+      assertEquals(parsed.data.all, true);
+    }
+  });
+
+  it("rejects explicit branch flags without a value", () => {
+    for (
+      const argv of [
+        ["knowledge", "ingest", "doc.md", "--branch="],
+        ["knowledge", "ingest", "doc.md", "--branch", "--json"],
+        ["knowledge", "ingest", "doc.md", "-b", ""],
+      ]
+    ) {
+      const parsed = parseKnowledgeIngestArgs(parseCliArgs(argv));
+      assertEquals(parsed.success, false);
+    }
+  });
+
   it("rejects unusable ingest arguments as invalid-argument usage errors", async () => {
     const error = await assertRejects(
       () => knowledgeCommand({ _: ["knowledge", "ingest"] } as unknown as ParsedArgs),
