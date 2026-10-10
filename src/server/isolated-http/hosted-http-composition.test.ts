@@ -395,6 +395,46 @@ describe("hosted HTTP host composition", () => {
     assertEquals(String((error as { cause?: unknown }).cause ?? "").includes("/host/"), false);
   });
 
+  it("shares one raw broker token read while it stalls", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let tokenReads = 0;
+    const stalled = Promise.withResolvers<Uint8Array>();
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      readFile: (path) => {
+        if (path !== "/host/token") return host.readFile(path);
+        tokenReads++;
+        return tokenReads === 1
+          ? stalled.promise
+          : Promise.resolve(new TextEncoder().encode("broker-token-3"));
+      },
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    const callers = Array.from({ length: 5 }, () => {
+      const controller = new AbortController();
+      const pending = allocatorOptions!.readBrokerToken(controller.signal);
+      controller.abort(new Error("allocator deadline"));
+      return pending;
+    });
+    for (const pending of callers) await assertRejects(() => pending, Error, "allocator deadline");
+    assertEquals(tokenReads, 1);
+    // Once the shared read settles, the next caller starts a fresh read.
+    stalled.resolve(new TextEncoder().encode("stale"));
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(
+      await allocatorOptions!.readBrokerToken(new AbortController().signal),
+      "broker-token-3",
+    );
+    assertEquals(tokenReads, 2);
+  });
+
   it("detaches a broker token read that never settles", async () => {
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();

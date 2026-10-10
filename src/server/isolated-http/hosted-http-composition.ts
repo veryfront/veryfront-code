@@ -394,23 +394,23 @@ export async function createHostedHttpComposition(
     refreshMs: SOURCE_RECORDS_REFRESH_MS,
   });
   const tokenFile = config.brokerTokenFile;
+  let tokenRead: Promise<string> | undefined;
   const allocator = (dependencies.createAllocatorClient ?? createHostedExecutorAllocatorClient)({
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
-      // A file read cannot be interrupted once in flight, so race it against the
-      // allocator's signal and a fixed bound and detach it if either wins.
-      const token = (await settleWithin(
-        readBoundedText(
-          read,
-          "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
-          tokenFile,
-          MAX_TOKEN_BYTES,
-          signal,
-        ),
-        signal,
-        TOKEN_READ_TIMEOUT_MS,
-      )).trim();
+      // A file read cannot be interrupted once in flight. At most one raw read runs
+      // at a time and callers share it; each caller races it against its own signal
+      // and a fixed bound, so a stalled file system cannot accumulate reads.
+      tokenRead ??= readBoundedText(
+        read,
+        "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
+        tokenFile,
+        MAX_TOKEN_BYTES,
+      ).finally(() => {
+        tokenRead = undefined;
+      });
+      const token = (await settleWithin(tokenRead, signal, TOKEN_READ_TIMEOUT_MS)).trim();
       if (!token) throw new Error("Executor broker token is unavailable");
       return token;
     },
