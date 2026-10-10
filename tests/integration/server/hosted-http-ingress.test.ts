@@ -434,6 +434,8 @@ it("refuses preview HMR, preview hosts and modes, and snippets under isolation w
         ["https://app.example/@components/card", {}],
         // A preview host with a production header is still preview.
         ["https://project-a.preview.example/page", {}],
+        // Host names are case-insensitive.
+        ["https://project-a.preview.example/page", { host: "PROJECT-A.PREVIEW.EXAMPLE" }],
       ] as const
     ) {
       const path = url;

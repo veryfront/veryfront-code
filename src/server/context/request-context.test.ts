@@ -43,6 +43,22 @@ describe("createRequestContext", () => {
       assertEquals(ctx.mode, "preview");
     });
 
+    it("returns preview mode for a preview host in any letter case or with a root dot", () => {
+      for (
+        const host of [
+          "PROJECT.PREVIEW.VERYFRONT.COM",
+          "Something.Preview.Custom-Domain.com:8443",
+          "my-app.preview.veryfront.com.",
+        ]
+      ) {
+        const req = makeRequest("https://127.0.0.1/page", {
+          host,
+          "x-environment": "production",
+        });
+        assertEquals(createRequestContext(req).mode, "preview", host);
+      }
+    });
+
     it("returns preview mode when effectiveHost contains .preview.", () => {
       // Even for non-veryfront domains, .preview. in host triggers preview
       const req = makeRequest("https://127.0.0.1/page", {
