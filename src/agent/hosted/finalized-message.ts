@@ -86,7 +86,8 @@ function openReasoningId(part: ReasoningPart, state?: MirroredToolChunkState): s
 }
 
 function compatibleReasoningCompletion(part: ReasoningPart, fallback: ReasoningPart): boolean {
-  return fallback.text.startsWith(part.text) &&
+  // Final-step text is trimmed, so an open block ending in whitespace may only lack end metadata.
+  return (fallback.text.startsWith(part.text) || fallback.text === part.text.trim()) &&
     (part.signature === undefined || fallback.signature === undefined ||
       part.signature === fallback.signature) &&
     (part.redactedData === undefined || fallback.redactedData === undefined ||
@@ -456,7 +457,8 @@ export function buildFinalizedMessageState(
         const updated: ReasoningPart = bindReasoningPartIdentity(
           {
             ...original,
-            text: fallbackPart.text,
+            // Keep the mirrored prefix when the final step adds no text beyond it.
+            text: fallbackPart.text.startsWith(original.text) ? fallbackPart.text : original.text,
             ...("state" in original ? { state: "done" as const } : {}),
             ...(fallbackPart.signature === undefined ? {} : { signature: fallbackPart.signature }),
             ...(fallbackPart.redactedData === undefined

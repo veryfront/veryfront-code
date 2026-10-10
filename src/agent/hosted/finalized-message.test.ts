@@ -1962,3 +1962,42 @@ Deno.test("closed framework reasoning keeps end metadata so finalization does no
     assertEquals(state.recoveredFallbackParts, []);
   }
 });
+
+Deno.test("open reasoning with trailing whitespace completes with end metadata only", () => {
+  // Projection-built open parts carry a streaming state beyond the base part type.
+  const open = { type: "reasoning" as const, text: "Thinking ", state: "streaming" as const };
+  const completed = { ...open, state: "done" as const, signature: "sig-1" };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "r" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "r", delta: "Thinking " });
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Thinking ", signature: "sig-1" }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [open],
+    },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [completed]);
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "reasoning-end", id: "r", signature: "sig-1" }],
+  );
+});
