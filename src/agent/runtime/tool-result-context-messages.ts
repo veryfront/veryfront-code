@@ -24,13 +24,22 @@ function shouldSkipToolResult(
 ): boolean {
   if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
     const result = part.result;
-    if (
-      typeof result === "object" && result !== null &&
-      "skillId" in result && typeof result.skillId === "string" &&
-      "file" in result && typeof result.file === "string" &&
-      "content" in result && typeof result.content === "string"
-    ) {
-      return false;
+    if (typeof result === "object" && result !== null) {
+      try {
+        const referenceFields = ["skillId", "file", "content"].map((key) =>
+          Object.getOwnPropertyDescriptor(result, key)
+        );
+        if (
+          referenceFields.every((field) =>
+            field && "value" in field && typeof field.value === "string"
+          )
+        ) {
+          return false;
+        }
+      } catch {
+        // A project tool can own this spelling and return a proxy. Keep the
+        // existing skip behavior when safe data inspection is unavailable.
+      }
     }
   }
   return skippedToolNames.has(part.toolName);

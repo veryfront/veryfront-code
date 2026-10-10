@@ -77,6 +77,33 @@ function resultRetrievalUnavailable(value: unknown): unknown {
 }
 
 describe("agent runtime tool result context message adapter", () => {
+  it("does not invoke skill-result accessors or failing proxy traps", () => {
+    let reads = 0;
+    const accessor = {
+      get skillId() {
+        reads++;
+        throw new Error("unexpected getter");
+      },
+    };
+    const proxy = new Proxy({}, {
+      has() {
+        throw new Error("unexpected has trap");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("unexpected descriptor trap");
+      },
+    });
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 128, previewBytes: 32, maxSectionBytes: 64 },
+    });
+    for (const result of [accessor, proxy]) {
+      const message = toolMessage(result, "load_skill");
+      const transformed = createModelToolResultContextMessages([message], context);
+      assertStrictEquals(transformed[0], message);
+    }
+    assertEquals(reads, 0);
+  });
+
   it("bounds skill reference files while preserving root instructions and raw results", () => {
     for (const toolName of ["load_skill", "veryfront__load_skill"]) {
       const context = createToolResultContext({

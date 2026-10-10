@@ -11,6 +11,8 @@ import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { register, resolve } from "#veryfront/extensions/contracts.ts";
 
 import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
@@ -923,6 +925,49 @@ describe("mcp/server", () => {
       structuredContent: { ok: true },
       isError: false,
     });
+  });
+
+  it("validates native output schemas without a JSON Schema compiler", async () => {
+    const validator = resolve<SchemaValidator>("SchemaValidator");
+    let returned: Record<string, unknown> = { ok: true };
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:native-output",
+      tool({
+        id: "test:native-output",
+        description: "Uses a native output schema",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        execute: async () => returned,
+      }),
+    );
+    register("SchemaValidator", { ...validator, compileJsonSchema: undefined });
+    try {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:native-output", arguments: {} },
+      });
+      assertEquals(response.result, {
+        content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+        structuredContent: { ok: true },
+        isError: false,
+      });
+      returned = { ok: "invalid" };
+      const invalid = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "test:native-output", arguments: {} },
+      });
+      assertEquals((invalid.result as { isError: boolean }).isError, true);
+    } finally {
+      register("SchemaValidator", validator);
+    }
   });
 
   it("hides agent-owned tools from tools/list", async () => {

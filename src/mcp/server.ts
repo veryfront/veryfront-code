@@ -36,6 +36,23 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
   if (result === null || typeof result !== "object" || Array.isArray(result)) {
     throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
   }
+  if (typeof tool.outputSchema?.safeParse === "function") {
+    const validation = tool.outputSchema.safeParse(result);
+    if (!validation.success) {
+      throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+    }
+    if (
+      validation.data === null || typeof validation.data !== "object" ||
+      Array.isArray(validation.data)
+    ) {
+      throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(validation.data, null, 2) }],
+      structuredContent: validation.data,
+      isError: false,
+    };
+  }
   const validator = resolve<SchemaValidator>("SchemaValidator");
   if (!validator.compileJsonSchema) {
     throw new Error(
