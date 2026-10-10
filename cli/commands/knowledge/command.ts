@@ -419,10 +419,11 @@ async function collectReferencedOkfCompanionPaths(
     let markdown: string;
     try {
       markdown = await Deno.readTextFile(source.localPath);
-    } catch {
-      continue;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
     }
-    const inspected = inspectOkfDocument(relativePath, markdown);
+    const inspected = inspectOkfDocument(relativePath, markdown.replace(/^\uFEFF/, ""));
     collectCompanionReferencesFromValue({
       documentPath: relativePath,
       value: inspected.metadata,
@@ -432,27 +433,6 @@ async function collectReferencedOkfCompanionPaths(
     });
   }
   return referencedPaths;
-}
-
-function filterOkfBundleUploadTargets(
-  uploadTargets: string[],
-  skipped: KnowledgeIngestSkippedFileResult[],
-  okfBundle: boolean | undefined,
-): string[] {
-  if (!okfBundle) return uploadTargets;
-  const markdownTargets: string[] = [];
-  for (const uploadPath of uploadTargets) {
-    if (isMarkdownPath(uploadPath)) {
-      markdownTargets.push(uploadPath);
-      continue;
-    }
-    skipped.push(commandHelpers.createSkippedKnowledgeSource({
-      source: formatKnowledgeUploadSource(uploadPath),
-      reason: "unsupported_file_type",
-      message: okfBundleSkipMessage(),
-    }));
-  }
-  return markdownTargets;
 }
 
 async function downloadOkfBundleUploads(input: {
@@ -728,9 +708,6 @@ export async function collectKnowledgeSources(
   let uploads = await listUploadsForPrefix(initialPrefix);
   deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle);
-  if (!options.okfBundle) {
-    uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
-  }
 
   if (
     !uploadTargets.length && skipped.length === 0 && uploadPrefix && !uploadPrefix.endsWith("/")
@@ -738,9 +715,6 @@ export async function collectKnowledgeSources(
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
     deps.signal?.throwIfAborted();
     ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle));
-    if (!options.okfBundle) {
-      uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
-    }
   }
 
   if (!uploadTargets.length && skipped.length === 0) {

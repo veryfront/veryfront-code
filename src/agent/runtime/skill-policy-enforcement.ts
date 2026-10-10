@@ -992,17 +992,35 @@ export type SkillPolicyOptions = {
   toolDefinition?: ToolDefinition;
 };
 
+/**
+ * Resolve the load arguments the loader will execute: the provider-facing
+ * `{ load: { skillId, file? } }` wrapper or the legacy flat shape. A `load` key
+ * that is not an own data record resolves to nothing, so policy never reads
+ * different arguments than the loader runs.
+ */
+function readSkillLoadArguments(input: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(input)) return undefined;
+  try {
+    if (!("load" in input)) return input;
+  } catch {
+    return undefined;
+  }
+  const load = readToolResultOwnDataProperty(input, "load");
+  return isRecord(load) ? load : undefined;
+}
+
 function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
+  const loadArguments = readSkillLoadArguments(options.toolInput);
   if (
     !options.activeSkillId ||
-    !isRecord(options.toolInput) ||
+    !loadArguments ||
     !isRecord(options.skillToolAvailability) ||
     readToolResultOwnDataProperty(options.skillToolAvailability, "hasActiveSkill") !== true
   ) {
     return false;
   }
-  const skillId = readToolResultOwnDataProperty(options.toolInput, "skillId");
-  const file = readToolResultOwnDataProperty(options.toolInput, "file");
+  const skillId = readToolResultOwnDataProperty(loadArguments, "skillId");
+  const file = readToolResultOwnDataProperty(loadArguments, "file");
   if (
     skillId !== options.activeSkillId ||
     typeof file !== "string" ||
@@ -1019,9 +1037,10 @@ function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
 
 /** Identify a valid skill-body activation call without confusing reference reads for activation. */
 export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolean {
-  if (!isLoadSkillToolName(toolName) || !isRecord(input)) return false;
-  const skillId = readToolResultOwnDataProperty(input, "skillId");
-  const file = readToolResultOwnDataProperty(input, "file");
+  const loadArguments = readSkillLoadArguments(input);
+  if (!isLoadSkillToolName(toolName) || !loadArguments) return false;
+  const skillId = readToolResultOwnDataProperty(loadArguments, "skillId");
+  const file = readToolResultOwnDataProperty(loadArguments, "file");
   return typeof skillId === "string" && skillId.length > 0 && file === undefined;
 }
 

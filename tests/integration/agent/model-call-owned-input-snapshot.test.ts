@@ -1,3 +1,4 @@
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { buildOpenAIChatRequest } from "../../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
 import { buildAnthropicMessagesRequest } from "../../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import { buildGoogleGenerateContentRequest } from "../../../extensions/ext-llm-google/src/google-request-builder.ts";
@@ -1520,5 +1521,179 @@ for (const nativeFormat of [false, true]) {
         if (nativeFormat) assertEquals(effectiveSchema, schema);
       });
     }
+  }
+}
+
+for (const cloud of [false, true]) {
+  for (
+    const hostile of ["array-iterator", "set-add", "array-includes", "string-startsWith"] as const
+  ) {
+    it(`captures Anthropic schema without mutable ${hostile} hooks in ${cloud ? "Cloud" : "native"}`, () => {
+      const schema = {
+        type: ["object", "null"],
+        properties: { answer: { type: "object", properties: { value: { type: "string" } } } },
+        $defs: { shared: { type: "object", properties: { id: { type: "number" } } } },
+        allOf: [{ $ref: "#/$defs/shared" }],
+      };
+      const model = {
+        provider: cloud ? "veryfront-cloud" : "anthropic",
+        modelProvider: "anthropic",
+        modelId: "claude-test",
+        doGenerate() {
+          throw new Error("Capture projection does not dispatch");
+        },
+        doStream() {
+          throw new Error("Capture projection does not dispatch");
+        },
+      };
+      if (cloud) {
+        registerVeryfrontCloudModelFacts(model, () => ({
+          provider: "anthropic",
+          surface: "anthropic",
+          native: true,
+          transportPlan: { transport: "chat-completions", pinned: true },
+        }));
+      }
+      const options: ModelRuntimeCallOptions = {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        responseFormat: { type: "json_schema", name: "neutral", schema },
+      };
+      const target = hostile === "set-add"
+        ? Set.prototype
+        : hostile === "string-startsWith"
+        ? String.prototype
+        : Array.prototype;
+      const key = hostile === "array-iterator"
+        ? Symbol.iterator
+        : hostile === "set-add"
+        ? "add"
+        : hostile === "array-includes"
+        ? "includes"
+        : "startsWith";
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      assert(descriptor);
+      let hooks = 0;
+      let request: ReturnType<typeof buildModelCallContextRequest> = undefined;
+      let failure: unknown;
+      Object.defineProperty(target, key, {
+        ...descriptor,
+        value() {
+          hooks += 1;
+          throw new Error("Managed mutable intrinsic hook executed");
+        },
+      });
+      try {
+        request = buildModelCallContextRequest(model, options);
+      } catch (error) {
+        failure = error;
+      } finally {
+        Object.defineProperty(target, key, descriptor);
+      }
+      assertEquals(hooks, 0);
+      assertEquals(failure, undefined);
+      assert(request?.responseFormat?.type === "json_schema");
+      const body = buildAnthropicMessagesRequest("claude-test", "anthropic", options, false, {
+        push() {},
+        drain() {
+          return [];
+        },
+      });
+      const output = Reflect.get(body, "output_config");
+      assert(typeof output === "object" && output !== null);
+      const format = Reflect.get(output, "format");
+      assert(typeof format === "object" && format !== null);
+      assertEquals(request.responseFormat.schema, Reflect.get(format, "schema"));
+    });
+  }
+}
+
+for (const cloud of [false, true]) {
+  for (
+    const hostile of ["object-setter", "proto-data"] as const
+  ) {
+    it(`captures Anthropic schema without mutable ${hostile} hooks in ${cloud ? "Cloud" : "native"}`, () => {
+      const schema = {
+        type: ["object", "null"],
+        properties: { answer: { type: "object", properties: { value: { type: "string" } } } },
+        $defs: { shared: { type: "object", properties: { id: { type: "number" } } } },
+        allOf: [{ $ref: "#/$defs/shared" }],
+      };
+      Object.defineProperty(schema.properties, "__proto__", {
+        value: { type: "object", properties: { marker: { type: "string" } } },
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      const model = {
+        provider: cloud ? "veryfront-cloud" : "anthropic",
+        modelProvider: "anthropic",
+        modelId: "claude-test",
+        doGenerate() {
+          throw new Error("Capture projection does not dispatch");
+        },
+        doStream() {
+          throw new Error("Capture projection does not dispatch");
+        },
+      };
+      if (cloud) {
+        registerVeryfrontCloudModelFacts(model, () => ({
+          provider: "anthropic",
+          surface: "anthropic",
+          native: true,
+          transportPlan: { transport: "chat-completions", pinned: true },
+        }));
+      }
+      const options: ModelRuntimeCallOptions = {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+        responseFormat: { type: "json_schema", name: "neutral", schema },
+      };
+      const target = Object.prototype;
+      const key = "additionalProperties";
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      let hooks = 0;
+      let request: ReturnType<typeof buildModelCallContextRequest> = undefined;
+      let failure: unknown;
+      if (hostile === "object-setter") {
+        Object.defineProperty(target, key, {
+          configurable: true,
+          set() {
+            hooks += 1;
+            throw new Error("Managed inherited setter executed");
+          },
+        });
+      }
+      try {
+        request = buildModelCallContextRequest(model, options);
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (hostile === "object-setter") {
+          if (descriptor) Object.defineProperty(target, key, descriptor);
+          else Reflect.deleteProperty(target, key);
+        }
+      }
+      assertEquals(hooks, 0);
+      assertEquals(failure, undefined);
+      assert(request?.responseFormat?.type === "json_schema");
+      const body = buildAnthropicMessagesRequest("claude-test", "anthropic", options, false, {
+        push() {},
+        drain() {
+          return [];
+        },
+      });
+      const output = Reflect.get(body, "output_config");
+      assert(typeof output === "object" && output !== null);
+      const format = Reflect.get(output, "format");
+      assert(typeof format === "object" && format !== null);
+      const wire = Reflect.get(format, "schema");
+      assertEquals(request.responseFormat.schema, wire);
+      assert(typeof wire === "object" && wire !== null);
+      const properties = Reflect.get(wire, "properties");
+      assert(typeof properties === "object" && properties !== null);
+      assert(Object.hasOwn(properties, "__proto__"));
+      const protoProperty = Reflect.get(properties, "__proto__");
+      assert(typeof protoProperty === "object" && protoProperty !== null);
+      assertEquals(Reflect.get(protoProperty, "additionalProperties"), false);
+    });
   }
 }

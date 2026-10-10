@@ -9,8 +9,12 @@
 const apply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
+const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
+const arrayIncludes = Array.prototype.includes;
+const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
+const stringStartsWith = String.prototype.startsWith;
 
 /**
  * JSON Schema keywords whose value is itself a schema, a list of schemas, or a
@@ -19,7 +23,7 @@ const setHas = Set.prototype.has;
  * through untouched instead of being rewritten when they happen to look like a
  * schema.
  */
-const SCHEMA_MAP_KEYWORDS = new NativeSet([
+const SCHEMA_MAP_KEYWORDS = createStringSet([
   "properties",
   "patternProperties",
   "$defs",
@@ -30,7 +34,7 @@ const SCHEMA_MAP_KEYWORDS = new NativeSet([
   // unchanged, so both spellings can share this branch.
   "dependencies",
 ]);
-const SCHEMA_LIST_KEYWORDS = new NativeSet(["anyOf", "oneOf", "prefixItems"]);
+const SCHEMA_LIST_KEYWORDS = createStringSet(["anyOf", "oneOf", "prefixItems"]);
 /**
  * `allOf` branches describe one instance together, not alternatives, and
  * `additionalProperties` only ever sees the `properties` of the schema object
@@ -48,8 +52,8 @@ const SCHEMA_LIST_KEYWORDS = new NativeSet(["anyOf", "oneOf", "prefixItems"]);
  * -- which is the correct outcome, and a legible one, rather than a schema that
  * validates nothing the model can produce.
  */
-const COMPOSITION_LIST_KEYWORDS = new NativeSet(["allOf"]);
-const SCHEMA_VALUE_KEYWORDS = new NativeSet([
+const COMPOSITION_LIST_KEYWORDS = createStringSet(["allOf"]);
+const SCHEMA_VALUE_KEYWORDS = createStringSet([
   "items",
   "additionalItems",
   "contains",
@@ -70,8 +74,41 @@ function getObjectKeys(value: SchemaRecord): string[] {
   return apply(objectKeys, Object, [value]) as string[];
 }
 
+function defineDataValue(
+  target: SchemaRecord | unknown[],
+  key: string | number,
+  value: unknown,
+): void {
+  apply(objectDefineProperty, Object, [target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  }]);
+}
+
+function createStringSet(values: readonly string[]): Set<string> {
+  const result: Set<string> = new NativeSet();
+  for (let index = 0; index < values.length; index += 1) {
+    apply(setAdd, result, [values[index]!]);
+  }
+  return result;
+}
+
 function hasSetValue(values: Set<string>, value: string): boolean {
   return apply(setHas, values, [value]) as boolean;
+}
+
+function addSetValue(values: Set<string>, value: string): void {
+  apply(setAdd, values, [value]);
+}
+
+function includesArrayValue(values: readonly unknown[], value: unknown): boolean {
+  return apply(arrayIncludes, values, [value]) as boolean;
+}
+
+function startsWithString(value: string, prefix: string): boolean {
+  return apply(stringStartsWith, value, [prefix]) as boolean;
 }
 
 /**
@@ -102,11 +139,15 @@ function closeObjectSchemas(
   if (ArrayIsArray(schema)) {
     const entries: unknown[] = [];
     for (let index = 0; index < schema.length; index += 1) {
-      entries[index] = closeObjectSchemas(
-        schema[index],
-        closeSelf,
-        `${pointer}/${index}`,
-        openTargets,
+      defineDataValue(
+        entries,
+        index,
+        closeObjectSchemas(
+          schema[index],
+          closeSelf,
+          `${pointer}/${index}`,
+          openTargets,
+        ),
       );
     }
     return entries;
@@ -116,22 +157,24 @@ function closeObjectSchemas(
   const source = schema as SchemaRecord;
   const result: SchemaRecord = {};
 
-  for (const key of getObjectKeys(source)) {
+  const keys = getObjectKeys(source);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     const value = source[key];
     const keyPointer = `${pointer}/${encodePointerToken(key)}`;
     if (hasSetValue(SCHEMA_MAP_KEYWORDS, key)) {
-      result[key] = closeSchemaMap(value, keyPointer, openTargets);
+      defineDataValue(result, key, closeSchemaMap(value, keyPointer, openTargets));
       continue;
     }
     if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
-      result[key] = closeObjectSchemas(value, false, keyPointer, openTargets);
+      defineDataValue(result, key, closeObjectSchemas(value, false, keyPointer, openTargets));
       continue;
     }
     if (hasSetValue(SCHEMA_LIST_KEYWORDS, key) || hasSetValue(SCHEMA_VALUE_KEYWORDS, key)) {
-      result[key] = closeObjectSchemas(value, true, keyPointer, openTargets);
+      defineDataValue(result, key, closeObjectSchemas(value, true, keyPointer, openTargets));
       continue;
     }
-    result[key] = value;
+    defineDataValue(result, key, value);
   }
 
   // `undefined` counts as unset, not as a declaration. The key survives the
@@ -147,7 +190,7 @@ function closeObjectSchemas(
     source.additionalProperties === undefined &&
     source.$ref === undefined
   ) {
-    result.additionalProperties = false;
+    defineDataValue(result, "additionalProperties", false);
   }
   return result;
 }
@@ -168,13 +211,19 @@ function closeSchemaMap(
   if (typeof value !== "object" || value === null || ArrayIsArray(value)) return value;
   const source = value as SchemaRecord;
   const result: SchemaRecord = {};
-  for (const name of getObjectKeys(source)) {
+  const keys = getObjectKeys(source);
+  for (let index = 0; index < keys.length; index += 1) {
+    const name = keys[index]!;
     const namePointer = `${pointer}/${encodePointerToken(name)}`;
-    result[name] = closeObjectSchemas(
-      source[name],
-      !hasSetValue(openTargets, namePointer),
-      namePointer,
-      openTargets,
+    defineDataValue(
+      result,
+      name,
+      closeObjectSchemas(
+        source[name],
+        !hasSetValue(openTargets, namePointer),
+        namePointer,
+        openTargets,
+      ),
     );
   }
   return result;
@@ -186,7 +235,8 @@ const EMPTY_POINTER_SET: Set<string> = new NativeSet();
 /** Escape a JSON pointer token, per RFC 6901. */
 function encodePointerToken(token: string): string {
   let escaped = "";
-  for (const char of token) {
+  for (let index = 0; index < token.length; index += 1) {
+    const char = token[index]!;
     if (char === "~") escaped += "~0";
     else if (char === "/") escaped += "~1";
     else escaped += char;
@@ -221,20 +271,25 @@ export function closeSchemaForOutputConfig(schema: unknown): unknown {
  */
 function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
   if (ArrayIsArray(schema)) {
-    for (const entry of schema) collectAllOfRefTargets(entry, out);
+    for (let index = 0; index < schema.length; index += 1) {
+      collectAllOfRefTargets(schema[index], out);
+    }
     return;
   }
   if (typeof schema !== "object" || schema === null) return;
 
   const source = schema as SchemaRecord;
-  for (const key of getObjectKeys(source)) {
+  const keys = getObjectKeys(source);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     const value = source[key];
     if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
       const branches = ArrayIsArray(value) ? value : [value];
-      for (const branch of branches) {
+      for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
+        const branch = branches[branchIndex];
         if (typeof branch !== "object" || branch === null) continue;
         const ref = (branch as SchemaRecord).$ref;
-        if (typeof ref === "string" && ref.startsWith("#/")) out.add(ref);
+        if (typeof ref === "string" && startsWithString(ref, "#/")) addSetValue(out, ref);
       }
     }
     collectAllOfRefTargets(value, out);
@@ -250,5 +305,5 @@ function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
  * string would leave that branch open and let Anthropic reject it.
  */
 function isObjectTyped(type: unknown): boolean {
-  return type === "object" || (ArrayIsArray(type) && type.includes("object"));
+  return type === "object" || (ArrayIsArray(type) && includesArrayValue(type, "object"));
 }
