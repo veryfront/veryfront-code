@@ -50,6 +50,7 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
     path: v.string().optional(),
     all: v.boolean().default(false),
     recursive: v.boolean().default(false),
+    branch: v.string().min(1).optional(),
     outputDir: v.string().optional(),
     knowledgePath: v.string().default("knowledge"),
     description: v.string().optional(),
@@ -182,6 +183,14 @@ Subcommands:
 `);
 }
 
+function getOptionalExplicitStringArg(args: ParsedArgs, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = args[key];
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 export function parseKnowledgeIngestArgs(
   args: ParsedArgs,
 ): SafeParseResult<KnowledgeIngestOptions> {
@@ -192,6 +201,7 @@ export function parseKnowledgeIngestArgs(
     path: getStringArg(args, "path"),
     all: getBooleanArg(args, "all"),
     recursive: getBooleanArg(args, "recursive"),
+    branch: getOptionalExplicitStringArg(args, "branch", "b"),
     outputDir: getStringArg(args, "output-dir"),
     knowledgePath: getStringArg(args, "knowledge-path") ?? "knowledge",
     description: getStringArg(args, "description", "desc"),
@@ -950,7 +960,9 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             runParser: runKnowledgeParser,
             eventLogger,
             uploadKnowledgeFile: (remotePath, localPath) =>
-              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath),
+              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath, undefined, {
+                branch: options.branch,
+              }),
           });
           const runResult = buildKnowledgeIngestRunResult({
             requestedCount,

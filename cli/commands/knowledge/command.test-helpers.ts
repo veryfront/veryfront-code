@@ -46,6 +46,7 @@ export function createKnowledgeCommandArgs(overrides: Record<string, unknown> = 
     path: undefined,
     all: false,
     recursive: false,
+    branch: undefined,
     outputDir: "/workspace/knowledge",
     knowledgePath: "knowledge",
     description: undefined,

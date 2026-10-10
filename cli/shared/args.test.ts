@@ -441,6 +441,18 @@ describe("cli/shared/args", () => {
       assertEquals(knowledgeDescription.description, "dev");
       assertEquals(knowledgeDescription._, ["knowledge", "ingest", "doc.md"]);
 
+      const knowledgeBranch = parseCliArgs([
+        "--branch",
+        "chore/context-knowledge-proof-20261007",
+        "knowledge",
+        "ingest",
+        "--path",
+        "/workspace/okf-bundle",
+        "--all",
+      ]);
+      assertEquals(knowledgeBranch.branch, "chore/context-knowledge-proof-20261007");
+      assertEquals(knowledgeBranch._, ["knowledge", "ingest"]);
+
       const uploadsOutputDir = parseCliArgs(["--output-dir", "dev", "uploads", "pull"]);
       assertEquals(uploadsOutputDir["output-dir"], "dev");
       assertEquals(uploadsOutputDir._, ["uploads", "pull"]);
