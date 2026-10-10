@@ -19,7 +19,7 @@ const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const stringIndexOf = String.prototype.indexOf;
 
-function ownKeys(value: object): string[] {
+function ownKeys(value: HostToolSet | HostToolDefinition): string[] {
   return reflectApply(objectKeys, Object, [value]) as string[];
 }
 
@@ -30,7 +30,7 @@ function hasOwn(
   return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
 }
 
-function ownDataValue(value: object, key: string): unknown {
+function ownDataValue(value: HostToolSet | HostToolDefinition, key: string): unknown {
   const descriptor = reflectApply(objectGetOwnPropertyDescriptor, Object, [value, key]) as
     | PropertyDescriptor
     | undefined;
@@ -60,7 +60,7 @@ function copyOwnDataTools(target: HostToolSet, source: HostToolSet): void {
 }
 
 function cloneHostToolDefinitionWithId(
-  definition: object,
+  definition: HostToolDefinition,
   id: string,
 ): HostToolDefinition {
   const wrapper = objectCreate(null) as HostToolDefinition;
@@ -137,7 +137,7 @@ export function retainTrustedSkillLoaderAliases(input: {
     if (pair === undefined) continue;
     const { selectedName, siblingName } = pair;
     if (hasOwn(tools, siblingName)) continue;
-    const selected = ownDataValue(tools, selectedName);
+    const selected = ownDataValue(tools, selectedName) as HostToolDefinition | undefined;
     const sibling = ownDataValue(input.originalTools, siblingName);
     if (typeof selected !== "object" || selected === null) continue;
     if (!hasTrustedHostToolProvenance(selected) || !hasTrustedHostToolProvenance(sibling)) continue;
