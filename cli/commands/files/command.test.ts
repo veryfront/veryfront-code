@@ -129,7 +129,7 @@ describe("putRemoteFileFromLocal", () => {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
-  it("rejects an empty explicit destination before reading or uploading", async () => {
+  it("rejects an empty explicit branch before reading or uploading", async () => {
     let writes = 0;
     const client = createMockClient({
       put: () => {
@@ -145,22 +145,31 @@ describe("putRemoteFileFromLocal", () => {
           "knowledge/proof.md",
           "/missing/proof.md",
           undefined,
-          { branchId: "" },
+          { branch: "" },
         ),
       VeryfrontError,
     );
     assertEquals(writes, 0);
   });
 
-  it("encodes the explicit destination as a single branch selector", async () => {
+  it("encodes branch names as canonical ref selectors", async () => {
+    assertEquals(
+      buildRemoteFileUrl("my-project", "knowledge/proof.md", {
+        branch: "chore/context-knowledge-proof-20261007",
+      }),
+      "/projects/my-project/files/knowledge%2Fproof.md?ref=branch%3Achore%2Fcontext-knowledge-proof-20261007",
+    );
+  });
+
+  it("uploads to the explicit branch ref without changing omitted-branch behavior", async () => {
     const tempDir = await makeTempDir();
     const localPath = `${tempDir}/proof.md`;
     await Deno.writeTextFile(localPath, "Branch proof");
-    let path = "";
+    const paths: string[] = [];
     try {
       const client = createMockClient({
         put: (url) => {
-          path = url;
+          paths.push(url);
           return Promise.resolve({});
         },
       });
@@ -169,13 +178,29 @@ describe("putRemoteFileFromLocal", () => {
         "my-project",
         "knowledge/proof.md",
         localPath,
+      );
+      await putRemoteFileFromLocal(
+        client,
+        "my-project",
+        "knowledge/proof.md",
+        localPath,
         undefined,
-        { branchId: "branch&ref=main" },
+        { branch: "branch&ref=main" },
       );
-      assertEquals(
-        path,
-        "/projects/my-project/files/knowledge%2Fproof.md?branch_id=branch%26ref%3Dmain",
+      const controller = new AbortController();
+      await putRemoteFileFromLocal(
+        client,
+        "my-project",
+        "knowledge/proof.md",
+        localPath,
+        controller.signal,
+        { branchId: "legacy-branch-id" },
       );
+      assertEquals(paths, [
+        "/projects/my-project/files/knowledge%2Fproof.md",
+        "/projects/my-project/files/knowledge%2Fproof.md?ref=branch%3Abranch%26ref%3Dmain",
+        "/projects/my-project/files/knowledge%2Fproof.md?branch_id=legacy-branch-id",
+      ]);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

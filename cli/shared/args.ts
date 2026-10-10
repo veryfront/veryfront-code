@@ -308,6 +308,7 @@ const COMMAND_VALUE_ARG_KEYS: Readonly<Record<string, readonly string[]>> = {
   knowledge: [
     ...CommonArgs.projectSlug.keys,
     ...CommonArgs.projectDir.keys,
+    ...CommonArgs.branch.keys,
     "path",
     "output-dir",
     "knowledge-path",
