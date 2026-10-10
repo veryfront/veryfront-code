@@ -18,6 +18,7 @@ const PROJECT_LOOKUP_TIMEOUT_MS = 5_000;
 const PROJECT_RESPONSE_MAX_BYTES = 64 * 1024;
 const MAX_SOURCE_TOKEN_CHARS = 8192;
 const MAX_SOURCE_RECORDS = 4096;
+const MAX_SOURCE_RECORD_BYTES = 16 * 1024;
 const DEFAULT_PREPARE_TIMEOUT_MS = 60_000;
 const DEFAULT_RESOLUTION_TIMEOUT_MS = 10_000;
 const DEFAULT_HARD_TIMEOUT_MS = 5 * 60_000;
@@ -238,12 +239,21 @@ function canonicalJson(value: unknown): string {
 export function createHostedHttpSourceRecordLookup(
   records: readonly unknown[],
 ): HostedHttpResolverOptions["lookupSourceImage"] {
-  if (!Array.isArray(records) || records.length > MAX_SOURCE_RECORDS) {
+  // The whole list shares one serialized budget, and each record has its own.
+  const list = snapshotBoundedJsonValue(records);
+  if (
+    !Array.isArray(records) || !list.success || !Array.isArray(list.value) ||
+    list.value.length > MAX_SOURCE_RECORDS
+  ) {
     throw new TypeError("Hosted HTTP source records must be a bounded list");
   }
   const index = new Map<string, { record: Readonly<Record<string, unknown>>; text: string }>();
-  for (const value of records) {
-    const snapshot = snapshotBoundedJsonValue(value);
+  for (const value of list.value) {
+    const snapshot = snapshotBoundedJsonValue(
+      value,
+      MAX_SOURCE_RECORD_BYTES,
+      MAX_SOURCE_RECORD_BYTES,
+    );
     const parsed = snapshot.success
       ? getSourceRecordSchema().safeParse(snapshot.value)
       : { success: false as const };

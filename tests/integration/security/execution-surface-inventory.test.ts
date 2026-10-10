@@ -218,7 +218,10 @@ describe("execution surface inventory", () => {
     const changed = Object.entries(GUARDED_SURFACES)
       .map(([path, entry]) => {
         const code = all.get(path);
-        const found = code === undefined ? "missing file" : countGuards(code, entry.guard);
+        // A custom guard adds to the canonical matcher; it never replaces it.
+        const found = code === undefined
+          ? "missing file"
+          : countGuards(code) + (entry.guard ? countGuards(code, entry.guard) : 0);
         return { path, expected: entry.guards, found };
       })
       .filter(({ expected, found }) => found !== expected);
