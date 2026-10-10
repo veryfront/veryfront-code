@@ -75,6 +75,73 @@ export interface HostedHttpResolverOptions {
   prepareTimeoutMs?: number;
   /** Default 5 minutes, maximum 1 hour, and not shorter than preparation. */
   hardTimeoutMs?: number;
+  /** @internal Replaces the Veryfront API reads in hermetic tests. */
+  api?: HostedHttpResolverApi;
+}
+
+/** Veryfront API reads, each authenticated with the request's source token. */
+export interface HostedHttpResolverApi {
+  /** Read the project addressed by its exact ID. */
+  readProject(authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<unknown>;
+  /** Reject unless the named environment has the expected ID and active release. */
+  authorizeEnvironment(
+    authority: HostedHttpRequestAuthority,
+    signal: AbortSignal,
+  ): Promise<unknown>;
+  /** Read the variables of the authorized environment. */
+  readEnvironment(
+    authority: HostedHttpRequestAuthority,
+    signal: AbortSignal,
+  ): Promise<Readonly<Record<string, string>>>;
+}
+
+function createVeryfrontApi(apiBaseUrl: string): HostedHttpResolverApi {
+  const environments = new ProjectEnvironmentIdentityResolver();
+  return {
+    readProject(authority, signal) {
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: apiBaseUrl,
+        getToken: () => authority.sourceToken,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        timeoutMs: PROJECT_LOOKUP_TIMEOUT_MS,
+        wrapFinalError: (error) => error,
+      });
+      return transport.request(`/projects/${encodeURIComponent(authority.projectId)}`, {
+        headers: { Accept: "application/json" },
+        maxResponseBytes: PROJECT_RESPONSE_MAX_BYTES,
+        redirect: "error",
+        includeErrorBodyInDiagnostics: false,
+        signal,
+      });
+    },
+    authorizeEnvironment(authority, signal) {
+      return environments.resolveNamedForActiveRelease({
+        apiBaseUrl,
+        // The exact project ID addresses the environments, not a mutable slug.
+        projectSlug: authority.projectId,
+        projectId: authority.projectId,
+        token: authority.sourceToken,
+        environmentName: authority.environmentName,
+        expectedEnvironmentId: authority.environmentId,
+        expectedReleaseId: authority.releaseId,
+      }, signal);
+    },
+    readEnvironment(authority, signal) {
+      return fetchProjectEnvVars(
+        apiBaseUrl,
+        authority.projectSlug,
+        authority.environmentId,
+        authority.sourceToken,
+        signal,
+      );
+    },
+  };
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }
 
 function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
@@ -88,7 +155,7 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
     typeof value !== "string" || url.protocol !== "https:" || url.username || url.password ||
     url.search || url.hash || (!allowPath && url.pathname !== "/")
   ) throw new TypeError(`Hosted HTTP resolver requires an HTTPS ${name}`);
-  return allowPath ? value.replace(/\/+$/, "") : url.origin;
+  return allowPath ? trimTrailingSlashes(value) : url.origin;
 }
 
 function limit(value: number | undefined, fallback: number, maximum: number, name: string) {
@@ -148,7 +215,7 @@ async function deriveConfigurationId(
   let canonical = `veryfront-hosted-http-configuration:v1:${frame(identity.projectId)}${
     frame(identity.releaseId)
   }${frame(identity.environmentId)}`;
-  for (const name of Object.keys(variables).sort()) {
+  for (const name of Object.keys(variables).sort((a, b) => a.localeCompare(b))) {
     canonical += frame(name) + frame(variables[name]!);
   }
   const digest = new Uint8Array(
@@ -190,25 +257,12 @@ export function createHostedHttpResolver(
   const hardMs = limit(options.hardTimeoutMs, DEFAULT_HARD_TIMEOUT_MS, 3_600_000, "lifetime");
   if (hardMs < prepareMs) throw new TypeError("Hosted HTTP resolver requires a bounded lifetime");
   const lookup = options.lookupSourceImage.bind(options);
-  const environments = new ProjectEnvironmentIdentityResolver();
+  const api = options.api ?? createVeryfrontApi(apiBaseUrl);
   // Process-local key: configuration identities never reveal variable values.
   let configurationKey: Promise<CryptoKey> | undefined;
 
   async function authorizeProject(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
-    const transport = createVeryfrontApiTransport<unknown>({
-      baseUrl: apiBaseUrl,
-      getToken: () => authority.sourceToken,
-      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
-      timeoutMs: PROJECT_LOOKUP_TIMEOUT_MS,
-      wrapFinalError: (error) => error,
-    });
-    const body = await transport.request(`/projects/${encodeURIComponent(authority.projectId)}`, {
-      headers: { Accept: "application/json" },
-      maxResponseBytes: PROJECT_RESPONSE_MAX_BYTES,
-      redirect: "error",
-      includeErrorBodyInDiagnostics: false,
-      signal,
-    });
+    const body = await api.readProject(authority, signal);
     const project = getProjectIdentitySchema().safeParse(body);
     if (
       !project.success || project.data.id !== authority.projectId ||
@@ -228,7 +282,7 @@ export function createHostedHttpResolver(
     if (
       !parsed.success || parsed.data.project_id !== authority.projectId ||
       parsed.data.release_id !== authority.releaseId ||
-      parsed.data.api_origin.replace(/\/+$/, "") !== sourceApiOrigin ||
+      trimTrailingSlashes(parsed.data.api_origin) !== sourceApiOrigin ||
       !parsed.data.image.startsWith(`${repository}@sha256:`)
     ) throw refuse("Published source does not match the authorized project release");
     return parsed.data.image;
@@ -253,16 +307,7 @@ export function createHostedHttpResolver(
     const checkSignal = AbortSignal.any([signal, checks.signal]);
     const pending = [
       authorizeProject(authority, checkSignal),
-      environments.resolveNamedForActiveRelease({
-        apiBaseUrl,
-        // The exact project ID addresses the environments, not a mutable slug.
-        projectSlug: identity.projectId,
-        projectId: identity.projectId,
-        token,
-        environmentName: identity.environmentName,
-        expectedEnvironmentId: identity.environmentId,
-        expectedReleaseId: identity.releaseId,
-      }, checkSignal),
+      api.authorizeEnvironment(authority, checkSignal),
       resolvePublishedImage(authority, checkSignal),
     ] as const;
     let image: string;
@@ -274,13 +319,7 @@ export function createHostedHttpResolver(
       throw error;
     }
     signal.throwIfAborted();
-    const environment = await fetchProjectEnvVars(
-      apiBaseUrl,
-      identity.projectSlug,
-      identity.environmentId,
-      token,
-      signal,
-    );
+    const environment = await api.readEnvironment(authority, signal);
     signal.throwIfAborted();
     const projectTracing = await resolveProjectTraceConfig(
       { projectId: identity.projectId, environmentId: identity.environmentId },
