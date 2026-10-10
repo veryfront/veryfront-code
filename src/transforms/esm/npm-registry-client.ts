@@ -14,7 +14,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
 
@@ -452,11 +452,9 @@ export async function postDependencyResolution(
     // served in this process can replace the global, and a direct call would
     // hand it the `Authorization` header to read.
     //
-    // This also puts the write-back under the host egress ceiling, which denies
-    // private and loopback destinations. A deployment whose API base is
-    // internal must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; the write-back
-    // is best-effort, so a blocked request degrades to a logged skip.
-    const res = await guardedOutboundFetch(url, {
+    // Bind the host transport to this API origin, including an internal HTTP
+    // endpoint explicitly configured by the operator before startup.
+    const res = await createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
