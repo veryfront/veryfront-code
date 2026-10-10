@@ -68,7 +68,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
+  `Load skill instructions; loading does not perform the task. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Wait for the body result before choosing a reference; never batch the first body load with a reference read. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
