@@ -2156,7 +2156,7 @@ export default function HomePage() {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
         const csp = response?.headers()["content-security-policy"] ?? "";
         assert(
-          getDirectiveSources(csp, "script-src").includes("https://esm.sh"),
+          getDirectiveSources(csp, "script-src").some((source) => source === "https://esm.sh"),
           `Expected CSP to allow esm.sh scripts, got: ${csp}`,
         );
         assert(
