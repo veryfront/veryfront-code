@@ -1109,6 +1109,89 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("captures structured Veryfront Cloud response formats before provider dispatch", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const responseJsonSchema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      additionalProperties: false,
+    };
+    const responseFormat = {
+      type: "json_schema" as const,
+      name: "result",
+      schema: {
+        jsonSchema: responseJsonSchema,
+        validate: () => true,
+      },
+      strict: true,
+    };
+    const expectedResponseFormat = {
+      type: "json_schema",
+      name: "result",
+      schema: {
+        type: "object",
+        properties: { answer: { type: "string" } },
+        required: ["answer"],
+        additionalProperties: false,
+      },
+      strict: true,
+    };
+    let dispatches = 0;
+    let recorded: AgentRunEvent | undefined;
+    const sink: AgentRunEventSink = async (event) => {
+      assertModelCallContextEvent(event);
+      recorded = event;
+      responseFormat.name = "mutated";
+      responseJsonSchema.properties.answer.type = "number";
+      responseFormat.strict = false;
+      await Promise.resolve();
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel({
+      provider: "veryfront-cloud",
+      modelId: "veryfront-cloud/openai/gpt-test",
+      specificationVersion: "v3",
+      runtimeCapabilities: { structuredOutput: ["json_schema"] },
+      async doGenerate(options) {
+        dispatches += 1;
+        assertEquals(options.responseFormat, expectedResponseFormat);
+        return {
+          content: [{ type: "text", text: '{"answer":"ok"}' }],
+          finishReason: "stop",
+          usage: {},
+        };
+      },
+      doStream: () => Promise.reject(new Error("unused doStream")),
+    });
+
+    await runWithMandatoryRunEventSink(
+      sink,
+      async () =>
+        await generateText({
+          model,
+          messages: [{ role: "user", content: "Return JSON" }],
+          responseFormat,
+        }),
+    );
+
+    assertEquals(dispatches, 1);
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.responseFormat, expectedResponseFormat);
+  });
+
   it("refuses exact capture when material provider controls are not represented", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
@@ -1881,6 +1964,7 @@ describe("runtime-bridge", () => {
 
     assertModelCallContextEvent(recorded);
     assertEquals(recorded.request, {
+      maxOutputTokens: 128_000,
       reasoning: { enabled: true, effort: "high" },
     });
     assertEquals("providerOptions" in (recorded.request ?? {}), false);
@@ -1913,7 +1997,10 @@ describe("runtime-bridge", () => {
     );
 
     assertModelCallContextEvent(recorded);
-    assertEquals(recorded.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+    assertEquals(recorded.request, {
+      maxOutputTokens: 64_000,
+      reasoning: { enabled: true, budgetTokens: 2048 },
+    });
   });
 
   it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
@@ -1955,6 +2042,7 @@ describe("runtime-bridge", () => {
 
       assertModelCallContextEvent(recorded);
       assertEquals(recorded.request, {
+        maxOutputTokens: 64_000,
         reasoning: { enabled: true, budgetTokens: 2048 },
       });
     }

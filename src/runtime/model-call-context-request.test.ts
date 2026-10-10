@@ -1235,6 +1235,31 @@ describe("model call request projection", () => {
     assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
+  it("matches Anthropic undefined native max_tokens suppression", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions: {
+        anthropic: { max_tokens: undefined },
+      },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, undefined);
+    assertEquals(projected, undefined);
+  });
+
   it("snapshots direct Anthropic controls once for capture and the native wire builder", () => {
     const anthropic = { max_tokens: 512, thinking: { type: "enabled", budget_tokens: 2048 } };
     const options = snapshotModelCallProviderOptions(

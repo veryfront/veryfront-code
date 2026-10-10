@@ -71,6 +71,7 @@ function isRequest(value: unknown): boolean {
       "presencePenalty",
       "frequencyPenalty",
       "reasoning",
+      "responseFormat",
     ])
   ) return false;
   for (
@@ -97,19 +98,39 @@ function isRequest(value: unknown): boolean {
     return false;
   }
   const reasoning = ownDataValue(value, "reasoning");
-  if (reasoning === undefined) return true;
-  if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
-    return false;
+  if (reasoning !== undefined) {
+    if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
+      return false;
+    }
+    const enabled = ownDataValue(reasoning, "enabled");
+    const effort = ownDataValue(reasoning, "effort");
+    const budget = ownDataValue(reasoning, "budgetTokens");
+    if (
+      (enabled !== undefined && typeof enabled !== "boolean") ||
+      (effort !== undefined &&
+        (typeof effort !== "string" ||
+          !somePrivateArray(ReasoningEfforts, (allowed) => allowed === effort))) ||
+      (budget !== undefined &&
+        (!(ReflectApply(NumberIsInteger, Number, [budget]) as boolean) || (budget as number) < 0))
+    ) {
+      return false;
+    }
   }
-  const enabled = ownDataValue(reasoning, "enabled");
-  const effort = ownDataValue(reasoning, "effort");
-  const budget = ownDataValue(reasoning, "budgetTokens");
-  return (enabled === undefined || typeof enabled === "boolean") &&
-    (effort === undefined ||
-      (typeof effort === "string" &&
-        somePrivateArray(ReasoningEfforts, (allowed) => allowed === effort))) &&
-    (budget === undefined ||
-      (ReflectApply(NumberIsInteger, Number, [budget]) as boolean && (budget as number) >= 0));
+  const responseFormat = ownDataValue(value, "responseFormat");
+  if (responseFormat === undefined) return true;
+  if (!isRecord(responseFormat)) return false;
+  const responseType = ownDataValue(responseFormat, "type");
+  if (responseType === "text" || responseType === "json") {
+    return hasOnlyKeys(responseFormat, ["type"]);
+  }
+  return responseType === "json_schema" &&
+    hasOnlyKeys(responseFormat, ["type", "name", "schema", "description", "strict"]) &&
+    typeof ownDataValue(responseFormat, "name") === "string" &&
+    ownDataValue(responseFormat, "schema") !== undefined &&
+    (ownDataValue(responseFormat, "description") === undefined ||
+      typeof ownDataValue(responseFormat, "description") === "string") &&
+    (ownDataValue(responseFormat, "strict") === undefined ||
+      typeof ownDataValue(responseFormat, "strict") === "boolean");
 }
 
 function isMessage(value: unknown): boolean {

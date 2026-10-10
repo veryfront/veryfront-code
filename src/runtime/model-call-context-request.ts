@@ -3,6 +3,7 @@ import type {
   RuntimeMetadata,
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
+import { unwrapToolInputSchema } from "#veryfront/provider/shared/index.ts";
 import {
   isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
@@ -22,7 +23,7 @@ import {
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
-import type { ModelCallRequest } from "./model-call-context.ts";
+import type { ModelCallRequest, ModelCallResponseFormat } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
@@ -628,13 +629,17 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
   model: ModelCallRuntimeMetadata,
   options: TOptions,
 ): TOptions {
+  const responseFormat = snapshotResponseFormat(options.responseFormat);
+  const hasResponseFormat = options.responseFormat !== undefined;
   const protocol = resolveModelCallProtocol(model);
   if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
-    return options;
+    return hasResponseFormat ? { ...options, responseFormat } as TOptions : options;
   }
 
   const providerOptions = options.providerOptions;
-  if (providerOptions === undefined) return options;
+  if (providerOptions === undefined) {
+    return hasResponseFormat ? { ...options, responseFormat } as TOptions : options;
+  }
 
   const output: Record<string, unknown> = {};
   const consumedBuckets: Record<string, unknown> = {};
@@ -677,7 +682,11 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
     if (descriptor) ReflectApply(ObjectDefineProperty, Object, [output, key, descriptor]);
   });
 
-  return { ...options, providerOptions: output } as TOptions;
+  return {
+    ...options,
+    providerOptions: output,
+    ...(hasResponseFormat ? { responseFormat } : {}),
+  } as TOptions;
 }
 
 /** Project effective request settings without persisting raw provider options. */
@@ -837,8 +846,7 @@ function resolveAnthropicMaxOutputTokens(
   options: ModelCallRequestSource,
 ): number | undefined {
   const native = readProviderControl(model, options, "max_tokens");
-  const nativeMaxTokens = native ? numberControl(native.value) : undefined;
-  if (nativeMaxTokens !== undefined) return nativeMaxTokens;
+  if (native) return numberControl(native.value);
 
   const baseMaxTokens = resolveAnthropicBaseMaxOutputTokens(model, options);
   const thinkingBudget = resolveAnthropicNeutralThinkingBudget(options.reasoning) ??
@@ -926,6 +934,29 @@ function resolveGoogleControls(
   return effective;
 }
 
+function snapshotResponseFormat(
+  responseFormat: ModelCallRequestSource["responseFormat"],
+): ModelCallResponseFormat | undefined {
+  if (responseFormat === undefined) return undefined;
+  if (responseFormat.type === "text" || responseFormat.type === "json") {
+    return { type: responseFormat.type };
+  }
+  return {
+    type: "json_schema",
+    name: responseFormat.name,
+    schema: snapshotProviderOptionValue(
+      "responseFormat",
+      unwrapToolInputSchema(responseFormat.schema),
+      { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+      0,
+    ),
+    ...(responseFormat.description === undefined
+      ? {}
+      : { description: responseFormat.description }),
+    ...(responseFormat.strict === undefined ? {} : { strict: responseFormat.strict }),
+  };
+}
+
 function buildModelCallRequest(
   options: ModelCallRequestSource,
   reasoning: RuntimeReasoningOption | undefined,
@@ -952,6 +983,9 @@ function buildModelCallRequest(
       : {}),
     ...(projectedReasoning && objectKeys(projectedReasoning).length > 0
       ? { reasoning: projectedReasoning }
+      : {}),
+    ...(options.responseFormat !== undefined
+      ? { responseFormat: snapshotResponseFormat(options.responseFormat) }
       : {}),
   };
   return objectKeys(request).length > 0 ? request : undefined;

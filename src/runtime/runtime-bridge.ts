@@ -852,7 +852,6 @@ function assertExactModelCallCaptureControlsSupported(
       "toolChoice",
       "headers",
       "providerOptions",
-      "responseFormat",
       "includeRawChunks",
     ] as const,
     (field) => {
