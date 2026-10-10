@@ -1,5 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { TAILWIND_DEFAULT_STYLESHEET, TailwindCSSProcessor } from "./index.ts";
+import {
+  TAILWIND_DEFAULT_STYLESHEET,
+  TailwindCSSProcessor,
+} from "../../../extensions/ext-css-tailwind/src/index.ts";
 
 const marker = "selector-boundary-sentinel";
 const cases: ReadonlyArray<readonly [string, string]> = [
@@ -9,12 +12,19 @@ const cases: ReadonlyArray<readonly [string, string]> = [
     "class-option",
     `@import "tailwindcss";\n@plugin "@tailwindcss/typography" { className: ${marker}; }`,
   ],
-  ["theme-primitive", TAILWIND_DEFAULT_STYLESHEET + `\n@theme { --typography-${marker}: red; }`],
+  [
+    "theme-primitive",
+    TAILWIND_DEFAULT_STYLESHEET + `\n@theme { --typography-${marker}: red; }`,
+  ],
   [
     "theme-path",
-    TAILWIND_DEFAULT_STYLESHEET + `\n@theme { --typography-DEFAULT-css-${marker}: red; }`,
+    TAILWIND_DEFAULT_STYLESHEET +
+    `\n@theme { --typography-DEFAULT-css-${marker}: red; }`,
   ],
-  ["theme-base-primitive", TAILWIND_DEFAULT_STYLESHEET + `\n@theme { --typography: red; }`],
+  [
+    "theme-base-primitive",
+    TAILWIND_DEFAULT_STYLESHEET + `\n@theme { --typography: red; }`,
+  ],
   [
     "theme-prototype-tuple",
     TAILWIND_DEFAULT_STYLESHEET +
@@ -42,9 +52,19 @@ Deno.test("parser-patched Typography preserves upstream CSS output", async (t) =
   for (const [index, [name, css]] of cases.entries()) {
     await t.step(name, async () => {
       const compiler = await new TailwindCSSProcessor().compile(css);
-      const output = compiler.build(["prose", "prose-sm", "prose-invert", marker]);
+      const output = compiler.build([
+        "prose",
+        "prose-sm",
+        "prose-invert",
+        marker,
+      ]);
       const hash = Array.from(
-        new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(output))),
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(output),
+          ),
+        ),
       )
         .map((byte) => byte.toString(16).padStart(2, "0")).join("");
       assertEquals(hash, expected[index]);
