@@ -1742,6 +1742,7 @@ describe("pullCommand", () => {
       await Deno.mkdir(join(tempDir, "scripts"), { recursive: true });
       await Deno.writeTextFile(join(tempDir, "app", "remove.ts"), "remove\n");
       await Deno.writeTextFile(join(tempDir, "scripts", "local_helper.py"), "print('local')\n");
+      await Deno.writeTextFile(join(tempDir, ".vfignore"), "knowledge/ignored.md\n");
       await initializeCleanTestGit(tempDir);
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
@@ -1842,6 +1843,19 @@ describe("pullCommand", () => {
                   type: "file",
                 },
                 { path: "knowledge/viz.bin", content: "viewer", size: 6, type: "file" },
+                {
+                  path: "knowledge/ignored.md",
+                  content:
+                    "---\ntype: Attested Computation\nattester:\n  resource: ignored.py\n---\nIgnored\n",
+                  size: 76,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/ignored.py",
+                  content: "def ignored():\n    return True\n",
+                  size: 31,
+                  type: "file",
+                },
               ],
               page_info: {},
             }),
@@ -1896,6 +1910,8 @@ describe("pullCommand", () => {
         "print('local')\n",
       );
       assertEquals(await exists(join(tempDir, "docs", "assets", "image.bin")), false);
+      assertEquals(await exists(join(tempDir, "knowledge", "ignored.md")), false);
+      assertEquals(await exists(join(tempDir, "knowledge", "ignored.py")), false);
       assertEquals(await exists(join(tempDir, "knowledge", "viz.bin")), false);
       assertEquals(await exists(join(tempDir, "scripts", "run.py")), false);
       assertEquals(await exists(join(tempDir, "app", "remove.ts")), false);

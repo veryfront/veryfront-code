@@ -636,12 +636,17 @@ function collectOkfPullReferencesFromValue(input: {
 
 function collectReferencedOkfPullCompanions(
   files: readonly { file: ProjectFile; op: ValidatedFilePath }[],
+  ignoreChecker: IgnoreChecker,
 ): Set<string> {
   const availablePaths = new Set(files.map(({ op }) => op.relativePath));
   const bundleRoots = collectOkfPullBundleRoots(files);
   const referencedPaths = new Set<string>();
   for (const { file, op } of files) {
-    if (!isMarkdownPullPath(op.relativePath) || typeof file.content !== "string") continue;
+    if (
+      ignoreChecker.isIgnored(op.relativePath) ||
+      !isMarkdownPullPath(op.relativePath) ||
+      typeof file.content !== "string"
+    ) continue;
     const inspected = inspectOkfDocument(op.relativePath, file.content);
     if (!hasOkfPullDocumentClassification(inspected.metadata)) continue;
     collectOkfPullReferencesFromValue({
@@ -1014,7 +1019,7 @@ async function pullSingleProject(
   // ignores, which `.vfignore` rules already prevent.
   const ignoreChecker = await loadIgnoreChecker(projectDir);
   await ignoreChecker.resolveGitIgnoredCandidates(remotePaths);
-  const referencedOkfCompanions = collectReferencedOkfPullCompanions(validatedFiles);
+  const referencedOkfCompanions = collectReferencedOkfPullCompanions(validatedFiles, ignoreChecker);
   const writeOps: WriteOp[] = [];
   for (const { file, op } of validatedFiles) {
     if (
