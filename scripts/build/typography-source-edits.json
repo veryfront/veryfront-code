@@ -33,6 +33,10 @@
         {
           "before": "let values ",
           "after": "const values "
+        },
+        {
+          "before": "    for (const key in source) {\n",
+          "after": "    for (const key of Object.keys(source)) {\n      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {\n        throw new TypeError('Typography configuration contains an unsafe property')\n      }\n"
         }
       ],
       "prefix": "const typographyUtils = (() => {\n",

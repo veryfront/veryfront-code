@@ -2,9 +2,9 @@
   "components": [
     {
       "name": "tailwindcss-typography-patched",
-      "version": "0.5.19-parser.2",
+      "version": "0.5.19-parser.3",
       "source": "vendor/typography.js",
-      "sha256": "de7684bf4f6e40e092dc227231d3898be3b0a88c9341c9957332878e8cb866c9",
+      "sha256": "e326c6b808147bcbe08e057e9843ff938154878727caff100f77ea3580ef3566",
       "license": "MIT",
       "upstream": {
         "name": "@tailwindcss/typography",

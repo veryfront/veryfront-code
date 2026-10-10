@@ -1,4 +1,5 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { loadPlugin } from "../../../extensions/ext-css-tailwind/src/plugin-loader.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import {
   TAILWIND_DEFAULT_STYLESHEET,
   TailwindCSSProcessor,
@@ -70,4 +71,66 @@ Deno.test("parser-patched Typography preserves upstream CSS output", async (t) =
       assertEquals(hash, expected[index]);
     });
   }
+});
+
+Deno.test("Typography configuration cannot pollute prototypes or copy inherited properties", async (t) => {
+  const marker = "__typographyParserPollutionProbe__";
+  function render(css: unknown): unknown {
+    const factory = loadPlugin("@tailwindcss/typography");
+    assert(typeof factory === "function");
+    const plugin: unknown = factory({ target: "legacy" });
+    assert(typeof plugin === "object" && plugin !== null);
+    const handler = (plugin as { handler: unknown }).handler;
+    assert(typeof handler === "function");
+    let components: unknown;
+    handler({
+      theme: () => ({ DEFAULT: { css } }),
+      prefix: (selector: string) => selector,
+      addVariant: () => {},
+      addComponents: (value: unknown) => components = value,
+    });
+    return components;
+  }
+  for (
+    const payload of [
+      `{"__proto__":{"${marker}":true}}`,
+      `{"p":{"__proto__":{"${marker}":true}}}`,
+      `{"constructor":{"prototype":{"${marker}":true}}}`,
+      `{"prototype":{"${marker}":true}}`,
+    ]
+  ) {
+    await t.step(payload, () => {
+      assertEquals(
+        Object.getOwnPropertyDescriptor(Object.prototype, marker),
+        undefined,
+      );
+      try {
+        let error: unknown;
+        try {
+          render(JSON.parse(payload));
+        } catch (caught) {
+          error = caught;
+        }
+        assertEquals(
+          Object.getOwnPropertyDescriptor(Object.prototype, marker),
+          undefined,
+        );
+        assert(
+          error instanceof TypeError,
+          "Unsafe configuration must fail before producing components",
+        );
+        assert(error.message.includes("unsafe property"));
+      } finally {
+        delete (Object.prototype as Record<string, unknown>)[marker];
+      }
+    });
+  }
+  await t.step("only own configuration properties become CSS", () => {
+    assertEquals(render(Object.create({ p: { color: "red" } })), [{
+      ".prose": {},
+    }]);
+    assertEquals(render({ p: { color: "red" } }), [{
+      ".prose": { p: { color: "red" } },
+    }]);
+  });
 });

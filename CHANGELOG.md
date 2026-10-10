@@ -28,7 +28,9 @@ package still requires affected 6.0.10, so it is removed from the runtime graph.
 All three original module hashes, reversible module-binding edits and MIT license
 are retained; SBOMs and cache identity bind the modified source. Eight captured
 upstream CSS output hashes remain unchanged. Plugin/config admission and runtime
-capabilities are unchanged.
+capabilities are unchanged. Typography's configuration merge also rejects prototype-affecting
+keys and copies only own properties, fixing the upstream helper's prototype-pollution
+behavior. Invalid configuration throws before producing components.
 
 ### Changed: a malformed provider stream reports `PROVIDER_STREAM_PROTOCOL_ERROR`
 

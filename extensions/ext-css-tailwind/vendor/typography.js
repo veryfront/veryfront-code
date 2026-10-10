@@ -58,7 +58,10 @@ function merge(target, ...sources) {
   const source = sources.shift()
 
   if (isObject(target) && isObject(source)) {
-    for (const key in source) {
+    for (const key of Object.keys(source)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        throw new TypeError('Typography configuration contains an unsafe property')
+      }
       if (Array.isArray(source[key])) {
         if (!target[key]) target[key] = []
         source[key].forEach((item, index) => {

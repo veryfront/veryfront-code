@@ -97,3 +97,9 @@ colors and selector parser. This preserves npm subpaths in supported Node source
 loaders. Its private default export has an explicit opaque type, matching the
 existing plugin loader contract and keeping generated declarations independent
 of Tailwind's private declaration filenames.
+
+
+The configuration merge also rejects `__proto__`, `constructor` and `prototype`
+keys before copying a value, and only enumerates own properties. This fixes the
+upstream merge helper's prototype-pollution behavior. Encountering one of those keys aborts the merge before components are produced. The guard is a recorded reversible source
+edit, and valid supported CSS output fixtures remain unchanged.
