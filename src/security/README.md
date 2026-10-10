@@ -533,11 +533,11 @@ The hosted ingress refuses these surfaces with a non-cacheable
 refused WebSocket upgrade receives no 101 response; on Node.js the upgrade
 transport closes the connection instead of writing the 503 body.
 
-| Surface                                     | Status                                                   |
-| ------------------------------------------- | -------------------------------------------------------- |
-| Preview mode, including Markdown preview    | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
-| Component snippets (`/@/`, `/@components/`) | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
-| WebSocket upgrades, including preview HMR   | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| Surface                                             | Status                                                   |
+| --------------------------------------------------- | -------------------------------------------------------- |
+| Preview mode, including Markdown preview            | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| Component snippets (`GET /@/`, `GET /@components/`) | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| WebSocket upgrades, including preview HMR           | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
 
 ### Host execution grant register
 

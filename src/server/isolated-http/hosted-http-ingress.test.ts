@@ -202,7 +202,7 @@ describe("hosted HTTP ingress", () => {
     }
     assertEquals(resolutions, 0);
   });
-  it("serves production Markdown paths through the isolated application", async () => {
+  it("serves production Markdown paths and non-GET snippet paths through the isolated application", async () => {
     let resolutions = 0;
     const fetch = createHostedHttpIngress({
       broker: { fetch: () => Promise.resolve(new Response("isolated")) },
@@ -214,6 +214,15 @@ describe("hosted HTTP ingress", () => {
     const response = await fetch(new Request("https://app.example/docs/readme.md"), selection);
     assertEquals(await response.text(), "isolated");
     assertEquals(resolutions, 1);
+    // Snippet prefixes are refused only for GET, which the snippet handler owns.
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const other = await fetch(
+        new Request("https://app.example/@/components/card", { method }),
+        selection,
+      );
+      assertEquals(await other.text(), "isolated", method);
+    }
+    assertEquals(resolutions, 4);
   });
   it("redacts failed source resolution and never falls back", async () => {
     const fetch = createHostedHttpIngress({
