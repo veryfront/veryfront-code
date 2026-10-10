@@ -4118,7 +4118,6 @@ async function executeStyleArtifactBuildRun(input: {
       });
       const { VERYFRONT_CONFIG_FILES } = await import("#veryfront/config/config-files.ts");
       const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
-      const { getProjectEnvSnapshot } = await import("#veryfront/server/project-env/storage.ts");
       let source: Parameters<typeof evaluateHostedConfigSource>[0]["source"] = null;
       for (const fileName of VERYFRONT_CONFIG_FILES) {
         const file = releaseFiles.find((file) => file.path === fileName);
@@ -4130,8 +4129,8 @@ async function executeStyleArtifactBuildRun(input: {
       styleConfig = await evaluateHostedConfigSource({
         cacheKey: `release-style:${projectReference}:${selector.releaseId}`,
         source,
-        environmentName: input.ctx.environmentName ?? "preview",
-        environment: getProjectEnvSnapshot() ?? {},
+        environmentName: "release",
+        environment: {},
         signal: input.signal,
       });
     }

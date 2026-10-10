@@ -3120,7 +3120,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const { createStyleScopeProfile } = await import(
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
-    const expectedProfile = createStyleScopeProfile({ tailwind: { stylesheet: "release.css" } });
+    const { runWithProjectEnv } = await import("#veryfront/server/project-env/storage.ts");
+    const releaseConfig =
+      'import { defineConfigWithEnv, getEnv } from "veryfront"; export default defineConfigWithEnv((env) => ({ tailwind: { stylesheet: env === "release" && (getEnv("STYLE_OVERRIDE") ?? "missing") === "missing" ? "release.css" : "ambient.css" } }));';
+    const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
+    const expectedConfig = await evaluateHostedConfigSource({
+      cacheKey: "release-style-exact-context-reference",
+      source: { fileName: "veryfront.config.ts", source: releaseConfig },
+      environmentName: "release",
+      environment: {},
+    });
+    assertEquals(expectedConfig.tailwind?.stylesheet, "release.css");
+    const expectedProfile = createStyleScopeProfile(expectedConfig);
     const hashes: unknown[] = [];
     for (const ambient of ['@import "tw-animate-css";', ".changed-main { color: blue; }"]) {
       const body = {
@@ -3128,7 +3139,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:style-artifact-build",
         projectId: "proj-1",
-        config: { release_id: "release-1" },
+        config: { release_id: "release-1", style_profile_hash: expectedProfile.hash },
       };
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_release_snapshot/execute",
@@ -3143,57 +3154,64 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
       const recorder = createStyleArtifactFetchRecorder();
       let releaseReads = 0;
-      const result = await withMockFetch(async (input, init) => {
-        const url = input instanceof Request ? input.url : input.toString();
-        if (url.includes("/releases/release-1/files?")) {
-          releaseReads++;
-          assertEquals(
-            new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
-            "Bearer test-token",
-          );
-          return new Response(
-            JSON.stringify({
-              data: [
-                {
-                  id: "config",
-                  version_id: "config-version",
-                  path: "veryfront.config.ts",
-                  type: "file",
-                  content: 'export default { tailwind: { stylesheet: "release.css" } };',
-                  size: 60,
-                  updated_at: "2026-10-10T00:00:00Z",
-                },
-                {
-                  id: "css",
-                  version_id: "css-version",
-                  path: "release.css",
-                  type: "file",
-                  content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
-                  size: 60,
-                  updated_at: "2026-10-10T00:00:00Z",
-                },
-                {
-                  id: "page",
-                  version_id: "page-version",
-                  path: "pages/index.tsx",
-                  type: "page",
-                  content: 'export default () => <div className="text-red-500" />;',
-                  size: 60,
-                  updated_at: "2026-10-10T00:00:00Z",
-                },
-              ],
-              page_info: { self: null, first: null, next: null, prev: null },
-              release_id: "release-1",
-              release_version: "1",
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
-        }
-        return await recorder.fetch(input, init);
-      }, () => new ProjectRunExecuteHandler().handle(request, ctx));
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : input.toString();
+          if (url.includes("/releases/release-1/files?")) {
+            releaseReads++;
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
+              "Bearer test-token",
+            );
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "config",
+                    version_id: "config-version",
+                    path: "veryfront.config.ts",
+                    type: "file",
+                    content: releaseConfig,
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                  {
+                    id: "css",
+                    version_id: "css-version",
+                    path: "release.css",
+                    type: "file",
+                    content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                  {
+                    id: "page",
+                    version_id: "page-version",
+                    path: "pages/index.tsx",
+                    type: "page",
+                    content: 'export default () => <div className="text-red-500" />;',
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                ],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return await recorder.fetch(input, init);
+        },
+        () =>
+          runWithProjectEnv(
+            { STYLE_OVERRIDE: ambient },
+            () => new ProjectRunExecuteHandler().handle(request, ctx),
+          ),
+      );
       assertExists(result.response);
       const json = await result.response.json();
-      assertEquals(json.success, true);
+      assertEquals(json.success, true, json.error);
       assertEquals(releaseReads, 1);
       assertEquals(sourceFileCalls.count, 0);
       assertEquals(readCalls, []);
@@ -3208,7 +3226,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       );
       const candidates = extractCandidatesFromFiles([{
         path: "veryfront.config.ts",
-        content: 'export default { tailwind: { stylesheet: "release.css" } };',
+        content: releaseConfig,
       }, {
         path: "release.css",
         content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
