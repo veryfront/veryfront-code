@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { createAdapter as createSourceAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.test-helpers.ts";
 import { buildFileListCacheKey } from "#veryfront/platform/adapters/fs/veryfront/cache-keys.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -93,7 +94,7 @@ describe("cold preview source recovery over HTTP", () => {
       let server: Deno.HttpServer<Deno.NetAddr> | undefined;
       let projectDir: string | undefined;
       try {
-        projectDir = await Deno.makeTempDir({ prefix: "cold-preview-source-recovery-" });
+        projectDir = await makeTempDir({ prefix: "cold-preview-source-recovery-" });
         const middleware: MiddlewareFunction = async (_context, next) => {
           middlewareCalls++;
           return await next();
@@ -119,7 +120,7 @@ describe("cold preview source recovery over HTTP", () => {
         if (server) await server.shutdown();
         SSRHandler.prototype.handle = originalHandle;
         sourceAdapter.dispose();
-        if (projectDir) await Deno.remove(projectDir, { recursive: true });
+        if (projectDir) await remove(projectDir, { recursive: true });
       }
     });
   }
