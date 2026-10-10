@@ -11791,6 +11791,7 @@ describe("project run inference credential header", () => {
       "invalid-capture",
       "invalid-json",
       "pre-append",
+      "schema-transport",
     ] as const
   ) {
     it(`fails closed when a mandatory output observation fails (${failure})`, async () => {
@@ -11820,6 +11821,34 @@ describe("project run inference credential header", () => {
                   return { text: "done", toolCalls: 1, status: "completed" };
                 },
               });
+            } else if (failure === "schema-transport") {
+              const model: ModelRuntime<ModelRuntimeCallOptions> = {
+                provider: "test",
+                modelId: "test/schema-rejection-observation",
+                executionMode: "remote",
+                runtimeCapabilities: { structuredOutput: true },
+                doGenerate() {
+                  return Promise.resolve({
+                    content: [{ type: "text", text: '{"city":"Berlin"}' }],
+                    finishReason: "stop" as const,
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  });
+                },
+                doStream() {
+                  throw new Error("unexpected stream dispatch");
+                },
+              };
+              const assistant = agent({
+                id: "schema-rejection-observation-probe",
+                model: "test/schema-rejection-observation",
+                system: "Report weather.",
+                skills: false,
+                outputSchema: defineSchema((v) =>
+                  v.object({ city: v.string(), tempC: v.number() })
+                )(),
+                resolveModelTransport: () => Promise.resolve({ model }),
+              });
+              await assistant.generate({ input: "Berlin?" });
             } else {
               await withLocalChildRuntime(
                 new AgentRuntime("observation-probe", { model: "test/model", system: "Observe" }),
@@ -11830,6 +11859,7 @@ describe("project run inference credential header", () => {
           } catch (error) {
             caughtObservationFailure = true;
             caughtFailureMessage = error instanceof Error ? error.message : "";
+            if (failure === "schema-transport") throw error;
           }
           return { success: true, result: { ignored: true }, durationMs: 1 };
         },
@@ -11888,7 +11918,10 @@ describe("project run inference credential header", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const payload = await result.response.json();
-      assertEquals(caughtObservationFailure, failure === "pre-append");
+      assertEquals(
+        caughtObservationFailure,
+        failure === "pre-append" || failure === "schema-transport",
+      );
       if (failure === "pre-append") assertStringIncludes(caughtFailureMessage, "structural limit");
       assertEquals(payload.success, false);
       if (failure === "transport") {
@@ -11905,6 +11938,8 @@ describe("project run inference credential header", () => {
         );
       } else if (failure === "invalid-json") {
         assertStringIncludes(payload.error, "JSON");
+      } else if (failure === "schema-transport") {
+        assertStringIncludes(payload.error, "append transport unavailable");
       } else {
         assertStringIncludes(payload.error, "Project run observation sink is disabled");
       }

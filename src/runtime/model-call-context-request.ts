@@ -619,15 +619,17 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
   options: TOptions,
 ): TOptions {
   const protocol = resolveModelCallProtocol(model);
-  if (!usesOpenAIBuilder(model) && protocol !== "google") return options;
+  if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
+    return options;
+  }
 
   const providerOptions = options.providerOptions;
   if (providerOptions === undefined) return options;
 
   const output: Record<string, unknown> = {};
   const consumedBuckets: Record<string, unknown> = {};
-  const bucketNames = protocol === "google"
-    ? ["google", resolveModelCallProvider(model), model.provider]
+  const bucketNames = protocol === "google" || protocol === "anthropic"
+    ? [protocol, resolveModelCallProvider(model), model.provider]
     : openAIProviderBucketNames(model);
   forEachPrivateArray(bucketNames, (providerName) => {
     if (!providerName || ObjectHasOwn(consumedBuckets, providerName)) return;

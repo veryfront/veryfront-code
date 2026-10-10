@@ -88,7 +88,6 @@ import {
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
-import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -1233,17 +1232,8 @@ async function observeGeneratedAgentOutputSchemaRejection(
   messageId: string,
   response: RuntimeGenerateTextResult,
 ): Promise<void> {
-  try {
-    await observeGeneratedAgentTurn(messageId, response);
-    await observeGeneratedAgentOutputSchemaFailure();
-  } catch (observationError) {
-    if (observationError instanceof DurableRunEventPersistenceError) {
-      throw observationError;
-    }
-    logger.debug("Generated outputSchema failure observation rejected", {
-      error: observationError,
-    });
-  }
+  await observeGeneratedAgentTurn(messageId, response);
+  await observeGeneratedAgentOutputSchemaFailure();
 }
 
 function buildGeneratedAssistantMessage(
