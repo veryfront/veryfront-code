@@ -108,6 +108,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   ) => void | Promise<void>;
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfToolLoadingMode?: RuntimeToolLoadingMode;
+  __vfToolBootstrapNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
@@ -179,6 +180,19 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
   }
   const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
   return snapshotStringArray(raw) ?? [];
+}
+
+export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {
+  const raw = (config as RuntimeToolFilterConfig).__vfToolBootstrapNames;
+  const names = snapshotStringArray(raw);
+  if (raw === undefined) return undefined;
+  const bootstrapNames = new NativeSet<string>();
+  if (names === undefined) return bootstrapNames;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (name !== undefined) reflectApply(SetAdd, bootstrapNames, [name]);
+  }
+  return bootstrapNames;
 }
 
 /** Return trusted run-scoped source policy; malformed internal state fails closed. */
