@@ -10,7 +10,7 @@ import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-co
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createHostInternalOriginBoundOutboundFetch,
-  createOriginBoundOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import type { SandboxClientOptions } from "./types.ts";
@@ -46,7 +46,7 @@ export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Respon
   if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin)) {
     return guardedExactHttpLoopbackOutboundFetch(url, { ...init, redirect: "error" });
   }
-  return createOriginBoundOutboundFetch(url)(url, init);
+  return createVeryfrontApiOriginBoundOutboundFetch(url)(url, init);
 }
 
 /** @internal Fetch a host-selected sandbox runtime route, including private Kubernetes DNS. */

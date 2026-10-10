@@ -39,7 +39,7 @@ export function isHostHttpApiOrigin(value: string): boolean {
   } catch {
     return false;
   }
-  for (let index = 0; index < HOST_API_ENV_KEYS.length; index++) {
+  for (let index = 0; index < HOST_API_ENV_KEYS.length; index++) { // NOSONAR: bypass project-replaced iterator hooks.
     const configuredApi = normalizeHostApiEnv(getHostBootEnv(HOST_API_ENV_KEYS[index]!));
     if (!configuredApi) continue;
     try {

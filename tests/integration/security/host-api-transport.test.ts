@@ -1,29 +1,106 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   clearEnvFileValueSource,
   markEnvFileValue,
 } from "#veryfront/platform/compat/process/env.ts";
-import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
+import {
+  isHostHttpApiOrigin,
+  requireHostPrivateApiHttps,
+} from "#veryfront/config/host-api-base.ts";
+import {
+  __runWithOutboundFetchTransportForTests,
+  guardedOutboundFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import { dispatchIntegrationApiRequest } from "#veryfront/integrations/integration-transport.ts";
+import { fetchSandboxUrl } from "#veryfront/sandbox/config.ts";
 
 const origin = "http://127.0.0.1:4000";
 
 function configured(apiUrl: string | undefined, fn: () => void) {
   return withEnv(
-    { VERYFRONT_API_URL: apiUrl, VERYFRONT_API_BASE_URL: undefined },
-    fn,
+    { VERYFRONT_API_URL: apiUrl ?? "", VERYFRONT_API_BASE_URL: "" },
+    async () => fn(),
   );
 }
 
 describe("host credential API transport", () => {
+  const apiRequests = {
+    integration: (url: string) =>
+      dispatchIntegrationApiRequest({
+        requestUrl: url,
+        token: "<TOKEN>",
+        signal: new AbortController().signal,
+      }),
+    sandbox: (url: string) =>
+      fetchSandboxUrl(url, { headers: { authorization: "Bearer <TOKEN>" } }),
+  };
+
+  for (const [name, request] of Object.entries(apiRequests)) {
+    it(`allows ${name} API requests to host-configured private DNS only`, async () => {
+      const service = "http://api.svc.example:4000";
+      const calls: string[] = [];
+      const fetchImpl: typeof fetch = (input, init) => {
+        const received = new Request(input, init);
+        calls.push(received.url);
+        assertEquals(received.headers.get("authorization"), "Bearer <TOKEN>");
+        return Promise.resolve(Response.json({ ok: true }));
+      };
+      await withEnv({
+        VERYFRONT_API_URL: service,
+        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
+        VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "",
+      }, () =>
+        __runWithOutboundFetchTransportForTests({
+          fetch: fetchImpl,
+          pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+          resolveHost: () => Promise.resolve(["10.0.0.8"]),
+        }, async () => {
+          assertEquals(await (await request(`${service}/api/test`)).json(), { ok: true });
+          await assertRejects(() => request("http://other.svc.example:4000/api/test"));
+          await assertRejects(() => request("http://api.svc.example:4001/api/test"));
+          await assertRejects(() => guardedOutboundFetch(`${service}/api/test`));
+          assertEquals(calls, [`${service}/api/test`]);
+        }));
+    });
+
+    it(`rejects ${name} API redirects without forwarding credentials`, async () => {
+      const service = "http://api.svc.example:4000";
+      const calls: string[] = [];
+      const fetchImpl: typeof fetch = (input) => {
+        calls.push(String(input));
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "http://other.svc.example:4000/collect" },
+          }),
+        );
+      };
+      await withEnv({
+        VERYFRONT_API_URL: service,
+        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
+      }, () =>
+        __runWithOutboundFetchTransportForTests({
+          fetch: fetchImpl,
+          pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+          resolveHost: () => Promise.resolve(["10.0.0.8"]),
+        }, async () => {
+          await assertRejects(() => request(`${service}/api/redirect`));
+          assertEquals(calls, [`${service}/api/redirect`]);
+        }));
+    });
+  }
+
   it("accepts either host-configured API origin", async () => {
-    await withEnv({ VERYFRONT_API_URL: undefined, VERYFRONT_API_BASE_URL: `${origin}/api` }, () => {
+    await withEnv({ VERYFRONT_API_URL: "", VERYFRONT_API_BASE_URL: `${origin}/api` }, async () => {
       assertEquals(requireHostPrivateApiHttps(origin), origin);
     });
     await withEnv(
       { VERYFRONT_API_URL: "https://api.example", VERYFRONT_API_BASE_URL: origin },
-      () => {
+      async () => {
         assertEquals(requireHostPrivateApiHttps(origin), origin);
       },
     );
@@ -32,7 +109,7 @@ describe("host credential API transport", () => {
         VERYFRONT_API_URL: "https://api.example",
         VERYFRONT_API_BASE_URL: "http://user:pass@127.0.0.1:4000",
       },
-      () => assertThrows(() => requireHostPrivateApiHttps(origin), TypeError),
+      async () => assertThrows(() => requireHostPrivateApiHttps(origin), TypeError),
     );
   });
 
@@ -68,6 +145,9 @@ describe("host credential API transport", () => {
           "http://192.168.1.1:4000",
           "http://api.example:4000",
           `blob:${origin}/id`,
+          "not-a-url",
+          "http://[",
+          "/api",
         ]
       ) {
         assertThrows(() => requireHostPrivateApiHttps(value), TypeError);
@@ -81,6 +161,7 @@ describe("host credential API transport", () => {
         "true",
         "ftp://127.0.0.1:4000",
         "http://user:pass@127.0.0.1:4000",
+        "http://:pass@127.0.0.1:4000",
         `${origin}?x=1`,
         `${origin}#x`,
       ]
@@ -117,11 +198,14 @@ describe("host credential API transport", () => {
   it("rejects embedded credentials on an otherwise approved origin", async () => {
     await configured(
       origin,
-      () =>
-        assertThrows(
-          () => requireHostPrivateApiHttps("http://user:pass@127.0.0.1:4000/api"),
-          TypeError,
-        ),
+      () => {
+        for (const credentials of ["user:pass", ":pass"]) {
+          assertThrows(
+            () => requireHostPrivateApiHttps(`http://${credentials}@127.0.0.1:4000/api`),
+            TypeError,
+          );
+        }
+      },
     );
   });
 
@@ -157,6 +241,26 @@ describe("host credential API transport", () => {
         });
         Object.defineProperty(originalUrl.prototype, "origin", original);
       }
+    });
+  });
+
+  it("does not invoke project-replaced array iterators when checking API origins", async () => {
+    await configured(origin, () => {
+      const original = Array.prototype[Symbol.iterator];
+      let calls = 0;
+      let accepted = false;
+      let rejected = false;
+      Array.prototype[Symbol.iterator] = function () {
+        calls++;
+        throw new Error("Project iterator must not run");
+      };
+      try {
+        accepted = isHostHttpApiOrigin(origin);
+        rejected = !isHostHttpApiOrigin("http://attacker.example");
+      } finally {
+        Array.prototype[Symbol.iterator] = original;
+      }
+      assertEquals([accepted, rejected, calls], [true, true, 0]);
     });
   });
 });

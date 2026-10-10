@@ -21,9 +21,9 @@ identity headers before setting its own. See
   built-in local model. See [Providers](./providers.md).
 - A host that supports the current Node.js LTS, Deno, Bun, or containers.
 
-Set `VERYFRONT_API_URL` before startup to use your own API. HTTP is permitted only
-for that host-configured origin and port; project `.env` files and later writes
-cannot enable it. Use HTTPS unless you provide a trusted, isolated network.
+Set `VERYFRONT_API_URL` before startup to use your own API. HTTP works only
+for that configured origin and port. Project `.env` files and later writes cannot
+enable it. Use HTTPS unless the API is on a private network you control.
 
 ## Check capability support
 
