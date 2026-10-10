@@ -1281,3 +1281,19 @@ it("tool search still resolves a bare platform tool id to its exact name match",
     "list_projects",
   );
 });
+
+it("an unavailable exact action preserves the canonical platform catalog reader", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [
+      definition(
+        "veryfront__get_integration",
+        "Inspect the Gmail integration and available actions",
+      ),
+      definition("gmail__upload_attachment", "Download a Gmail attachment"),
+      definition("veryfront__send_email", "Send a Gmail email"),
+    ],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches.map((match) => match.name), ["veryfront__get_integration"]);
+});
