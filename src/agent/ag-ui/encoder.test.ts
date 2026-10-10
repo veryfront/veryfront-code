@@ -1240,6 +1240,24 @@ describe("agent/ag-ui-encoder", () => {
     assertEquals(state.metadata.finishReason, undefined);
   });
 
+  it("marks non-plain parsed outputs unsupported instead of capturing an empty object", () => {
+    class ParsedResult {}
+    for (const object of [new Date(0), new Map(), new ParsedResult()]) {
+      const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+      const events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-finish",
+        object,
+      });
+      assertEquals(events[0]?.payload.value, {
+        object: {
+          captureStatus: "unsupported",
+          reasons: ["unsupported_object"],
+          value: "[unsupported object]",
+        },
+      });
+    }
+  });
+
   it("records oversized message-finish objects as partial metadata without failing", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     const events = mapRuntimeStreamEventToAgUiEvents(state, {

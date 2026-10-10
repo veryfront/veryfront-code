@@ -3,6 +3,7 @@ import type {
   RuntimeMetadata,
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
+import { unwrapToolInputSchema } from "#veryfront/provider/shared/index.ts";
 import {
   isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
@@ -22,7 +23,7 @@ import {
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
-import type { ModelCallRequest } from "./model-call-context.ts";
+import type { ModelCallRequest, ModelCallResponseFormat } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
@@ -648,13 +649,16 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
   model: ModelCallRuntimeMetadata,
   options: TOptions,
 ): TOptions {
+  const responseFormat = snapshotResponseFormat(options.responseFormat);
+  const hasResponseFormat = options.responseFormat !== undefined;
   const protocol = resolveModelCallProtocol(model);
   if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
-    return options;
+    return hasResponseFormat ? { ...options, responseFormat } as TOptions : options;
   }
 
   const neutralOptions = {
     ...options,
+    ...(hasResponseFormat ? { responseFormat } : {}),
     ...(options.stopSequences === undefined
       ? {}
       : { stopSequences: objectFreeze(slicePrivateArray(options.stopSequences)) }),
@@ -887,7 +891,11 @@ function resolveAnthropicControls(
   // triggers the Messages builder's neutral sampling filter.
   const thinkingEnabled = options.reasoning?.enabled === true ||
     readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled";
-  const effective = { ...options };
+  const effective = {
+    ...options,
+    // The Messages builder drops schemaless JSON instead of sending a constraint.
+    responseFormat: options.responseFormat?.type === "json" ? undefined : options.responseFormat,
+  };
   forEachPrivateArray(
     [
       ["temperature", "temperature"],
@@ -954,6 +962,29 @@ function resolveGoogleControls(
   return effective;
 }
 
+function snapshotResponseFormat(
+  responseFormat: ModelCallRequestSource["responseFormat"],
+): ModelCallResponseFormat | undefined {
+  if (responseFormat === undefined) return undefined;
+  if (responseFormat.type === "text" || responseFormat.type === "json") {
+    return { type: responseFormat.type };
+  }
+  return {
+    type: "json_schema",
+    name: responseFormat.name,
+    schema: snapshotProviderOptionValue(
+      "responseFormat",
+      unwrapToolInputSchema(responseFormat.schema),
+      { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+      0,
+    ),
+    ...(responseFormat.description === undefined
+      ? {}
+      : { description: responseFormat.description }),
+    ...(responseFormat.strict === undefined ? {} : { strict: responseFormat.strict }),
+  };
+}
+
 function buildModelCallRequest(
   options: ModelCallRequestSource,
   reasoning: RuntimeReasoningOption | undefined,
@@ -980,6 +1011,9 @@ function buildModelCallRequest(
       : {}),
     ...(projectedReasoning && objectKeys(projectedReasoning).length > 0
       ? { reasoning: projectedReasoning }
+      : {}),
+    ...(options.responseFormat !== undefined
+      ? { responseFormat: snapshotResponseFormat(options.responseFormat) }
       : {}),
   };
   return objectKeys(request).length > 0 ? request : undefined;

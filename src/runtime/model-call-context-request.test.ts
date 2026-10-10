@@ -1280,6 +1280,29 @@ describe("model call request projection", () => {
     assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
+  it("omits Anthropic schemaless JSON capture just as the native builder does", () => {
+    for (const provider of ["anthropic", "veryfront-cloud"]) {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json" },
+      };
+      const projected = buildModelCallContextRequest({
+        provider,
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, options);
+      const body = buildAnthropicMessagesRequest(
+        "claude-haiku-4-5",
+        provider,
+        options,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.output_config, undefined);
+      assertEquals(projected?.responseFormat, undefined);
+    }
+  });
+
   it("matches Anthropic undefined native max_tokens suppression", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,

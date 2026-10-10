@@ -416,6 +416,7 @@ describe("hosted executor model dispatch", () => {
           presencePenalty: 0.3,
           frequencyPenalty: 0.1,
           reasoning: { enabled: false },
+          responseFormat: options.responseFormat,
         },
       });
       persisted.resolve();

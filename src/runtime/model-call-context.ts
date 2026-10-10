@@ -54,6 +54,17 @@ export interface ModelCallModel {
   modelProvider?: string;
 }
 
+export type ModelCallResponseFormat =
+  | { type: "text" }
+  | { type: "json" }
+  | {
+    type: "json_schema";
+    name: string;
+    schema: unknown;
+    description?: string;
+    strict?: boolean;
+  };
+
 /** Provider-neutral generation controls that materially affect one model call. */
 export interface ModelCallRequest {
   maxOutputTokens?: number;
@@ -69,6 +80,7 @@ export interface ModelCallRequest {
     effort?: "low" | "medium" | "high" | "max";
     budgetTokens?: number;
   };
+  responseFormat?: ModelCallResponseFormat;
 }
 
 /**

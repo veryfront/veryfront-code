@@ -9825,7 +9825,7 @@ describe("project run inference credential header", () => {
     const canonicalRunId = "11111111-1111-4111-8111-111111111111";
     const projectId = "22222222-2222-4222-8222-222222222222";
     const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
-    const queueFilled = Promise.withResolvers<void>();
+    const firstAppendStarted = Promise.withResolvers<void>();
     const releaseFirstAppend = Promise.withResolvers<void>();
     const appended: Record<string, unknown>[] = [];
     let producedDeltas = 0;
@@ -9882,9 +9882,9 @@ describe("project run inference credential header", () => {
             });
           }
           runtimeAppendCalls++;
-          if (runtimeAppendCalls === 3) {
+          if (runtimeAppendCalls === 1) {
             await Promise.resolve();
-            queueFilled.resolve();
+            firstAppendStarted.resolve();
             await releaseFirstAppend.promise;
           }
           maxRuntimeAppendCallsBeforeRelease = Math.max(
@@ -9899,12 +9899,13 @@ describe("project run inference credential header", () => {
           });
         }, async () => {
           const pending = handler.handle(request, ctx);
-          await queueFilled.promise;
+          await firstAppendStarted.promise;
+          await delay(0);
           assertEquals(taskFinishedStreaming, false);
           assertEquals(producedDeltas <= 300, true);
           assertEquals(producedDeltas < 450, true);
-          assertEquals(runtimeAppendCalls, 3);
-          assertEquals(maxRuntimeAppendCallsBeforeRelease, 2);
+          assertEquals(runtimeAppendCalls, 1);
+          assertEquals(maxRuntimeAppendCallsBeforeRelease, 0);
           releaseFirstAppend.resolve();
           return await pending;
         }),

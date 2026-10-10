@@ -40,6 +40,8 @@ const objectAssign = Object.assign;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
 const intrinsicCrypto = crypto;
 const cryptoRandomUUID = intrinsicCrypto.randomUUID;
 const intrinsicPerformance = performance;
@@ -875,6 +877,14 @@ function snapshotMessageFinishObjectValue(
       };
     }
 
+    const prototype = objectGetPrototypeOf(input);
+    if (prototype !== null && prototype !== objectPrototype) {
+      return {
+        value: "[unsupported object]",
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
     const output = createNullDataRecord();
     const keys = reflectOwnKeys(input);
     let copiedKeys = 0;
