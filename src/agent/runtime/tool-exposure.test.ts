@@ -160,6 +160,35 @@ it("deferred exposure keeps injected tool_search in visible ASCII order", () => 
   );
 });
 
+it("an exact local tool name loads only that tool, retaining aliases and related readers for discovery", () => {
+  const authorized = [
+    definition("list_skills", "List project skills"),
+    definition("veryfront__list_skills", "List project skills"),
+    definition("get_skill", "Read a skill from the list_skills inventory"),
+    definition("get_skill_source", "Read source for list_skills entries"),
+  ];
+  const state = createToolExposureState();
+  const first = searchToolExposure({ query: "  LIST_SKILLS  ", authorized, state });
+  assertEquals(first.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const plan = createToolExposurePlan({ authorized, state, mode: "deferred" });
+  const repeated = searchToolExposure({
+    query: "list_skills",
+    authorized: plan.deferred,
+    available: plan.visible,
+    state,
+  });
+  assertEquals(repeated.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals(repeated.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const broad = searchToolExposure({
+    query: "list skills",
+    authorized,
+    state: createToolExposureState(),
+  });
+  assert(broad.resultCount > 1);
+});
+
 it("tool search ranks exact name, description, and parameter matches", () => {
   const state = createToolExposureState();
   const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });
@@ -222,21 +251,21 @@ it("tool search loads a deferred exact-name match ahead of a visible capability 
   assertEquals([...state.loadedToolNames], ["release"]);
 });
 
-it("tool search orders all four match ranks before name tie-breaking", () => {
+it("capability phrase search orders all four match ranks before name tie-breaking", () => {
   const rankedCatalog = [
-    definition("a_parameter", "Other capability", "Release value"),
-    definition("z_description", "Release information"),
-    definition("release_notes", "Other capability"),
-    definition("release", "Other capability"),
+    definition("a_parameter", "Other capability", "Release info value"),
+    definition("z_description", "Release info information"),
+    definition("release_info_notes", "Other capability"),
+    definition("release_info", "Other capability"),
   ];
 
   assertEquals(
     searchToolExposure({
-      query: "release",
+      query: "release info",
       authorized: rankedCatalog,
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["release", "release_notes", "z_description", "a_parameter"],
+    ["release_info", "release_info_notes", "z_description", "a_parameter"],
   );
 });
 
@@ -705,6 +734,39 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.length, 128);
   assertEquals(loadedStep.deferred, []);
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+});
+
+it("defers the compatibility skill loader when the canonical loader is authorized", () => {
+  const authorized = [
+    definition("load_skill", "Load a skill"),
+    definition("veryfront__load_skill", "Load a skill"),
+  ];
+  const state = createToolExposureState();
+  const initial = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(initial.visible.map((tool) => tool.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
+  assertEquals(initial.deferred.map((tool) => tool.name), ["veryfront__load_skill"]);
+  const searched = searchToolExposure({
+    query: "veryfront__load_skill",
+    authorized: initial.deferred,
+    available: initial.visible,
+    state,
+  });
+  assertEquals(searched.matches.map((tool) => tool.name), ["veryfront__load_skill"]);
+  const loaded = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(loaded.visible.map((tool) => tool.name), ["load_skill", "veryfront__load_skill"]);
+  assertEquals(
+    createToolExposurePlan({ authorized, mode: "eager", state: createToolExposureState() }).visible,
+    authorized,
+  );
+  assertEquals(
+    createToolExposurePlan({
+      authorized,
+      mode: "deferred",
+      state: createToolExposureState(),
+      bootstrapToolNames: new Set(["load_skill", "veryfront__load_skill"]),
+    }).visible.map((tool) => tool.name),
+    ["load_skill", "veryfront__load_skill"],
+  );
 });
 
 it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {

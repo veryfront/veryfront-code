@@ -42,7 +42,8 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill", "veryfront__load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
+const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** The platform's own namespace, which models also use as an alias for local platform tools. */
 const PLATFORM_TOOL_NAMESPACE = "veryfront";
@@ -576,6 +577,21 @@ function rankToolExposureMatches(input: {
     );
   }
 
+  // A literal local id identifies one capability, not every tool whose schema
+  // mentions it. Keep phrase searches broad while exact calls load only that schema.
+  const literalName = privateTextToLowerCase(privateTextTrim(input.query));
+  const exactLocalMatches = sortSearchItems(
+    mapPrivateArray(
+      filterPrivateArray(
+        candidates,
+        (candidate) => privateTextToLowerCase(candidate.name) === literalName,
+      ),
+      toSearchMatch,
+    ),
+    compareToolSearchMatches,
+  );
+  if (exactLocalMatches.length > 0) return exactLocalMatches;
+
   // The query taken whole is the strongest signal for every non-canonical query.
   const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
   if (wholeQueryMatches.length > 0) return wholeQueryMatches;
@@ -664,7 +680,14 @@ export function createToolExposurePlan(input: {
     }
   }
 
-  const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
+  let hasCanonicalSkillLoader = false;
+  for (let index = 0; index < authorized.length; index++) {
+    if (authorized[index]?.name === "load_skill") hasCanonicalSkillLoader = true;
+  }
+  // Keep the legacy loader discoverable without sending both loader schemas
+  // in every initial request. Hosts without the canonical loader still bootstrap it.
+  const bootstrap = input.bootstrapToolNames ??
+    (hasCanonicalSkillLoader ? DEFAULT_BOOTSTRAP_TOOL_NAMES : LEGACY_BOOTSTRAP_TOOL_NAMES);
   let bootstrapCount = 0;
   const loadable: ToolDefinition[] = [];
   const loadableNames = createPrivateSet<string>();

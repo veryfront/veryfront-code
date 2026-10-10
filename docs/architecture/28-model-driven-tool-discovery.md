@@ -40,7 +40,12 @@ example. Read it in
 - **deferred**: the agent has no explicit `tools` binding. The model initially
   sees only `tool_search` plus the `load_skill` bootstrap tool when the run
   authorizes it. `form_input` remains authorized but deferred until a search
-  loads it. Bootstrap tools are filtered against the authorized set, so a run
+  loads it. When both `load_skill` and its `veryfront__load_skill` compatibility
+  name are authorized, only the canonical schema bootstraps; the compatibility
+  name remains searchable and can be loaded explicitly. A host exposing only the
+  compatibility name still bootstraps that loader. Explicit bootstrap overrides
+  and eager bindings retain their declared tools. Bootstrap tools are filtered
+  against the authorized set, so a run
   that does not authorize `load_skill` exposes `tool_search` alone. That is why
   the measurement below reports one initially exposed tool. Its deterministic
   fixture authorizes exactly 64 generated tools and does not authorize
@@ -74,7 +79,8 @@ mechanism.
 - Searches the run's authorized catalog only, under the same project and
   integration gating as the eager path.
 - Deterministic, case-insensitive matching. Underscores are treated as spaces.
-  Ranking: exact name, then name substring, then description substring.
+  A literal exact name loads only that authorized tool. Capability phrases retain
+  broad matching ranked by name, then description and parameter descriptions.
 - Bounded on every axis: query bytes, candidate count, per-schema depth, node
   count and byte size, and total loaded schema budget. See the `TOOL_SEARCH_*`
   constants in `tool-exposure.ts`.
