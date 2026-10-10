@@ -9,7 +9,7 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
-import { setProviderObservedSkillBodies } from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import {
   type AdmitExecutorToolCall,
   runWithToolCallAdmissionReceipt,

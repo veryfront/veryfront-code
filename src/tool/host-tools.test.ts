@@ -14,7 +14,7 @@ import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts
 import {
   hasProviderObservedSkillBody,
   setProviderObservedSkillBodies,
-} from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
+} from "./provider-observed-skill-bodies.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 

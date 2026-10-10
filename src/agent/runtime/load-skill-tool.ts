@@ -45,7 +45,7 @@ import {
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { hasProviderObservedSkillBody } from "./provider-observed-skill-bodies.ts";
+import { hasProviderObservedSkillBody } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectDefineProperty = Object.defineProperty;

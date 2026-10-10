@@ -195,7 +195,7 @@ import {
   restoreTrustedSkillLoadResultsFromPauseCheckpoint,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
-import { setProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import {
   isRuntimeGeneratedUserMessage,

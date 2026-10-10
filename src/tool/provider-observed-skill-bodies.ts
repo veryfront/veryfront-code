@@ -1,4 +1,4 @@
-import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
+import type { ToolExecutionContext } from "./types.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 

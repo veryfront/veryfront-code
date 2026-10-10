@@ -15,7 +15,7 @@ import {
 import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
-import { setProviderObservedSkillBodies } from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
 import {

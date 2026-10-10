@@ -41,7 +41,7 @@ import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { setProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
