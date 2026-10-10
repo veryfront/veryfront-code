@@ -394,11 +394,13 @@ import {
   createToolExposureCheckpoint,
   createToolExposureState,
   createToolSearchDefinition,
+  listToolExposure,
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
   type ToolExposureCheckpoint,
   type ToolExposurePlan,
   type ToolExposureState,
+  type ToolInventoryPage,
   type ToolSearchMatch,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
@@ -1205,9 +1207,42 @@ function executeFrameworkToolSearch(input: {
   plan: ToolExposurePlan;
   state: ToolExposureState;
 }): {
-  result: ReturnType<typeof searchToolExposure> & { nextStep: string };
+  result: (ToolSearchResult | ToolInventoryPage) & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
+  if (ObjectHasOwn(input.args, "inventory")) {
+    if (ObjectHasOwn(input.args, "query")) throw new Error("Choose query or inventory, not both");
+    const inventory = input.args.inventory;
+    if (inventory === null || typeof inventory !== "object" || Array.isArray(inventory)) {
+      throw new Error("Tool inventory must be an object");
+    }
+    const options = inventory as Record<string, unknown>;
+    const cursor = options.cursor;
+    const limit = options.limit;
+    if (cursor !== undefined && typeof cursor !== "string") {
+      throw new Error("Invalid tool inventory cursor");
+    }
+    if (limit !== undefined && typeof limit !== "number") {
+      throw new Error("Invalid tool inventory limit");
+    }
+    const result = listToolExposure({
+      authorized: input.plan.deferred,
+      available: filterPrivateArray(
+        input.plan.visible,
+        (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
+      ),
+      cursor,
+      limit,
+    });
+    return {
+      result: {
+        ...result,
+        nextStep:
+          "These are executable tool names, not project definitions. Call available tools directly; use query with one exact deferred name to load its input schema for the next step. Follow nextCursor to browse another page.",
+      },
+      checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+    };
+  }
   const query = typeof input.args.query === "string" ? privateTextTrim(input.args.query) : "";
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
@@ -1236,7 +1271,7 @@ function executeFrameworkToolSearch(input: {
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
-        ? "No authorized tool matched this query, but other authorized tools are not loaded yet. Call tool_search again with one exact tool name or a different short capability phrase before answering without a tool."
+        ? "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then query one exact name. A project resource title is not a tool name."
         : "Continue with the available tools or answer without a tool.",
     },
     checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
@@ -1759,7 +1794,8 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
-function didReloadProjectAgentWriteTool(result: ToolSearchResult): boolean {
+function didReloadProjectAgentWriteTool(result: ToolSearchResult | ToolInventoryPage): boolean {
+  if ("nextCursor" in result) return false;
   return somePrivateArray(
     result.matches,
     (match) => match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name),

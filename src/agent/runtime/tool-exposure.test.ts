@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { tool, type ToolDefinition } from "#veryfront/tool";
 import {
@@ -6,6 +6,7 @@ import {
   createToolExposurePlan,
   createToolExposureState,
   createToolSearchDefinition,
+  listToolExposure,
   restoreToolExposureState,
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
@@ -14,6 +15,54 @@ import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeProviderSchemaHiddenTool,
 } from "./local-tool.ts";
+
+it("browses executable metadata in bounded pages without loading schemas", () => {
+  const state = createToolExposureState();
+  const authorized = [
+    definition("write_agent", "Write an agent"),
+    definition("get_agent", "Read an agent"),
+    definition("list_agents", "List agents"),
+  ];
+  const first = listToolExposure({ authorized, available: [authorized[1]!], limit: 2 });
+  assertEquals(first.matches.map((entry) => [entry.name, entry.status]), [[
+    "get_agent",
+    "available",
+  ], ["list_agents", "deferred"]]);
+  assertEquals(first.nextCursor, "2");
+  assertEquals(first.loadedCount, 0);
+  assertEquals(state.loadedToolNames.size, 0);
+  const second = listToolExposure({ authorized, limit: 2, cursor: first.nextCursor! });
+  assertEquals(second.matches.map((entry) => entry.name), ["write_agent"]);
+  assertEquals(second.nextCursor, null);
+  assertEquals(Object.hasOwn(second.matches[0]!, "parameters"), false);
+});
+
+it("browsing metadata never reads parameter schemas or lists provider-hidden tools", () => {
+  const candidate = definition("get_agent", "Read an agent");
+  let schemaReads = 0;
+  Object.defineProperty(candidate, "parameters", {
+    get() {
+      schemaReads++;
+      throw new Error("must not inspect schemas");
+    },
+  });
+  const hidden = hiddenDefinition("native_hidden", "Provider-owned hidden tool");
+  const result = listToolExposure({ authorized: [candidate, hidden] });
+  assertEquals(result.matches.map((entry) => entry.name), ["get_agent"]);
+  assertEquals(schemaReads, 0);
+});
+
+it("bounds inventory descriptions and rejects invalid pagination", () => {
+  const authorized = [definition("get_agent", "x".repeat(1000))];
+  const result = listToolExposure({ authorized });
+  assertEquals(result.matches[0]?.description, "x".repeat(240) + "...");
+  for (const limit of [0, 21, 1.5, Infinity]) {
+    assertThrows(() => listToolExposure({ authorized, limit }));
+  }
+  for (const cursor of ["", "-1", "1.5", "1e1", "2", "99999999999"]) {
+    assertThrows(() => listToolExposure({ authorized, cursor }));
+  }
+});
 
 function definition(
   name: string,

@@ -76,6 +76,23 @@ mechanism.
 
 ### `tool_search`
 
+Use one of two input forms:
+
+- `{"query":"get_agent"}` searches or loads an exact authorized executable tool.
+  Its input schema becomes visible on the next model step.
+- `{"inventory":{"limit":10}}` browses executable tool metadata without loading
+  schemas or changing exposure. Results distinguish `available` and `deferred`
+  tools. Follow `nextCursor` with `{"inventory":{"cursor":"10","limit":10}}`.
+  Page sizes range from 1 to 20, default 10. Descriptions are previews of at most
+  240 characters plus an ellipsis. Inventory does not inspect parameter schemas.
+
+Choose `query` or `inventory`, not both. Inventory contains only this run's
+provider-visible authorized tools, not project tool definitions. It preserves
+provider-hidden tool filtering and execution permissions. Use an exact returned
+name to load a deferred tool. A search miss directs the model to browse instead
+of repeatedly guessing resource display names. If the catalog changes and a
+cursor is outside the current inventory, restart without a cursor.
+
 - Schema-free results: `{ name, description, status: "available" | "loaded" }`.
   Input schemas are never returned by a search.
 - Searches the run's authorized catalog only, under the same project and
