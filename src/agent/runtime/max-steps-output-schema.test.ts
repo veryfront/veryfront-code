@@ -5,6 +5,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../factory.ts";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
 
 const getReportSchema = defineSchema((v) => v.object({ city: v.string(), tempC: v.number() }));
 const discardReportSchema = defineSchema((v) =>
@@ -155,6 +156,39 @@ describe("agent max steps output schema", () => {
     assertEquals(response.metadata?.warning, "Max steps (1) reached");
     assertEquals(response.metadata?.outputSchemaError, undefined);
     assertEquals(response.object, { city: "Berlin", tempC: 12 });
+  });
+
+  it("observes the parsed object on the final generated tool turn before max-steps exit", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
+    const assistant = agent({
+      id: "max-steps-observed-parsed-object",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: getReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, { city: "Berlin", tempC: 12 });
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        object: { city: "Berlin", tempC: 12 },
+      }],
+    );
   });
 
   it("preserves object presence when a successful schema transform returns undefined", async () => {

@@ -3611,6 +3611,7 @@ export class AgentRuntime {
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
+      let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -3821,6 +3822,11 @@ export class AgentRuntime {
           await observeGeneratedAgentTurn(assistantMessage.id, turn);
           generatedTurnObserved = true;
         };
+        const parseMaxStepsOutputOnce = async (): Promise<MaxStepsOutputParse> => {
+          if (maxStepsParsedOutput !== undefined) return maxStepsParsedOutput;
+          maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
+          return maxStepsParsedOutput;
+        };
         let generatedProviderReplayCheckpointPersisted = false;
         const persistGeneratedProviderReplayCheckpoint = async (): Promise<void> => {
           if (generatedProviderReplayCheckpointPersisted) return;
@@ -3962,7 +3968,15 @@ export class AgentRuntime {
           }, outputSchema);
         }
 
-        await observeGeneratedProviderTurnOnce(response);
+        if (step + 1 >= maxSteps) {
+          const parsedOutput = await parseMaxStepsOutputOnce();
+          await observeGeneratedProviderTurnOnce({
+            ...response,
+            ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+          });
+        } else {
+          await observeGeneratedProviderTurnOnce(response);
+        }
         await persistGeneratedProviderReplayCheckpoint();
         throwIfAborted(abortSignal);
         this.status = "tool_execution";
@@ -4391,7 +4405,8 @@ export class AgentRuntime {
       // The last message on this exit is a tool result, so the response text
       // and the structured-output candidate come from the final assistant turn.
       const finalText = getFinalAssistantText(currentMessages);
-      const parsedOutput = await tryParseMaxStepsOutput(finalText, outputSchema);
+      const parsedOutput = maxStepsParsedOutput ??
+        await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
         ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
