@@ -35,6 +35,20 @@ const ReadableStreamLockedGet = Object.getOwnPropertyDescriptor(
 const ReaderCancel = NativeReadableStreamDefaultReader.prototype.cancel;
 const ReaderRead = NativeReadableStreamDefaultReader.prototype.read;
 const ReaderReleaseLock = NativeReadableStreamDefaultReader.prototype.releaseLock;
+// Body bytes may hold host credentials, so copy and decode them without
+// looking up replaceable shared-prototype methods.
+const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as Uint8Array;
+const TypedArraySet = TypedArrayPrototype.set;
+const TypedArraySubarray = TypedArrayPrototype.subarray;
+const TypedArrayByteLengthGet = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "byteLength")!
+  .get!;
+const TextDecoderDecode = TextDecoder.prototype.decode;
+const NativeUint8Array = Uint8Array;
+const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
+
+function byteLengthOf(bytes: Uint8Array): number {
+  return IntrinsicReflectApply(TypedArrayByteLengthGet, bytes, []);
+}
 
 export interface ReadBodyLimitOptions {
   /** Abort the read and cancel the underlying stream when the caller deadline expires. */
@@ -320,7 +334,7 @@ export async function readBodyWithLimit(
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
   const bytes = await readBodyBytesWithLimit(request, maxSize);
-  return fatalUtf8Decoder.decode(bytes);
+  return IntrinsicReflectApply(TextDecoderDecode, fatalUtf8Decoder, [bytes]);
 }
 
 /**
@@ -397,23 +411,24 @@ export async function readBodyBytesWithLimit(
       const { done, value } = await IntrinsicReflectApply(ReaderRead, reader, []);
       if (abortReason !== undefined) throw abortReason;
       if (done) break;
-      if (!(value instanceof Uint8Array)) {
+      if (!IntrinsicReflectApply(FunctionHasInstance, NativeUint8Array, [value])) {
         const error = createValidationError(
           "Request body stream produced a non-byte chunk",
         );
         cancelReader(reader, error);
         throw error;
       }
+      const valueByteLength = byteLengthOf(value);
 
-      if (value.byteLength > maxSize - totalSize) {
-        const actualSize = totalSize + value.byteLength;
+      if (valueByteLength > maxSize - totalSize) {
+        const actualSize = totalSize + valueByteLength;
         const error = createBodyTooLargeError(maxSize, actualSize, "stream");
         cancelReader(reader, error);
         throw error;
       }
 
       chunksSinceYield++;
-      if (value.byteLength === 0) {
+      if (valueByteLength === 0) {
         consecutiveEmptyChunks++;
         if (consecutiveEmptyChunks > MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS) {
           const error = createValidationError(
@@ -435,11 +450,11 @@ export async function readBodyBytesWithLimit(
         if (abortReason !== undefined) throw abortReason;
       }
 
-      if (value.byteLength === 0) continue;
+      if (valueByteLength === 0) continue;
 
-      totalSize += value.byteLength;
+      totalSize += valueByteLength;
       let valueOffset = 0;
-      while (valueOffset < value.byteLength) {
+      while (valueOffset < valueByteLength) {
         if (currentBlock === null) {
           const nextCapacity = Math.min(
             BODY_COALESCE_BLOCK_BYTES,
@@ -450,18 +465,21 @@ export async function readBodyBytesWithLimit(
         }
 
         const copyLength = Math.min(
-          currentBlock.byteLength - currentBlockLength,
-          value.byteLength - valueOffset,
+          byteLengthOf(currentBlock) - currentBlockLength,
+          valueByteLength - valueOffset,
         );
-        currentBlock.set(
-          value.subarray(valueOffset, valueOffset + copyLength),
+        IntrinsicReflectApply(TypedArraySet, currentBlock, [
+          IntrinsicReflectApply(TypedArraySubarray, value, [
+            valueOffset,
+            valueOffset + copyLength,
+          ]),
           currentBlockLength,
-        );
+        ]);
         currentBlockLength += copyLength;
         valueOffset += copyLength;
 
-        if (currentBlockLength === currentBlock.byteLength) {
-          blocks.push(currentBlock);
+        if (currentBlockLength === byteLengthOf(currentBlock)) {
+          blocks[blocks.length] = currentBlock;
           currentBlock = null;
           currentBlockLength = 0;
         }
@@ -475,12 +493,16 @@ export async function readBodyBytesWithLimit(
   const combined = new Uint8Array(totalSize);
   let offset = 0;
 
-  for (const block of blocks) {
-    combined.set(block, offset);
-    offset += block.byteLength;
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index]!;
+    IntrinsicReflectApply(TypedArraySet, combined, [block, offset]);
+    offset += byteLengthOf(block);
   }
   if (currentBlock !== null && currentBlockLength > 0) {
-    combined.set(currentBlock.subarray(0, currentBlockLength), offset);
+    IntrinsicReflectApply(TypedArraySet, combined, [
+      IntrinsicReflectApply(TypedArraySubarray, currentBlock, [0, currentBlockLength]),
+      offset,
+    ]);
   }
 
   return combined;

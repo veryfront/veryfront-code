@@ -35,6 +35,7 @@ import {
   createApplicationRequest,
   createApplicationRequestHeaders,
 } from "#veryfront/security/http/application-request.ts";
+import { assertNativeBodyProcessing } from "#veryfront/security/http/native-body-processing.ts";
 import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
 import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { isResponseLike } from "./response-like.ts";
@@ -258,7 +259,9 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   // The hosted parser consumes the original request body for authentication. The
   // retained clone must therefore be materialized and sanitized separately before
   // the detached callback receives an application-facing request.
+  assertNativeBodyProcessing();
   const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
+  assertNativeBodyProcessing();
   const credentials = payload.credentials;
   const sanitizedPayload = isCredentialRecord(credentials)
     ? {
@@ -503,6 +506,9 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
       assertNativeHeaderProcessing();
       assertNativeRequestDefaults();
+      // The invocation body carries host credentials. Native cloning and reading
+      // reach shared stream operations, so reject known changes before each step.
+      assertNativeBodyProcessing();
       const applicationRequestSource = IntrinsicReflectApply(
         RequestClone,
         input.request,
@@ -525,6 +531,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
       assertNativeHeaderProcessing();
       assertNativeRequestDefaults();
+      assertNativeBodyProcessing();
       const applicationRequest = await createRuntimeInvocationApplicationRequest(
         applicationRequestSource,
       );

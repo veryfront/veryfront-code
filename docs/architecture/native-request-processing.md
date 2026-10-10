@@ -4,7 +4,13 @@ The service request helper and application-request sanitizers preserve native Re
 
 The preconditions inspect Function.prototype.call and the native Headers iterator protocol without invoking accessors. Request construction also rejects ambient RequestInit fields on Object.prototype. Options inherited from a custom prototype remain supported. An existing native Request passed without init remains unchanged; its headers are not enumerated to manufacture defaults.
 
-Framework-invoked option conversion is followed by another check before native construction or header iteration. Application sanitization checks before cloning and copying, and hosted invocation preparation removes infrastructure headers before native HeadersInit conversion. It checks native state again after payload serialization and before constructing the application request. Request bodies, content types, native transfer semantics and host error identity retain their ordinary behavior. Node instrumentation that replaces the checked callback or iterator methods will cause explicit rejection on these paths.
+Framework-invoked option conversion is followed by another check before native construction or header iteration. Application sanitization checks before cloning and copying, and hosted invocation preparation removes infrastructure headers before native HeadersInit conversion. It checks native state again after payload serialization and before constructing the application request. Request bodies, content types, native transfer semantics and host error identity retain their ordinary behavior. Node instrumentation that replaces the checked callback, iterator or body methods will cause explicit rejection on these paths.
+
+## Request body ownership
+
+Control-plane runtime invocations carry host credentials in the JSON request body. Hosted invocation preparation checks the shared body operations before it clones the invocation request, before and after the hosted parser reads the body, and before and after it reads the retained copy to build the application request. On Node, the check covers the stream, reader, controller, typed array, text codec, JSON parse, array push and promise operations that native body cloning and reading look up. On every runtime, an inherited `then` on `Object.prototype` is rejected, because promise resolution reads it from stream read results and parsed payloads. A detected change throws a TypeError before the step runs, and the route does not start detached execution.
+
+The bounded body reader copies, measures and decodes body bytes with captured methods. The application request contains a body without the inference credential.
 
 ## Ownership and limits
 
@@ -16,4 +22,4 @@ A stronger credential boundary requires a trusted process that never imports pro
 
 ## Verification
 
-Use isolated test processes and synthetic credentials. Check the service helper, application-request sanitizer and hosted invocation preparation, including callback/iterator changes, inherited defaults, compatibility, body transfer and failure controls. Run the tests on Node, Deno and Bun. Deployment verification must identify the exact installed package and source revision, rerun the synthetic probes, and record a representative authenticated hosted-run control separately.
+Use isolated test processes and synthetic credentials. Check the service helper, application-request sanitizer and hosted invocation preparation, including callback/iterator changes, inherited defaults, body stream, getter and promise-resolution changes, compatibility, body transfer and failure controls. Run the tests on Node, Deno and Bun. Deployment verification must identify the exact installed package and source revision, rerun the synthetic probes, and record a representative authenticated hosted-run control separately.

@@ -51,6 +51,7 @@ import {
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
+import { assertNativeBodyProcessing } from "#veryfront/security/http/native-body-processing.ts";
 import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
@@ -854,7 +855,11 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
+  // The invocation body carries host credentials; reject known changes to the
+  // shared operations that observe it before and after reading it.
+  assertNativeBodyProcessing();
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+  assertNativeBodyProcessing();
   if (requestBody instanceof Response) return requestBody;
 
   const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody);
