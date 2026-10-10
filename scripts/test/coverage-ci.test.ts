@@ -1,5 +1,9 @@
 import { fromFileUrl } from "#std/path";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   annotateLcovWorkspace,
@@ -398,7 +402,9 @@ describe("coverage source paths", () => {
       "/foreign/src/task.ts",
       `${root}-other/src/task.ts`,
     ];
-    const report = sources.map((source) => `SF:${source}\nDA:10,2\nend_of_record\n`).join("");
+    const report = sources.map((source) =>
+      `SF:${source}\nDA:10,2\nend_of_record\n`
+    ).join("");
     assertEquals(
       normalizeLcovSourcePaths(
         report,
@@ -439,7 +445,8 @@ describe("coverage source paths", () => {
 describe("coverage artifact producer provenance", () => {
   it("uses the actual custom producer workspace for primary and nested reports only", () => {
     const root = "/custom/runner/checkouts/repo";
-    const record = `SF:${root}/src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n`;
+    const record =
+      `SF:${root}/src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nend_of_record\n`;
     const reports = [
       {
         path: "coverage-profiles/shard-1/lcov.info",

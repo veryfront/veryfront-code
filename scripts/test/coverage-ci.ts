@@ -27,7 +27,8 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
-const GENERATED_MDX_CACHE_PREFIX = "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
+const GENERATED_MDX_CACHE_PREFIX =
+  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -114,7 +115,9 @@ function validateProducerWorkspace(value: unknown): string {
   if (
     typeof value !== "string" || !/^(?:\/|[A-Za-z]:[\\/])/.test(value) ||
     /[\r\n\0]/.test(value) ||
-    value.replaceAll("\\", "/").split("/").some((part) => part === "." || part === "..")
+    value.replaceAll("\\", "/").split("/").some((part) =>
+      part === "." || part === ".."
+    )
   ) {
     throw new Error("Invalid LCOV producer workspace provenance.");
   }
@@ -231,16 +234,22 @@ function normalizeLcovSource(
   if (prefix) {
     const relative = normalizeRelativeLcovPath(portable.slice(prefix.length));
     if (!sourceExists(relative)) {
-      throw new Error(`LCOV source path does not exist in the project: ${relative}`);
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
     }
     return { kind: "source", path: relative };
   }
 
-  const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(portable);
+  const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
   if (githubCheckout?.[2]) {
     const relative = normalizeRelativeLcovPath(githubCheckout[2]);
     if (!sourceExists(relative)) {
-      throw new Error(`LCOV source path does not exist in the project: ${relative}`);
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
     }
     return { kind: "source", path: relative };
   }
@@ -358,7 +367,9 @@ export function mergeLcovReports(reports: string[]): string {
         { key: b },
       ) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
       const branchRecords = sortedBranches.length === 0 ? [] : [
-        ...sortedBranches.map(({ key, hits }) => `BRDA:${key.join(",")},${hits}`),
+        ...sortedBranches.map(({ key, hits }) =>
+          `BRDA:${key.join(",")},${hits}`
+        ),
         `BRF:${sortedBranches.length}`,
         `BRH:${sortedBranches.filter(({ hits }) => hits > 0).length}`,
       ];
@@ -569,7 +580,8 @@ async function runMerge(args: string[]): Promise<void> {
     checkoutSourceExists,
   );
   const retainedAbsoluteSources = normalizedReports.reduce(
-    (count, report) => count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
+    (count, report) =>
+      count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
     0,
   );
   if (retainedAbsoluteSources > 0) {
