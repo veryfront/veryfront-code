@@ -616,7 +616,14 @@ Use form_input once, then produce the plan.`,
 
   assertStringIncludes(firstResult.instructions, "Use form_input once");
   assertStringIncludes(secondResult.instructions, 'Skill "write" is already loaded');
-  assertStringIncludes(secondResult.instructions, "Do not call load_skill");
+  assertStringIncludes(
+    secondResult.instructions,
+    'Do not call load_skill for the "write" body again',
+  );
+  assertStringIncludes(
+    secondResult.instructions,
+    'To read a listed reference file, call load_skill with skillId "write" and file.',
+  );
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
   assertEquals(secondResult.maxSteps, 8);
   assertEquals(secondResult.references, ["references/write.md"]);

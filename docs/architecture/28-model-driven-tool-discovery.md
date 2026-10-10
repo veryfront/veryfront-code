@@ -43,7 +43,9 @@ example. Read it in
   loads it. When both `load_skill` and its `veryfront__load_skill` compatibility
   name are authorized, only the canonical schema bootstraps; the compatibility
   name remains searchable and can be loaded explicitly. A host exposing only the
-  compatibility name still bootstraps that loader. Explicit bootstrap overrides
+  compatibility name still bootstraps that loader. The runtime picks the loader
+  by framework provenance, not by name, so a project tool that owns either
+  loader name is never bootstrapped. Explicit bootstrap overrides
   and eager bindings retain their declared tools. Bootstrap tools are filtered
   against the authorized set, so a run
   that does not authorize `load_skill` exposes `tool_search` alone. That is why

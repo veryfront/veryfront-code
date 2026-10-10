@@ -584,10 +584,16 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
+  const copied = copyLoadedSkillResponse(response);
+  const references = copied.references;
+  const referenceGuidance = references !== undefined && references.length > 0
+    ? `To read a listed reference file, call load_skill with skillId "${skillId}" and file. `
+    : "";
   return {
-    ...copyLoadedSkillResponse(response),
+    ...copied,
     instructions:
-      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
+      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for the "${skillId}" body again. ` +
+      referenceGuidance +
       "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
   };
