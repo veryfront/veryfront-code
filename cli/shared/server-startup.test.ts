@@ -214,9 +214,10 @@ describe("startCliProductionServer hosted HTTP composition", () => {
     assertEquals(loads, 0);
   });
 
-  it("passes the host composition to the server and shuts the broker down after stop", async () => {
+  it("passes the host composition to the server and shuts the broker down with stop", async () => {
     const events: string[] = [];
     const composition = fakeComposition(events);
+    const listenerStopped = Promise.withResolvers<void>();
     let received: StartProductionServerOptions | undefined;
     const handle = await startCliProductionServer(baseOptions, {
       ...hostedOn(composition),
@@ -224,13 +225,17 @@ describe("startCliProductionServer hosted HTTP composition", () => {
         received = options;
         return server(() => {
           events.push("server.stop");
-          return Promise.resolve();
+          return listenerStopped.promise;
         });
       },
     });
     assertEquals(received?.hostedHttp === composition.ingress, true);
-    await handle.stop();
-    assertEquals(events, ["server.stop", "broker.shutdown"]);
+    const stopping = handle.stop();
+    await Promise.resolve();
+    // Broker shutdown does not wait for the listener, so it gets its own cleanup window.
+    assertEquals(events.toSorted(), ["broker.shutdown", "server.stop"]);
+    listenerStopped.resolve();
+    await stopping;
   });
 
   it("refuses the flag without proxy mode before loading the host module", async () => {

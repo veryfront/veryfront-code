@@ -257,15 +257,21 @@ async function startCliProductionServerWithHostedHttp(
   return {
     ...result,
     stop: async () => {
-      try {
-        if (unregisterLocalManifest) {
-          unregisterLocalManifest();
-          clearReleaseAssetManifestCache();
-        }
-        await result.stop();
-      } finally {
-        // After the listener stops: release executor allocations it no longer needs.
-        await hostedHttp?.shutdown();
+      // Requests have drained when the process owner calls stop. Start broker
+      // shutdown with the listener stop so allocator release gets its own
+      // bounded window inside the process cleanup deadline.
+      const outcomes = await Promise.allSettled([
+        (async () => {
+          if (unregisterLocalManifest) {
+            unregisterLocalManifest();
+            clearReleaseAssetManifestCache();
+          }
+          await result.stop();
+        })(),
+        hostedHttp?.shutdown(),
+      ]);
+      for (const outcome of outcomes) {
+        if (outcome.status === "rejected") throw outcome.reason;
       }
     },
   };

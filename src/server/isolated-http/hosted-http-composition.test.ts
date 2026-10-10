@@ -183,7 +183,7 @@ describe("hosted HTTP host composition", () => {
     });
     assertEquals(allocatorOptions?.baseUrl, "https://allocator.internal.test");
     assertEquals(allocatorOptions?.ca, "-----BEGIN CERTIFICATE-----\nAA==\n");
-    assertEquals(brokerOptions, { maxActive: 16 });
+    assertEquals(brokerOptions, { maxActive: 16, shutdownTimeoutMs: 3_000 });
     const signal = new AbortController().signal;
     assertEquals(await allocatorOptions!.readBrokerToken(signal), "broker-token-1");
     host.files.set("/host/token", "broker-token-2");

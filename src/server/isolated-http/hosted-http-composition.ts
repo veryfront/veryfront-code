@@ -18,12 +18,21 @@ import {
 import { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled } from "./hosted-http-flag.ts";
 
 export { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled };
+export {
+  buildHostedHttpGenerationBindingInput,
+  createHostedHttpResolver,
+  createHostedHttpSourceRecordLookup,
+  type HostedHttpGenerationBindingInput,
+  type HostedHttpResolverOptions,
+} from "./hosted-http-resolver.ts";
 
 const MAX_TOKEN_BYTES = 16 * 1024;
 const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
+/** Broker shutdown and per-session cleanup bounds, inside the default 4 s process cleanup budget. */
+const SHUTDOWN_TIMEOUT_MS = 3_000;
 const BROKER_INSTANCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** Host-owned settings, read once from the host process environment. */
@@ -267,10 +276,12 @@ export async function createHostedHttpComposition(
       expectedBrokerInstanceId: config.brokerInstanceId,
       allocator,
       connectTransport: connectExecutorTransport,
+      cleanupTimeoutMs: SHUTDOWN_TIMEOUT_MS,
     },
   });
   const broker = (dependencies.createBroker ?? createHostedHttpBroker)({
     maxActive: config.maxActive,
+    shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
   });
   let stopped: Promise<void> | undefined;
   return Object.freeze({
