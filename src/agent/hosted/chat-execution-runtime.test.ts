@@ -528,6 +528,57 @@ describe("agent/hosted-chat-execution-runtime", () => {
     }]);
   });
 
+  it("keeps caller abort terminal semantics when the internal watchdog also aborts", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const callerAbortController = new AbortController();
+    const watchdogAbortController = new AbortController();
+    let capturedAbortSignal: AbortSignal | undefined;
+    const lifecycleAdapter = createLifecycleAdapter({ terminalStates });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async (input) => {
+        capturedAbortSignal = input.abortSignal;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter,
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: callerAbortController.signal,
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          signal: watchdogAbortController.signal,
+        }),
+    });
+    callerAbortController.abort(new DOMException("Caller closed the request", "AbortError"));
+    watchdogAbortController.abort(new Error("internal watchdog token=secret"));
+    assertEquals(capturedAbortSignal?.aborted, true);
+
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: callerAbortController.signal,
+      bootstrap,
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{
+      status: "cancelled",
+      terminalErrorCode: "ABORTED",
+      terminalErrorMessage: "Chat stream aborted",
+    }]);
+  });
+
   it("rejects a conversation runtime bootstrap without a durable stream message id", async () => {
     let streamCalls = 0;
     const agent: HostedChatRuntimeAgent = {
