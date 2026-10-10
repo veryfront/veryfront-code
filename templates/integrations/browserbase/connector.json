@@ -60,7 +60,7 @@
     {
       "id": "browserbase__create_session",
       "name": "Create Session",
-      "description": "Create session",
+      "description": "Create session (uses browser hours)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

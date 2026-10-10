@@ -1492,7 +1492,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "amplitude__list_events",
       "name": "List Events",
-      "description": "List event types",
+      "description": "List event types with weekly totals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8069,7 +8069,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "browserbase__create_session",
       "name": "Create Session",
-      "description": "Create session",
+      "description": "Create session (uses browser hours)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14010,7 +14010,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "deel__review_timesheet",
       "name": "Review Timesheet",
-      "description": "Review timesheet",
+      "description": "Review timesheet (approval schedules payment)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -17377,7 +17377,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "figma__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get Figma user profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.figma.com/v1/me" },
     }, {
@@ -55855,7 +55855,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "typeform__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get Typeform account profile",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.typeform.com/me" },
     }],

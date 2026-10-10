@@ -202,7 +202,7 @@
     {
       "id": "deel__review_timesheet",
       "name": "Review Timesheet",
-      "description": "Review timesheet",
+      "description": "Review timesheet (approval schedules payment)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

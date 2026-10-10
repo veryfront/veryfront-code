@@ -49,7 +49,7 @@
     {
       "id": "amplitude__list_events",
       "name": "List Events",
-      "description": "List event types",
+      "description": "List event types with weekly totals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

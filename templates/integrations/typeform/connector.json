@@ -204,7 +204,7 @@
     {
       "id": "typeform__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get Typeform account profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

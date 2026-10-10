@@ -80,7 +80,7 @@
     {
       "id": "figma__get_me",
       "name": "Get Me",
-      "description": "Get me",
+      "description": "Get Figma user profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
