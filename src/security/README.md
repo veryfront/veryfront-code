@@ -527,31 +527,32 @@ updated.
 
 ### Host execution grant register
 
-Each file below passes the literal `allowHostProjectCodeExecution: true`. The
+Each file below passes the literal `allowHostProjectCodeExecution: true` the listed
+number of times. The
 grant is valid only where its consumer is trusted local execution, an isolated
 executor, a single-project process, or code that a capability check has
 already admitted.
 
-| File                                                   | Consumer                                                                | Grant basis                         |
-| ------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------- |
-| `src/agent/hosted/cloud-agent-config.ts`               | Node Cloud agent service discovery for its own project                  | Single-project process              |
-| `src/agent/hosted/executor-discovery-node.ts`          | Discovery inside the isolated agent executor                            | Isolated executor                   |
-| `src/discovery/discovery-engine.ts`                    | `discoverAll`, after its explicit capability check                      | Propagates an already checked grant |
-| `src/routing/api/handler.ts`                           | Host-realm API route loading, selected only when execution is allowed   | Propagates an already checked grant |
-| `src/routing/api/module-loader/types.ts`               | Type contract that requires a literal grant for host loading            | Type-level requirement              |
-| `src/routing/api/openapi/spec-generator.ts`            | OpenAPI generation, reached only from the local-project OpenAPI handler | Trusted local execution             |
-| `src/server/dev-server/server.ts`                      | Local development server discovery                                      | Trusted local execution             |
-| `src/server/handlers/request/api/project-discovery.ts` | Project discovery, after `requiresIsolatedProjectRuntime`               | Propagates an already checked grant |
-| `src/server/handlers/request/openapi.handler.ts`       | OpenAPI handler, after its local-project check                          | Trusted local execution             |
-| `src/server/isolated-http/application-runtime.ts`      | Application handler inside the isolated HTTP executor                   | Isolated executor                   |
-| `src/trigger/local-runner.ts`                          | Local trigger runner for a developer's own project                      | Trusted local execution             |
-| `src/workflow/worker/dynamic-run-entrypoint.ts`        | Workflow run process for one tenant                                     | Single-project process              |
-| `cli/commands/eval/command.ts`                         | `veryfront eval` on a local project                                     | Trusted local execution             |
-| `cli/commands/schedule/handler.ts`                     | `veryfront schedule` on a local project                                 | Trusted local execution             |
-| `cli/commands/schedules/handler.ts`                    | `veryfront schedules` on a local project                                | Trusted local execution             |
-| `cli/commands/task/command.ts`                         | `veryfront task` on a local project                                     | Trusted local execution             |
-| `cli/commands/webhook/handler.ts`                      | `veryfront webhook` on a local project                                  | Trusted local execution             |
-| `cli/commands/webhooks/handler.ts`                     | `veryfront webhooks` on a local project                                 | Trusted local execution             |
+| File                                                   | Consumer                                                                | Grant basis                         | Grants |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------- | ------ |
+| `src/agent/hosted/cloud-agent-config.ts`               | Node Cloud agent service discovery for its own project                  | Single-project process              | 1      |
+| `src/agent/hosted/executor-discovery-node.ts`          | Discovery inside the isolated agent executor                            | Isolated executor                   | 1      |
+| `src/discovery/discovery-engine.ts`                    | `discoverAll`, after its explicit capability check                      | Propagates an already checked grant | 1      |
+| `src/routing/api/handler.ts`                           | Host-realm API route loading, selected only when execution is allowed   | Propagates an already checked grant | 1      |
+| `src/routing/api/module-loader/types.ts`               | Type contract that requires a literal grant for host loading            | Type-level requirement              | 1      |
+| `src/routing/api/openapi/spec-generator.ts`            | OpenAPI generation, reached only from the local-project OpenAPI handler | Trusted local execution             | 1      |
+| `src/server/dev-server/server.ts`                      | Local development server discovery                                      | Trusted local execution             | 1      |
+| `src/server/handlers/request/api/project-discovery.ts` | Project discovery, after `requiresIsolatedProjectRuntime`               | Propagates an already checked grant | 1      |
+| `src/server/handlers/request/openapi.handler.ts`       | OpenAPI handler, after its local-project check                          | Trusted local execution             | 1      |
+| `src/server/isolated-http/application-runtime.ts`      | Application handler inside the isolated HTTP executor                   | Isolated executor                   | 1      |
+| `src/trigger/local-runner.ts`                          | Local trigger runner for a developer's own project                      | Trusted local execution             | 1      |
+| `src/workflow/worker/dynamic-run-entrypoint.ts`        | Workflow run process for one tenant                                     | Single-project process              | 1      |
+| `cli/commands/eval/command.ts`                         | `veryfront eval` on a local project                                     | Trusted local execution             | 1      |
+| `cli/commands/schedule/handler.ts`                     | `veryfront schedule` on a local project                                 | Trusted local execution             | 2      |
+| `cli/commands/schedules/handler.ts`                    | `veryfront schedules` on a local project                                | Trusted local execution             | 1      |
+| `cli/commands/task/command.ts`                         | `veryfront task` on a local project                                     | Trusted local execution             | 1      |
+| `cli/commands/webhook/handler.ts`                      | `veryfront webhook` on a local project                                  | Trusted local execution             | 2      |
+| `cli/commands/webhooks/handler.ts`                     | `veryfront webhooks` on a local project                                 | Trusted local execution             | 1      |
 
 ## Internal-only files
 

@@ -166,6 +166,30 @@ describe("hosted HTTP resolver", () => {
     assertNotEquals(first.session.request.allocationId, same.session.request.allocationId);
   });
 
+  it("derives a distinct configuration identity for a renamed slug or environment", async () => {
+    // One resolver, so one HMAC key: only the identity fields differ between calls.
+    const resolve = createHostedHttpResolver(options({
+      api: fakeApi({
+        readProject: (value) =>
+          Promise.resolve({ id: PROJECT_ID, name: "A", slug: value.projectSlug }),
+      }).api,
+    }));
+    const baseline = await resolve(authority, signal());
+    const same = await resolve(authority, signal());
+    const renamedSlug = await resolve({ ...authority, projectSlug: "project-renamed" }, signal());
+    const renamedEnvironment = await resolve(
+      { ...authority, environmentName: "staging-renamed" },
+      signal(),
+    );
+    assertEquals(baseline.installation.configurationId, same.installation.configurationId);
+    const ids = [baseline, renamedSlug, renamedEnvironment].map((resolved) =>
+      resolved.installation.configurationId
+    );
+    assertEquals(new Set(ids).size, 3);
+    assertEquals(renamedSlug.configuration?.projectSlug, "project-renamed");
+    assertEquals(renamedEnvironment.configuration?.environmentName, "staging-renamed");
+  });
+
   it("refuses a missing or oversized source token without any read", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));

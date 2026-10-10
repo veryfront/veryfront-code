@@ -261,15 +261,22 @@ export function createHostedHttpSourceRecordLookup(
   };
 }
 
+/** Covers every field emitted into the application configuration. */
 async function deriveConfigurationId(
   key: Promise<CryptoKey>,
-  identity: { projectId: string; releaseId: string; environmentId: string },
+  identity: {
+    projectId: string;
+    projectSlug: string;
+    releaseId: string;
+    environmentId: string;
+    environmentName: string;
+  },
   variables: Readonly<Record<string, string>>,
 ): Promise<string> {
   const frame = (value: string) => `${value.length}:${value}`;
-  let canonical = `veryfront-hosted-http-configuration:v1:${frame(identity.projectId)}${
-    frame(identity.releaseId)
-  }${frame(identity.environmentId)}`;
+  let canonical = "veryfront-hosted-http-configuration:v2:" + frame(identity.projectId) +
+    frame(identity.projectSlug) + frame(identity.releaseId) + frame(identity.environmentId) +
+    frame(identity.environmentName);
   for (const name of Object.keys(variables).sort((a, b) => a.localeCompare(b))) {
     canonical += frame(name) + frame(variables[name]!);
   }
