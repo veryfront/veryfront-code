@@ -506,8 +506,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
       assertNativeHeaderProcessing();
       assertNativeRequestDefaults();
-      // The invocation body carries host credentials. Native cloning and reading
-      // reach shared stream operations, so reject known changes before each step.
+      // Validate native body processing before cloning and reading the body.
       assertNativeBodyProcessing();
       const applicationRequestSource = IntrinsicReflectApply(
         RequestClone,

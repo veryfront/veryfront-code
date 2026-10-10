@@ -855,8 +855,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  // The invocation body carries host credentials; reject known changes to the
-  // shared operations that observe it before and after reading it.
+  // Validate native body processing before and after reading the body.
   assertNativeBodyProcessing();
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   assertNativeBodyProcessing();

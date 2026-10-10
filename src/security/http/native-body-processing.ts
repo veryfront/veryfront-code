@@ -39,8 +39,7 @@ function captureMembers(
 }
 
 /**
- * Operations that Node's native Request body clone, read and construction steps
- * look up on shared prototypes while the body bytes are reachable.
+ * Members used by Node's native Request body clone, read and construction steps.
  */
 const NodeBodyDependencies: readonly BodyDependency[] = isNode
   ? [
@@ -69,12 +68,11 @@ const NodeBodyDependencies: readonly BodyDependency[] = isNode
   : [];
 
 /**
- * Reject known mutable dependencies before a credential-bearing request body is
- * cloned, read or rebuilt.
+ * Validate native body processing before a runtime invocation body is cloned,
+ * read or rebuilt.
  *
- * Promise resolution reads `then` from every resolved object, including stream
- * read results and parsed JSON payloads, so an inherited `then` is rejected on
- * every runtime. On Node the native body operations are also checked.
+ * Every runtime requires that `Object.prototype` has no own `then`. On Node the
+ * native body members must also match the values captured at load.
  */
 export function assertNativeBodyProcessing(): void {
   if (GetOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {

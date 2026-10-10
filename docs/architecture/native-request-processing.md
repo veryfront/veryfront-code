@@ -6,11 +6,11 @@ The preconditions inspect Function.prototype.call and the native Headers iterato
 
 Framework-invoked option conversion is followed by another check before native construction or header iteration. Application sanitization checks before cloning and copying, and hosted invocation preparation removes infrastructure headers before native HeadersInit conversion. It checks native state again after payload serialization and before constructing the application request. Request bodies, content types, native transfer semantics and host error identity retain their ordinary behavior. Node instrumentation that replaces the checked callback, iterator or body methods will cause explicit rejection on these paths.
 
-## Request body ownership
+## Runtime invocation bodies
 
-Control-plane runtime invocations carry host credentials in the JSON request body. Hosted invocation preparation checks the shared body operations before it clones the invocation request, before and after the hosted parser reads the body, and before and after it reads the retained copy to build the application request. On Node, the check covers the stream, reader, controller, typed array, text codec, JSON parse, array push and promise operations that native body cloning and reading look up. On every runtime, an inherited `then` on `Object.prototype` is rejected, because promise resolution reads it from stream read results and parsed payloads. A detected change throws a TypeError before the step runs, and the route does not start detached execution.
+Hosted invocation preparation validates native body processing before it clones the invocation request, before and after the hosted parser reads the body, and before and after it reads the retained copy to build the application request. On Node, the check compares the stream, reader, controller, typed array, text codec, JSON parse, array push and promise members with the values captured at framework initialization. On every runtime, it requires that `Object.prototype` has no own `then`. A failed check throws a TypeError before the step runs, and the route does not start detached execution.
 
-The bounded body reader copies, measures and decodes body bytes with captured methods. The application request contains a body without the inference credential.
+The bounded body reader copies, measures and decodes body bytes with captured methods.
 
 ## Ownership and limits
 
@@ -22,4 +22,4 @@ A stronger credential boundary requires a trusted process that never imports pro
 
 ## Verification
 
-Use isolated test processes and synthetic credentials. Check the service helper, application-request sanitizer and hosted invocation preparation, including callback/iterator changes, inherited defaults, body stream, getter and promise-resolution changes, compatibility, body transfer and failure controls. Run the tests on Node, Deno and Bun. Deployment verification must identify the exact installed package and source revision, rerun the synthetic probes, and record a representative authenticated hosted-run control separately.
+Use isolated test processes and synthetic credentials. Check the service helper, application-request sanitizer and hosted invocation preparation, including callback/iterator changes, inherited defaults, body processing changes, compatibility, body transfer and failure controls. Run the tests on Node, Deno and Bun. Deployment verification must identify the exact installed package and source revision, rerun the synthetic probes, and record a representative authenticated hosted-run control separately.

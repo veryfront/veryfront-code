@@ -35,8 +35,7 @@ const ReadableStreamLockedGet = Object.getOwnPropertyDescriptor(
 const ReaderCancel = NativeReadableStreamDefaultReader.prototype.cancel;
 const ReaderRead = NativeReadableStreamDefaultReader.prototype.read;
 const ReaderReleaseLock = NativeReadableStreamDefaultReader.prototype.releaseLock;
-// Body bytes may hold host credentials, so copy and decode them without
-// looking up replaceable shared-prototype methods.
+// Copy, measure and decode body bytes with methods captured at load.
 const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as Uint8Array;
 const TypedArraySet = TypedArrayPrototype.set;
 const TypedArraySubarray = TypedArrayPrototype.subarray;
