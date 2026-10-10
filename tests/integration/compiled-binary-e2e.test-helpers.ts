@@ -1,7 +1,7 @@
 import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, resolve } from "#veryfront/compat/path/index.ts";
 import { tmpdir } from "node:os";
 import {
   captureBrowserDiagnostics,
@@ -32,6 +32,9 @@ const COORDINATION_DIR = join(
 );
 const BINARY_LOCK_PATH = join(COORDINATION_DIR, "compile.lock");
 const BINARY_RECORD_SUFFIX = ".binary.json";
+// Records outlive the process and are read from other checkouts, so they hold
+// the binary path resolved against this process's working directory.
+const RECORDED_BINARY_PATH = resolve(BINARY_PATH);
 
 /**
  * The e2e:binary suite runs this many shard files side by side. The hosted CI
@@ -188,7 +191,7 @@ async function readBinaryRecord(path: string): Promise<Partial<BinaryRecord> | u
 
 /**
  * Remove binaries compiled by test processes that have exited, except
- * BINARY_PATH itself, which compileBinary checks against the source hash.
+ * this process's BINARY_PATH, which compileBinary checks against the source hash.
  * A process whose liveness cannot be read keeps its binary.
  */
 async function removeBinariesOfExitedProcesses(): Promise<void> {
@@ -201,7 +204,7 @@ async function removeBinariesOfExitedProcesses(): Promise<void> {
       const current = await readProcessIdentity(pid);
       if (current === undefined || current === record?.process) continue;
     }
-    if (record?.binaryPath && record.binaryPath !== BINARY_PATH) {
+    if (record?.binaryPath && record.binaryPath !== RECORDED_BINARY_PATH) {
       for (const path of [record.binaryPath, `${record.binaryPath}.srcHash`]) {
         await Deno.remove(path).catch(() => {});
       }
@@ -221,23 +224,36 @@ export function ensureBinaryCompiled(): Promise<void> {
   return binaryCompiled;
 }
 
+/**
+ * Without a start time the record is keyed by pid alone and may be left by an
+ * earlier process, so reuse then also requires the binary to match the source.
+ */
+async function isBinaryHashCurrent(): Promise<boolean> {
+  try {
+    return (await Deno.readTextFile(BINARY_HASH_PATH)).trim() === await computeSourceHash();
+  } catch {
+    return false;
+  }
+}
+
 async function acquireBinary(): Promise<void> {
   await ensureCoordinationDir();
-  const processIdentity = await readProcessIdentity(Deno.pid) ?? String(Deno.pid);
+  const startedIdentity = await readProcessIdentity(Deno.pid);
+  const processIdentity = startedIdentity ?? String(Deno.pid);
   const recordPath = join(COORDINATION_DIR, `${Deno.pid}${BINARY_RECORD_SUFFIX}`);
   using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
   await lock.lock(true);
   await removeBinariesOfExitedProcesses();
   const record = await readBinaryRecord(recordPath);
   if (
-    record?.process === processIdentity && record.binaryPath === BINARY_PATH &&
-    await exists(BINARY_PATH)
+    record?.process === processIdentity && record.binaryPath === RECORDED_BINARY_PATH &&
+    await exists(BINARY_PATH) && (startedIdentity || await isBinaryHashCurrent())
   ) {
     console.log("✅ Using the binary compiled for this test run:", BINARY_PATH);
     return;
   }
   await compileBinary();
-  const compiled: BinaryRecord = { process: processIdentity, binaryPath: BINARY_PATH };
+  const compiled: BinaryRecord = { process: processIdentity, binaryPath: RECORDED_BINARY_PATH };
   await Deno.writeTextFile(recordPath, `${JSON.stringify(compiled)}\n`);
 }
 
