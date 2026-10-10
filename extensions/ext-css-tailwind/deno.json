@@ -42,7 +42,7 @@
   },
   "fmt": {
     "exclude": [
-      "vendor/"
+      "vendor/typography.js"
     ]
   }
 }

@@ -136,6 +136,10 @@ underscores as spaces and ranks results in this order:
 3. Tool description substring.
 4. Input parameter description substring.
 
+An exact canonical integration query such as `gmail__list_emails` never loads a
+sibling action when that action is unavailable. It can return an authorized
+catalog reader with integration guidance, or report a miss.
+
 Equal-rank matches use ASCII tool-name order. Each search returns at most five
 matches. Results contain the tool name, description, and loading status, but no
 input or output schema. The search tool has no page or pagination parameter.

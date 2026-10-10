@@ -1116,6 +1116,29 @@ it("tool search prefers an authorized integration tool over its namespace catalo
   assertEquals(result.matches[0]?.name, "jira__list_projects");
 });
 
+it("an unavailable exact Gmail action does not load an attachment action", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [definition("gmail__upload_attachment", "Download a Gmail attachment")],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches, []);
+  assertEquals(result.loadedCount, 0);
+  assertEquals(result.miss, true);
+});
+
+it("an unavailable exact action discovers catalog guidance without sibling actions", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [
+      definition("get_integration", "Inspect the Gmail integration and available actions"),
+      definition("gmail__upload_attachment", "Download a Gmail attachment"),
+    ],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
+});
+
 it("tool search does not let a same-named local tool satisfy a canonical id", () => {
   // `jira__list_projects` and the local id `jira_list_projects` normalize to the
   // same text, and the registry permits any local id without `__`. A phrase match
@@ -1236,8 +1259,8 @@ it("tool search never strips a non-platform namespace onto a local tool", () => 
   );
 });
 
-it("tool search keeps integration evidence ahead of the local id fallback", () => {
-  // A namespace with real evidence is discovery, not a mistyped local id.
+it("tool search does not replace missing canonical actions with sibling or local ids", () => {
+  // Namespace evidence must not substitute a sibling action or a local tool.
   assertEquals(
     searchToolExposure({
       query: "jira__list_files",
@@ -1247,7 +1270,7 @@ it("tool search keeps integration evidence ahead of the local id fallback", () =
       ],
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["jira__list_projects"],
+    [],
   );
   assertEquals(
     searchToolExposure({
@@ -1258,7 +1281,7 @@ it("tool search keeps integration evidence ahead of the local id fallback", () =
       ],
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["veryfront__list_projects"],
+    [],
   );
   // A malformed canonical query has no local id to fall back to.
   assertEquals(
@@ -1318,4 +1341,20 @@ it("tool search still resolves a bare platform tool id to its exact name match",
     }).matches[0]?.name,
     "list_projects",
   );
+});
+
+it("an unavailable exact action preserves the canonical platform catalog reader", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [
+      definition(
+        "veryfront__get_integration",
+        "Inspect the Gmail integration and available actions",
+      ),
+      definition("gmail__upload_attachment", "Download a Gmail attachment"),
+      definition("veryfront__send_email", "Send a Gmail email"),
+    ],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches.map((match) => match.name), ["veryfront__get_integration"]);
 });

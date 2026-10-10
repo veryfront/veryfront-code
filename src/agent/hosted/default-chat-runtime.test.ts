@@ -455,6 +455,220 @@ it("prepared hosted runtime generate accepts a trusted hidden legacy loader alia
   }
 });
 
+it("prepared hosted runtime stream executes a trusted hidden canonical loader alias", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let platformLoadSkillExecutions = 0;
+  const toolNamesByCall: string[][] = [];
+  const toolOutputs: unknown[] = [];
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/prepared-loader-trusted-canonical-alias-stream",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      modelCallCount += 1;
+      const prompt = typeof options === "object" && options !== null && "prompt" in options
+        ? options.prompt
+        : undefined;
+      if (Array.isArray(prompt)) {
+        for (const message of prompt) {
+          if (
+            typeof message !== "object" || message === null || !("role" in message) ||
+            message.role !== "tool" || !("content" in message) || !Array.isArray(message.content)
+          ) continue;
+          for (const part of message.content) toolOutputs.push(part);
+        }
+      }
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "call-canonical-loader",
+                toolName: "veryfront__load_skill",
+                input: { skillId: "build" },
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+  try {
+    const runtimeTools = createToolsFromHostDefinitions(
+      withPlatformHostToolAliases(
+        markTrustedHostToolSet({
+          load_skill: {
+            description: "Platform load skill",
+            inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+            execute: () => {
+              platformLoadSkillExecutions += 1;
+              return {
+                skillId: "build",
+                instructions: "# Build",
+                references: [],
+                scripts: [],
+              };
+            },
+          },
+        }),
+      ),
+    );
+    const canonicalLoader = runtimeTools.veryfront__load_skill;
+    assertExists(canonicalLoader);
+    markRuntimeProviderSchemaHiddenTool(canonicalLoader);
+    const runtime = createPreparedHostedRuntimeAgent({
+      options: {
+        projectId: "project",
+        instructions: "Use the selected loader.",
+        model: "test/prepared-loader-trusted-canonical-alias-stream",
+        allowedTools: ["load_skill", "veryfront__load_skill"],
+        toolLoading: "deferred",
+      },
+      taskContext: {
+        projectId: "project",
+        branchId: null,
+      },
+      toolAssembly: {
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "veryfront__load_skill"],
+        modelVisibleToolNames: ["load_skill"],
+        toolLoadingMode: "deferred",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "Use the selected loader.",
+      },
+      modelId: "test/prepared-loader-trusted-canonical-alias-stream",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    }, {});
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const response = await runtime.stream({ input: "Load the build skill" });
+      await response.toDataStreamResponse().text();
+    });
+
+    const serializedToolOutputs = JSON.stringify(toolOutputs);
+    assertEquals(modelCallCount, 2);
+    assertEquals(toolNamesByCall[0], ["load_skill"]);
+    assertEquals(toolNamesByCall[0]?.includes("veryfront__load_skill"), false);
+    assertEquals(platformLoadSkillExecutions, 1);
+    assertStringIncludes(serializedToolOutputs, '"skillId":"build"');
+    assertStringIncludes(serializedToolOutputs, '"instructions":"# Build"');
+    assertEquals(serializedToolOutputs.includes("not available"), false);
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("prepared hosted runtime stream preserves the assembled skill tool catalog", async () => {
+  clearModelProviders();
+  const toolNamesByCall: string[][] = [];
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/prepared-hosted-skill-catalog-stream",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+  try {
+    const assembledTools = createToolsFromHostDefinitions(
+      withPlatformHostToolAliases(
+        markTrustedHostToolSet({
+          load_skill: {
+            description: "Platform load skill",
+            inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+            execute: () => ({ skillId: "build", instructions: "# Build" }),
+          },
+        }),
+      ),
+    );
+    const canonicalLoader = assembledTools.veryfront__load_skill;
+    assertExists(canonicalLoader);
+    const runtime = createPreparedHostedRuntimeAgent({
+      options: {
+        projectId: "project",
+        instructions: "Use the assembled hosted catalog.",
+        model: "test/prepared-hosted-skill-catalog-stream",
+        allowedTools: ["veryfront__load_skill"],
+        toolLoading: "eager",
+      },
+      taskContext: {
+        projectId: "project",
+        branchId: null,
+      },
+      toolAssembly: {
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        runtimeTools: { veryfront__load_skill: canonicalLoader },
+        remoteToolSources: [],
+        localToolNames: ["veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["veryfront__load_skill"],
+        modelVisibleToolNames: ["veryfront__load_skill"],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "Use the assembled hosted catalog.",
+      },
+      modelId: "test/prepared-hosted-skill-catalog-stream",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    }, { preserveToolCatalog: false });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const response = await runtime.stream({ input: "Use the hosted catalog" });
+      await response.toDataStreamResponse().text();
+    });
+
+    assertEquals(toolNamesByCall, [["veryfront__load_skill"]]);
+  } finally {
+    clearModelProviders();
+  }
+});
+
 it("default hosted runtime defers a project load_skill collision after full construction", async () => {
   clearModelProviders();
   let modelCallCount = 0;
@@ -1039,7 +1253,7 @@ it("assembles registry skill context when live steering is absent", async () => 
         apiUrl: "https://api.example.com",
         apiMcpUrl: "https://api.example.com/mcp",
       },
-      buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+      buildLocalTools: () => markTrustedHostToolSet({ load_skill: localTool("Load a skill") }),
       createRemoteToolSource: emptyRemoteSource,
       preloadLatestConversationUserText: false,
     });
