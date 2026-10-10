@@ -2150,7 +2150,8 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
     return true;
   }
 
-  return error instanceof DOMException && error.name === "AbortError";
+  return abortSignal?.aborted === true &&
+    error instanceof DOMException && error.name === "AbortError";
 }
 
 function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
