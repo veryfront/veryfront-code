@@ -40,6 +40,8 @@ export interface HostedHttpCompositionConfig {
   sourceApiOrigin: string;
   /** `VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY`: private tenant-source repository. */
   sourceImageRepository: string;
+  /** `VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID`: service account named by edge source credentials. */
+  serviceAccountId: string;
   /** `VERYFRONT_API_BASE_URL`: API that authorizes each request's source token. */
   apiBaseUrl: string;
   /** `VERYFRONT_HOSTED_HTTP_MAX_ACTIVE`: executor admission limit. Default 16, maximum 256. */
@@ -126,6 +128,7 @@ export function readHostedHttpCompositionConfig(
     ),
     sourceApiOrigin: required("VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN"),
     sourceImageRepository: required("VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY"),
+    serviceAccountId: required("VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID"),
     apiBaseUrl,
     maxActive,
   });
@@ -226,6 +229,7 @@ export async function createHostedHttpComposition(
     apiBaseUrl: config.apiBaseUrl,
     sourceApiOrigin: config.sourceApiOrigin,
     sourceImageRepository: config.sourceImageRepository,
+    serviceAccountId: config.serviceAccountId,
     lookupSourceImage,
     session: {
       expectedBrokerInstanceId: config.brokerInstanceId,

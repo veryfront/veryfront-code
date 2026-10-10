@@ -19,6 +19,7 @@ const hostEnv: Record<string, string | undefined> = {
   VERYFRONT_HOSTED_HTTP_SOURCE_RECORDS_FILE: "/host/records.json",
   VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN: "https://source-api.veryfront.test",
   VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY: "ghcr.io/veryfront/tenant-source",
+  VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID: "service-account-renderer",
   VERYFRONT_API_BASE_URL: "https://api.veryfront.test",
 };
 const read = (env: Record<string, string | undefined>) => (key: string) => env[key];
