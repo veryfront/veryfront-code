@@ -1,3 +1,4 @@
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -2922,12 +2923,14 @@ it(
   },
 );
 
-it("ApiCacheBackend allows host-configured HTTP and explicit HTTPS endpoints", async () => {
+it("ApiCacheBackend uses the host endpoint and permits an explicit HTTPS endpoint", async () => {
   const { ApiCacheBackend } = await importBackend();
   const originalUrl = getEnv("VERYFRONT_API_URL");
   const originalEgress = getEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
+  // Deno tests provide a boot-env overlay; Node and Bun retain their real boot configuration.
+  const hostOrigin = isDeno ? "http://127.0.0.1:4000" : "https://api.example.test";
   try {
-    setEnv("VERYFRONT_API_URL", "http://127.0.0.1:4000/api");
+    setEnv("VERYFRONT_API_URL", `${hostOrigin}/api`);
     setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     for (const explicit of [false, true]) {
       const urls: string[] = [];
@@ -2947,7 +2950,7 @@ it("ApiCacheBackend allows host-configured HTTP and explicit HTTPS endpoints", a
       assertEquals(await cache.delByPattern("agent:*"), 1);
       assertEquals(urls, [
         `${
-          explicit ? "https://93.184.216.35" : "http://127.0.0.1:4000"
+          explicit ? "https://93.184.216.35" : hostOrigin
         }/api/projects/test-project/cache/entries?pattern=agent%3A*`,
       ]);
       restoreMockFetch();

@@ -1,3 +1,4 @@
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -153,8 +154,10 @@ describe("npm-registry-client dependency contracts", () => {
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
     const originalUrl = getHostEnv("VERYFRONT_API_URL");
     const originalEgress = getHostEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
-    setEnv("VERYFRONT_API_BASE_URL", "http://127.0.0.1:4000/api");
-    setEnv("VERYFRONT_API_URL", "http://127.0.0.1:4000/api");
+    // Only Deno provides a test overlay for API configuration captured at boot.
+    const apiBaseUrl = isDeno ? "http://127.0.0.1:4000/api" : "https://api.example.test/api";
+    setEnv("VERYFRONT_API_BASE_URL", apiBaseUrl);
+    setEnv("VERYFRONT_API_URL", apiBaseUrl);
     setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     setEnv("VERYFRONT_API_TOKEN", "");
     refreshEnvironmentConfig();
