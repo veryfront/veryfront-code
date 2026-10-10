@@ -167,6 +167,23 @@ describe("hosted HTTP resolver", () => {
     assertNotEquals(first.session.request.allocationId, same.session.request.allocationId);
   });
 
+  it("derives the same configuration identity on every replica with a shared key", async () => {
+    const key = new Uint8Array(32).fill(7);
+    const first = await createHostedHttpResolver(options({ configurationKey: key }))(
+      authority,
+      signal(),
+    );
+    const second = await createHostedHttpResolver(options({ configurationKey: key }))(
+      authority,
+      signal(),
+    );
+    const otherKey = await createHostedHttpResolver(
+      options({ configurationKey: new Uint8Array(32).fill(8) }),
+    )(authority, signal());
+    assertEquals(first.installation.configurationId, second.installation.configurationId);
+    assertNotEquals(first.installation.configurationId, otherKey.installation.configurationId);
+  });
+
   it("keeps configuration identities distinct for lone surrogates", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));
@@ -437,6 +454,7 @@ describe("hosted HTTP resolver", () => {
         { session: { ...options().session, expectedBrokerInstanceId: "" } },
         { serviceAccountId: "" },
         { serviceAccountId: undefined as never },
+        { configurationKey: new Uint8Array(16) },
         { resolutionTimeoutMs: 0 },
         { resolutionTimeoutMs: 60_001 },
         { prepareTimeoutMs: 0 },
