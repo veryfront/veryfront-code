@@ -93,6 +93,8 @@ export type ToolExposurePlan = {
   deferred: ToolDefinition[];
   loadedToolNames: Set<string>;
   maxLoadedTools?: number;
+  /** Authorized tools that may execute but are never sent as provider schemas. */
+  executionOnlyToolNames?: ReadonlySet<string>;
 };
 
 /** Private versioned state persisted by the framework between resumed steps. */
@@ -642,19 +644,35 @@ export function createToolExposurePlan(input: {
   mode: RuntimeToolLoadingMode;
   state: ToolExposureState;
   bootstrapToolNames?: ReadonlySet<string>;
+  executionOnlyToolNames?: ReadonlySet<string>;
   maxVisibleTools?: number;
 }): ToolExposurePlan {
   const authorized: ToolDefinition[] = [];
+  const executionOnlyToolNames = createPrivateSet<string>();
+  const exposable: ToolDefinition[] = [];
+  let hasExecutionOnlyTools = false;
   for (let index = 0; index < input.authorized.length; index++) {
     const tool = input.authorized[index];
-    if (tool !== undefined) authorized[authorized.length] = tool;
+    if (tool === undefined) continue;
+    authorized[authorized.length] = tool;
+    if (
+      input.executionOnlyToolNames !== undefined &&
+      setHas(input.executionOnlyToolNames, tool.name)
+    ) {
+      ReflectApply(SetAdd, executionOnlyToolNames, [tool.name]);
+      hasExecutionOnlyTools = true;
+    } else {
+      exposable[exposable.length] = tool;
+    }
   }
+  const executionOnly = hasExecutionOnlyTools ? { executionOnlyToolNames } : {};
   if (input.mode === "eager") {
     return {
       authorized,
-      visible: authorized,
+      visible: exposable,
       deferred: [],
       loadedToolNames: input.state.loadedToolNames,
+      ...executionOnly,
     };
   }
   for (let index = 0; index < authorized.length; index++) {
@@ -667,8 +685,8 @@ export function createToolExposurePlan(input: {
   let bootstrapCount = 0;
   const loadable: ToolDefinition[] = [];
   const loadableNames = createPrivateSet<string>();
-  for (let index = 0; index < authorized.length; index++) {
-    const tool = authorized[index]!;
+  for (let index = 0; index < exposable.length; index++) {
+    const tool = exposable[index]!;
     if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
     else {
       loadable[loadable.length] = tool;
@@ -685,8 +703,8 @@ export function createToolExposurePlan(input: {
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible: ToolDefinition[] = [];
   const visibleNames = createPrivateSet<string>();
-  for (let index = 0; index < authorized.length; index++) {
-    const tool = authorized[index]!;
+  for (let index = 0; index < exposable.length; index++) {
+    const tool = exposable[index]!;
     if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
       visible[visible.length] = tool;
       ReflectApply(SetAdd, visibleNames, [tool.name]);
@@ -713,6 +731,7 @@ export function createToolExposurePlan(input: {
     deferred,
     loadedToolNames: input.state.loadedToolNames,
     ...(maxLoadedTools === undefined ? {} : { maxLoadedTools }),
+    ...executionOnly,
   };
 }
 

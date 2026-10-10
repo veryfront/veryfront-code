@@ -598,6 +598,11 @@ export async function getAvailableTools(
     frameworkLocalTools?: Record<string, Tool>;
     /** Calling agent id for owner-aware tool visibility. */
     callerAgentId?: string;
+    /**
+     * Receives trusted host tools that must stay out of provider schemas but
+     * remain executable. Without it, schema-hidden tools are omitted.
+     */
+    onProviderSchemaHiddenTool?: (toolName: string) => void;
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
@@ -725,7 +730,12 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
-      if (isRuntimeProviderSchemaHiddenTool(entry)) {
+      const providerSchemaHidden = isRuntimeProviderSchemaHiddenTool(entry);
+      if (
+        providerSchemaHidden &&
+        (options?.onProviderSchemaHiddenTool === undefined ||
+          !hasTrustedHostToolProvenance(entry))
+      ) {
         continue;
       }
       if (
@@ -743,6 +753,7 @@ export async function getAvailableTools(
       }
       configuredAuthorizationToolNames.set(name, authorizationToolName);
       addToolDefinition(tools, name, entry);
+      if (providerSchemaHidden) options?.onProviderSchemaHiddenTool?.(name);
     }
   }
 

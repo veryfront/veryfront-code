@@ -1691,7 +1691,40 @@ function resolveToolExecutionAuthority(input: {
       return { kind: "visible", toolDefinition };
     }
   }
+  // Execution-only aliases stay out of provider schemas but keep the same
+  // authorized definition, so policy checks still see the trusted tool.
+  const executionOnlyToolNames = input.plan.executionOnlyToolNames;
+  if (
+    executionOnlyToolNames === undefined ||
+    !IntrinsicReflectApply(IntrinsicSetHas, executionOnlyToolNames, [input.toolName])
+  ) {
+    return undefined;
+  }
+  for (let index = 0; index < input.plan.authorized.length; index++) {
+    if (!ObjectHasOwn(input.plan.authorized, index)) continue;
+    const toolDefinition = input.plan.authorized[index];
+    if (toolDefinition !== undefined && toolDefinition.name === input.toolName) {
+      return { kind: "visible", toolDefinition };
+    }
+  }
   return undefined;
+}
+
+function collectExecutionOnlyToolNames(plan: ToolExposurePlan): string[] {
+  const names: string[] = [];
+  const executionOnlyToolNames = plan.executionOnlyToolNames;
+  if (executionOnlyToolNames === undefined) return names;
+  for (let index = 0; index < plan.authorized.length; index++) {
+    if (!ObjectHasOwn(plan.authorized, index)) continue;
+    const toolName = plan.authorized[index]?.name;
+    if (
+      toolName !== undefined &&
+      IntrinsicReflectApply(IntrinsicSetHas, executionOnlyToolNames, [toolName])
+    ) {
+      pushPrivateArray(names, toolName);
+    }
+  }
+  return names;
 }
 
 function buildStreamFinishUsage(
@@ -4989,7 +5022,10 @@ export class AgentRuntime {
         requireProviderFinish:
           languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
-        availableToolNames: runtimeToolNames,
+        availableToolNames: [
+          ...runtimeToolNames,
+          ...collectExecutionOnlyToolNames(effectiveToolExposurePlan),
+        ],
         streamLifecycleMode,
         traceSpanName: `chat ${effectiveModel}`,
         traceAttributes: {

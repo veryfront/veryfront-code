@@ -1867,3 +1867,118 @@ for (const denySkillLoader of [false, true]) {
     }
   });
 }
+
+Deno.test("default hosted runtime executes a hidden trusted loader alias without exposing its schema", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  const toolNamesByCall: string[][] = [];
+  const toolOutputs: unknown[] = [];
+  let platformLoaderExecutions = 0;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/default-loader-hidden-alias",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      modelCallCount += 1;
+      const prompt = typeof options === "object" && options !== null && "prompt" in options
+        ? options.prompt
+        : undefined;
+      if (Array.isArray(prompt)) {
+        for (const message of prompt) {
+          if (
+            typeof message !== "object" || message === null || !("role" in message) ||
+            message.role !== "tool" || !("content" in message) || !Array.isArray(message.content)
+          ) continue;
+          for (const part of message.content) toolOutputs.push(part);
+        }
+      }
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "call-legacy-loader",
+                toolName: "load_skill",
+                input: {},
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project",
+        authToken: "token",
+        instructions: "Use the selected loader.",
+        model: "test/default-loader-hidden-alias",
+        toolLoading: "deferred",
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () =>
+        withPlatformHostToolAliases(
+          markTrustedHostToolSet({
+            load_skill: {
+              description: "Platform load skill",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => {
+                platformLoaderExecutions += 1;
+                return { loaded: true };
+              },
+            },
+          }),
+          { sleep: localTool("Sleep") },
+        ),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // Consume both model responses.
+      }
+    });
+
+    assertEquals(modelCallCount, 2);
+    assertEquals(toolNamesByCall[0], ["tool_search", "veryfront__load_skill"]);
+    assertEquals(toolNamesByCall[1], ["tool_search", "veryfront__load_skill"]);
+    assertEquals(platformLoaderExecutions, 1);
+    assertEquals(JSON.stringify(toolOutputs).includes("not available"), false);
+  } finally {
+    clearModelProviders();
+  }
+});

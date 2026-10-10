@@ -80,6 +80,7 @@ export type RuntimeStepToolLoader = (
     strictConfiguredToolsOnly?: boolean;
     frameworkLocalTools?: Record<string, Tool>;
     callerAgentId?: string;
+    onProviderSchemaHiddenTool?: (toolName: string) => void;
   },
 ) => Promise<ToolDefinition[]>;
 
@@ -265,6 +266,7 @@ export async function prepareAgentRuntimeStep(
   }
 
   let integrationToolDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
+  const executionOnlyToolNames = new IntrinsicSet<string>();
   let tools = input.supportsToolCalling
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
@@ -281,6 +283,9 @@ export async function prepareAgentRuntimeStep(
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
       frameworkLocalTools: input.frameworkLocalTools,
+      onProviderSchemaHiddenTool: (toolName) => {
+        IntrinsicReflectApply(IntrinsicSetAdd, executionOnlyToolNames, [toolName]);
+      },
     })
     : [];
 
@@ -348,6 +353,7 @@ export async function prepareAgentRuntimeStep(
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
     bootstrapToolNames: getRuntimeToolBootstrapNames(input.config),
+    executionOnlyToolNames,
     maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
