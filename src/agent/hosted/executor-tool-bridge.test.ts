@@ -155,7 +155,10 @@ describe("executor tool bridge", () => {
       const context = (toolCallId: string): ToolExecutionContext => {
         // Executor-side observation state does not cross the channel.
         const executorContext: ToolExecutionContext = { toolCallId };
-        setProviderObservedSkillBodies(executorContext, ["review"]);
+        setProviderObservedSkillBodies(executorContext, [{
+          skillId: "review",
+          references: ["references/checklist.md"],
+        }]);
         return executorContext;
       };
       const readReference = async (toolCallId: string) =>
@@ -164,12 +167,12 @@ describe("executor tool bridge", () => {
           { reference: { skillId: "review", file: "references/checklist.md" } },
           context(toolCallId),
         ) as { error?: string; content?: string };
-      const toolResultPrompt = (toolCallId: string, value: unknown) => [{
+      const toolResultPrompt = (toolCallId: string, value: unknown, toolName = "load_skill") => [{
         role: "tool" as const,
         content: [{
           type: "tool-result" as const,
           toolCallId,
-          toolName: "load_skill",
+          toolName,
           output: { type: "json" as const, value },
         }],
       }];
@@ -188,6 +191,8 @@ describe("executor tool bridge", () => {
       skillObservation.observePrompt(toolResultPrompt("forged-call", body));
       assertEquals((await readReference("forged-step-reference")).content, undefined);
 
+      skillObservation.observePrompt(toolResultPrompt("body-call", body, "other_tool"));
+      skillObservation.observePrompt(toolResultPrompt("body-call", {}));
       skillObservation.observePrompt(toolResultPrompt("body-call", "body"));
       assertEquals((await readReference("substituted-body-reference")).content, undefined);
       skillObservation.observePrompt(

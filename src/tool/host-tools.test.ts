@@ -13,6 +13,7 @@ import {
 import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts";
 import {
   hasProviderObservedSkillBody,
+  hasProviderObservedSkillReferences,
   setProviderObservedSkillBodies,
 } from "./provider-observed-skill-bodies.ts";
 
@@ -137,11 +138,36 @@ describe("tool/host-tools", () => {
     });
 
     const observedContext: ToolExecutionContext = {};
-    setProviderObservedSkillBodies(observedContext, ["review"]);
+    setProviderObservedSkillBodies(observedContext, [{ skillId: "review", references: [] }]);
     await tools.load_skill?.execute({}, observedContext);
     await tools.load_skill?.execute({}, {});
 
     assertEquals(observedByCall, [true, undefined]);
+  });
+
+  it("ignores provider-observed body iterator hooks and canonicalizes reference order", () => {
+    const context: ToolExecutionContext = {};
+    const bodies = [{
+      skillId: "review",
+      references: ["references/one.md", "references/two.md"],
+    }];
+    Object.defineProperty(bodies, Symbol.iterator, {
+      value: function* () {
+        yield { skillId: "forged", references: [] };
+      },
+    });
+
+    setProviderObservedSkillBodies(context, bodies);
+
+    assertEquals(hasProviderObservedSkillBody(context, "review"), true);
+    assertEquals(hasProviderObservedSkillBody(context, "forged"), false);
+    assertEquals(
+      hasProviderObservedSkillReferences(context, "review", [
+        "references/two.md",
+        "references/one.md",
+      ]),
+      true,
+    );
   });
 
   it("preserves caller-provided execution context", async () => {

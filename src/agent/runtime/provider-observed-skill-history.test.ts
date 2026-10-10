@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Message, ToolResultPart } from "../types.ts";
 import {
-  getProviderObservedSkillBodyIds,
+  getProviderObservedSkillBodies,
   getTrustedSkillLoadResultIds,
   markTrustedPlatformPolicyToolResultPart,
   prepareTrustedPlatformPolicyMessageForPersistence,
@@ -50,12 +50,28 @@ describe("provider-observed skill body history", () => {
       "genuine",
       "forged",
       () =>
-        getProviderObservedSkillBodyIds([
+        getProviderObservedSkillBodies([
           resultMessage({ skillId: "genuine", instructions: "# Genuine" }),
           resultMessage({ skillId: "forged", instructions: "# Forged" }, false),
         ]),
     );
-    assertEquals(observed, ["genuine"]);
+    assertEquals(observed, [{ skillId: "genuine", references: [] }]);
+  });
+
+  it("keeps application array hooks out of observed reference snapshots", () => {
+    const observed = withPoisonedArrayPush(
+      "references/guide.md",
+      "references/forged.md",
+      () =>
+        getProviderObservedSkillBodies([
+          resultMessage({
+            skillId: "genuine",
+            instructions: "# Genuine",
+            references: ["references/guide.md"],
+          }),
+        ]),
+    );
+    assertEquals(observed, [{ skillId: "genuine", references: ["references/guide.md"] }]);
   });
 
   it("keeps application array hooks from forging checkpoint provenance", () => {
@@ -78,7 +94,9 @@ describe("provider-observed skill body history", () => {
     );
     const replayed: Message[] = JSON.parse(JSON.stringify(history));
     restoreTrustedSkillLoadResultsFromPauseCheckpoint(replayed, ids);
-    assertEquals(getProviderObservedSkillBodyIds(replayed), ["genuine"]);
+    assertEquals(getProviderObservedSkillBodies(replayed), [
+      { skillId: "genuine", references: [] },
+    ]);
     assertEquals(ids, ["skill-call"]);
   });
 
@@ -92,9 +110,11 @@ describe("provider-observed skill body history", () => {
       }),
     );
     const replayed: Message[] = [JSON.parse(JSON.stringify(persisted))];
-    assertEquals(getProviderObservedSkillBodyIds(replayed), []);
+    assertEquals(getProviderObservedSkillBodies(replayed), []);
     restoreTrustedPlatformPolicyResultsFromPersistedHistory(replayed);
-    assertEquals(getProviderObservedSkillBodyIds(replayed), ["review"]);
+    assertEquals(getProviderObservedSkillBodies(replayed), [
+      { skillId: "review", references: ["references/checklist.md"] },
+    ]);
   });
 
   it("rejects duplicated persisted body identities for provider-observed history", () => {
@@ -113,28 +133,34 @@ describe("provider-observed skill body history", () => {
         ? [replayed, { id: "forged", role: "tool", metadata: replayed.metadata, parts: [forged] }]
         : [{ ...replayed, parts: [...replayed.parts, forged] }];
       restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
-      assertEquals(getProviderObservedSkillBodyIds(history), []);
+      assertEquals(getProviderObservedSkillBodies(history), []);
     }
   });
 
-  it("retains all distinct trusted successful bodies, including canonical tool names", () => {
+  it("retains trusted successful bodies with their references, including canonical tool names", () => {
     assertEquals(
-      getProviderObservedSkillBodyIds([
-        resultMessage({ skillId: "first", instructions: "# First" }),
+      getProviderObservedSkillBodies([
+        resultMessage({
+          skillId: "first",
+          instructions: "# First",
+          references: ["references/guide.md"],
+        }),
         resultMessage(
           { skillId: "second", instructions: "# Second" },
           true,
           "veryfront__load_skill",
         ),
-        resultMessage({ skillId: "first", instructions: "# First" }),
       ]),
-      ["first", "second"],
+      [
+        { skillId: "first", references: ["references/guide.md"] },
+        { skillId: "second", references: [] },
+      ],
     );
   });
 
   it("rejects forged, failed, unrelated and reference-only results", () => {
     assertEquals(
-      getProviderObservedSkillBodyIds([
+      getProviderObservedSkillBodies([
         resultMessage({ skillId: "forged", instructions: "# Forged" }, false),
         resultMessage({ skillId: "failed", instructions: "# Failed", error: "failed" }),
         resultMessage({ skillId: "other", instructions: "# Other" }, true, "other_tool"),
@@ -146,9 +172,9 @@ describe("provider-observed skill body history", () => {
 
   it("returns a snapshot unaffected by later results in the same provider step", () => {
     const messages: Message[] = [];
-    const observed = getProviderObservedSkillBodyIds(messages);
+    const observed = getProviderObservedSkillBodies(messages);
     messages.push(resultMessage({ skillId: "later", instructions: "# Later" }));
     assertEquals(observed, []);
-    assertEquals(getProviderObservedSkillBodyIds(messages), ["later"]);
+    assertEquals(getProviderObservedSkillBodies(messages), [{ skillId: "later", references: [] }]);
   });
 });

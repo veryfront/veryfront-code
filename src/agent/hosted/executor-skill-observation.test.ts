@@ -38,7 +38,10 @@ describe("executor skill body observation", () => {
       })),
       "veryfront__load_skill",
     ));
-    assertEquals(observation.observedSkillIds(), ["review"]);
+    assertEquals(observation.observedSkillBodies(), [{
+      skillId: "review",
+      references: ["references/checklist.md"],
+    }]);
   });
 
   it("rejects matching IDs with substituted, incomplete, or error bodies", () => {
@@ -54,7 +57,7 @@ describe("executor skill body observation", () => {
       const observation = createExecutorSkillObservation();
       observation.recordToolResult("load_skill", "body-call", body());
       observation.observePrompt(prompt(value));
-      assertEquals(observation.observedSkillIds(), []);
+      assertEquals(observation.observedSkillBodies(), []);
     }
   });
 
@@ -62,7 +65,7 @@ describe("executor skill body observation", () => {
     const observation = createExecutorSkillObservation();
     observation.recordToolResult("load_skill", "body-call", body());
     observation.observePrompt(prompt(body(), "unrelated_tool"));
-    assertEquals(observation.observedSkillIds(), []);
+    assertEquals(observation.observedSkillBodies(), []);
   });
 
   it("retains the host body snapshot when the returned object changes", () => {
@@ -71,9 +74,12 @@ describe("executor skill body observation", () => {
     observation.recordToolResult("load_skill", "body-call", returned);
     returned.instructions = "Substituted after recording";
     observation.observePrompt(prompt(returned));
-    assertEquals(observation.observedSkillIds(), []);
+    assertEquals(observation.observedSkillBodies(), []);
     observation.observePrompt(prompt(body()));
-    assertEquals(observation.observedSkillIds(), ["review"]);
+    assertEquals(observation.observedSkillBodies(), [{
+      skillId: "review",
+      references: ["references/checklist.md"],
+    }]);
   });
 
   it("ignores forged prompt parts from application array iterators", () => {
@@ -97,6 +103,6 @@ describe("executor skill body observation", () => {
     } finally {
       Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
     }
-    assertEquals(observation.observedSkillIds(), []);
+    assertEquals(observation.observedSkillBodies(), []);
   });
 });

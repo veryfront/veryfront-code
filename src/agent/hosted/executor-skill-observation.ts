@@ -1,8 +1,11 @@
 import type { ModelRuntimePromptMessage } from "#veryfront/provider/types.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
-import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import type { ProviderObservedSkillBody } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { isLoadSkillToolName } from "#veryfront/agent/platform-tool-names.ts";
-import { extractSkillId } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
+import {
+  extractSkillId,
+  extractSkillToolAvailability,
+} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 
 /**
  * Host-side record of which skill bodies the provider has received, built only
@@ -13,7 +16,7 @@ export interface ExecutorSkillObservation {
   recordToolResult(toolName: string, toolCallId: string | undefined, result: unknown): void;
   /** Mark bodies observed when a brokered model request carries their results. */
   observePrompt(prompt: readonly ModelRuntimePromptMessage[]): void;
-  observedSkillIds(): string[];
+  observedSkillBodies(): ProviderObservedSkillBody[];
 }
 
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -22,6 +25,7 @@ import { readToolResultOwnDataProperty as readOwn } from "#veryfront/tool/result
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const keys = Object.keys;
+const freeze = Object.freeze;
 
 function equalBody(left: BoundedJsonValue, right: BoundedJsonValue): boolean {
   if (left === right) return true;
@@ -46,19 +50,25 @@ function equalBody(left: BoundedJsonValue, right: BoundedJsonValue): boolean {
 }
 
 export function createExecutorSkillObservation(): ExecutorSkillObservation {
-  const bodies = createPrivateMap<string, { skillId: string; value: BoundedJsonValue } | null>();
-  const observed = createPrivateSet<string>();
+  const bodies = createPrivateMap<
+    string,
+    { body: ProviderObservedSkillBody; value: BoundedJsonValue } | null
+  >();
+  const observed = createPrivateMap<string, ProviderObservedSkillBody>();
   return {
     recordToolResult(toolName, toolCallId, result) {
       if (!toolCallId || !isLoadSkillToolName(toolName)) return;
       const skillId = extractSkillId(result);
       const snapshot = snapshotBoundedJsonValue(result);
+      const references = snapshot.success
+        ? extractSkillToolAvailability(snapshot.value)?.references
+        : undefined;
       // A repeated call ID is ambiguous provenance and never becomes observable.
       bodies.set(
         toolCallId,
-        bodies.has(toolCallId) || !skillId || !snapshot.success
+        bodies.has(toolCallId) || !skillId || !snapshot.success || references === undefined
           ? null
-          : { skillId, value: snapshot.value },
+          : { body: freeze({ skillId, references: freeze(references) }), value: snapshot.value },
       );
     },
     observePrompt(prompt) {
@@ -80,10 +90,12 @@ export function createExecutorSkillObservation(): ExecutorSkillObservation {
           const output = readOwn(part, "output");
           if (!body || readOwn(output, "type") !== "json") continue;
           const snapshot = snapshotBoundedJsonValue(readOwn(output, "value"));
-          if (snapshot.success && equalBody(body.value, snapshot.value)) observed.add(body.skillId);
+          if (snapshot.success && equalBody(body.value, snapshot.value)) {
+            observed.set(toolCallId, body.body);
+          }
         }
       }
     },
-    observedSkillIds: () => [...observed],
+    observedSkillBodies: () => [...observed.values()],
   };
 }

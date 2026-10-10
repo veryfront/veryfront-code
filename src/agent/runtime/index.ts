@@ -182,7 +182,7 @@ import {
 
 import {
   enforceSkillPolicy,
-  getProviderObservedSkillBodyIds,
+  getProviderObservedSkillBodies,
   getTrustedSkillLoadResultIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
@@ -195,7 +195,10 @@ import {
   restoreTrustedSkillLoadResultsFromPauseCheckpoint,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
-import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
+import {
+  type ProviderObservedSkillBody,
+  setProviderObservedSkillBodies,
+} from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import {
   isRuntimeGeneratedUserMessage,
@@ -1955,11 +1958,11 @@ const readContextProperty = Reflect.get;
 
 function applicationExecutionContext(
   context: ToolExecutionContext | undefined,
-  providerObservedSkillBodyIds?: readonly string[],
+  providerObservedSkillBodies?: readonly ProviderObservedSkillBody[],
 ): ToolExecutionContext {
   const projected: ToolExecutionContext = {};
-  if (providerObservedSkillBodyIds !== undefined) {
-    setProviderObservedSkillBodies(projected, providerObservedSkillBodyIds);
+  if (providerObservedSkillBodies !== undefined) {
+    setProviderObservedSkillBodies(projected, providerObservedSkillBodies);
   }
   if (!context) return projected;
   forEachPrivateArray(ownContextKeys(context), (key) => {
@@ -3582,7 +3585,7 @@ export class AgentRuntime {
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
         // Keep this snapshot fixed while calls from the same provider response execute.
-        const providerObservedSkillBodyIds = getProviderObservedSkillBodyIds(currentMessages);
+        const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
         const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
           ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
             reloadable: runtimeStepToolLoading.mode === "deferred",
@@ -4146,7 +4149,7 @@ export class AgentRuntime {
               );
               const executionContext = applicationExecutionContext(
                 toolContext,
-                providerObservedSkillBodyIds,
+                providerObservedSkillBodies,
               );
               executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
               throwIfAborted(abortSignal);
@@ -4639,7 +4642,7 @@ export class AgentRuntime {
         const executionContext = applicationExecutionContext(
           toolContext,
           // Partial results from the parked assistant turn were not yet provider-observed.
-          getProviderObservedSkillBodyIds(
+          getProviderObservedSkillBodies(
             slicePrivateArray(currentMessages, 0, admittedTurn.start),
           ),
         );
@@ -4757,7 +4760,7 @@ export class AgentRuntime {
       }
 
       // Include the parked result delivered to this request, but exclude new same-step results.
-      const providerObservedSkillBodyIds = getProviderObservedSkillBodyIds(currentMessages);
+      const providerObservedSkillBodies = getProviderObservedSkillBodies(currentMessages);
       const modelMessages = toolResultContext
         ? createModelToolResultContextMessages(currentMessages, toolResultContext)
         : currentMessages;
@@ -5781,7 +5784,7 @@ export class AgentRuntime {
 
           const executionContext = applicationExecutionContext(
             toolContext,
-            providerObservedSkillBodyIds,
+            providerObservedSkillBodies,
           );
           const result = await runWithToolCallOccurrenceDispatch(
             tc,

@@ -9,7 +9,10 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
-import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
+import {
+  type ProviderObservedSkillBody,
+  setProviderObservedSkillBodies,
+} from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import type { ExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
 import {
   type AdmitExecutorToolCall,
@@ -269,7 +272,7 @@ export function createExecutorToolBroker(options: {
             ...call?.projectContext,
           }
           : capability.context,
-        observedSkillIds: skillObservation?.observedSkillIds() ?? [],
+        observedSkillBodies: skillObservation?.observedSkillBodies() ?? [],
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
         correlation: request,
@@ -354,7 +357,7 @@ export function createExecutorToolBroker(options: {
 async function* callWithProgress(options: {
   invoke(context: ToolExecutionContext): Promise<unknown>;
   context: ToolExecutionContext;
-  observedSkillIds: readonly string[];
+  observedSkillBodies: readonly ProviderObservedSkillBody[];
   publisher: ToolExecutionContext["publishDataEvent"];
   publisherReceiver: ToolExecutionContext;
   correlation: Pick<ExecutorToolCall, "toolCallId" | "progressToken">;
@@ -475,7 +478,7 @@ async function* callWithProgress(options: {
     },
   };
   // Only host-verified observations count; executor-side state never crosses the channel.
-  setProviderObservedSkillBodies(context, options.observedSkillIds);
+  setProviderObservedSkillBodies(context, options.observedSkillBodies);
   const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
