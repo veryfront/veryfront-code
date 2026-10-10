@@ -10,7 +10,6 @@ import {
 import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { isMonitoringPath } from "../runtime-handler/request-utils.ts";
-import { markdownPreviewOwnsDocumentPathname } from "../handlers/request/ssr/document-ownership.ts";
 import {
   type InstalledProjectHttpBinding,
   snapshotInstalledProjectHttpBinding,
@@ -30,9 +29,9 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * Proxy mode must have host project execution disabled. Complete project, immutable release,
  * and named environment identities are required; preview branches and failed resolution return
  * a non-cacheable project-execution-unavailable response without host execution fallback.
- * Control-plane routes retain their existing handlers. Preview mode, Markdown preview,
- * component snippets and WebSocket upgrades, including preview HMR, are unsupported under
- * isolation and refused. The installed application handles its own authentication, CORS and middleware.
+ * Control-plane routes retain their existing handlers. Preview mode (including Markdown
+ * preview), component snippets and WebSocket upgrades (including preview HMR) are
+ * unsupported under isolation and refused. The installed application handles its own authentication, CORS and middleware.
  * Source publication, resolver authorization and executor deployment remain caller prerequisites.
  */
 export interface HostedHttpIngressOptions {
@@ -63,8 +62,8 @@ export function isHostedHttpApplicationRequest(request: Request): boolean {
 /** Preview surfaces with no isolated route. Refused, never served by the host. */
 function isUnsupportedUnderIsolation(request: Request): boolean {
   const pathname = new URL(request.url).pathname;
-  return isWebSocketUpgrade(request) || markdownPreviewOwnsDocumentPathname(pathname) ||
-    pathname.startsWith("/@/") || pathname.startsWith("/@components/");
+  return isWebSocketUpgrade(request) || pathname.startsWith("/@/") ||
+    pathname.startsWith("/@components/");
 }
 
 function unavailable(

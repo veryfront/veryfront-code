@@ -398,7 +398,7 @@ it("refuses incompatible production startup before discovery, prewarming or list
   }
 });
 
-it("refuses preview HMR, Markdown preview and snippets under isolation without host handlers", async () => {
+it("refuses preview HMR, preview mode and snippets under isolation without host handlers", async () => {
   await withEnv({ VERYFRONT_TRUST_FORWARDED_HEADERS: "1" }, async () => {
     const adapter = createMockAdapter();
     let hostReads = 0;
@@ -430,7 +430,7 @@ it("refuses preview HMR, Markdown preview and snippets under isolation without h
     for (
       const [path, extra] of [
         ["/_ws", { upgrade: "websocket", connection: "upgrade" }],
-        ["/guide.md", {}],
+        ["/guide.md", { "x-environment": "preview" }],
         ["/@components/card", {}],
       ] as const
     ) {
@@ -439,7 +439,11 @@ it("refuses preview HMR, Markdown preview and snippets under isolation without h
       );
       assertEquals(response.status, 503, path);
       assertEquals(response.headers.get("cache-control"), "no-store");
-      await response.body?.cancel();
+      assertEquals(
+        (await response.json()).detail,
+        "This surface is unsupported under isolation",
+        path,
+      );
     }
     assertEquals(resolutions, 0);
     assertEquals(hostReads, 0);
