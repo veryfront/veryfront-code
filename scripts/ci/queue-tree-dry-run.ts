@@ -32,7 +32,8 @@ export async function measureQueueTree(
       options.repository,
     )
   ) {
-    return miss("unsupported queue identity");
+    // The tree is unvalidated here, so it stays out of the line.
+    return "would not reuse: unsupported queue identity; full pipeline retained";
   }
   const pr = Number(queued[1]);
   const fetchImpl = options.fetch ?? fetch;
@@ -62,7 +63,7 @@ export async function measureQueueTree(
     );
     const latest = runs.workflow_runs[0];
     if (
-      !latest || latest.event !== "pull_request" ||
+      latest?.event !== "pull_request" ||
       latest.head_sha !== pull.head.sha ||
       latest.status !== "completed" || latest.conclusion !== "success" ||
       latest.run_attempt !== 1 ||
@@ -98,6 +99,12 @@ export async function measureQueueTree(
   }
 }
 
+/** Escape per the workflow-command spec so data cannot end the line or start a command. */
+export function formatQueueTreeNotice(message: string): string {
+  const escaped = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  return `::notice title=Queue tree dry run::${escaped}`;
+}
+
 if (import.meta.main) {
   const message = await measureQueueTree({
     repository: Deno.env.get("GITHUB_REPOSITORY") ?? "",
@@ -105,7 +112,7 @@ if (import.meta.main) {
     tree: Deno.env.get("QUEUE_TREE") ?? "",
     token: Deno.env.get("GH_TOKEN") ?? "",
   });
-  console.log(`::notice title=Queue tree dry run::${message}`);
+  console.log(formatQueueTreeNotice(message));
   await Deno.writeTextFile(
     Deno.env.get("GITHUB_STEP_SUMMARY")!,
     `## Queue tree dry run\n\n${message}\n`,

@@ -1,9 +1,6 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { measureQueueTree } from "./queue-tree-dry-run.ts";
+import { formatQueueTreeNotice, measureQueueTree } from "./queue-tree-dry-run.ts";
 
 const TREE = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -142,6 +139,17 @@ describe("queue tree dry run", () => {
     assertStringIncludes(
       await measureQueueTree(options),
       "latest PR run is not eligible",
+    );
+  });
+  it("does not echo an unvalidated tree into the miss line", async () => {
+    const { options } = fixture();
+    const message = await measureQueueTree({ ...options, tree: "bad\n::error::forged" });
+    assertEquals(message, "would not reuse: unsupported queue identity; full pipeline retained");
+  });
+  it("escapes the notice so a message cannot start another workflow command", () => {
+    assertEquals(
+      formatQueueTreeNotice("50% done\r\n::error::forged"),
+      "::notice title=Queue tree dry run::50%25 done%0D%0A::error::forged",
     );
   });
 });
