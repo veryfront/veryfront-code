@@ -30,7 +30,7 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * and named environment identities are required; preview branches and failed resolution return
  * a non-cacheable project-execution-unavailable response without host execution fallback.
  * Control-plane routes retain their existing handlers. Preview mode (including Markdown
- * preview), component snippets and WebSocket upgrades (including preview HMR) are
+ * preview), component snippets (GET) and WebSocket upgrades (including preview HMR) are
  * unsupported under isolation and refused. A refused WebSocket upgrade receives no 101; on
  * Node.js the upgrade transport closes the connection rather than writing the 503 body.
  * The installed application handles its own authentication, CORS and middleware.
@@ -67,8 +67,10 @@ export function isHostedHttpApplicationRequest(request: Request): boolean {
 /** Preview surfaces with no isolated route. Refused, never served by the host. */
 function isUnsupportedUnderIsolation(request: Request): boolean {
   const pathname = new URL(request.url).pathname;
-  return isWebSocketUpgrade(request) || pathname.startsWith("/@/") ||
-    pathname.startsWith("/@components/");
+  // The snippet handler owns these prefixes only for GET; other methods reach the application.
+  return isWebSocketUpgrade(request) ||
+    (request.method === "GET" &&
+      (pathname.startsWith("/@/") || pathname.startsWith("/@components/")));
 }
 
 function unavailable(
