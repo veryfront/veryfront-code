@@ -32,6 +32,7 @@ const mathMin = Math.min;
 const mathRound = Math.round;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
+const numberToString = Number.prototype.toString;
 const numberMaxValue = Number.MAX_VALUE;
 const ArrayIsArray = Array.isArray;
 const objectKeys = Object.keys;
@@ -846,7 +847,10 @@ function snapshotMessageFinishObjectValue(
         : 0;
       const limit = mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
       for (let index = 0; index < limit; index++) {
-        const property = objectGetOwnPropertyDescriptor(input, String(index));
+        const property = objectGetOwnPropertyDescriptor(
+          input,
+          reflectApply(numberToString, index, []) as string,
+        );
         const item = !property || !property.enumerable
           ? { value: null, status: "complete", reasons: [] } satisfies MessageFinishObjectSnapshot
           : !objectHasOwn(property, "value")

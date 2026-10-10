@@ -415,6 +415,64 @@ describe("model call request projection", () => {
     assertEquals((body.output_config as Record<string, unknown>).effort, undefined);
   });
 
+  it("ignores undispatched underlying buckets for served Anthropic and Google models", () => {
+    const anthropicModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m1" };
+    registerVeryfrontCloudModelFacts(anthropicModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "anthropic",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const anthropicOptions = snapshotModelCallProviderOptions(anthropicModel, {
+      prompt,
+      providerOptions: {
+        anthropic: { max_tokens: 111, thinking: { type: "enabled", budget_tokens: 1000 } },
+        "veryfront-cloud": { max_tokens: 222, thinking: { type: "enabled", budget_tokens: 2000 } },
+        acme: { max_tokens: 999, thinking: { type: "enabled", budget_tokens: 9000 } },
+      },
+    });
+    const anthropicProjected = buildModelCallContextRequest(anthropicModel, anthropicOptions);
+    const anthropicBody = buildAnthropicMessagesRequest(
+      "m1",
+      "veryfront-cloud",
+      anthropicOptions,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(anthropicProjected?.maxOutputTokens, 222);
+    assertEquals(anthropicProjected?.reasoning, { enabled: true, budgetTokens: 2000 });
+    assertEquals(anthropicBody.max_tokens, 222);
+    assertEquals(anthropicBody.thinking, { type: "enabled", budget_tokens: 2000 });
+
+    const googleModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m2" };
+    registerVeryfrontCloudModelFacts(googleModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "google",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const googleOptions = snapshotModelCallProviderOptions(googleModel, {
+      prompt,
+      providerOptions: {
+        google: { generationConfig: { maxOutputTokens: 111 } },
+        "veryfront-cloud": { generationConfig: { maxOutputTokens: 222 } },
+        acme: { generationConfig: { maxOutputTokens: 999 } },
+      },
+    });
+    const googleProjected = buildModelCallContextRequest(googleModel, googleOptions);
+    const googleBody = buildGoogleGenerateContentRequest(
+      "veryfront-cloud",
+      googleOptions,
+      createWarningCollector(),
+    );
+
+    assertEquals(googleProjected?.maxOutputTokens, 222);
+    assertEquals(googleBody.generationConfig?.maxOutputTokens, 222);
+  });
+
   it("records native controls by served surface for a newly served provider", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
@@ -1086,7 +1144,6 @@ describe("model call request projection", () => {
           modelProvider: "anthropic",
           modelId: "claude-haiku-4-5",
         }, options);
-        assertEquals(projected?.maxOutputTokens, 64);
         for (const stream of [false, true]) {
           const body = buildAnthropicMessagesRequest(
             "claude-haiku-4-5",
@@ -1095,6 +1152,7 @@ describe("model call request projection", () => {
             stream,
             createWarningCollector(),
           ) as unknown as Record<string, unknown>;
+          assertEquals(projected?.maxOutputTokens, body.max_tokens);
           for (
             const [field, nativeField] of [...samplingFields, ["topK", "top_k"], [
               "seed",
@@ -1112,6 +1170,111 @@ describe("model call request projection", () => {
         }
       }
     }
+  });
+
+  it("matches Anthropic thinking token expansion and model caps", () => {
+    for (
+      const options of [
+        {
+          modelId: "claude-haiku-4-5",
+          maxOutputTokens: 64,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+        {
+          modelId: "claude-3-haiku",
+          maxOutputTokens: 4000,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+      ] as const
+    ) {
+      const callOptions = {
+        prompt,
+        maxOutputTokens: options.maxOutputTokens,
+        reasoning: options.reasoning,
+      };
+      const model = {
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: options.modelId,
+      };
+      const projected = buildModelCallContextRequest(model, callOptions);
+      const body = buildAnthropicMessagesRequest(
+        options.modelId,
+        "anthropic",
+        callOptions,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals(projected?.maxOutputTokens, body.max_tokens);
+    }
+  });
+
+  it("matches default Anthropic wire limits for hosted reasoning cases", () => {
+    const cases: { modelId: string; options: ModelRuntimeCallOptions; expected: number }[] = [
+      {
+        modelId: "claude-opus-4-8",
+        options: { prompt, providerOptions: { anthropic: { thinking: { type: "adaptive" } } } },
+        expected: 128_000,
+      },
+      {
+        modelId: "claude-sonnet-4-6",
+        options: {
+          prompt,
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        },
+        expected: 64_000,
+      },
+      ...[{}, { enabled: false }, { enabled: true, budgetTokens: 1024 }].map((reasoning) => ({
+        modelId: "claude-synthetic",
+        options: {
+          prompt,
+          reasoning,
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        },
+        expected: 4096,
+      })),
+    ];
+    for (const { modelId, options, expected } of cases) {
+      const captured = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "anthropic",
+        modelId,
+      }, options);
+      for (const stream of [false, true]) {
+        const body = buildAnthropicMessagesRequest(
+          modelId,
+          "veryfront-cloud",
+          options,
+          stream,
+          createWarningCollector(),
+        );
+        assertEquals(body.max_tokens, expected);
+        assertEquals(captured?.maxOutputTokens, body.max_tokens);
+      }
+    }
+  });
+
+  it("preserves explicit undefined native Anthropic token overrides", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions: { anthropic: { max_tokens: undefined } },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.max_tokens, undefined);
+    assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
   it("matches direct Anthropic native max_tokens overrides to the exact wire body", () => {
@@ -1263,6 +1426,7 @@ describe("model call request projection", () => {
       seed: 0,
       presencePenalty: 0.7,
       frequencyPenalty: -0.5,
+      maxOutputTokens: 64_000,
       stopSequences: ["native"],
       reasoning: { enabled: true, budgetTokens: 2048 },
     });

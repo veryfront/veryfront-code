@@ -436,7 +436,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: false },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 2048 },
-        expectedMaxOutputTokens: 2048,
+        expectedMaxOutputTokens: 4096,
       },
       {
         reasoning: { enabled: false },
@@ -450,7 +450,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: true, budgetTokens: 1024 },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 1024 },
-        expectedMaxOutputTokens: 3072,
+        expectedMaxOutputTokens: 4096,
       },
     ] as const;
     for (const mode of ["generate", "stream"] as const) {
