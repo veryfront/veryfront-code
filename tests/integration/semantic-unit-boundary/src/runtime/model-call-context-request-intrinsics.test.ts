@@ -6,6 +6,7 @@ import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { buildGoogleGenerateContentRequest } from "../../../../../extensions/ext-llm-google/src/google-request-builder.ts";
+import { buildOpenAIChatRequest } from "../../../../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
 
 const prompt: ModelRuntimeCallOptions["prompt"] = [{
   role: "user",
@@ -70,6 +71,41 @@ describe("model call request projection intrinsic boundaries", () => {
       });
     } finally {
       Object.keys = nativeObjectKeys;
+    }
+  });
+
+  it("preserves native OpenAI Chat token aliases when RegExp matching is replaced before dispatch", () => {
+    const nativeRegExpExec = RegExp.prototype.exec;
+    const nativeRegExpTest = RegExp.prototype.test;
+
+    try {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        maxOutputTokens: 100,
+        providerOptions: { openai: { max_completion_tokens: 444 } },
+      };
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.max_completion_tokens, 444);
+
+      RegExp.prototype.exec = (() => null) as typeof RegExp.prototype.exec;
+      RegExp.prototype.test = (() => false) as typeof RegExp.prototype.test;
+      const projected = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        openAITransport: "chat-completions",
+      }, options);
+
+      assertEquals(projected?.maxOutputTokens, body.max_completion_tokens);
+    } finally {
+      RegExp.prototype.exec = nativeRegExpExec;
+      RegExp.prototype.test = nativeRegExpTest;
     }
   });
 

@@ -4,6 +4,7 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import {
+  isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
@@ -20,9 +21,13 @@ import {
   slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import type { ModelCallRequest } from "./model-call-context.ts";
 
-type ModelCallRuntimeMetadata = Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">;
+type ModelCallRuntimeMetadata = Pick<
+  RuntimeMetadata,
+  "modelId" | "provider" | "modelProvider" | "openAITransport"
+>;
 type ModelCallRequestSource =
   & Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools" | "responseFormat">
   & {
@@ -30,17 +35,18 @@ type ModelCallRequestSource =
   };
 
 const ReflectApply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const NumberIsInteger = Number.isInteger;
 const NumberIsSafeInteger = Number.isSafeInteger;
-const RegExpPrototypeTest = RegExp.prototype.test;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const NativeOpenAIChatModelPattern = /^(gpt-|o[134](-|$)|chatgpt-)/;
 
 function regexpTest(pattern: RegExp, value: string): boolean {
-  return ReflectApply(RegExpPrototypeTest, pattern, [value]) as boolean;
+  return testPrivateRegExp(pattern, value);
 }
 
 function stringStartsWith(value: string, search: string): boolean {
@@ -49,6 +55,15 @@ function stringStartsWith(value: string, search: string): boolean {
 
 function objectKeys<TValue extends object>(value: TValue): string[] {
   return ObjectKeys(value);
+}
+
+function defineOwnDataProperty(target: object, key: string, value: unknown): void {
+  ReflectApply(ObjectDefineProperty, Object, [target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  }]);
 }
 
 function numberIsInteger(value: number): boolean {
@@ -98,10 +113,22 @@ function numberControl(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+function ownNumberControl(
+  value: Record<string, unknown>,
+  key: string,
+): { present: boolean; value: number | undefined } {
+  if (!ObjectHasOwn(value, key)) return { present: false, value: undefined };
+  return { present: true, value: numberControl(value[key]) };
+}
+
 function stopControl(value: unknown): string[] | undefined {
   return ArrayIsArray(value) && everyPrivateArray(value, (item) => typeof item === "string")
     ? slicePrivateArray(value)
     : undefined;
+}
+
+function isNativeOpenAIChatModel(modelId: string | undefined): boolean {
+  return typeof modelId === "string" && regexpTest(NativeOpenAIChatModelPattern, modelId);
 }
 
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
@@ -113,11 +140,18 @@ function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   return (built?.surface ?? resolveVeryfrontCloudProviderRouting(provider).surface) === "openai";
 }
 
+function requestUsesOpenAIHostedTool(options: ModelCallRequestSource): boolean {
+  return ArrayIsArray(options.tools) &&
+    somePrivateArray(
+      options.tools,
+      (tool) => tool.type === "provider" && stringStartsWith(tool.id, "openai."),
+    );
+}
+
 function managedOpenAITransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): "chat-completions" | "responses" | undefined {
-  // Custom direct runtime transport overrides are not represented by this metadata.
   if (model.provider !== "veryfront-cloud" || !model.modelId) return undefined;
   const provider = resolveModelCallProvider(model);
   if (provider === undefined) return undefined;
@@ -125,11 +159,7 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  const usesHostedTool = ArrayIsArray(options.tools) &&
-    somePrivateArray(
-      options.tools,
-      (tool) => tool.type === "provider" && stringStartsWith(tool.id, "openai."),
-    );
+  const usesHostedTool = requestUsesOpenAIHostedTool(options);
   const built = readVeryfrontCloudModelFacts(model);
   if (built) {
     if (built.transportPlan.pinned) return built.transportPlan.transport;
@@ -138,17 +168,129 @@ function managedOpenAITransport(
   return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, usesHostedTool);
 }
 
+function directOpenAITransport(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): "chat-completions" | "responses" | undefined {
+  if (model.provider !== "openai" || typeof model.modelId !== "string") return undefined;
+  if (model.openAITransport === "chat-completions" || model.openAITransport === "responses") {
+    return model.openAITransport;
+  }
+  if (model.openAITransport !== "auto") return undefined;
+  return isOpenAIReasoningModel(model.modelId, openAIProviderName(model)) ||
+      requestUsesOpenAIHostedTool(options)
+    ? "responses"
+    : "chat-completions";
+}
+
+function resolveOpenAIContextTransport(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): "chat-completions" | "responses" | undefined {
+  return managedOpenAITransport(model, options) ?? directOpenAITransport(model, options);
+}
+
+function openAIProviderName(model: ModelCallRuntimeMetadata): string {
+  return model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
+}
+
+function normalizeOpenAIProviderOptionsForChat(
+  providerOptions: Record<string, unknown>,
+  modelId: string | undefined,
+): Record<string, unknown> {
+  if (!isNativeOpenAIChatModel(modelId) || !ObjectHasOwn(providerOptions, "max_tokens")) {
+    return providerOptions;
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const key of objectKeys(providerOptions)) {
+    if (key !== "max_tokens") defineOwnDataProperty(normalized, key, providerOptions[key]);
+  }
+  if (!ObjectHasOwn(normalized, "max_completion_tokens")) {
+    defineOwnDataProperty(normalized, "max_completion_tokens", providerOptions.max_tokens);
+  }
+  return normalized;
+}
+
 function openAIProviderOptions(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): Record<string, unknown> {
-  const providerName = model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
+  const providerName = openAIProviderName(model);
   return readProviderOptions(
     options.providerOptions as Record<string, unknown> | undefined,
     ...(providerName === "openai" ? ["openai-compatible"] : []),
     "openai",
     providerName,
   );
+}
+
+function openAIChatProviderOptions(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): Record<string, unknown> {
+  const providerName = openAIProviderName(model);
+  const bucketNames = [
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  ];
+  const providerOptions: Record<string, unknown> = {};
+  for (const bucketName of bucketNames) {
+    const normalized = normalizeOpenAIProviderOptionsForChat(
+      readProviderOptions(
+        options.providerOptions as Record<string, unknown> | undefined,
+        bucketName,
+      ),
+      model.modelId,
+    );
+    for (const key of objectKeys(normalized)) {
+      defineOwnDataProperty(providerOptions, key, normalized[key]);
+    }
+  }
+  return providerOptions;
+}
+
+function resolveOpenAIChatMaxOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  providerOptions: Record<string, unknown>,
+): { present: boolean; value: number | undefined } {
+  const keys = isNativeOpenAIChatModel(model.modelId)
+    ? ["max_completion_tokens", "max_tokens"]
+    : ["max_tokens"];
+  for (const key of keys) {
+    const native = ownNumberControl(providerOptions, key);
+    if (native.present) return native;
+  }
+  return { present: false, value: undefined };
+}
+
+function resolveOpenAIMaxOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+  responsesProviderOptions: Record<string, unknown>,
+  transport: "chat-completions" | "responses" | undefined,
+): number | undefined {
+  const responsesMaxOutputTokens = ownNumberControl(responsesProviderOptions, "max_output_tokens");
+  if (transport === "responses") {
+    return responsesMaxOutputTokens.present
+      ? responsesMaxOutputTokens.value
+      : options.maxOutputTokens;
+  }
+
+  const chatMaxOutputTokens = resolveOpenAIChatMaxOutputTokens(
+    model,
+    openAIChatProviderOptions(model, options),
+  );
+  if (transport === "chat-completions") {
+    return chatMaxOutputTokens.present ? chatMaxOutputTokens.value : options.maxOutputTokens;
+  }
+  if (responsesMaxOutputTokens.present && !chatMaxOutputTokens.present) {
+    return responsesMaxOutputTokens.value;
+  }
+  if (chatMaxOutputTokens.present && !responsesMaxOutputTokens.present) {
+    return chatMaxOutputTokens.value;
+  }
+  return options.maxOutputTokens;
 }
 
 /** Project effective request settings without persisting raw provider options. */
@@ -171,13 +313,14 @@ function resolvePersistedControls(
     return options;
   }
   const providerOptions = openAIProviderOptions(model, options);
-  const transport = managedOpenAITransport(model, options);
+  const transport = resolveOpenAIContextTransport(model, options);
   // Native reasoning is merged after neutral sampling is filtered.
   const dropSampling = resolveOpenAINeutralReasoning(model, options)?.enabled === true ||
     (typeof model.modelId === "string" && (rejectsOpenAISamplingParams(model.modelId) ||
       (transport !== "responses" && regexpTest(/^kimi-k2\.5/, model.modelId))));
   const effective = {
     ...options,
+    maxOutputTokens: resolveOpenAIMaxOutputTokens(model, options, providerOptions, transport),
     topK: numberControl(providerOptions.top_k),
     seed: ObjectHasOwn(providerOptions, "seed")
       ? numberControl(providerOptions.seed)
@@ -340,7 +483,7 @@ function resolvePersistedReasoning(
   if (resolveModelCallProtocol(model) === "google") return resolveGoogleReasoning(model, options);
   if (usesOpenAIBuilder(model) && typeof model.modelId === "string") {
     const neutral = resolveOpenAINeutralReasoning(model, options);
-    const transport = managedOpenAITransport(model, options);
+    const transport = resolveOpenAIContextTransport(model, options);
     if (!transport) return neutral;
     if (suppressOpenAIFunctionToolReasoning(model, options)) return { enabled: false };
     const native = openAIProviderOptions(model, options);

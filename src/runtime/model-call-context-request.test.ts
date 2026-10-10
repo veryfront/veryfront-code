@@ -581,6 +581,273 @@ describe("model call request projection", () => {
     }
   });
 
+  it("records the effective OpenAI output token budget after native overrides", () => {
+    const responseOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        openai: { max_output_tokens: 111, max_tokens: 999 },
+        "veryfront-cloud": { max_output_tokens: 222, max_tokens: 888 },
+      },
+    };
+    const responseProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "o3",
+    }, responseOptions);
+    const responseBody = buildOpenAIResponsesRequest(
+      "o3",
+      "veryfront-cloud",
+      responseOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(responseBody.max_output_tokens, 222);
+    assertEquals(responseProjected?.maxOutputTokens, responseBody.max_output_tokens);
+
+    const nativeChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        "openai-compatible": { max_completion_tokens: 111 },
+        openai: { max_tokens: 333, max_output_tokens: 999 },
+      },
+    };
+    const nativeChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeChatOptions);
+    const nativeChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeChatBody.max_completion_tokens, 333);
+    assertEquals(nativeChatProjected?.maxOutputTokens, nativeChatBody.max_completion_tokens);
+
+    const nativeCompletionOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_completion_tokens: 444 } },
+    };
+    const nativeCompletionProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeCompletionOptions);
+    const nativeCompletionBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeCompletionOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeCompletionBody.max_completion_tokens, 444);
+    assertEquals(
+      nativeCompletionProjected?.maxOutputTokens,
+      nativeCompletionBody.max_completion_tokens,
+    );
+
+    const nativeAliasCollisionOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_tokens: 333, max_completion_tokens: 444 } },
+    };
+    const nativeAliasCollisionProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeAliasCollisionOptions);
+    const nativeAliasCollisionBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeAliasCollisionOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeAliasCollisionBody.max_completion_tokens, 444);
+    assertEquals(
+      nativeAliasCollisionProjected?.maxOutputTokens,
+      nativeAliasCollisionBody.max_completion_tokens,
+    );
+
+    const compatibleChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_tokens: 555, max_completion_tokens: 444 } },
+    };
+    const compatibleChatProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "mistral",
+      modelId: "mistral-large",
+    }, compatibleChatOptions);
+    const compatibleChatBody = buildOpenAIChatRequest(
+      "mistral-large",
+      "veryfront-cloud",
+      compatibleChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(compatibleChatBody.max_tokens, 555);
+    assertEquals(compatibleChatBody.max_completion_tokens, 444);
+    assertEquals(compatibleChatProjected?.maxOutputTokens, compatibleChatBody.max_tokens);
+
+    const compatibleCompletionOnlyOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_completion_tokens: 444 } },
+    };
+    const compatibleCompletionOnlyProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "mistral",
+      modelId: "mistral-large",
+    }, compatibleCompletionOnlyOptions);
+    const compatibleCompletionOnlyBody = buildOpenAIChatRequest(
+      "mistral-large",
+      "veryfront-cloud",
+      compatibleCompletionOnlyOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(compatibleCompletionOnlyBody.max_tokens, 100);
+    assertEquals(compatibleCompletionOnlyBody.max_completion_tokens, 444);
+    assertEquals(
+      compatibleCompletionOnlyProjected?.maxOutputTokens,
+      compatibleCompletionOnlyBody.max_tokens,
+    );
+
+    const directAmbiguousOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_output_tokens: 666, max_tokens: 777 } },
+    };
+    const directAmbiguousProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "auto",
+    }, directAmbiguousOptions);
+    const directAmbiguousChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    const directAmbiguousResponsesBody = buildOpenAIResponsesRequest(
+      "gpt-4o",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(directAmbiguousChatBody.max_completion_tokens, 777);
+    assertEquals(directAmbiguousResponsesBody.max_output_tokens, 666);
+    assertEquals(
+      directAmbiguousProjected?.maxOutputTokens,
+      directAmbiguousChatBody.max_completion_tokens,
+    );
+
+    const directHostedToolProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "auto",
+    }, {
+      ...directAmbiguousOptions,
+      tools: [{ type: "provider", id: "openai.web_search", name: "web_search", args: {} }],
+    });
+    assertEquals(
+      directHostedToolProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const directUnknownTransportProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "custom-openai",
+      modelId: "custom-gpt",
+    }, directAmbiguousOptions);
+    assertEquals(directAmbiguousChatBody.max_completion_tokens, 777);
+    assertEquals(directAmbiguousResponsesBody.max_output_tokens, 666);
+    assertEquals(directUnknownTransportProjected?.maxOutputTokens, 100);
+
+    const pinnedReasoningChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "o3",
+      openAITransport: "chat-completions",
+    }, directAmbiguousOptions);
+    const pinnedReasoningChatBody = buildOpenAIChatRequest(
+      "o3",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(
+      pinnedReasoningChatProjected?.maxOutputTokens,
+      pinnedReasoningChatBody.max_completion_tokens,
+    );
+
+    const pinnedResponsesProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "responses",
+    }, directAmbiguousOptions);
+    assertEquals(
+      pinnedResponsesProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const explicitUndefinedResponseOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_output_tokens: undefined } },
+    };
+    const explicitUndefinedResponseProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "o3",
+    }, explicitUndefinedResponseOptions);
+    const explicitUndefinedResponseBody = buildOpenAIResponsesRequest(
+      "o3",
+      "veryfront-cloud",
+      explicitUndefinedResponseOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(explicitUndefinedResponseBody.max_output_tokens, undefined);
+    assertEquals(explicitUndefinedResponseProjected?.maxOutputTokens, undefined);
+
+    const explicitUndefinedChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_tokens: undefined } },
+    };
+    const explicitUndefinedChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, explicitUndefinedChatOptions);
+    const explicitUndefinedChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      explicitUndefinedChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(explicitUndefinedChatBody.max_completion_tokens, undefined);
+    assertEquals(explicitUndefinedChatProjected?.maxOutputTokens, undefined);
+  });
+
   it("projects numeric native sampling overrides after neutral sampling is dropped", () => {
     const expected = { temperature: 0, topP: 0.6, presencePenalty: -0.2, frequencyPenalty: 0.5 };
     for (const provider of ["openai", "veryfront-cloud"]) {

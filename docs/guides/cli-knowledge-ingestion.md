@@ -72,11 +72,20 @@ veryfront knowledge ingest --path ./bundle --all --okf-bundle
 Bundle mode requires an explicit root and `--all`; it does not accept positional
 sources. Documents retain their metadata, Markdown, links and relative paths,
 including files in hidden directories. Document envelopes are validated before
-upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
-with their relative paths, regardless of filename extension. Unreferenced viewer
-artifacts are excluded. Referenced Markdown companions preserve their bytes even when their contents resemble malformed
-YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log files
-retain document validation and classification. Unreferenced Markdown remains subject to document
+upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter.
+Referenced resource, source, computation, executor and attester companions are preserved with
+their relative paths, regardless of filename extension. Unreferenced viewer artifacts are excluded.
+Companion references are resolved relative to the referencing document when that file exists.
+Leading-slash references resolve from the bundle root.
+
+For legacy bundles whose nested documents use root bundle paths without a leading slash, bundle
+mode preserves the existing root file when no document-relative file exists. This compatibility
+behavior preserves bytes during ingestion and does not rewrite OKF graph semantics.
+
+Project pull writes referenced UTF-8 companions returned for a branch proof without adding their extensions to ordinary push or prune source sync.
+Binary companions remain unsupported and fail with an explicit content error. Referenced Markdown companions preserve their bytes even when their contents resemble
+malformed YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log
+files retain document validation and classification. Unreferenced Markdown remains subject to document
 diagnostics.
 IDs, labels and descriptions in companion objects remain metadata;
 only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.
