@@ -280,8 +280,13 @@ async function deriveConfigurationId(
   },
   variables: Readonly<Record<string, string>>,
 ): Promise<string> {
-  const frame = (value: string) => `${value.length}:${value}`;
-  let canonical = "veryfront-hosted-http-configuration:v2:" + frame(identity.projectId) +
+  // JSON string encoding escapes lone surrogates, so distinct strings stay distinct
+  // after UTF-8 encoding; the length prefix keeps adjacent fields unambiguous.
+  const frame = (value: string) => {
+    const encoded = JSON.stringify(value);
+    return `${encoded.length}:${encoded}`;
+  };
+  let canonical = "veryfront-hosted-http-configuration:v3:" + frame(identity.projectId) +
     frame(identity.projectSlug) + frame(identity.releaseId) + frame(identity.environmentId) +
     frame(identity.environmentName);
   for (const name of Object.keys(variables).sort((a, b) => a.localeCompare(b))) {

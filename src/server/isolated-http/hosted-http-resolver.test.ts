@@ -167,6 +167,20 @@ describe("hosted HTTP resolver", () => {
     assertNotEquals(first.session.request.allocationId, same.session.request.allocationId);
   });
 
+  it("keeps configuration identities distinct for lone surrogates", async () => {
+    const fake = fakeApi();
+    const resolve = createHostedHttpResolver(options({ api: fake.api }));
+    fake.setVariables({ APP_VALUE: "\uD800" });
+    const surrogate = await resolve(authority, signal());
+    fake.setVariables({ APP_VALUE: "\uFFFD" });
+    const replacement = await resolve(authority, signal());
+    assertEquals(surrogate.configuration?.variables.APP_VALUE, "\uD800");
+    assertNotEquals(
+      surrogate.installation.configurationId,
+      replacement.installation.configurationId,
+    );
+  });
+
   it("derives a distinct configuration identity for a renamed slug or environment", async () => {
     // One resolver, so one HMAC key: only the identity fields differ between calls.
     const resolve = createHostedHttpResolver(options({
