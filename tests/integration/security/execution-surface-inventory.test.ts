@@ -18,43 +18,93 @@ const SCANNED_ROOTS = ["src/", "cli/"];
 const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
-/** A call that decides host execution, or a negated capability flag. */
+/**
+ * A call that decides host execution, or a deny-shaped test of the capability flag:
+ * `!allowHostProjectCodeExecution`, `allowHostProjectCodeExecution !== true` or
+ * `allowHostProjectCodeExecution === false`.
+ */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed)\s*\(|!\s*allowHostProjectCodeExecution\b/;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==\s*true|===\s*false)\b/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/;
 
-/** Files that decide whether tenant code may run on the host, and the surface each one guards. */
-const GUARDED_SURFACES: Record<string, { surface: string; guard?: RegExp }> = {
-  "src/discovery/discovery-engine.ts": { surface: "Executable primitive discovery" },
-  "src/discovery/transpiler.ts": { surface: "Discovery module transpilation and import" },
-  "src/routing/api/handler.ts": { surface: "API route ownership and host-realm selection" },
-  "src/routing/api/module-loader/loader.ts": { surface: "API route module loading" },
-  "src/routing/api/route-executor.ts": { surface: "API route execution" },
-  "src/server/dev-server/middleware.ts": { surface: "Local development middleware" },
-  "src/server/handlers/preview/markdown-preview.handler.ts": { surface: "Markdown preview" },
-  "src/server/handlers/request/api/api-handler-wrapper.ts": { surface: "API handler wrapper" },
-  "src/server/handlers/request/api/app-router-handler.ts": { surface: "App router API routes" },
-  "src/server/handlers/request/api/project-discovery.ts": { surface: "Request-time discovery" },
-  "src/server/handlers/request/module/module.handler.ts": { surface: "Module server" },
+/**
+ * Files that decide whether tenant code may run on the host, the surface each one guards,
+ * and how many guards the file holds. Counting guards per file, not lines, keeps the
+ * inventory valid when code moves inside a file, while removing any one guard fails.
+ */
+const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?: RegExp }> = {
+  "src/data/server-data-fetcher.ts": { surface: "Remote server-data execution", guards: 1 },
+  "src/discovery/discovery-engine.ts": { surface: "Executable primitive discovery", guards: 1 },
+  "src/discovery/transpiler.ts": {
+    surface: "Discovery module transpilation and import",
+    guards: 1,
+  },
+  "src/routing/api/handler.ts": {
+    surface: "API route ownership and host-realm selection",
+    guards: 5,
+  },
+  "src/routing/api/module-loader/loader.ts": { surface: "API route module loading", guards: 1 },
+  "src/routing/api/openapi/spec-generator.ts": { surface: "OpenAPI route evaluation", guards: 1 },
+  "src/routing/api/route-executor.ts": { surface: "API route execution", guards: 1 },
+  "src/server/dev-server/middleware.ts": { surface: "Local development middleware", guards: 1 },
+  "src/server/handlers/preview/markdown-preview.handler.ts": {
+    surface: "Markdown preview",
+    guards: 1,
+  },
+  "src/server/handlers/request/api/api-handler-wrapper.ts": {
+    surface: "API handler wrapper",
+    guards: 2,
+  },
+  "src/server/handlers/request/api/app-router-handler.ts": {
+    surface: "App router API routes",
+    guards: 1,
+  },
+  "src/server/handlers/request/api/project-discovery.ts": {
+    surface: "Request-time discovery",
+    guards: 1,
+  },
+  "src/server/handlers/request/module/module.handler.ts": { surface: "Module server", guards: 1 },
   "src/server/handlers/request/openapi.handler.ts": {
     surface: "Runtime OpenAPI generation",
-    guard: /\bisLocalProject\s*!==\s*true\b/,
+    guards: 1,
+    guard: /\bisLocalProject\s*!==\s*true\b/g,
   },
   "src/server/handlers/request/public-agent-metadata.handler.ts": {
     surface: "Public agent metadata",
+    guards: 1,
   },
-  "src/server/handlers/request/public-agents-list.handler.ts": { surface: "Public agent list" },
-  "src/server/handlers/request/rsc/index.ts": { surface: "RSC request handler" },
-  "src/server/handlers/request/snippet.handler.ts": { surface: "Component snippets" },
-  "src/server/handlers/request/ssr/ssr.handler.ts": { surface: "SSR handler" },
-  "src/server/handlers/response/cors.ts": { surface: "CORS preflight route inspection" },
-  "src/server/production-server.ts": { surface: "Startup execution posture" },
-  "src/server/runtime-handler/index.ts": { surface: "Root middleware and hosted ingress" },
-  "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware" },
-  "src/server/services/rendering/ssr.service.ts": { surface: "SSR service" },
-  "src/server/services/rsc/endpoints/endpoint-router.ts": { surface: "RSC server endpoints" },
+  "src/server/handlers/request/public-agents-list.handler.ts": {
+    surface: "Public agent list",
+    guards: 1,
+  },
+  "src/server/handlers/request/rsc/index.ts": { surface: "RSC request handler", guards: 1 },
+  "src/server/handlers/request/snippet.handler.ts": { surface: "Component snippets", guards: 1 },
+  "src/server/handlers/request/ssr/ssr.handler.ts": { surface: "SSR handler", guards: 1 },
+  "src/server/handlers/response/cors.ts": {
+    surface: "CORS preflight route inspection",
+    guards: 2,
+  },
+  "src/server/production-server.ts": { surface: "Startup execution posture", guards: 1 },
+  "src/server/runtime-handler/adapter-factory.ts": {
+    surface: "Preview configuration refresh",
+    guards: 1,
+  },
+  "src/server/runtime-handler/index.ts": {
+    surface: "Root middleware and hosted ingress",
+    guards: 2,
+  },
+  "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware", guards: 1 },
+  "src/server/services/rendering/ssr.service.ts": { surface: "SSR service", guards: 2 },
+  "src/server/services/rsc/endpoints/endpoint-router.ts": {
+    surface: "RSC server endpoints",
+    guards: 1,
+  },
 };
+
+function countGuards(code: string, pattern: RegExp = GUARD): number {
+  return code.match(new RegExp(pattern.source, "g"))?.length ?? 0;
+}
 
 /** Definitions of the predicates themselves are not surfaces. */
 const PREDICATE_DEFINITIONS = new Set(["src/security/project-locality.ts"]);
@@ -118,7 +168,8 @@ describe("execution surface inventory", () => {
     const all = await sources();
     const unlisted = [...all.entries()]
       .filter(([path, code]) =>
-        GUARD.test(code) && !(path in GUARDED_SURFACES) && !PREDICATE_DEFINITIONS.has(path)
+        countGuards(code) > 0 && !(path in GUARDED_SURFACES) &&
+        !PREDICATE_DEFINITIONS.has(path)
       )
       .map(([path]) => path)
       .toSorted();
@@ -132,18 +183,19 @@ describe("execution surface inventory", () => {
 
   it("keeps every inventoried guard in place", async () => {
     const all = await sources();
-    const missing = Object.entries(GUARDED_SURFACES)
-      .filter(([path, entry]) => {
+    const changed = Object.entries(GUARDED_SURFACES)
+      .map(([path, entry]) => {
         const code = all.get(path);
-        return code === undefined || !(entry.guard ?? GUARD).test(code);
+        const found = code === undefined ? "missing file" : countGuards(code, entry.guard);
+        return { path, expected: entry.guards, found };
       })
-      .map(([path]) => path);
+      .filter(({ expected, found }) => found !== expected);
     assertEquals(
-      missing,
+      changed,
       [],
-      "These inventoried files no longer exist or no longer contain their guard. If the file " +
-        "moved, update its path. If the guard was removed, restore it or remove the entry " +
-        "deliberately.",
+      "These inventoried files no longer exist or hold a different number of guards. If the " +
+        "file moved, update its path. If a guard was added, update its count. If a guard was " +
+        "removed, restore it or update the entry deliberately.",
     );
   });
 
