@@ -19,13 +19,14 @@ const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
 /**
- * A call that decides host execution, or any branch on the capability flag:
- * `!allowHostProjectCodeExecution`, a comparison with `true` or `false`, a ternary
- * (`allowHostProjectCodeExecution ? ...`), `if (allowHostProjectCodeExecution)` or
- * `&& allowHostProjectCodeExecution`.
+ * A call that decides host execution, or any read of the capability flag. Object keys
+ * and type annotations (`allowHostProjectCodeExecution:` or `?:`, formatted without a
+ * space) are not reads; literal
+ * grants are tracked separately. Counting every read, whatever its shape, keeps
+ * negations, comparisons, ternaries and conjunctions on any receiver in the inventory.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*[!=]==?\s*(?:true|false)\b|\ballowHostProjectCodeExecution\s*\?(?![.?:])|\bif\s*\(\s*(?:[\w$]+\.)*allowHostProjectCodeExecution\s*\)|&&\s*(?:[\w$]+\.)*allowHostProjectCodeExecution\b(?!\s*[!=]=)/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|\ballowHostProjectCodeExecution\b(?!\??:)/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
@@ -35,33 +36,78 @@ const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
  * inventory valid when code moves inside a file, while removing any one guard fails.
  */
 const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?: RegExp }> = {
-  "src/data/server-data-fetcher.ts": { surface: "Remote server-data execution", guards: 1 },
-  "src/discovery/discovery-engine.ts": { surface: "Executable primitive discovery", guards: 1 },
+  "src/agent/project/agent-runtime.ts": {
+    surface: "Project agent runtime capability",
+    guards: 1,
+  },
+  "src/data/data-fetcher.ts": {
+    surface: "Data fetcher capability",
+    guards: 1,
+  },
+  "src/data/server-data-fetcher.ts": {
+    surface: "Remote server-data execution",
+    guards: 1,
+  },
+  "src/discovery/discovery-engine.ts": {
+    surface: "Executable primitive discovery",
+    guards: 1,
+  },
+  "src/discovery/module-import.ts": {
+    surface: "Discovery module import capability",
+    guards: 1,
+  },
   "src/discovery/project-discovery-config.ts": {
     surface: "Discovery capability normalization",
     guards: 1,
+  },
+  "src/discovery/transpiler.ts": {
+    surface: "Discovery module transpilation and import",
+    guards: 1,
+  },
+  "src/eval/discovery.ts": {
+    surface: "Eval discovery capability",
+    guards: 3,
   },
   "src/rendering/context/render-context.ts": {
     surface: "Render context capability",
     guards: 2,
   },
-  "src/rendering/orchestrator/pipeline.ts": { surface: "Render pipeline capability", guards: 1 },
-  "src/discovery/transpiler.ts": {
-    surface: "Discovery module transpilation and import",
+  "src/rendering/orchestrator/pipeline.ts": {
+    surface: "Render pipeline capability",
+    guards: 5,
+  },
+  "src/rendering/renderer.ts": {
+    surface: "Renderer capability",
     guards: 1,
   },
   "src/routing/api/handler.ts": {
     surface: "API route ownership and host-realm selection",
+    guards: 9,
+  },
+  "src/routing/api/module-loader/loader.ts": {
+    surface: "API route module loading",
+    guards: 1,
+  },
+  "src/routing/api/openapi/spec-generator.ts": {
+    surface: "OpenAPI route evaluation",
+    guards: 1,
+  },
+  "src/routing/api/route-executor.ts": {
+    surface: "API route execution",
     guards: 6,
   },
-  "src/routing/api/module-loader/loader.ts": { surface: "API route module loading", guards: 1 },
-  "src/routing/api/openapi/spec-generator.ts": { surface: "OpenAPI route evaluation", guards: 1 },
-  "src/routing/api/route-executor.ts": { surface: "API route execution", guards: 3 },
+  "src/schedule/discovery.ts": {
+    surface: "Schedule discovery capability",
+    guards: 1,
+  },
   "src/server/context/enriched-context.ts": {
     surface: "Enriched request context capability",
     guards: 1,
   },
-  "src/server/dev-server/middleware.ts": { surface: "Local development middleware", guards: 1 },
+  "src/server/dev-server/middleware.ts": {
+    surface: "Local development middleware",
+    guards: 1,
+  },
   "src/server/handlers/preview/markdown-preview.handler.ts": {
     surface: "Markdown preview",
     guards: 1,
@@ -78,11 +124,13 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
     surface: "Request-time discovery",
     guards: 1,
   },
-  "src/server/handlers/request/module/module.handler.ts": { surface: "Module server", guards: 1 },
-  "src/server/handlers/request/openapi.handler.ts": {
-    surface: "Runtime OpenAPI generation",
+  "src/server/handlers/request/module/module.handler.ts": {
+    surface: "Module server",
     guards: 1,
-    guard: /\bisLocalProject\s*!==\s*true\b/g,
+  },
+  "src/server/handlers/request/project-run-execute.handler.ts": {
+    surface: "Project run execution capability",
+    guards: 2,
   },
   "src/server/handlers/request/public-agent-metadata.handler.ts": {
     surface: "Public agent metadata",
@@ -92,32 +140,86 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
     surface: "Public agent list",
     guards: 1,
   },
-  "src/server/handlers/request/rsc/index.ts": { surface: "RSC request handler", guards: 1 },
-  "src/server/handlers/request/snippet.handler.ts": { surface: "Component snippets", guards: 1 },
-  "src/server/handlers/request/ssr/ssr.handler.ts": { surface: "SSR handler", guards: 1 },
+  "src/server/handlers/request/rsc/index.ts": {
+    surface: "RSC request handler",
+    guards: 1,
+  },
+  "src/server/handlers/request/snippet.handler.ts": {
+    surface: "Component snippets",
+    guards: 1,
+  },
+  "src/server/handlers/request/ssr/ssr.handler.ts": {
+    surface: "SSR handler",
+    guards: 1,
+  },
   "src/server/handlers/response/cors.ts": {
     surface: "CORS preflight route inspection",
     guards: 2,
   },
-  "src/server/production-server.ts": { surface: "Startup execution posture", guards: 3 },
+  "src/server/production-server.ts": {
+    surface: "Startup execution posture",
+    guards: 6,
+  },
   "src/server/runtime-handler/adapter-factory.ts": {
     surface: "Preview configuration refresh",
     guards: 1,
   },
+  "src/server/runtime-handler/handler-context-builder.ts": {
+    surface: "Handler context capability",
+    guards: 2,
+  },
   "src/server/runtime-handler/index.ts": {
     surface: "Root middleware and hosted ingress",
-    guards: 3,
+    guards: 4,
+  },
+  "src/server/runtime-handler/project-middleware.ts": {
+    surface: "Project middleware",
+    guards: 10,
   },
   "src/server/runtime-handler/project-runtime-context.ts": {
     surface: "Project runtime context capability",
-    guards: 1,
+    guards: 2,
   },
-  "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware", guards: 2 },
-  "src/server/services/rendering/ssr.service.ts": { surface: "SSR service", guards: 2 },
-  "src/server/shared/renderer/adapter.ts": { surface: "Renderer adapter capability", guards: 1 },
+  "src/server/services/rendering/ssr.service.ts": {
+    surface: "SSR service",
+    guards: 2,
+  },
   "src/server/services/rsc/endpoints/endpoint-router.ts": {
     surface: "RSC server endpoints",
+    guards: 2,
+  },
+  "src/server/shared/renderer/adapter.ts": {
+    surface: "Renderer adapter capability",
+    guards: 2,
+  },
+  "src/server/startup-discovery.ts": {
+    surface: "Startup discovery capability",
     guards: 1,
+  },
+  "src/task/discovery.ts": {
+    surface: "Task discovery capability",
+    guards: 5,
+  },
+  "src/task/project-runtime.ts": {
+    surface: "Task project runtime capability",
+    guards: 1,
+  },
+  "src/trigger/discovery.ts": {
+    surface: "Trigger discovery capability",
+    guards: 2,
+  },
+  "src/webhook/discovery.ts": {
+    surface: "Webhook discovery capability",
+    guards: 1,
+  },
+  "src/workflow/discovery/workflow-discovery.ts": {
+    surface: "Workflow discovery capability",
+    guards: 2,
+  },
+  "src/server/handlers/request/openapi.handler.ts": {
+    surface: "Runtime OpenAPI generation",
+    guards: 1,
+    guard: /\bisLocalProject\s*!==\s*true\b/g,
   },
 };
 
