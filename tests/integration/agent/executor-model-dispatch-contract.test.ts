@@ -51,6 +51,9 @@ async function connected(
     allowedModelIds,
     scope: { binding, signal: new AbortController().signal, assertActive() {} },
     runEventSink: (event) => {
+      if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+        throw new TypeError("Expected model call context event");
+      }
       events.push(event);
     },
     resolveModelRuntime: () => ({
@@ -211,7 +214,15 @@ describe("hosted executor model request contracts", () => {
       ...buildGoogleGenerateContentRequest("veryfront-cloud", call, createWarningCollector()),
     });
     const channels = await connected("google", build, 32);
-    const schema = {
+    const responseJsonSchema = {
+      type: "object",
+      properties: {
+        n: { type: "integer" },
+        candidateCount: { type: "integer" },
+        best_of: { type: "integer" },
+      },
+    };
+    const legacyResponseSchema = {
       type: "OBJECT",
       properties: {
         n: { type: "INTEGER" },
@@ -226,7 +237,7 @@ describe("hosted executor model request contracts", () => {
             prompt: options.prompt,
             maxOutputTokens: 32,
             providerOptions: {
-              [bucket]: { generationConfig: { maxOutputTokens: 32, responseSchema: schema } },
+              [bucket]: { generationConfig: { maxOutputTokens: 32, responseJsonSchema } },
             },
           };
           if (mode === "generate") await channels.runtime.doGenerate(input);
@@ -237,8 +248,9 @@ describe("hosted executor model request contracts", () => {
             reader.releaseLock();
           }
           assertEquals(
-            (channels.bodies.at(-1)?.generationConfig as Record<string, unknown>).responseSchema,
-            schema,
+            (channels.bodies.at(-1)?.generationConfig as Record<string, unknown>)
+              .responseJsonSchema,
+            responseJsonSchema,
           );
           const multiplied = {
             ...input,
@@ -247,7 +259,7 @@ describe("hosted executor model request contracts", () => {
                 generationConfig: {
                   maxOutputTokens: 32,
                   candidateCount: 2,
-                  responseSchema: schema,
+                  responseJsonSchema,
                 },
               },
             },
@@ -261,6 +273,18 @@ describe("hosted executor model request contracts", () => {
             else await channels.runtime.doStream(multiplied);
           }, Error);
           assertEquals(parseProviderError(error).code, "RESOURCE_LIMIT_EXCEEDED");
+          const legacy = {
+            ...input,
+            providerOptions: {
+              [bucket]: {
+                generationConfig: { maxOutputTokens: 32, responseSchema: legacyResponseSchema },
+              },
+            },
+          };
+          await assertRejects(async () => {
+            if (mode === "generate") await channels.runtime.doGenerate(legacy);
+            else await channels.runtime.doStream(legacy);
+          }, Error);
         }
       }
       assertEquals(channels.bodies.length, 4);
@@ -481,8 +505,16 @@ describe("hosted executor model request contracts", () => {
     }
   });
 
-  it("preserves a native Google response schema with exact neutral control and reasoning values", async () => {
-    const responseSchema = {
+  it("preserves a native Google JSON schema with exact neutral control and reasoning values", async () => {
+    const responseJsonSchema = {
+      type: "object",
+      properties: {
+        contents: { type: "string" },
+        tools: { type: "string" },
+        temperature: { type: "number" },
+      },
+    };
+    const legacyResponseSchema = {
       type: "OBJECT",
       properties: {
         contents: { type: "STRING" },
@@ -512,7 +544,7 @@ describe("hosted executor model request contracts", () => {
         const generationConfig = {
           ...baseline.generationConfig,
           responseMimeType: "application/json",
-          responseSchema,
+          responseJsonSchema,
         };
         await channels.runtime.doGenerate({
           ...options,
@@ -524,13 +556,35 @@ describe("hosted executor model request contracts", () => {
           maxOutputTokens: 12,
           temperature: 0.4,
           reasoning,
+          responseFormat: { type: "json_schema", name: "response", schema: responseJsonSchema },
         });
       }
       await assertRejects(
         async () =>
           await channels.runtime.doGenerate({
             ...options,
-            providerOptions: { google: { generationConfig: { responseSchema } } },
+            reasoning: reasonings[0],
+            providerOptions: { google: { generationConfig: { responseJsonSchema } } },
+          }),
+        Error,
+        "operation-failed",
+      );
+      await assertRejects(
+        async () =>
+          await channels.runtime.doGenerate({
+            ...options,
+            reasoning: reasonings[0],
+            providerOptions: {
+              google: {
+                generationConfig: {
+                  ...buildGoogleGenerateContentRequest("veryfront-cloud", {
+                    ...options,
+                    reasoning: reasonings[0],
+                  }, createWarningCollector()).generationConfig,
+                  responseSchema: legacyResponseSchema,
+                },
+              },
+            },
           }),
         Error,
         "operation-failed",

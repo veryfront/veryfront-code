@@ -641,7 +641,15 @@ describe("hosted executor model dispatch", () => {
   });
 
   it("permits schema properties but rejects generationConfig changes to captured controls", async () => {
-    const responseSchema = {
+    const responseJsonSchema = {
+      type: "object",
+      properties: {
+        messages: { type: "string" },
+        auth: { type: "string" },
+        temperature: { type: "number" },
+      },
+    };
+    const legacyResponseSchema = {
       type: "OBJECT",
       properties: {
         messages: { type: "STRING" },
@@ -649,15 +657,16 @@ describe("hosted executor model dispatch", () => {
         temperature: { type: "NUMBER" },
       },
     };
-    let events = 0;
+    const events: AgentRunModelCallContextEvent[] = [];
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
         grant: grant(),
         allowedModelIds,
         scope: scope(),
-        runEventSink: () => {
-          events++;
+        runEventSink: (event) => {
+          assertModelCallContextEvent(event);
+          events.push(event);
         },
         resolveModelRuntime: () => ({ ...model(() => dispatches++), modelProvider: "google" }),
       }),
@@ -668,7 +677,9 @@ describe("hosted executor model dispatch", () => {
         await runtime.doGenerate({
           prompt,
           providerOptions: {
-            [bucket]: { generationConfig: { maxOutputTokens: 4096, responseSchema } },
+            [bucket]: {
+              generationConfig: { maxOutputTokens: 4096, responseJsonSchema },
+            },
           },
         });
         await runtime.doGenerate({
@@ -677,12 +688,18 @@ describe("hosted executor model dispatch", () => {
           temperature: 0.4,
           providerOptions: {
             [bucket]: {
-              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseSchema },
+              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseJsonSchema },
             },
           },
         });
         for (
-          const generationConfig of [{ responseSchema }, { maxOutputTokens: 13 }, {
+          const generationConfig of [{ responseJsonSchema }, {
+            maxOutputTokens: 12,
+            temperature: 0.4,
+            responseSchema: legacyResponseSchema,
+          }, {
+            maxOutputTokens: 13,
+          }, {
             maxOutputTokens: 12,
             temperature: 1,
           }, { maxOutputTokens: 12, thinkingConfig: { thinkingBudget: 4096 } }]
@@ -700,7 +717,14 @@ describe("hosted executor model dispatch", () => {
           );
         }
       }
-      assertEquals(events, 4);
+      assertEquals(events.length, 4);
+      for (const event of events) {
+        assertEquals(event.request?.responseFormat, {
+          type: "json_schema",
+          name: "response",
+          schema: responseJsonSchema,
+        });
+      }
       assertEquals(dispatches, 4);
     } finally {
       await channels.close();

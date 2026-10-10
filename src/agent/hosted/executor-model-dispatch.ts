@@ -343,10 +343,10 @@ async function acknowledgePersistence<T>(
  * Match the existing durable projection: neutral messages/tools/controls and
  * validated system cache metadata. Provider options and assistant replay
  * metadata remain excluded. The request uses the existing ModelCallRequest
- * subset; toolChoice, responseFormat, and userId are not durable event fields.
- * Reasoning and provider-result assistant content
- * cannot be represented by that contract and refuse hosted dispatch.
- * The broker's local call sequence is not a new durable event field.
+ * subset; toolChoice and userId are not durable event fields.
+ * Provider-result assistant content cannot be represented by that contract and
+ * refuses hosted dispatch. The broker's local call sequence is not a new
+ * durable event field.
  */
 function createContextEvent(
   call: ExecutorModelDispatch,
