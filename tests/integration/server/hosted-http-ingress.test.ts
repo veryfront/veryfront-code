@@ -397,3 +397,51 @@ it("refuses incompatible production startup before discovery, prewarming or list
     });
   }
 });
+
+it("refuses preview HMR, Markdown preview and snippets under isolation without host handlers", async () => {
+  await withEnv({ VERYFRONT_TRUST_FORWARDED_HEADERS: "1" }, async () => {
+    const adapter = createMockAdapter();
+    let hostReads = 0;
+    adapter.fs.readFile = () => {
+      hostReads++;
+      throw new Error("Host project read");
+    };
+    let resolutions = 0;
+    const handler = createVeryfrontHandler("/host", adapter, {
+      projectDir: "/host",
+      config: { fs: { veryfront: { proxyMode: true } } },
+      hostedHttp: {
+        broker: { fetch: () => Promise.reject(new Error("Must not dispatch")) },
+        resolve() {
+          resolutions++;
+          return Promise.reject(new Error("Must not resolve"));
+        },
+      },
+    });
+    const headers = {
+      "x-project-id": identity.projectId,
+      "x-project-slug": identity.projectSlug,
+      "x-release-id": identity.releaseId,
+      "x-environment": "production",
+      "x-environment-id": identity.environmentId,
+      "x-environment-name": identity.environmentName,
+      "x-token": "source-only",
+    };
+    for (
+      const [path, extra] of [
+        ["/_ws", { upgrade: "websocket", connection: "upgrade" }],
+        ["/guide.md", {}],
+        ["/@components/card", {}],
+      ] as const
+    ) {
+      const response = await handler(
+        new Request(`https://app.example${path}`, { headers: { ...headers, ...extra } }),
+      );
+      assertEquals(response.status, 503, path);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      await response.body?.cancel();
+    }
+    assertEquals(resolutions, 0);
+    assertEquals(hostReads, 0);
+  });
+});

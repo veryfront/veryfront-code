@@ -164,6 +164,38 @@ describe("hosted HTTP ingress", () => {
       assertEquals(resolutions, 0);
     });
   }
+  it("refuses preview surfaces unsupported under isolation before lookup", async () => {
+    let resolutions = 0;
+    const fetch = createHostedHttpIngress({
+      broker: {
+        fetch() {
+          throw new Error("Must not allocate");
+        },
+      },
+      resolve() {
+        resolutions++;
+        return Promise.resolve(resolvedInput());
+      },
+    });
+    for (
+      const input of [
+        new Request("https://app.example/docs/readme.md"),
+        new Request("https://app.example/@/components/card.snippet.mdx"),
+        new Request("https://app.example/@components/card"),
+        new Request("https://app.example/_ws", { headers: { upgrade: "websocket" } }),
+      ]
+    ) {
+      const response = await fetch(input, selection);
+      assertEquals(response.status, 503, input.url);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals((await response.json()).detail, "This surface is unsupported under isolation");
+    }
+    assertEquals(
+      (await fetch(request(), { ...selection, mode: "preview" })).status,
+      503,
+    );
+    assertEquals(resolutions, 0);
+  });
   it("redacts failed source resolution and never falls back", async () => {
     const fetch = createHostedHttpIngress({
       broker: {
@@ -238,11 +270,12 @@ describe("hosted HTTP ingress", () => {
         true,
       );
     }
+    // Preview HMR is unsupported under isolation, so the ingress refuses it.
     assertEquals(
       isHostedHttpApplicationRequest(
         new Request("https://app.example/_ws", { headers: { upgrade: "websocket" } }),
       ),
-      false,
+      true,
     );
     assertEquals(
       isHostedHttpApplicationRequest(

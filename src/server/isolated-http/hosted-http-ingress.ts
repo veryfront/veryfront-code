@@ -9,7 +9,8 @@ import {
 } from "#veryfront/channels/control-plane.ts";
 import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { isHMRWebSocketUpgrade, isMonitoringPath } from "../runtime-handler/request-utils.ts";
+import { isMonitoringPath } from "../runtime-handler/request-utils.ts";
+import { markdownPreviewOwnsDocumentPathname } from "../handlers/request/ssr/document-ownership.ts";
 import {
   type InstalledProjectHttpBinding,
   snapshotInstalledProjectHttpBinding,
@@ -29,8 +30,9 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * Proxy mode must have host project execution disabled. Complete project, immutable release,
  * and named environment identities are required; preview branches and failed resolution return
  * a non-cacheable project-execution-unavailable response without host execution fallback.
- * Control-plane routes and native HMR retain their existing handlers. Other WebSocket upgrades
- * are unavailable. The installed application handles its own authentication, CORS and middleware.
+ * Control-plane routes retain their existing handlers. Preview mode, Markdown preview,
+ * component snippets and WebSocket upgrades, including preview HMR, are unsupported under
+ * isolation and refused. The installed application handles its own authentication, CORS and middleware.
  * Source publication, resolver authorization and executor deployment remain caller prerequisites.
  */
 export interface HostedHttpIngressOptions {
@@ -50,18 +52,27 @@ interface IngressSelection extends Partial<InstalledProjectHttpBinding> {
   proxyTrusted: boolean | undefined;
 }
 
-/** Keep framework-owned signed dispatch and native HMR on their existing handlers. */
+/** Keep framework-owned signed dispatch on its existing handlers. */
 export function isHostedHttpApplicationRequest(request: Request): boolean {
   const pathname = new URL(request.url).pathname;
   return !isMonitoringPath(pathname) &&
     !isControlPlaneSurfaceRoute(request.method, pathname) &&
-    !isChannelDispatchRoute(request.method, pathname) &&
-    !(request.method === "GET" && isHMRWebSocketUpgrade(request, pathname));
+    !isChannelDispatchRoute(request.method, pathname);
 }
 
-function unavailable(request: Request): Response {
+/** Preview surfaces with no isolated route. Refused, never served by the host. */
+function isUnsupportedUnderIsolation(request: Request): boolean {
+  const pathname = new URL(request.url).pathname;
+  return isWebSocketUpgrade(request) || markdownPreviewOwnsDocumentPathname(pathname) ||
+    pathname.startsWith("/@/") || pathname.startsWith("/@components/");
+}
+
+function unavailable(
+  request: Request,
+  detail = "An authorized isolated application release is unavailable",
+): Response {
   const response = createErrorResponseFromDefinition(PROJECT_EXECUTION_UNAVAILABLE, {
-    detail: "An authorized isolated application release is unavailable",
+    detail,
     instance: new URL(request.url).pathname,
   });
   response.headers.set("cache-control", "no-store");
@@ -82,9 +93,12 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
   const fetch = options.broker.fetch.bind(options.broker);
   return async (request: Request, selection: IngressSelection): Promise<Response> => {
     request.signal.throwIfAborted();
+    if (isUnsupportedUnderIsolation(request) || selection.mode === "preview") {
+      return unavailable(request, "This surface is unsupported under isolation");
+    }
     if (
       selection.proxyTrusted !== true || selection.mode !== "production" ||
-      !selection.sourceToken || selection.sourceToken.length > 8192 || isWebSocketUpgrade(request)
+      !selection.sourceToken || selection.sourceToken.length > 8192
     ) return unavailable(request);
     const origin = getEffectiveRequestOrigin(request, undefined, true);
     if (!origin) return unavailable(request);
