@@ -2385,6 +2385,111 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertStringIncludes(payload.error, "explicit writable main_branch or preview_branch target");
   });
 
+  // The default executor/parser are real; this publisher models logical output
+  // persistence at the HTTP seam, not API database or staging persistence.
+  for (const cancel of [false, true]) {
+    it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
+      const sources = ["first", "second", "third"];
+      const outputs = new Map<string, string>();
+      const attempts: string[] = [];
+      const held = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let firstAttempt = true;
+      let stoppedAcknowledgements = 0;
+      const execute = async (runId: string, signal?: AbortSignal) => {
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+          runId,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "branch-retained",
+          config: { paths: sources.map((name) => `uploads/${name}.md`) },
+        }, { "x-token": "test-token", "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        const response = await new ProjectRunExecuteHandler().handle(
+          signal ? new Request(signed.request, { signal }) : signed.request,
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(response.response);
+        return await response.response.json();
+      };
+      await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/cancellation-ack")) {
+          stoppedAcknowledgements++;
+          return Response.json({ acknowledged: true });
+        }
+        const download = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md/url`));
+        if (download) {
+          return Response.json({ signed_url: `https://signed.example.test/${download}.md` });
+        }
+        const source = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md`));
+        if (source) {
+          return new Response(`# ${source}\n\nRetained source ${source}.`, {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        const destination = new URL(url);
+        assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
+        const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
+        assertStringIncludes(path, "knowledge/");
+        attempts.push(path);
+        if (firstAttempt && path.endsWith("second.md")) {
+          if (cancel) {
+            const signal = observeFetchRequestInit(init).signal;
+            assertExists(signal);
+            held.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          }
+          return Response.json({ error: "synthetic publication failure" }, { status: 500 });
+        }
+        const content = String(requestJsonBody(init)?.content);
+        outputs.set(path, content);
+        return Response.json({ path });
+      }, async () => {
+        const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
+        if (cancel) {
+          await Promise.race([
+            held.promise,
+            pending.then((result) => {
+              throw new Error(JSON.stringify(result));
+            }),
+          ]);
+          controller.abort(new Error("Run cancelled"));
+        }
+        const failed = await pending;
+        assertEquals(failed.success, false);
+        if (cancel) {
+          assertStringIncludes(failed.error, "Run cancelled");
+          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          assertEquals(outputs.size, 1);
+          assertEquals(stoppedAcknowledgements, 1);
+        } else {
+          assertExists(failed.result, JSON.stringify(failed));
+          assertEquals(failed.result.summary.failed_count, 1);
+          assertEquals(failed.result.summary.ingested_count, 2);
+          assertEquals(outputs.size, 2);
+        }
+        const previous = new Map(outputs);
+        firstAttempt = false;
+        const retried = await execute(`run_retained_retry_${cancel}`);
+        assertEquals(retried.success, true, JSON.stringify(retried));
+        assertEquals(retried.result.summary.ingested_count, 3);
+        assertEquals(outputs.size, 3);
+        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        for (const name of sources) {
+          assertStringIncludes(
+            outputs.get(`knowledge/${name}.md`) ?? "",
+            `Retained source ${name}.`,
+          );
+        }
+        assertStringIncludes(retried.logs, "file_completed");
+      });
+    });
+  }
+
   it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
     const controller = new AbortController();
     const listingStarted = Promise.withResolvers<void>();

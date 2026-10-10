@@ -173,3 +173,106 @@ describe("Node and Bun native extraction process cancellation", () => {
     });
   }
 });
+
+// Exercise the Windows cancellation branch with a real child on this host.
+// A native Windows runner additionally exercises the absolute system executable.
+describe("Windows taskkill command selection", () => {
+  for (
+    const systemRoot of [
+      "D:\\HostWindows",
+      "relative",
+      "\\\\server\\Windows",
+      "\\\\?\\C:\\Windows",
+      "C:\\Windows\\..\\rogue",
+    ]
+  ) {
+    it(`does not execute a PATH taskkill for SystemRoot ${systemRoot}`, {
+      ignore: Deno.build.os === "windows" ||
+        !executables.some(({ execPath, available }) => execPath === "node" && available),
+    }, async () => {
+      const directory = await makeTempDir();
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      const originalPath = process.env.PATH;
+      const originalRoot = process.env.SystemRoot;
+      const marker = `${directory}/rogue-ran`;
+      const trustedMarker = `${directory}/system-taskkill-ran`;
+      const fixture = `${directory}/child.mjs`;
+      const controller = new AbortController();
+      const reason = { kind: "windows command selection" };
+      let childPid: number | undefined;
+      try {
+        await Deno.writeTextFile(
+          fixture,
+          `import process from "node:process"; for await (const _chunk of process.stdin) {} process.stdout.write(JSON.stringify({type:"progress",event:{unit:"file",current:process.pid}})+"\\n"); setInterval(()=>{},1000);`,
+        );
+        await Deno.writeTextFile(
+          `${directory}/taskkill`,
+          `#!/bin/sh\ntouch '${marker}'\nkill -9 "$2"\n`,
+        );
+        await Deno.chmod(`${directory}/taskkill`, 0o755);
+        // On POSIX, this filename lets the actual spawn execute the command chosen
+        // by the Windows branch. Windows resolves that same string as an absolute path.
+        const systemTaskkill = `${directory}/D:\\HostWindows\\System32\\taskkill.exe`;
+        await Deno.writeTextFile(
+          systemTaskkill,
+          `#!/bin/sh\ntouch '${trustedMarker}'\nkill -9 "$2"\n`,
+        );
+        await Deno.chmod(systemTaskkill, 0o755);
+        process.env.PATH = `${directory}:${originalPath ?? ""}`;
+        process.env.SystemRoot = systemRoot;
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        let rejected: unknown;
+        try {
+          await extractWithNativeProcessNode(
+            new ArrayBuffer(0),
+            "text/html",
+            {
+              signal: controller.signal,
+              hardTimeoutMs: 10000,
+              onProgress: (event) => {
+                childPid = event.current;
+                process.env.SystemRoot = "relative-after-start";
+                controller.abort(reason);
+              },
+            },
+            "progress",
+            { execPath: "node", scriptUrl: new URL(`file://${fixture}`) },
+          );
+        } catch (error) {
+          rejected = error;
+        }
+        assertEquals(rejected, reason);
+        assertEquals(typeof childPid, "number");
+        assertEquals(
+          await Deno.stat(marker).then(() => true, (error) => {
+            if (error instanceof Deno.errors.NotFound) return false;
+            throw error;
+          }),
+          false,
+        );
+        assertEquals(
+          await Deno.stat(trustedMarker).then(() => true, (error) => {
+            if (error instanceof Deno.errors.NotFound) return false;
+            throw error;
+          }),
+          systemRoot === "D:\\HostWindows",
+        );
+        let alive = false;
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, 0);
+            alive = true;
+          } catch { /* exited */ }
+        }
+        assertEquals(alive, false);
+      } finally {
+        if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+        if (originalRoot === undefined) delete process.env.SystemRoot;
+        else process.env.SystemRoot = originalRoot;
+        await Deno.remove(directory, { recursive: true });
+      }
+    });
+  }
+});

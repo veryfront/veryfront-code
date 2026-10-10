@@ -1,11 +1,16 @@
 import { fromFileUrl } from "#std/path";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
   LOOPBACK_ALLOW_NET,
   mergeLcovReports,
+  normalizeLcovSourcePaths,
 } from "./coverage-ci.ts";
 
 /**
@@ -51,8 +56,14 @@ describe("coverage CI command", () => {
 
     // The unit suite runs cli/ tests on every shard; before cli/ was included
     // here that coverage was collected and then dropped at report time.
-    assert(args.includes("--include=src/"));
-    assert(args.includes("--include=cli/"));
+    const patterns = args.filter((arg) => arg.startsWith("--include="))
+      .map((arg) => new RegExp(arg.slice("--include=".length)));
+    const root = new URL("../../", import.meta.url).href;
+    assert(patterns.some((pattern) => pattern.test(`${root}src/task.ts`)));
+    assert(patterns.some((pattern) => pattern.test(`${root}cli/router.ts`)));
+    assert(
+      !patterns.some((pattern) => pattern.test("file:///cache/src/task.ts")),
+    );
   });
 
   it("keeps published modules whose name contains 'tests'", () => {
@@ -286,5 +297,60 @@ describe("mergeLcovReports", () => {
         "end_of_record",
       ].join("\n"),
     );
+  });
+});
+
+describe("normalizeLcovSourcePaths", () => {
+  const root = "/checkout/veryfront-code";
+  const existing = new Set(["src/task.ts", "cli/router.ts"]);
+  const options = {
+    repositoryRoot: root,
+    sourceExists: (path: string) => existing.has(path),
+  };
+
+  it("maps current and public-pool checkout roots without changing counters", () => {
+    for (
+      const prefix of [
+        root,
+        "/home/runner/work/veryfront-code/veryfront-code",
+        "/home/runner/_work/veryfront-code/veryfront-code",
+        "D:/a/veryfront-code/veryfront-code",
+      ]
+    ) {
+      const counters = "\nDA:1,3\nBRDA:1,0,0,2\nLF:1\nLH:1\nend_of_record\n";
+      assertEquals(
+        normalizeLcovSourcePaths(
+          `SF:${prefix}/src/task.ts${counters}`,
+          options,
+        ),
+        `SF:src/task.ts${counters}`,
+      );
+    }
+  });
+
+  it("preserves repository-relative sources", () => {
+    assertEquals(
+      normalizeLcovSourcePaths("SF:cli/router.ts\nDA:2,0\n", options),
+      "SF:cli/router.ts\nDA:2,0\n",
+    );
+  });
+
+  it("rejects unknown roots, traversal and missing repository sources", () => {
+    for (
+      const path of [
+        "/cache/src/task.ts",
+        "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
+        "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
+        "../src/task.ts",
+        "src/missing.ts",
+        "/home/runner/_work/other/other/src/task.ts",
+      ]
+    ) {
+      assertThrows(
+        () => normalizeLcovSourcePaths(`SF:${path}\nDA:1,1`, options),
+        Error,
+        "LCOV source",
+      );
+    }
   });
 });

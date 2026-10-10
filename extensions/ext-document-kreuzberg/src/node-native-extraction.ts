@@ -1,6 +1,7 @@
 /** Contain native parser crashes and cancellation in a Node/Bun OS child. */
 import { spawn } from "node:child_process";
 import process from "node:process";
+import { win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   DocumentExtractionOptions,
@@ -11,6 +12,23 @@ import type { NativeExtractionMode } from "./native-extraction.ts";
 export interface NodeExtractionProcessOverrides {
   execPath?: string;
   scriptUrl?: URL;
+}
+
+/** SystemRoot is host OS configuration, not extraction input or executable search PATH. */
+function windowsTaskkillExecutable(): string | undefined {
+  const root = process.env.SystemRoot;
+  if (!root || !/^[a-z]:[\\/]/i.test(root)) return undefined;
+  const parts = root.slice(3).split(/[\\/]/);
+  if (parts.at(-1) === "") parts.pop();
+  if (
+    parts.length === 0 ||
+    parts.some((part) =>
+      !part || part === "." || part === ".." || /[<>:"|?*]/.test(part) ||
+      Array.from(part).some((character) => character.charCodeAt(0) < 32) ||
+      /[. ]$/.test(part)
+    )
+  ) return undefined;
+  return win32.join(root, "System32", "taskkill.exe");
 }
 
 function progressEvent(value: unknown): DocumentExtractionProgressEvent | undefined {
@@ -50,6 +68,8 @@ export async function extractWithNativeProcessNode(
   if (scriptUrl.protocol !== "file:") {
     throw new Error("Native extraction subprocess script is not on disk");
   }
+  // Capture the validated host path before parser callbacks can change environment state.
+  const taskkillExecutable = process.platform === "win32" ? windowsTaskkillExecutable() : undefined;
   const child = spawn(overrides.execPath ?? process.execPath, [
     fileURLToPath(scriptUrl),
     mimeType,
@@ -74,8 +94,8 @@ export async function extractWithNativeProcessNode(
     try {
       if (process.platform !== "win32" && child.pid !== undefined) {
         process.kill(-child.pid, "SIGKILL");
-      } else if (child.pid !== undefined) {
-        const taskkill = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      } else if (child.pid !== undefined && taskkillExecutable !== undefined) {
+        const taskkill = spawn(taskkillExecutable, ["/PID", String(child.pid), "/T", "/F"], {
           stdio: "ignore",
         });
         termination = new Promise<void>((resolve) => {

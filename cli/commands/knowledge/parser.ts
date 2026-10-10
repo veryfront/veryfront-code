@@ -36,6 +36,7 @@ export interface KnowledgeParserInput {
   slug?: string;
   sourceReference?: string;
   okfRelativePath?: string;
+  okfRole?: "companion";
 }
 
 export type ExtractDocumentText = (
@@ -277,12 +278,23 @@ async function preserveOkfCompanion(input: {
   outputDir: string;
   relativePath: string;
   signal?: AbortSignal;
+  sourceReference?: string;
 }): Promise<KnowledgeParserResult> {
   const relativePath = validateOkfCompanionRelativePath(input.relativePath);
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
-  decodeOkfUtf8(relativePath, bytes);
+  const source = decodeOkfUtf8(relativePath, bytes);
+  if (relativePath.toLowerCase().endsWith(".md")) {
+    const inspected = inspectOkfDocument(relativePath, source);
+    // A reference does not demote canonical documents. Unknown explicit types
+    // remain OKF types. Otherwise the explicit artifact role preserves its bytes,
+    // even when its contents resemble malformed YAML frontmatter.
+    if (
+      inspected.kind !== "concept" || "type" in inspected.metadata ||
+      "okf_version" in inspected.metadata
+    ) return await preserveOkfDocument(input);
+  }
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   input.signal?.throwIfAborted();
@@ -600,6 +612,7 @@ export async function runKnowledgeParser(input: {
   slug?: string;
   sourceReference?: string;
   okfRelativePath?: string;
+  okfRole?: "companion";
 }, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult> {
   const [result] = await runKnowledgeParsers({
     files: [{
@@ -608,6 +621,7 @@ export async function runKnowledgeParser(input: {
       slug: input.slug,
       sourceReference: input.sourceReference,
       okfRelativePath: input.okfRelativePath,
+      okfRole: input.okfRole,
     }],
     outputDir: input.outputDir,
   }, deps);
@@ -648,20 +662,22 @@ export async function runKnowledgeParsers(input: {
 
       deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
-        const preserve = file.okfRelativePath.toLowerCase().endsWith(".md")
-          ? preserveOkfDocument({
-            filePath: file.filePath,
-            outputDir: input.outputDir,
-            relativePath: file.okfRelativePath,
-            signal: deps.signal,
-            sourceReference: file.sourceReference,
-          })
-          : preserveOkfCompanion({
-            filePath: file.filePath,
-            outputDir: input.outputDir,
-            relativePath: file.okfRelativePath,
-            signal: deps.signal,
-          });
+        const preserve =
+          file.okfRelativePath.toLowerCase().endsWith(".md") && file.okfRole !== "companion"
+            ? preserveOkfDocument({
+              filePath: file.filePath,
+              outputDir: input.outputDir,
+              relativePath: file.okfRelativePath,
+              signal: deps.signal,
+              sourceReference: file.sourceReference,
+            })
+            : preserveOkfCompanion({
+              filePath: file.filePath,
+              outputDir: input.outputDir,
+              relativePath: file.okfRelativePath,
+              signal: deps.signal,
+              sourceReference: file.sourceReference,
+            });
         results.push(await preserve);
         continue;
       }

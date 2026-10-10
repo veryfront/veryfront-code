@@ -2254,3 +2254,115 @@ it("preserves a UTF-8 BOM-prefixed OKF document byte-for-byte", async () => {
     await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
   }
 });
+
+for (const sourceKind of ["local", "upload"] as const) {
+  it(`preserves referenced plain Markdown companions through ${sourceKind} discovery and real parsing`, async () => {
+    const root = await makeTempDir({ prefix: "veryfront-okf-markdown-companions-" });
+    const bundle = join(root, "bundle");
+    const files = new Map([
+      [
+        "topic.md",
+        "---\ntype: Attested Computation\nresource: assets/resource.md\ncomputation: assets/computation.md\nexecutor: assets/executor.md\nsources:\n  - resource: assets/source.md\n  - resource: concept.md\n  - resource: invalid-concept.md\n  - resource: malformed-concept.md\n  - resource: malformed-version.md\n  - resource: malformed-flow.md\n  - resource: malformed-indented.md\n  - resource: malformed-companion.md\n  - resource: future.md\n  - resource: index.md\n  - resource: log.md\nattester:\n  resource: assets/attester.md\n---\nTopic\n",
+      ],
+      [
+        "assets/resource.md",
+        "---\r\ntitle: Raw companion\r\ncustom: yes\r\n---\r\n# Resource café\r\nPlain Markdown\r\n",
+      ],
+      ["assets/source.md", "# Source 日本語\nRaw source\n"],
+      ["assets/computation.md", "# Computation\nPlain instructions\n"],
+      ["assets/executor.md", "# Executor\nPlain instructions\n"],
+      ["assets/attester.md", "# Attester\nPlain instructions\n"],
+      ["concept.md", "---\ntype: concept\ntitle: Referenced concept\n---\nConcept\n"],
+      ["invalid-concept.md", "---\ntype: []\n---\nInvalid referenced concept\n"],
+      ["invalid-document.md", "No frontmatter, but not a referenced companion\n"],
+      ["malformed-concept.md", "---\ntype: [\n---\nMalformed referenced concept\n"],
+      ["malformed-version.md", "---\nokf_version: [\n---\nMalformed reserved version\n"],
+      ["malformed-flow.md", "---\n{type: [}\n---\nMalformed flow mapping\n"],
+      ["malformed-indented.md", "---\n  type: [\n---\nMalformed indented mapping\n"],
+      ["malformed-companion.md", "---\ntitle: [\n---\nMalformed ordinary metadata\n"],
+      ["future.md", "---\ntype: Custom Future Concept\n---\nUnknown explicit type\n"],
+      ["index.md", "[Topic](topic.md)\n"],
+      ["log.md", "Authored log\n"],
+    ]);
+    // The same malformed bytes remain errors when selected as canonical documents.
+    for (const [path, content] of [...files]) {
+      if (path.startsWith("malformed-")) files.set(`unreferenced-${path}`, content);
+    }
+    try {
+      for (const [path, content] of files) {
+        await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+        await Deno.writeTextFile(join(bundle, path), content);
+      }
+      const remoteRoot = "uploads/bundle";
+      const client = createMockClient({
+        get: () =>
+          Promise.resolve({
+            data: [...files.keys()].map((path) => ({
+              type: "file",
+              path: `${remoteRoot}/${path}`,
+            })),
+            page_info: { next: null },
+          }),
+      });
+      const options = createKnowledgeCommandArgs({
+        path: sourceKind === "local" ? bundle : remoteRoot,
+        all: true,
+        okfBundle: true,
+      });
+      const collection = await collectKnowledgeSources(options, {
+        client,
+        projectSlug: "my-project",
+        downloadUploads: async (paths) =>
+          paths.map((uploadPath) => ({
+            uploadPath,
+            localPath: join(bundle, uploadPath.slice(remoteRoot.length + 1)),
+          })),
+      });
+      const uploaded = new Map<string, Uint8Array>();
+      const result = await ingestResolvedSources(collection.sources, options, {
+        client,
+        projectSlug: "my-project",
+        outputDir: join(root, "output"),
+        runParser: runKnowledgeParser,
+        uploadKnowledgeFile: async (remotePath, localPath) => {
+          uploaded.set(remotePath, await Deno.readFile(localPath));
+          return { path: remotePath };
+        },
+      });
+      assertEquals(result.failed.length, 7);
+      assertEquals(
+        result.failed.every((item) => item.message.includes("OKF document failed diagnostics")),
+        true,
+      );
+      for (const [path, content] of files) {
+        if (path.startsWith("invalid-") || path.startsWith("unreferenced-")) {
+          assertEquals(uploaded.has(`knowledge/${path}`), false);
+        } else {
+          assertEquals(uploaded.get(`knowledge/${path}`), new TextEncoder().encode(content));
+        }
+      }
+      assertEquals(
+        result.ingested.find((item) => item.remotePath === "knowledge/concept.md")?.documentKind,
+        "okf_concept",
+      );
+      assertEquals(
+        result.ingested.find((item) => item.remotePath === "knowledge/future.md")?.documentKind,
+        "okf_concept",
+      );
+      assertEquals(
+        result.ingested.find((item) => item.remotePath === "knowledge/index.md")?.documentKind,
+        "okf_index",
+      );
+      assertEquals(
+        result.ingested.find((item) => item.remotePath === "knowledge/log.md")?.documentKind,
+        "okf_log",
+      );
+      assertEquals(
+        result.ingested.filter((item) => item.remotePath.startsWith("knowledge/assets/")).length,
+        5,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}

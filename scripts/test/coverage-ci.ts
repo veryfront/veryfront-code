@@ -1,3 +1,4 @@
+import { fromFileUrl, toFileUrl } from "#std/path";
 import { walk } from "#std/fs/walk";
 import {
   buildTestProcessEnv,
@@ -67,16 +68,21 @@ export function buildDenoTestCommandArgs(
   ];
 }
 
-export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
+export function buildCoverageCommandArgs(
+  profileDirs: string[],
+  repositoryRoot = fromFileUrl(new URL("../../", import.meta.url)),
+): string[] {
+  const sourceRoot = toFileUrl(repositoryRoot.replace(/[\\/]+$/, "") + "/").href
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [
     "coverage",
     ...profileDirs,
-    "--include=src/",
+    `--include=^${sourceRoot}src/`,
     // cli/ ships as a published export and the unit suite already runs its 184
     // test files on every shard; without this their coverage was collected and
     // then discarded at report time. Adding it puts 267 cli/ source files and
     // 29,263 lines into the report and into the 80% gate.
-    "--include=cli/",
+    `--include=^${sourceRoot}cli/`,
     // `--exclude` takes a regex matched against the file URL, not a glob. Two
     // consequences, both verified against deno 2.7.7:
     //
@@ -94,6 +100,56 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
     "--exclude=/__tests__/",
     "--lcov",
   ];
+}
+
+/** Keep producer checkout identities out of merged coverage source names. */
+export function normalizeLcovSourcePaths(
+  report: string,
+  options: {
+    repositoryRoot: string;
+    sourceExists: (repositoryPath: string) => boolean;
+  },
+): string {
+  const currentRoot =
+    options.repositoryRoot.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+  const producerRoot =
+    /^(?:\/home\/runner\/(?:work|_work)|[A-Za-z]:\/a)\/veryfront-code\/veryfront-code\//;
+  return report.replace(/^SF:([^\r\n]+)$/gm, (_record, rawPath: string) => {
+    const path = rawPath.replace(/\\/g, "/");
+    const relative = path.startsWith(currentRoot)
+      ? path.slice(currentRoot.length)
+      : path.replace(producerRoot, "");
+    if (
+      /^(?:\/|[A-Za-z]:)/.test(relative) ||
+      relative.split("/").some((segment) =>
+        segment === ".." || segment === "." || segment === ""
+      )
+    ) {
+      throw new Error(
+        `LCOV source is outside a recognized repository checkout: ${rawPath}`,
+      );
+    }
+    if (!options.sourceExists(relative)) {
+      throw new Error(
+        `LCOV source does not exist in the repository: ${relative}`,
+      );
+    }
+    return `SF:${relative}`;
+  });
+}
+
+function normalizeRepositoryLcov(report: string): string {
+  return normalizeLcovSourcePaths(report, {
+    repositoryRoot: Deno.cwd(),
+    sourceExists: (path) => {
+      try {
+        return Deno.statSync(path).isFile;
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+        return false;
+      }
+    },
+  });
 }
 
 export function mergeLcovReports(reports: string[]): string {
@@ -322,7 +378,9 @@ async function runShard(args: string[]): Promise<void> {
   }
 
   await clearEmptyCoverageProfileJson(coverageDir);
-  const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
+  const lcov = normalizeRepositoryLcov(
+    await captureDeno(buildCoverageCommandArgs([coverageDir], Deno.cwd())),
+  );
   await clearCoverageProfileJson(coverageDir);
   await Deno.writeTextFile(`${coverageDir}/lcov.info`, lcov);
 }
@@ -349,13 +407,17 @@ async function runMerge(args: string[]): Promise<void> {
   }
 
   const lcov = mergeLcovReports(
-    await Promise.all(lcovFiles.map((path) => Deno.readTextFile(path))),
+    await Promise.all(
+      lcovFiles.map(async (path) =>
+        normalizeRepositoryLcov(await Deno.readTextFile(path))
+      ),
+    ),
   );
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([
     "run",
     "--allow-read",
-    "scripts/lint/check-coverage.ts",
+    fromFileUrl(new URL("../lint/check-coverage.ts", import.meta.url)),
     String(threshold),
   ]);
 }

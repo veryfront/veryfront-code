@@ -756,6 +756,9 @@ export async function ingestResolvedSources(
   }
 
   const okfRelativePaths = buildOkfBundleRelativePaths(sources, options);
+  const okfCompanionPaths = options.okfBundle && options.path
+    ? await collectReferencedOkfCompanionPaths(sources, options.path)
+    : new Set<string>();
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
@@ -818,6 +821,9 @@ export async function ingestResolvedSources(
         slug: slugs[index],
         sourceReference,
         okfRelativePath: okfRelativePaths.get(source),
+        ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
+          ? { okfRole: "companion" as const }
+          : {}),
       }, parserDeps);
       deps.signal?.throwIfAborted();
     } catch (error) {
