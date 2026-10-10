@@ -837,8 +837,7 @@ function resolveAnthropicMaxOutputTokens(
   options: ModelCallRequestSource,
 ): number | undefined {
   const native = readProviderControl(model, options, "max_tokens");
-  const nativeMaxTokens = native ? numberControl(native.value) : undefined;
-  if (nativeMaxTokens !== undefined) return nativeMaxTokens;
+  if (native) return numberControl(native.value);
 
   const baseMaxTokens = resolveAnthropicBaseMaxOutputTokens(model, options);
   const thinkingBudget = resolveAnthropicNeutralThinkingBudget(options.reasoning) ??

@@ -1881,6 +1881,7 @@ describe("runtime-bridge", () => {
 
     assertModelCallContextEvent(recorded);
     assertEquals(recorded.request, {
+      maxOutputTokens: 128_000,
       reasoning: { enabled: true, effort: "high" },
     });
     assertEquals("providerOptions" in (recorded.request ?? {}), false);
@@ -1913,7 +1914,10 @@ describe("runtime-bridge", () => {
     );
 
     assertModelCallContextEvent(recorded);
-    assertEquals(recorded.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+    assertEquals(recorded.request, {
+      maxOutputTokens: 64_000,
+      reasoning: { enabled: true, budgetTokens: 2048 },
+    });
   });
 
   it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
@@ -1955,6 +1959,7 @@ describe("runtime-bridge", () => {
 
       assertModelCallContextEvent(recorded);
       assertEquals(recorded.request, {
+        maxOutputTokens: 64_000,
         reasoning: { enabled: true, budgetTokens: 2048 },
       });
     }
