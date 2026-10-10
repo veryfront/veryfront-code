@@ -91,8 +91,13 @@ const E2E_RSC_BROWSER_FILES = [
   "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
   "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
 ];
+// The shard files split compiled-binary-e2e.suite.ts round-robin and run in
+// parallel against one compiled binary.
 const E2E_BINARY_FILES = [
-  "tests/integration/compiled-binary-e2e.test.ts",
+  "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-3.test.ts",
 ];
 const UNIT_PARALLEL_EXCLUSIONS = new Set([
   ...UNIT_SERIAL_FILES,
@@ -384,7 +389,7 @@ async function selectProfileFiles(
         path.startsWith("tests/") && isDenoDiscoveredTest(path) &&
         !path.startsWith("tests/bun/") &&
         !path.startsWith("tests/e2e/") &&
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !E2E_BINARY_FILES.includes(path)
       );
     case "e2e:rsc-browser":
       return candidates.filter((path) => E2E_RSC_BROWSER_FILES.includes(path));
