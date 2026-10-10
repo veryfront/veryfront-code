@@ -1,3 +1,4 @@
+import { inheritToolResultSource } from "./tool-result-source.ts";
 import { cleanContent, hasValidContent } from "./provider-message-content.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import {
@@ -355,8 +356,15 @@ const WRITE_TOOL_INPUT_NAMES = new Set([
   "write_file",
   "writefile",
   "edit",
+  "veryfront__create_file",
+  "veryfront__createfile",
+  "veryfront__update_file",
+  "veryfront__updatefile",
+  "veryfront__write_file",
+  "veryfront__writefile",
+  "veryfront__edit",
 ]);
-const CHILD_AGENT_TOOL_INPUT_NAMES = new Set(["invoke_agent"]);
+const CHILD_AGENT_TOOL_INPUT_NAMES = new Set(["invoke_agent", "veryfront__invoke_agent"]);
 const DEFAULT_WRITE_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInputRetainedField[] = [{
   outputName: "path",
   inputNames: [
@@ -1401,7 +1409,10 @@ export function maskOldToolOutputs(
         }
       }
 
-      return { ...part, output: wrapToolResultOutput(part.output, masked) };
+      return inheritToolResultSource(part, {
+        ...part,
+        output: wrapToolResultOutput(part.output, masked),
+      });
     });
 
     return copyProviderModelMessageSourceId(msg, { ...msg, content: newContent });

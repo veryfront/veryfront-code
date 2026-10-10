@@ -10,17 +10,16 @@ import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.t
 import {
   createAgentServiceSandboxClient,
   createAgentServiceSandboxTools,
-  createProjectScopedExecOptions,
   unwrapSandboxWorkingDirectoryCommand,
 } from "./agent-service-tools.ts";
 import {
   clearSandboxEnv,
+  commandResponse,
   type FetchCall,
   installMockFetch as createSandboxFetchMock,
   jsonBody,
   jsonResponse,
   type MockResponseEntry,
-  ndjsonResponse,
 } from "./sandbox.test-helpers.ts";
 import {
   installMockFetch as installHostMockFetch,
@@ -68,7 +67,8 @@ function createOkResponse(): Response {
 
 function createCommandPayload(overrides: Record<string, unknown> = {}) {
   return {
-    id: "command-1",
+    command_id: "command-1",
+    command: "echo test",
     status: "running",
     exit_code: null,
     signal: null,
@@ -108,7 +108,7 @@ describe("sandbox/agent-service-tools", () => {
     const { tools } = await createAgentServiceSandboxTools({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
-      projectId: "project-123",
+      projectReference: "project-123",
       createBashTool,
     });
 
@@ -127,14 +127,20 @@ describe("sandbox/agent-service-tools", () => {
     mockFetch([
       createSandboxSessionResponse(),
       createOkResponse(),
-      createOkResponse(),
+      jsonResponse({
+        results: ["a.txt", "b.bin", "c.txt"].map((path) => ({
+          path,
+          status: "written",
+          error: null,
+        })),
+      }),
       createOkResponse(),
     ]);
 
     const sandbox = createAgentServiceSandboxClient({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
-      projectId: "project-123",
+      projectReference: "project-123",
     });
     const writeFiles = sandbox.writeFiles;
     assertExists(writeFiles, "the agent-service sandbox client must expose writeFiles");
@@ -169,7 +175,7 @@ describe("sandbox/agent-service-tools", () => {
     const sandbox = createAgentServiceSandboxClient({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
-      projectId: "project-123",
+      projectReference: "project-123",
     });
     const writeFiles = sandbox.writeFiles;
     assertExists(writeFiles, "the agent-service sandbox client must expose writeFiles");
@@ -183,11 +189,11 @@ describe("sandbox/agent-service-tools", () => {
     assertEquals(fetchCalls.length, 0, "a rejected write entry dispatches no sandbox request");
   });
 
-  it("passes the latest project reference through exec and background-command requests", async () => {
+  it("selects the latest project at creation and uses sandbox scope for commands", async () => {
     mockFetch([
       createSandboxSessionResponse(),
       createOkResponse(),
-      ndjsonResponse([{ type: "stdout", data: "ok" }, { type: "exit", exitCode: 0 }]),
+      commandResponse([{ type: "stdout", data: "ok" }, { type: "exit", exitCode: 0 }]),
       jsonResponse(createCommandPayload()),
       createOkResponse(),
     ]);
@@ -202,13 +208,14 @@ describe("sandbox/agent-service-tools", () => {
     projectId = "project-2";
 
     try {
-      assertEquals(await sandbox.executeCommand("echo ok"), {
+      assertEquals(await sandbox.runCommand("echo ok"), {
         stdout: "ok",
         stderr: "",
         exitCode: 0,
       });
       assertEquals(await sandbox.startBackgroundCommand("npm test"), {
         id: "command-1",
+        command: "echo test",
         status: "running",
         exitCode: null,
         signal: null,
@@ -223,15 +230,17 @@ describe("sandbox/agent-service-tools", () => {
       await sandbox.close();
     }
 
-    assertEquals(jsonBody(fetchCalls, 0), { project_id: "project-2" });
+    assertEquals(jsonBody(fetchCalls, 0), {
+      access_scope: "project",
+      ttl_mode: "default",
+      project_reference: "project-2",
+    });
     assertEquals(jsonBody(fetchCalls, 2), {
       command: "echo ok",
-      projectReference: "project-2",
     });
     assertEquals(jsonBody(fetchCalls, 3), {
       command: "npm test",
       cwd: "/workspace",
-      projectReference: "project-2",
     });
   });
 
@@ -246,7 +255,7 @@ describe("sandbox/agent-service-tools", () => {
     const { closeSandbox, tools } = await createAgentServiceSandboxTools({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
-      projectId: "project-123",
+      projectReference: "project-123",
       createBashTool,
     });
 
@@ -262,7 +271,6 @@ describe("sandbox/agent-service-tools", () => {
     assertEquals(jsonBody(fetchCalls, 2), {
       command: "python3 process_pdf.py",
       cwd: "/workspace",
-      projectReference: "project-123",
     });
   });
 
@@ -272,9 +280,5 @@ describe("sandbox/agent-service-tools", () => {
       "echo ok",
     );
     assertEquals(unwrapSandboxWorkingDirectoryCommand("  echo ok  "), "echo ok");
-    assertEquals(createProjectScopedExecOptions("project-123"), {
-      projectReference: "project-123",
-    });
-    assertEquals(createProjectScopedExecOptions(null), {});
   });
 });

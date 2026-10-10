@@ -486,6 +486,7 @@ describe("cli/sync/ignore", () => {
 
       assertEquals(checker.isSupportedExtension("image.png"), false);
       assertEquals(checker.isSupportedExtension("data.bin"), false);
+      assertEquals(checker.isSupportedExtension("attesters/sql_equality.py"), false);
     });
 
     it("should reject files without extension", () => {

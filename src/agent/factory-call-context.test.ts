@@ -14,6 +14,8 @@ import { agent } from "./index.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { scriptedModel } from "./runtime/model-runtime.test-helpers.ts";
+import { getAvailableTools } from "./runtime/tool-helpers.ts";
+import { hasTrustedPlatformPolicyToolDefinition } from "./runtime/skill-policy-enforcement.ts";
 import type { AgentConfig, RuntimeStateRequest } from "./types.ts";
 
 /** Runs one generate() call through a stub provider and returns the system prompt it saw. */
@@ -346,6 +348,39 @@ describe("agent/factory call context", () => {
       '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("create_file"), false);
+  });
+
+  it("discloses the skill catalog when only the canonical loader is enabled", async () => {
+    registerSkill("canonical-triage", {
+      id: "canonical-triage",
+      metadata: { name: "canonical-triage", description: "Triage support requests" },
+      rootPath: "/test/skills/canonical-triage",
+    });
+    const prompt = await captureFactorySystemPrompt({
+      id: "canonical-catalog",
+      system: "Use matching skills.",
+      skills: ["canonical-triage"],
+      tools: { load_skill: false, veryfront__load_skill: true },
+    });
+    assertStringIncludes(prompt, "<available_skills>");
+    assertStringIncludes(prompt, '"skillId":"canonical-triage"');
+  });
+
+  it("marks factory-registered shared skill tools as trusted platform policy tools", async () => {
+    agent({
+      id: "trusted-shared-skill-tools",
+      system: "Use skills.",
+      tools: true,
+      skills: true,
+    });
+
+    const definitions = await getAvailableTools(true, {
+      includeSkillTools: true,
+      strictConfiguredToolsOnly: true,
+    });
+    const loadSkill = definitions.find((definition) => definition.name === "load_skill");
+
+    assertEquals(hasTrustedPlatformPolicyToolDefinition(loadSkill), true);
   });
 
   it("preserves skill tool metadata when the direct factory selects that tool", async () => {

@@ -22,6 +22,7 @@ import { DurableRunEventPersistenceError } from "../conversation/private-run-eve
 import { hasCompletedStepSignal, isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { hasHostedAgentPauseStopped } from "./manual-pause-credential.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/index.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -37,6 +38,8 @@ import {
   getEmptyHostedFinalizedMessageTerminalError,
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
+
+const pauseLogger = getBaseLogger("Agent pause");
 
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
 
@@ -55,6 +58,11 @@ export type HostedChatFinalizationCommon = {
   streamError?: unknown | null;
 };
 
+type HostedDetachedTerminalContext = {
+  isAborted: boolean;
+  streamError?: unknown | null;
+};
+
 export type FinalizeHostedChatRunInput =
   & HostedChatFinalizationCommon
   & (
@@ -64,6 +72,7 @@ export type FinalizeHostedChatRunInput =
       isAborted: boolean;
       mirroredDurableOutput: boolean;
       mirroredMessage?: ChatUiMessage;
+      resolveTerminalContext?: () => HostedDetachedTerminalContext;
     }
   );
 
@@ -464,6 +473,7 @@ export async function finalizeHostedChatRun(
   input: FinalizeHostedChatRunInput,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    pauseLogger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
     if (input.streamError) {
       invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, input.streamError);
     }
@@ -479,6 +489,28 @@ export async function finalizeHostedChatRun(
     return;
   }
   const finalStep = await getLastStreamStep(input.streamResult);
+  const terminalContext = input.kind === "detached" && input.resolveTerminalContext
+    ? input.resolveTerminalContext()
+    : { isAborted: input.isAborted, streamError: input.streamError };
+  const isAborted = terminalContext.isAborted;
+  const streamError = terminalContext.streamError;
+
+  if (hasHostedAgentPauseStopped(input.lifecycleAdapter)) {
+    pauseLogger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
+    if (streamError) {
+      invalidateHostedAgentPauseSettlement(input.lifecycleAdapter, streamError);
+    }
+    try {
+      const snapshot = await input.lifecycleAdapter.durableRunMirror?.flush();
+      recordHostedAgentPauseMirrorSnapshot(input.lifecycleAdapter, snapshot);
+    } catch (error) {
+      recordHostedAgentPauseFlush(input.lifecycleAdapter, false);
+      input.logger?.error("Paused agent output could not be flushed", { error: String(error) });
+    } finally {
+      await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
+    }
+    return;
+  }
 
   let ownershipCorrections: ConversationRunEvent[] = [];
   let fallbackChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
@@ -496,14 +528,14 @@ export async function finalizeHostedChatRun(
       persistedMessage: state.persistedMessage,
       finalizedMessage: state.finalizedMessage,
       mirroredToolChunkState: input.mirroredToolChunkState,
-      isAborted: input.isAborted,
+      isAborted,
     });
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = state.metadata;
     emptyFailure = state.fallbackChunks.length === 0 &&
       shouldFailEmptyHostedFinalizedMessage({
-        isAborted: input.isAborted,
+        isAborted,
         message: state.finalizedMessage,
       });
     hasOutput = true;
@@ -515,6 +547,7 @@ export async function finalizeHostedChatRun(
       : input.mirroredDurableOutput;
     const state = createHostedChatFinalizeDetachedBuildState({
       ...input,
+      isAborted,
       mirroredDurableOutput: hasMirroredContent,
     })(finalStep);
 
@@ -528,13 +561,13 @@ export async function finalizeHostedChatRun(
         persistedMessage: input.mirroredMessage,
         finalizedMessage: state.finalizedMessage,
         mirroredToolChunkState: input.mirroredToolChunkState,
-        isAborted: input.isAborted,
+        isAborted,
       });
     }
     fallbackChunks = state.fallbackChunks;
     hasIncompleteToolParts = state.hasIncompleteToolParts;
     metadata = undefined;
-    emptyFailure = !input.isAborted && !hasMirroredContent && !state.hasContent;
+    emptyFailure = !isAborted && !hasMirroredContent && !state.hasContent;
     hasOutput = hasMirroredContent || state.hasContent;
   }
 
@@ -543,7 +576,7 @@ export async function finalizeHostedChatRun(
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
-      streamError: input.streamError,
+      streamError,
       metadata,
     });
     await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
@@ -562,7 +595,7 @@ export async function finalizeHostedChatRun(
   );
   const mirrorDrained = await flushMirror(input.lifecycleAdapter);
 
-  if (!input.isAborted && !mirrorDrained) {
+  if (!isAborted && !mirrorDrained) {
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
@@ -578,16 +611,16 @@ export async function finalizeHostedChatRun(
 
   if (
     shouldFailStreamError({
-      isAborted: input.isAborted,
+      isAborted,
       hasOutput,
       finalStep,
-      streamError: input.streamError,
+      streamError,
     })
   ) {
     await dispatchFailedTerminalError({
       lifecycleAdapter: input.lifecycleAdapter,
       finalStep,
-      streamError: input.streamError,
+      streamError,
       metadata,
     });
     await cleanupAfterFinalization({ cleanup: input.cleanup, logger: input.logger });
@@ -595,7 +628,7 @@ export async function finalizeHostedChatRun(
   }
 
   const terminalState = resolveTerminalState({
-    isAborted: input.isAborted,
+    isAborted,
     hasIncompleteToolParts,
   });
   await dispatchTerminalState({

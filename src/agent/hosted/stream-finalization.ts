@@ -161,6 +161,7 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
   options: FinalizeHostedResponseOptions<TMessage, TChunk>,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    logger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
     if (options.streamError) {
       invalidateHostedAgentPauseSettlement(options.dispatchTerminalState, options.streamError);
     }
@@ -242,6 +243,7 @@ export async function finalizeHostedDetached<TChunk>(
   options: FinalizeHostedDetachedOptions<TChunk>,
 ): Promise<void> {
   if (hasHostedAgentPauseStopped(options.dispatchTerminalState)) {
+    logger.info("Agent run stopped at a pause boundary; leaving it nonterminal");
     if (options.streamError) {
       invalidateHostedAgentPauseSettlement(options.dispatchTerminalState, options.streamError);
     }

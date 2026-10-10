@@ -1,4 +1,5 @@
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -20,7 +21,15 @@ import {
   parseToolArgs,
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
+import {
+  enforceSkillPolicy,
+  hasTrustedPlatformPolicyToolDefinition,
+} from "./skill-policy-enforcement.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import {
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 /**
  * Remote integration discovery goes through `guardedOutboundFetch`, which reads
@@ -677,6 +686,33 @@ describe("tool-helpers", () => {
       assertEquals(definitions.map((definition) => definition.name), ["allowed_lookup"]);
     });
 
+    it("hides provider-schema-hidden local tools unless the runtime planner opts in", async () => {
+      const hiddenTool = markTrustedHostToolProvenance(
+        markRuntimeProviderSchemaHiddenTool(tool({
+          id: "load_skill",
+          description: "Hidden legacy platform loader",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: async () => ({ ok: true }),
+        })),
+      );
+
+      assertEquals(
+        await getAvailableTools({ load_skill: hiddenTool }, { includeIntegrationTools: false }),
+        [],
+      );
+
+      const [definition] = await getAvailableTools(
+        { load_skill: hiddenTool },
+        {
+          includeIntegrationTools: false,
+          includeProviderSchemaHiddenTools: true,
+        },
+      );
+      assertEquals(definition?.name, "load_skill");
+      assertEquals(isRuntimeProviderSchemaHiddenTool(definition), true);
+      assertEquals(hasTrustedPlatformPolicyToolDefinition(definition), true);
+    });
+
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
       toolRegistryInternal.clearAll();
 
@@ -1127,6 +1163,36 @@ describe("tool-helpers", () => {
         );
       });
     }
+
+    it("carries trusted registry ownership onto tools:true platform policy definitions", async () => {
+      toolRegistryInternal.clearAll();
+
+      try {
+        toolRegistryInternal.register(
+          "form_input",
+          markTrustedHostToolProvenance(tool({
+            id: "form_input",
+            description: "Trusted platform form",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ submitted: true }),
+          })),
+        );
+
+        const defs = await getAvailableTools(true, { includeIntegrationTools: false });
+        const formInput = defs.find((def) => def.name === "form_input");
+
+        assertEquals(hasTrustedPlatformPolicyToolDefinition(formInput), true);
+        assertEquals(
+          enforceSkillPolicy("form_input", {
+            hasSubmittedFormInput: true,
+            toolDefinition: formInput,
+          }).allowed,
+          false,
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
       toolRegistryInternal.clearAll();

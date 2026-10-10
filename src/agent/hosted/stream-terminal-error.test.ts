@@ -245,6 +245,36 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage keeps tool output beside runtim
   );
 });
 
+Deno.test("shouldFailEmptyHostedFinalizedMessage fails responses carrying only runtime context", () => {
+  const runtimeContext = {
+    type: "data-veryfront.runtime_context",
+    data: { currentDateUtc: "2026-10-08" },
+  };
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: { parts: [{ type: "step-start" }, runtimeContext, runtimeContext] },
+    }),
+    true,
+  );
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: true,
+      message: { parts: [runtimeContext] },
+    }),
+    false,
+  );
+  for (const visible of [{ type: "text", text: "Done" }, { type: "data-progress", data: {} }]) {
+    assertEquals(
+      shouldFailEmptyHostedFinalizedMessage({
+        isAborted: false,
+        message: { parts: [runtimeContext, visible] },
+      }),
+      false,
+    );
+  }
+});
+
 Deno.test("getEmptyHostedFinalizedMessageTerminalError prefers a real terminal error from final step response body", () => {
   assertEquals(
     getEmptyHostedFinalizedMessageTerminalError({

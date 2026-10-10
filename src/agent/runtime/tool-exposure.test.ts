@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import { tool, type ToolDefinition } from "#veryfront/tool";
 import {
   createToolExposureCheckpoint,
   createToolExposurePlan,
@@ -10,6 +10,10 @@ import {
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
 } from "./tool-exposure.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 function definition(
   name: string,
@@ -26,6 +30,22 @@ function definition(
       },
     },
   };
+}
+
+function hiddenDefinition(
+  name: string,
+  description: string,
+  parameterDescription = `${name} unique parameter`,
+): ToolDefinition {
+  return inheritRuntimeProviderSchemaHiddenTool(
+    markRuntimeProviderSchemaHiddenTool(tool({
+      id: name,
+      description,
+      inputSchema: { type: "object", properties: {} },
+      execute: () => ({}),
+    })),
+    definition(name, description, parameterDescription),
+  );
 }
 
 const catalog = [
@@ -115,6 +135,47 @@ it("tool exposure plans eager and deferred visibility deterministically", () => 
   assertEquals(
     deferred.deferred.map((tool) => tool.name),
     ["archive_release", "create_release", "form_input", "get_release"],
+  );
+});
+
+it("keeps hidden provider-schema aliases authorized but out of model exposure", () => {
+  const state = createToolExposureState(["load_skill"]);
+  const hiddenLegacyLoader = hiddenDefinition("load_skill", "Hidden legacy loader");
+  const canonicalLoader = definition("veryfront__load_skill", "Canonical loader");
+  const deferredProjectTool = definition("project_loader", "Project loader");
+  const plan = createToolExposurePlan({
+    authorized: [hiddenLegacyLoader, canonicalLoader, deferredProjectTool],
+    bootstrapToolNames: new Set(["veryfront__load_skill"]),
+    mode: "deferred",
+    state,
+  });
+
+  assertEquals(plan.authorized.map((entry) => entry.name), [
+    "load_skill",
+    "veryfront__load_skill",
+    "project_loader",
+  ]);
+  assertEquals(plan.visible.map((entry) => entry.name), [
+    TOOL_SEARCH_TOOL_NAME,
+    "veryfront__load_skill",
+  ]);
+  assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
+  assertEquals(
+    searchToolExposure({
+      query: "legacy loader",
+      available: plan.visible,
+      authorized: plan.deferred,
+      state,
+    }).matches,
+    [],
+  );
+  assertEquals(createToolExposureCheckpoint(plan.authorized, state).loadedToolNames, []);
+  assertEquals(
+    [
+      ...restoreToolExposureState({ version: 2, loadedToolNames: ["load_skill"] }, plan.authorized)
+        .loadedToolNames,
+    ],
+    [],
   );
 });
 
@@ -707,6 +768,24 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
 });
 
+it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
+  const state = createToolExposureState();
+
+  const plan = createToolExposurePlan({
+    authorized: [
+      definition("veryfront__load_skill", "Load a configured skill"),
+      definition("other_tool", "Other deferred tool"),
+    ],
+    mode: "deferred",
+    state,
+  });
+
+  assertEquals(
+    plan.visible.map((tool) => tool.name),
+    [TOOL_SEARCH_TOOL_NAME, "veryfront__load_skill"],
+  );
+});
+
 it("deferred exposure prunes revoked and bootstrap names before budget eviction", () => {
   const retained = definition("retained_tool", "Retained deferred tool");
   const authorized = [
@@ -1102,6 +1181,93 @@ it("tool search matches a canonical namespace as a whole token", () => {
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
     ["get_integration"],
+  );
+});
+
+it("tool search falls back to the local id when a canonical query has no integration match", () => {
+  const authorized = [
+    definition("list_files", "List project files"),
+    definition("list_files_archive", "List archived files"),
+    definition("github__list_files", "List files in a GitHub repository"),
+    definition("veryfront_list_files", "A local tool that only shares normalized text"),
+  ];
+  for (const query of ["veryfront__list_files", "VERYFRONT__LIST_FILES"]) {
+    const state = createToolExposureState();
+    const result = searchToolExposure({ query, authorized, state });
+    assertEquals(result.matches.map((match) => match.name), ["list_files"], query);
+    assertEquals(result.loadedCount, 1);
+    assertEquals([...state.loadedToolNames], ["list_files"]);
+  }
+
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list_files",
+      authorized: [],
+      available: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).matches,
+    [{ name: "list_files", description: "List project files", status: "available" }],
+  );
+});
+
+it("tool search never strips a non-platform namespace onto a local tool", () => {
+  // Only `veryfront__` aliases local platform tools. Another namespace with no
+  // integration evidence is a miss, not a project tool that happens to share the id.
+  for (const query of ["github__list_files", "jira__list_files", "GITHUB__LIST_FILES"]) {
+    const state = createToolExposureState();
+    const result = searchToolExposure({
+      query,
+      authorized: [definition("list_files", "List project files")],
+      available: [definition("read_file", "Read a project file")],
+      state,
+    });
+    assertEquals(result.miss, true, query);
+    assertEquals(result.matches, [], query);
+    assertEquals([...state.loadedToolNames], [], query);
+  }
+  assertEquals(
+    searchToolExposure({
+      query: "github__list_files",
+      authorized: [],
+      available: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).matches,
+    [],
+  );
+});
+
+it("tool search keeps integration evidence ahead of the local id fallback", () => {
+  // A namespace with real evidence is discovery, not a mistyped local id.
+  assertEquals(
+    searchToolExposure({
+      query: "jira__list_files",
+      authorized: [
+        definition("list_files", "List project files"),
+        definition("jira__list_projects", "List Jira projects on a site"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["jira__list_projects"],
+  );
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list_files",
+      authorized: [
+        definition("list_files", "List project files"),
+        definition("veryfront__list_projects", "List Veryfront projects"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["veryfront__list_projects"],
+  );
+  // A malformed canonical query has no local id to fall back to.
+  assertEquals(
+    searchToolExposure({
+      query: "veryfront__list__files",
+      authorized: [definition("list_files", "List project files")],
+      state: createToolExposureState(),
+    }).miss,
+    true,
   );
 });
 

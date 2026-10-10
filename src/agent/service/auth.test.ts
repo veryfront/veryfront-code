@@ -387,6 +387,34 @@ describe("agent/agent-service-auth", () => {
     }
   });
 
+  it("returns only a valid signed tool exposure checkpoint digest for the exact writer run", async () => {
+    for (const digest of ["b".repeat(64), "B".repeat(64), "b".repeat(63), 1]) {
+      const fixture = await createRs256JwtFixture({
+        ...apiRunEventWriterContract.payload,
+        toolExposureCheckpointSha256: digest,
+      });
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      assertEquals(
+        await auth.verifyRunEventAppendToken({
+          token: fixture.token,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "run_1",
+        }),
+        digest === "b".repeat(64)
+          ? { verified: true, toolExposureCheckpointSha256: digest }
+          : { verified: false },
+      );
+    }
+  });
+
   it("returns the integration tool grant carried by the signed payload", async () => {
     const grantFixture = await createRs256JwtFixture({
       ...apiRunEventWriterContract.payload,

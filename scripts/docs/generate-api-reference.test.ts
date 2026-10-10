@@ -238,6 +238,12 @@ describe("generate-api-reference", () => {
       );
       await assertGeneratedReferenceIsFormatted(outputDir);
 
+      const sandboxReference = await Deno.readTextFile(`${outputDir}/veryfront/sandbox.md`);
+      const sandboxOptionsTable = sandboxReference.split("### `SandboxOptions`")[1]?.split("### ")[0] ?? "";
+      assertStringIncludes(sandboxOptionsTable, "apiUrl");
+      assertStringIncludes(sandboxOptionsTable, "authToken");
+      assertStringIncludes(sandboxOptionsTable, "projectReference");
+
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
       );

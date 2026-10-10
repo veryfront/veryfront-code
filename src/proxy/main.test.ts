@@ -148,7 +148,7 @@ describe("proxy main request URL parsing", () => {
     );
     assertStringIncludes(
       source,
-      "proxyRequestDrainTracker.completeOnResponseEnd(requestId, response)",
+      "proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response)",
     );
 
     // The call must carry the configured drain budget: waiting for zero would

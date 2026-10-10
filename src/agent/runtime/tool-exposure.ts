@@ -22,6 +22,7 @@ import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 const ArraySort = Array.prototype.sort;
@@ -39,11 +40,17 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
   return ReflectApply(SetHas, set, [value]);
 }
 
+function isProviderSchemaVisibleToolDefinition(tool: ToolDefinition): boolean {
+  return !isRuntimeProviderSchemaHiddenTool(tool);
+}
+
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill", "veryfront__load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
+/** The platform's own namespace, which models also use as an alias for local platform tools. */
+const PLATFORM_TOOL_NAMESPACE = "veryfront";
 /** Which field a query term matched on, strongest evidence first. */
 type ToolSearchMatchField = "exactName" | "name" | "description" | "parameterDescription";
 
@@ -386,6 +393,7 @@ function collectSearchCandidates(input: {
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
       if (!hasOwn(tools, toolIndex)) continue;
       const tool = tools[toolIndex]!;
+      if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
       const snapshot = snapshotSearchableTool(tool, status, budget);
@@ -547,7 +555,30 @@ function rankToolExposureMatches(input: {
           (description) => testPrivateRegExp(namespacePattern, description),
         );
     });
-    return rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
+    const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
+    if (
+      namespaceMatches.length > 0 || canonicalName === null ||
+      canonical.namespace !== PLATFORM_TOOL_NAMESPACE
+    ) {
+      return namespaceMatches;
+    }
+
+    // With no integration evidence at all, models often prefix a platform tool with
+    // the platform namespace (`veryfront__list_files`). Only that reserved namespace
+    // aliases local tools: `github__list_files` must never load a project's own
+    // `list_files`. Match the exact local id only; a normalized phrase match would
+    // reintroduce `veryfront_list_files`.
+    const localId = privateTextSlice(canonicalName, canonical.namespace.length + 2);
+    return sortSearchItems(
+      mapPrivateArray(
+        filterPrivateArray(
+          candidates,
+          (candidate) => privateTextToLowerCase(candidate.name) === localId,
+        ),
+        toSearchMatch,
+      ),
+      compareToolSearchMatches,
+    );
   }
 
   // The query taken whole is the strongest signal for every non-canonical query.
@@ -627,7 +658,7 @@ export function createToolExposurePlan(input: {
   if (input.mode === "eager") {
     return {
       authorized,
-      visible: authorized,
+      visible: filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
       deferred: [],
       loadedToolNames: input.state.loadedToolNames,
     };
@@ -644,6 +675,7 @@ export function createToolExposurePlan(input: {
   const loadableNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
     else {
       loadable[loadable.length] = tool;
@@ -662,6 +694,7 @@ export function createToolExposurePlan(input: {
   const visibleNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
       visible[visible.length] = tool;
       ReflectApply(SetAdd, visibleNames, [tool.name]);
@@ -751,7 +784,12 @@ export function createToolExposureCheckpoint(
   authorized: readonly ToolDefinition[],
   state: ToolExposureState,
 ): ToolExposureCheckpoint {
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   return {
     version: 2,
     loadedToolNames: filterPrivateArray(
@@ -790,7 +828,12 @@ export function restoreToolExposureState(
     return createToolExposureState();
   }
 
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   const loadedToolNames = filterPrivateArray(
     checkpoint.loadedToolNames,
     (name) => authorizedNames.has(name),

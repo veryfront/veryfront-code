@@ -18,6 +18,7 @@ const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; 
     { code: "INSUFFICIENT_CREDITS", status: 402 },
     { code: "RESOURCE_LIMIT_EXCEEDED", status: 402 },
     { code: "OVERLOADED_ERROR", status: 503 },
+    { code: "ai_provider_spend_check_unavailable", status: 503 },
     { code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED", status: 402 },
     { code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED", status: 502 },
     { code: "AI_PROVIDER_BILLING_ERROR", status: 502 },
@@ -62,6 +63,15 @@ function durableRequest(): ParsedHostedChatRequest {
 }
 
 describe("executor errors at hosted setup response boundaries", () => {
+  it("preserves fixed protocol failure wording through hosted error snapshots", () => {
+    const error = new ExecutorAgentError("PROVIDER_STREAM_PROTOCOL_ERROR");
+    const message =
+      "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.";
+    assertEquals(error.message, message);
+    assertEquals(error.toRFC9457().title, message);
+    assertEquals(serializeLogError(error)?.message, message);
+  });
+
   it("serializes fixed authentication diagnostics across logger boundaries", () => {
     const error = new ExecutorAgentError("agent-provider-auth-error");
     assertEquals(serializeLogError(error)?.message, "Agent provider authentication failed");

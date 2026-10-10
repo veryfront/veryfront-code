@@ -148,6 +148,7 @@ export function shouldFailEmptyHostedFinalizedMessage(input: {
   isAborted: boolean;
   message: { parts: ReadonlyArray<unknown> };
 }): boolean {
+  // Step markers, runtime context and blank text/reasoning are framing, not an assistant response.
   return !input.isAborted &&
     input.message.parts.every((part) =>
       isRecord(part) &&

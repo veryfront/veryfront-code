@@ -27,13 +27,15 @@ import {
   parseCommaSeparatedFlag,
 } from "./runtime-e2e-helpers.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  inlinePublicPoolJobs,
+  PUBLIC_POOL_WORKFLOW_REF,
+} from "../ci/public-pool-jobs.ts";
 
 const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
 const FLOW_TEST_PATH = "scripts/test/runtime-inference-critical-flow.test.ts";
 const FLOW_HARNESS_PATH = "scripts/test/runtime-inference-critical-flow.ts";
-const PUSH_MERGE_GROUP_UBUNTU_RUNNER =
-  "${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}";
 const REPO_ROOT = new URL("../../", import.meta.url);
 
 function anthropicRequest(overrides: {
@@ -827,8 +829,12 @@ describe("runtime inference critical-flow CI contract", () => {
       "cicd workflow",
     );
     const jobs = yamlRecord(workflow.jobs, "cicd workflow jobs");
-    const job = yamlRecord(
+    const caller = yamlRecord(
       jobs["tests-runtime-critical-flow"],
+      "tests-runtime-critical-flow job",
+    );
+    const job = yamlRecord(
+      (await inlinePublicPoolJobs(workflow))["tests-runtime-critical-flow"],
       "tests-runtime-critical-flow job",
     );
 
@@ -838,9 +844,9 @@ describe("runtime inference critical-flow CI contract", () => {
       "Runtime critical-flow job should expose stable matrix check names",
     );
     assertEquals(
-      job["runs-on"],
-      PUSH_MERGE_GROUP_UBUNTU_RUNNER,
-      "Runtime critical-flow job should use the standard Ubuntu runner expression",
+      caller.uses,
+      PUBLIC_POOL_WORKFLOW_REF,
+      "Runtime critical-flow job should run through the main-pinned runner pool workflow",
     );
     assertEquals(
       job["timeout-minutes"],
@@ -880,8 +886,10 @@ describe("runtime inference critical-flow CI contract", () => {
     assert(
       steps.some((step) =>
         step.name === "Run runtime critical flow" &&
+        yamlRecord(step.env, "runtime flow env").RUNTIME ===
+          "${{ matrix.runtime }}" &&
         step.run ===
-          "deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility"
+          'deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime="${RUNTIME}" --packed-dir=dist/npm-compatibility'
       ),
       "Runtime critical-flow job should consume the canonical artifact for the matrix runtime",
     );

@@ -25,11 +25,64 @@ const CHAT_UPLOAD_PREFIX_RE =
   /^chat-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d+-[a-z0-9]+-/i;
 
 export function normalizeKnowledgeInputPath(inputPath: string): string {
+  const rawPath = inputPath.replace(/\\/g, "/");
   const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
-  if (!normalizedPath || normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
+  if (
+    rawPath.split("/").includes("..") || !normalizedPath || normalizedPath.startsWith("..") ||
+    normalizedPath.startsWith("/") || normalizedPath.split("/").includes("..")
+  ) {
     throw INVALID_ARGUMENT.create({ detail: `Invalid knowledge input path: ${inputPath}` });
   }
   return normalizedPath;
+}
+
+export function normalizeKnowledgeRelativePath(
+  inputPath: string,
+  label = "knowledge relative path",
+): string {
+  const rawPath = inputPath.replace(/\\/g, "/");
+  const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
+  if (
+    rawPath.split("/").includes("..") || !normalizedPath || normalizedPath.startsWith("..") ||
+    normalizedPath.startsWith("/") || normalizedPath.split("/").includes("..")
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: `Invalid ${label}: ${inputPath}` });
+  }
+  return normalizedPath;
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function relativeToNormalizedPrefix(path: string, prefix: string): string {
+  const normalizedPath = normalizeKnowledgeInputPath(path);
+  const normalizedPrefix = stripTrailingSlash(normalizeKnowledgeInputPath(prefix));
+  if (normalizedPath === normalizedPrefix) {
+    throw INVALID_ARGUMENT.create({
+      detail: `OKF bundle source is the bundle root, not a file: ${path}`,
+    });
+  }
+  if (!normalizedPath.startsWith(`${normalizedPrefix}/`)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `OKF bundle source is outside declared bundle root: ${path}`,
+    });
+  }
+  return normalizeKnowledgeRelativePath(
+    normalizedPath.slice(normalizedPrefix.length + 1),
+    "OKF bundle relative path",
+  );
+}
+
+export function deriveOkfBundleRelativePath(source: KnowledgeSource, bundleRoot: string): string {
+  if (source.kind === "upload") {
+    return relativeToNormalizedPrefix(source.uploadPath, bundleRoot);
+  }
+
+  const root = normalize(bundleRoot).replace(/\\/g, "/");
+  const localPath = normalize(source.localPath).replace(/\\/g, "/");
+  const relativePath = relative(root, localPath).replace(/\\/g, "/");
+  return normalizeKnowledgeRelativePath(relativePath, "OKF bundle relative path");
 }
 
 export function normalizeProjectUploadPath(inputPath: string): string {
@@ -77,7 +130,7 @@ export function resolveKnowledgeDownloadOutputDir(outputDir: string): string {
   return join(outputDir, ".uploads");
 }
 
-function createSkippedKnowledgeSource(input: {
+export function createSkippedKnowledgeSource(input: {
   source: string;
   localSourcePath?: string | null;
   message: string;
@@ -123,9 +176,9 @@ function classifySourceOrSkip(input: {
 }
 
 function classifyDirectoryOrSkip(
-  input: { source: string },
+  input: { source: string; allowHidden?: boolean },
 ): KnowledgeIngestSkippedFileResult | null {
-  const decision = classifyKnowledgeDirectoryPath(input.source);
+  const decision = classifyKnowledgeDirectoryPath(input.source, input.allowHidden);
   if (decision.kind === "ingest") {
     return null;
   }
@@ -141,11 +194,14 @@ function classifyDirectoryOrSkip(
 export async function collectLocalFiles(
   root: string,
   recursive: boolean,
+  okfBundle = false,
 ): Promise<KnowledgeSourceCollection> {
   const fs = createFileSystem();
   const stat = await fs.stat(root);
   if (stat.isFile) {
-    const skipped = classifySourceOrSkip({ source: root, localSourcePath: root });
+    const skipped = okfBundle
+      ? null
+      : classifySourceOrSkip({ source: root, localSourcePath: root });
     return skipped == null
       ? {
         sources: [{ kind: "local", input: root, localPath: root }],
@@ -160,7 +216,7 @@ export async function collectLocalFiles(
     return { sources: [], skipped: [] };
   }
 
-  const skippedRootDirectory = classifyDirectoryOrSkip({ source: root });
+  const skippedRootDirectory = classifyDirectoryOrSkip({ source: root, allowHidden: okfBundle });
   if (skippedRootDirectory != null) {
     return {
       sources: [],
@@ -176,7 +232,7 @@ export async function collectLocalFiles(
     for await (const entry of fs.readDir(dir)) {
       const entryPath = join(dir, entry.name);
       if (entry.isDirectory) {
-        const skipped = classifyDirectoryOrSkip({ source: entryPath });
+        const skipped = classifyDirectoryOrSkip({ source: entryPath, allowHidden: okfBundle });
         if (skipped != null) {
           collection.skipped.push(skipped);
           continue;
@@ -189,7 +245,9 @@ export async function collectLocalFiles(
         continue;
       }
 
-      const skipped = classifySourceOrSkip({ source: entryPath, localSourcePath: entryPath });
+      const skipped = okfBundle
+        ? null
+        : classifySourceOrSkip({ source: entryPath, localSourcePath: entryPath });
       if (skipped != null) {
         collection.skipped.push(skipped);
         continue;
@@ -265,7 +323,7 @@ export function deriveKnowledgeRemotePath(
     throw new Error(`Output path is outside output directory: ${outputPath}`);
   }
   const prefix = normalizeKnowledgeInputPath(knowledgePath);
-  const normalizedRelative = normalize(relativeOutputPath).replace(/^\/+/, "");
+  const normalizedRelative = normalizeKnowledgeRelativePath(relativeOutputPath);
   return `${prefix}/${normalizedRelative}`.replace(/\\/g, "/");
 }
 
@@ -280,6 +338,8 @@ export function createKnowledgeIngestResult(input: {
     warnings: string[];
     source_type: string;
     summary: string;
+    document_kind?: KnowledgeIngestFileResult["documentKind"];
+    okf?: KnowledgeIngestFileResult["okf"];
   };
 }): KnowledgeIngestFileResult {
   return {
@@ -292,5 +352,9 @@ export function createKnowledgeIngestResult(input: {
     summary: input.parser.summary,
     stats: input.parser.stats,
     warnings: input.parser.warnings,
+    ...(input.parser.document_kind === undefined
+      ? {}
+      : { documentKind: input.parser.document_kind }),
+    ...(input.parser.okf === undefined ? {} : { okf: input.parser.okf }),
   };
 }

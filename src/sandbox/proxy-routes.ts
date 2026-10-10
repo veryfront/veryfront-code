@@ -1,4 +1,7 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { fetchSandboxUrl } from "./config.ts";
+import { hasTemporarySandboxPolicy } from "./response.ts";
+import type { CommandOptions } from "./types.ts";
 
 const applyIntrinsic = Reflect.apply;
 const stringReplace = String.prototype.replace;
@@ -9,7 +12,7 @@ export function sandboxSessionRoute(
   path = "",
 ): string {
   const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
-  const base = `${normalizedApiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
+  const base = `${normalizedApiUrl}/sandboxes/${encodeURIComponent(sessionId)}`;
   return path ? `${base}${path}` : base;
 }
 
@@ -37,4 +40,52 @@ export async function readSandboxFileContent(res: Response): Promise<string> {
   }
 
   return content;
+}
+
+/** @internal Allow synchronous execution plus transport slack without disabling the default bound. */
+export function sandboxCommandRequestTimeoutMs(options?: CommandOptions): number {
+  return options?.timeoutSeconds === undefined ? 60_000 : (options.timeoutSeconds + 5) * 1000;
+}
+
+/** @internal Keep a deadline active until the complete asynchronous operation has settled. */
+export async function withSandboxRequestDeadline<T>(
+  timeoutMs: number,
+  action: (signal: AbortSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (timeoutMs <= 0) return await action(undefined);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await action(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** @internal Recheck mutable policy before automatic cleanup; unknown policy never authorizes deletion. */
+export async function currentSandboxCleanupPolicy(input: {
+  apiUrl: string;
+  sessionId: string;
+  authToken: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<"temporary" | "retain" | "unavailable"> {
+  return await withSandboxRequestDeadline(input.timeoutMs ?? 15_000, async (deadline) => {
+    const response = await fetchSandboxUrl(sandboxSessionRoute(input.apiUrl, input.sessionId), {
+      method: "GET",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${input.authToken}` },
+      signal: input.signal && deadline
+        ? AbortSignal.any([input.signal, deadline])
+        : input.signal ?? deadline,
+    });
+    if (response.status === 404) return "unavailable";
+    if (!response.ok) {
+      throw REQUEST_ERROR.create({ detail: `Sandbox cleanup policy failed: ${response.status}` });
+    }
+    const record = await response.json();
+    return record?.id === input.sessionId && hasTemporarySandboxPolicy(record)
+      ? "temporary"
+      : "retain";
+  });
 }

@@ -30,6 +30,13 @@ import {
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import { AgentRuntime } from "../runtime/index.ts";
+import type { ModelRuntime } from "#veryfront/provider";
+import { createHostedChatRuntimeAgentAdapter } from "./chat-runtime-agent-adapter.ts";
+import {
+  createHostedChatExecutionRuntime,
+  createHostedChatExecutionRuntimeBootstrap,
+} from "./chat-execution-runtime.ts";
 import {
   createRunBoundAgentManualPause,
   inheritHostedAgentPauseCapability,
@@ -1316,6 +1323,153 @@ describe("agent/hosted-chat-finalization", () => {
       assertEquals(calls.slice(-3), ["flush", "terminal:completed:", "cleanup"]);
     });
   }
+
+  for (
+    const boundary of [
+      "middleware",
+      "pause",
+      "provider",
+      "caller",
+      "caller-drain",
+      "caller-first",
+      "root-first",
+    ] as const
+  ) {
+    const cancellation = boundary.startsWith("caller") || boundary === "root-first";
+    const callerCancellation = cancellation && boundary !== "root-first";
+    it(
+      boundary === "root-first" || boundary === "caller-first"
+        ? `preserves ${boundary} ordering while the hosted consumer continues draining`
+        : boundary === "caller-drain"
+        ? "keeps a caller-aborted hosted run cancelled while the consumer continues draining"
+        : boundary === "caller"
+        ? "keeps a cancelled hosted consumer cancelled after a pre-step caller abort"
+        : `preserves an independent ${boundary} AbortError as a hosted failure, not EMPTY_RESPONSE`,
+      async () => {
+        const caller = new AbortController();
+        const root = new AbortController();
+        const executionSignal = AbortSignal.any([caller.signal, root.signal]);
+        let providerCalls = 0;
+        const model: ModelRuntime = {
+          provider: "anthropic",
+          modelId: "abort-boundary",
+          doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+          doStream: () => {
+            providerCalls++;
+            return Promise.resolve({
+              stream: new ReadableStream({
+                pull(controller) {
+                  controller.error(new DOMException("Independent provider abort", "AbortError"));
+                },
+              }),
+            });
+          },
+        };
+        const runtime = new AgentRuntime("abort-boundary", {
+          model: "veryfront-cloud/anthropic/abort-boundary",
+          system: "Synthetic instructions",
+          maxSteps: 1,
+          middleware: cancellation
+            ? [() =>
+              new Promise((_, reject) => {
+                if (executionSignal.aborted) reject(executionSignal.reason);
+                else {
+                  executionSignal.addEventListener("abort", () => reject(executionSignal.reason), {
+                    once: true,
+                  });
+                }
+              })]
+            : boundary === "middleware"
+            ? [async () => {
+              throw new DOMException("Independent operation aborted", "AbortError");
+            }]
+            : [],
+        }, {
+          resolveModelRuntime: () => model,
+          ...(boundary === "pause"
+            ? {
+              manualPause: {
+                load: async () => {
+                  throw new DOMException("Independent checkpoint abort", "AbortError");
+                },
+                acknowledge: async () => false,
+              },
+            }
+            : {}),
+        });
+        const adapter = createHostedChatRuntimeAgentAdapter({
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          runtimeAgent: {
+            async stream(input) {
+              const stream = await runtime.stream(
+                input.messages ?? [],
+                input.context,
+                undefined,
+                undefined,
+                undefined,
+                input.context?.abortSignal as AbortSignal,
+              );
+              return { toDataStreamResponse: () => new Response(stream) };
+            },
+          },
+        });
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const chunks: ChatUiMessageChunk[] = [];
+        const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+          agent: adapter,
+          lifecycleAdapter: createLifecycleAdapter({ calls: [], terminalStates }),
+          durableRunEventMirror: createDurableRunMirror({ calls: [] }),
+          finalMessages: [{
+            id: "input",
+            role: "user",
+            timestamp: 0,
+            parts: [{ type: "text", text: "Synthetic input" }],
+          }],
+          abortSignal: caller.signal,
+          conversationId: "conversation-1",
+          cleanup: async () => {},
+          createRootStreamWatchdog: () => ({
+            signal: root.signal,
+            lastTimeoutState: null,
+            keepAlive: () => {},
+            observe: () => {},
+            dispose: () => {},
+          }),
+        });
+        const hosted = createHostedChatExecutionRuntime({
+          agentId: "abort-boundary",
+          modelId: "veryfront-cloud/anthropic/abort-boundary",
+          originalMessages: [],
+          runContext: { withContext: (operation) => operation() },
+          abortSignal: caller.signal,
+          bootstrap,
+        });
+        for await (const chunk of hosted.agentUIStream) {
+          chunks.push(chunk);
+          if (cancellation && chunk.type === "data-veryfront.runtime_context") {
+            const reason = new DOMException("Stream timeout", "AbortError");
+            if (boundary === "root-first") root.abort(reason);
+            caller.abort(reason);
+            if (boundary === "caller-first") root.abort(reason);
+            if (boundary === "caller") break;
+          }
+        }
+        await hosted.waitForFinish();
+        assertEquals(caller.signal.aborted, cancellation);
+        assertEquals(providerCalls, boundary === "provider" ? 1 : 0);
+        assertEquals(chunks.some((chunk) => chunk.type === "start-step"), boundary === "provider");
+        assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [
+          callerCancellation
+            ? ["cancelled", "ABORTED"]
+            : boundary === "root-first"
+            ? ["failed", "STREAM_TIMEOUT"]
+            : ["failed", "STREAM_ERROR"],
+        ]);
+        assertEquals(chunks.some((chunk) => chunk.type === "error"), !cancellation);
+      },
+    );
+  }
+
   it("appends response fallback chunks, flushes, dispatches completed, then cleanup", async () => {
     const calls: string[] = [];
     const terminalStates: HostedLifecycleTerminalState[] = [];
@@ -2438,6 +2592,43 @@ describe("agent/hosted-chat-finalization", () => {
     );
     assertEquals(terminalStates.at(0)!.status, "failed");
     assertEquals(terminalStates.at(0)!.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+  });
+
+  it("fails a response whose only part is the runtime context instead of completing", async () => {
+    const calls: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: {
+            currentDateUtc: "2026-10-08",
+            currentTimeUtc: "2026-10-08T00:00:00Z",
+            runStartedAtUtc: "2026-10-08T00:00:00Z",
+          },
+        }],
+      }),
+      isAborted: false,
+      streamResult: { steps: Promise.resolve([]) },
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals("output" in terminalStates[0]!, false);
   });
 
   it("preserves response metadata on terminal states", async () => {

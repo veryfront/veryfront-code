@@ -236,6 +236,7 @@ describe("private tool-call admission", () => {
       }> = [];
       let sequence = 0;
       const fetch: HostedRequestFetch = async (_url, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
         assert(!JSON.stringify(body).includes("privateObservedToolResult"));
@@ -390,6 +391,7 @@ describe("private tool-call admission", () => {
     const privateRequests: Request[] = [];
     const configuredRequests: Request[] = [];
     const responseFor: HostedRequestFetch = async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       const body = JSON.parse(String(init?.body));
       return Response.json({
         jsonrpc: "2.0",
@@ -684,6 +686,7 @@ describe("private tool-call admission", () => {
     let appendCount = 0;
     let mcpCalls = 0;
     const fetch: HostedRequestFetch = async (url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;

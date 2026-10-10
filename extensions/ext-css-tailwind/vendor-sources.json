@@ -1,0 +1,18 @@
+{
+  "components": [
+    {
+      "name": "tailwindcss-typography-patched",
+      "version": "0.5.19-parser.3",
+      "source": "vendor/typography.js",
+      "sha256": "e326c6b808147bcbe08e057e9843ff938154878727caff100f77ea3580ef3566",
+      "license": "MIT",
+      "upstream": {
+        "name": "@tailwindcss/typography",
+        "version": "0.5.19",
+        "source": "src/index.js",
+        "sha256": "0650b9739a9ae52731159a8bc53fb07de020412b413071fa701fc9ecc8ffbace",
+        "url": "https://registry.npmjs.org/@tailwindcss/typography/-/typography-0.5.19.tgz"
+      }
+    }
+  ]
+}

@@ -19,13 +19,17 @@ import {
   streamWithAgentRuntimeDispatch,
 } from "./runtime/index.ts";
 import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
-import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
+import { isRuntimeLocalTool, markRuntimeLocalTool } from "./runtime/local-tool.ts";
 import {
   detectPlatform,
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
@@ -70,6 +74,7 @@ import {
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
 import {
   buildAgentCallContext,
+  type BuildAgentCallContextInput,
   buildAgentCallContextPreservingRuntimeMarker,
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
@@ -80,6 +85,7 @@ import {
 } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicToolRegistryGet = toolRegistry.get;
 const IntrinsicStringTrim = String.prototype.trim;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
@@ -359,7 +365,10 @@ function resolveToolsConfiguration(input: {
   for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
     const registration = SKILL_TOOL_REGISTRATIONS[index]!;
     if (!toolRegistry.has(registration.id)) {
-      toolRegistryInternal.registerShared(registration.id, registration.create());
+      toolRegistryInternal.registerShared(
+        registration.id,
+        markTrustedHostToolProvenance(registration.create()),
+      );
     }
   }
 
@@ -372,24 +381,40 @@ function resolveToolsConfiguration(input: {
     }
     for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
       const registration = SKILL_TOOL_REGISTRATIONS[index]!;
+      const canonicalId = `veryfront__${registration.id}`;
       if (skillTools === "disable" || skillTools === "omit") {
         if (configuredTools[registration.id] !== false) {
           delete configuredTools[registration.id];
+        }
+        if (configuredTools[canonicalId] !== false) {
+          delete configuredTools[canonicalId];
         }
         continue;
       }
 
       const configuredTool = configuredTools[registration.id];
-      if (
-        configuredTool === false ||
-        (typeof configuredTool === "object" && configuredTool !== null)
-      ) {
+      const configuredCanonicalTool = configuredTools[canonicalId];
+      if (configuredTool === false && configuredCanonicalTool !== true) {
         continue;
       }
 
-      configuredTools[registration.id] = registration.create({
+      const platformTool = markTrustedHostToolProvenance(registration.create({
         resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
-      });
+      }));
+      if (
+        configuredTool !== false && (typeof configuredTool !== "object" || configuredTool === null)
+      ) {
+        configuredTools[registration.id] = platformTool;
+      }
+      if (
+        configuredCanonicalTool !== false &&
+        (typeof configuredCanonicalTool !== "object" || configuredCanonicalTool === null)
+      ) {
+        configuredTools[canonicalId] = markRuntimeLocalTool(markTrustedHostToolProvenance({
+          ...platformTool,
+          id: canonicalId,
+        }));
+      }
     }
     const hasConfiguredTools = IntrinsicObjectKeys(configuredTools).length > 0;
     merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
@@ -419,19 +444,25 @@ function resolveToolsConfiguration(input: {
   return merged;
 }
 
-/**
- * Whether the resolved tool selection actually exposes the skill loader.
- *
- * The skill catalog block instructs the model to call `load_skill`, so it must
- * only be rendered when the effective tool configuration can honour that call.
- * An explicit `load_skill: false` denial, or a selection the loader was never
- * merged into, means the catalog would advertise an unusable tool.
- */
-function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
-  if (tools === true) return true;
-  if (!tools) return false;
-  const loader = tools["load_skill"];
-  return loader !== undefined && loader !== false;
+/** Resolve the exposed loader spelling so catalogs advertise a usable call. */
+function getSkillLoaderToolName(
+  tools: AgentConfig["tools"],
+): BuildAgentCallContextInput["skillLoaderToolName"] {
+  if (tools === true) {
+    return hasTrustedHostToolProvenance(
+        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["load_skill"]),
+      )
+      ? "load_skill"
+      : undefined;
+  }
+  if (!tools) return undefined;
+  const names = ["veryfront__load_skill", "load_skill"] as const;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    const loader = tools[name];
+    if (hasTrustedHostToolProvenance(loader)) return name;
+  }
+  return undefined;
 }
 
 /**
@@ -443,10 +474,10 @@ function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
  */
 function createAugmentedSystem(input: {
   config: AgentConfig;
-  skillLoaderExposed: boolean;
+  skillLoaderToolName: BuildAgentCallContextInput["skillLoaderToolName"];
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<AgentSystem> {
-  const { config, skillLoaderExposed, resolveSkillSnapshot } = input;
+  const { config, skillLoaderToolName, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
   const augmentSystem = (
@@ -468,9 +499,9 @@ function createAugmentedSystem(input: {
     const contextInput = {
       // A denied or absent loader suppresses the catalog: advertising skills
       // the agent cannot load would only steer the model into blocked calls.
-      ...(preassembledSkillContext || !skillLoaderExposed
+      ...(preassembledSkillContext || !skillLoaderToolName
         ? {}
-        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
+        : { skills: snapshot.definitions.map(toRuntimeSkillDefinition), skillLoaderToolName }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
       ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
     };
@@ -642,7 +673,7 @@ function createAgent<TOutput = never>(
 
   const augmentedSystem = createAugmentedSystem({
     config,
-    skillLoaderExposed: isSkillLoaderExposed(mergedToolsConfig),
+    skillLoaderToolName: getSkillLoaderToolName(mergedToolsConfig),
     resolveSkillSnapshot,
   });
 
@@ -782,9 +813,9 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const name = pair[0];
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
+    if (isRuntimeLocalTool(entry)) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);
-    if (isRuntimeLocalTool(entry)) continue;
 
     const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
     registerTool(normalizedTool.id, normalizedTool);

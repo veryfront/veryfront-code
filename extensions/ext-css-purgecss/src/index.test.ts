@@ -38,7 +38,7 @@ describe("ext-css-purgecss", () => {
     assertEquals(extensionPackage.veryfront.capabilities, [
       {
         type: "env:read",
-        keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+        keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
       },
     ]);
     assertEquals(
@@ -47,7 +47,7 @@ describe("ext-css-purgecss", () => {
     );
     assertEquals(
       extensionPackage.tasks.test,
-      "deno test --frozen --no-check --allow-env=__MINIMATCH_TESTING_PLATFORM__,NO_COLOR,FORCE_COLOR,TERM,CI src/",
+      "deno test --frozen --no-check --allow-env=NO_COLOR,FORCE_COLOR,TERM,CI src/",
     );
 
     await extension.setup?.({
@@ -67,7 +67,7 @@ describe("ext-css-purgecss", () => {
       engine.cacheIdentity,
       `ext-css-purgecss@${extensionPackage.version}`,
     );
-    assertStringIncludes(engine.cacheIdentity, "purgecss@7.0.2");
+    assertStringIncludes(engine.cacheIdentity, "purgecss@8.0.0");
     assertThrows(
       () => {
         (engine as { cacheIdentity: string }).cacheIdentity = "changed@2";
@@ -106,6 +106,25 @@ describe("ext-css-purgecss", () => {
     assertEquals(result.css.includes(".dynamic"), true);
     assertEquals(result.css.includes(".unused"), false);
     assertEquals("rejectedCSS" in result, false);
+  });
+
+  it("honors escaped safelisted classes and compound selectors inside nested rules", async () => {
+    const session = createCSSPurgingSession(await createEngine());
+    const result = await session.run({
+      css:
+        '@supports (display: grid) { .keep\\:focus[data-state="open"] { color: red } .unused { color: blue } }',
+      content: [{
+        raw: '<button class="keep:focus" data-state="open">Go</button>',
+        extension: "html",
+      }],
+      safelist: ["keep:focus"],
+      includeRejectedCSS: true,
+    });
+    assertStringIncludes(result.css, ".keep\\:focus");
+    assertStringIncludes(result.css, '[data-state="open"]');
+    assertStringIncludes(result.css, "@supports");
+    assertEquals(result.css.includes(".unused"), false);
+    assertStringIncludes(result.rejectedCSS ?? "", ".unused");
   });
 
   it("preserves normalized tag and class evidence through the provider", async () => {
