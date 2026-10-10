@@ -344,7 +344,7 @@
         "body": {
           "content": {
             "type": "string",
-            "description": "Base64-encoded file content; the decoded bytes are sent as the raw request body The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
+            "description": "Base64-encoded file content; the decoded bytes are sent as the raw request body. The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
             "required": true,
             "encoding": "base64"
           }

@@ -69,7 +69,7 @@
     {
       "id": "axiom__query_apl",
       "name": "Run APL Query",
-      "description": "Run apl query",
+      "description": "Run APL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

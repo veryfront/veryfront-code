@@ -98,7 +98,7 @@
     {
       "id": "jira__list_sites",
       "name": "List Atlassian Sites",
-      "description": "List atlassian sites",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

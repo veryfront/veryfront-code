@@ -79,7 +79,7 @@
     {
       "id": "power-bi__list_datasets",
       "name": "List My Workspace Datasets",
-      "description": "List my workspace datasets",
+      "description": "List My workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -113,7 +113,7 @@
     {
       "id": "power-bi__list_reports",
       "name": "List My Workspace Reports",
-      "description": "List my workspace reports",
+      "description": "List My workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

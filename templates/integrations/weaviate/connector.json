@@ -65,7 +65,7 @@
     {
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
-      "description": "Run graph ql query",
+      "description": "Run GraphQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

@@ -265,7 +265,7 @@
           "bookingUid": {
             "type": "string",
             "in": "path",
-            "description": "UID of the booking to reschedule (from list_bookings) Only accepted or pending bookings can be rescheduled.",
+            "description": "UID of the booking to reschedule (from list_bookings). Only accepted or pending bookings can be rescheduled.",
             "required": true
           },
           "cal-api-version": {

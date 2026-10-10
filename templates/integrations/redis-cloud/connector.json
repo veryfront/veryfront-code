@@ -62,7 +62,7 @@
     {
       "id": "redis-cloud__list_fixed_subscriptions",
       "name": "List Essentials Subscriptions",
-      "description": "List essentials subscriptions",
+      "description": "List Essentials subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "redis-cloud__list_fixed_databases",
       "name": "List Essentials Databases",
-      "description": "List essentials databases",
+      "description": "List Essentials databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

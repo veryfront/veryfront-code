@@ -214,7 +214,7 @@
     {
       "id": "zoho-crm__coql_query",
       "name": "Run COQL Query",
-      "description": "Run coql query",
+      "description": "Run COQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -250,7 +250,7 @@
         "body": {
           "data": {
             "type": "array",
-            "description": "Array of record objects keyed by field API names, e.g. [{\"Last_Name\":\"Smith\",\"Company\":\"Acme\"}] At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.",
+            "description": "Array of record objects keyed by field API names, e.g. [{\"Last_Name\":\"Smith\",\"Company\":\"Acme\"}]. At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.",
             "required": true
           }
         },
@@ -284,7 +284,7 @@
         "body": {
           "data": {
             "type": "array",
-            "description": "Array with one record object of field API names to update, e.g. [{\"Lead_Status\":\"Contacted\"}] Requires the ZohoCRM.modules.UPDATE OAuth scope.",
+            "description": "Array with one record object of field API names to update, e.g. [{\"Lead_Status\":\"Contacted\"}]. Requires the ZohoCRM.modules.UPDATE OAuth scope.",
             "required": true
           }
         },

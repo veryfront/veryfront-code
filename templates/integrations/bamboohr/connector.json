@@ -286,7 +286,7 @@
         "body": {
           "status": {
             "type": "string",
-            "description": "New status for the request: approved, denied, or canceled The API user must have approval permissions.",
+            "description": "New status for the request: approved, denied, or canceled. The API user must have approval permissions.",
             "required": true
           },
           "note": {

@@ -3757,23 +3757,23 @@ export const connectors: IntegrationConfig[] = [
     },
     "tools": [{
       "name": "list-s3-buckets",
-      "description": "List s3 buckets",
+      "description": "List S3 buckets",
       "file": "tools/list-s3-buckets.ts",
     }, {
       "name": "list-s3-objects",
-      "description": "List s3 objects",
+      "description": "List S3 objects",
       "file": "tools/list-s3-objects.ts",
     }, {
       "name": "get-s3-object",
-      "description": "Get s3 object",
+      "description": "Get S3 object",
       "file": "tools/get-s3-object.ts",
     }, {
       "name": "list-ec2-instances",
-      "description": "List ec2 instances",
+      "description": "List EC2 instances",
       "file": "tools/list-ec2-instances.ts",
     }, {
       "name": "list-lambda-functions",
-      "description": "List lambda functions",
+      "description": "List Lambda functions",
       "file": "tools/list-lambda-functions.ts",
     }],
     "setupGuide": {
@@ -3845,7 +3845,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "axiom__query_apl",
       "name": "Run APL Query",
-      "description": "Run apl query",
+      "description": "Run APL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -4233,7 +4233,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "azure__get_vm_instance_view",
       "name": "Get VM Instance View",
-      "description": "Get vm instance view",
+      "description": "Get VM instance view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -5320,7 +5320,7 @@ export const connectors: IntegrationConfig[] = [
           "status": {
             "type": "string",
             "description":
-              "New status for the request: approved, denied, or canceled The API user must have approval permissions.",
+              "New status for the request: approved, denied, or canceled. The API user must have approval permissions.",
             "required": true,
           },
           "note": {
@@ -7251,7 +7251,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+              "Base64-encoded file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -7292,7 +7292,7 @@ export const connectors: IntegrationConfig[] = [
           "file": {
             "type": "string",
             "description":
-              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+              "Base64-encoded new file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -8715,7 +8715,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "UID of the booking to reschedule (from list_bookings) Only accepted or pending bookings can be rescheduled.",
+              "UID of the booking to reschedule (from list_bookings). Only accepted or pending bookings can be rescheduled.",
             "required": true,
           },
           "cal-api-version": {
@@ -11463,7 +11463,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__list_dns_records",
       "name": "List DNS Records",
-      "description": "List dns records",
+      "description": "List DNS records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -11509,7 +11509,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__create_dns_record",
       "name": "Create DNS Record",
-      "description": "Create dns record",
+      "description": "Create DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -11553,7 +11553,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "cloudflare__update_dns_record",
       "name": "Update DNS Record",
-      "description": "Update dns record",
+      "description": "Update DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -12140,7 +12140,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "confluence__list_sites",
       "name": "List Atlassian Sites",
-      "description": "List atlassian sites",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -12161,7 +12161,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "confluence__search_content",
       "name": "Search Confluence",
-      "description": "Search confluence",
+      "description": "Search Confluence",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -14410,7 +14410,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "dialpad__send_sms",
       "name": "Send SMS",
-      "description": "Send sms",
+      "description": "Send SMS",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -14860,7 +14860,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "discord__create_dm",
       "name": "Create DM Channel",
-      "description": "Create dm channel",
+      "description": "Create DM channel",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -19626,7 +19626,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Name of the VM instance to start Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+              "Name of the VM instance to start. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19657,7 +19657,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Name of the VM instance to stop Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+              "Name of the VM instance to stop. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true,
           },
         },
@@ -19665,7 +19665,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_cloud_run_services",
       "name": "List Cloud Run Services",
-      "description": "List cloud run services",
+      "description": "List Cloud Run services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19707,7 +19707,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__get_cloud_run_service",
       "name": "Get Cloud Run Service",
-      "description": "Get cloud run service",
+      "description": "Get Cloud Run service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19737,7 +19737,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gcp__list_cloud_functions",
       "name": "List Cloud Functions",
-      "description": "List cloud functions",
+      "description": "List Cloud Functions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -19748,7 +19748,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Google Cloud project ID Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
+              "Google Cloud project ID. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
             "required": true,
           },
           "location": {
@@ -20073,7 +20073,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "gemini__imagen_generate",
       "name": "Generate Image (Imagen)",
-      "description": "Generate image (imagen)",
+      "description": "Generate image (Imagen)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -20474,7 +20474,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "github__get_pr_diff",
       "name": "Get PR Diff",
-      "description": "Get pr diff",
+      "description": "Get PR diff",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -23819,7 +23819,7 @@ export const connectors: IntegrationConfig[] = [
           "content": {
             "type": "string",
             "description":
-              "Raw object content sent as the request body Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+              "Raw object content sent as the request body. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -23839,7 +23839,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Bucket containing the source object Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+              "Bucket containing the source object. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
           "sourceObject": {
@@ -23889,7 +23889,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+              "Object name to delete, URL-encoded. Slashes in the name must be encoded as %2F. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true,
           },
         },
@@ -24398,7 +24398,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Form ID to update Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
+              "Form ID to update. Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
             "required": true,
           },
         },
@@ -28591,7 +28591,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "hetzner__list_ssh_keys",
       "name": "List SSH Keys",
-      "description": "List ssh keys",
+      "description": "List SSH keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -30146,7 +30146,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "jira__list_sites",
       "name": "List Atlassian Sites",
-      "description": "List atlassian sites",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -32670,7 +32670,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "Invoice id (UUID) Draft invoices have no document file and are rejected; use a non-draft invoice.",
+              "Invoice id (UUID). Draft invoices have no document file and are rejected; use a non-draft invoice.",
             "required": true,
           },
         },
@@ -36048,7 +36048,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
-      "description": "Run nrql query",
+      "description": "Run NRQL query",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -36524,7 +36524,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "notion__search_notion",
       "name": "Search Notion",
-      "description": "Search notion",
+      "description": "Search Notion",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -43380,7 +43380,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_datasets",
       "name": "List My Workspace Datasets",
-      "description": "List my workspace datasets",
+      "description": "List My workspace datasets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -43408,7 +43408,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "power-bi__list_reports",
       "name": "List My Workspace Reports",
-      "description": "List my workspace reports",
+      "description": "List My workspace reports",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -45926,7 +45926,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__list_fixed_subscriptions",
       "name": "List Essentials Subscriptions",
-      "description": "List essentials subscriptions",
+      "description": "List Essentials subscriptions",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://api.redislabs.com/v1/fixed/subscriptions" },
     }, {
@@ -45986,7 +45986,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "redis-cloud__list_fixed_databases",
       "name": "List Essentials Databases",
-      "description": "List essentials databases",
+      "description": "List Essentials databases",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -46784,7 +46784,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "ID of the leave request to process (from List Leave Requests) The leave request must be pending.",
+              "ID of the leave request to process (from List Leave Requests). The leave request must be pending.",
             "required": true,
           },
           "action": {
@@ -49783,7 +49783,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "sharepoint__list_sites",
       "name": "List SharePoint Sites",
-      "description": "List share point sites",
+      "description": "List SharePoint sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -50862,7 +50862,7 @@ export const connectors: IntegrationConfig[] = [
           "product": {
             "type": "object",
             "description":
-              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]} Requires name, productNumber, stock, taxId, and a price array.',
+              'Product payload, e.g. {"name":"T-shirt","productNumber":"SW-1001","stock":10,"taxId":"<tax uuid>","price":[{"currencyId":"<currency uuid>","gross":19.99,"net":16.8,"linked":true}]}. Requires name, productNumber, stock, taxId, and a price array.',
             "required": true,
           },
         },
@@ -52725,13 +52725,13 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "query",
             "description":
-              "Identifier of the parent resource container (organization or folder); containerId or UUID At least one of containerParentId or member is required.",
+              "Identifier of the parent resource container (organization or folder); containerId or UUID. At least one of containerParentId or member is required.",
           },
           "member": {
             "type": "string",
             "in": "query",
             "description":
-              "Email address of the user or service account whose visible projects should be listed At least one of containerParentId or member is required.",
+              "Email address of the user or service account whose visible projects should be listed. At least one of containerParentId or member is required.",
           },
           "limit": {
             "type": "number",
@@ -55475,7 +55475,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "twilio__send_sms",
       "name": "Send SMS",
-      "description": "Send sms",
+      "description": "Send SMS",
       "requiresWrite": true,
     }, {
       "id": "twilio__send_whatsapp",
@@ -55933,7 +55933,7 @@ export const connectors: IntegrationConfig[] = [
           "files": {
             "type": "string",
             "description":
-              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request Remote URLs are not accepted; fetch the file first and provide its content.",
+              "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request. Remote URLs are not accepted; fetch the file first and provide its content.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name",
@@ -56884,7 +56884,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
-      "description": "Run graph ql query",
+      "description": "Run GraphQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -59327,7 +59327,7 @@ export const connectors: IntegrationConfig[] = [
           "content": {
             "type": "string",
             "description":
-              "Base64-encoded file content; the decoded bytes are sent as the raw request body The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
+              "Base64-encoded file content; the decoded bytes are sent as the raw request body. The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
             "required": true,
             "encoding": "base64",
           },
@@ -59979,7 +59979,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "zoho-crm__coql_query",
       "name": "Run COQL Query",
-      "description": "Run coql query",
+      "description": "Run COQL query",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -60014,7 +60014,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}] At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.',
+              'Array of record objects keyed by field API names, e.g. [{"Last_Name":"Smith","Company":"Acme"}]. At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.',
             "required": true,
           },
         },
@@ -60046,7 +60046,7 @@ export const connectors: IntegrationConfig[] = [
           "data": {
             "type": "array",
             "description":
-              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}] Requires the ZohoCRM.modules.UPDATE OAuth scope.',
+              'Array with one record object of field API names to update, e.g. [{"Lead_Status":"Contacted"}]. Requires the ZohoCRM.modules.UPDATE OAuth scope.',
             "required": true,
           },
         },

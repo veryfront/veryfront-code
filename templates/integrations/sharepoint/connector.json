@@ -87,7 +87,7 @@
     {
       "id": "sharepoint__list_sites",
       "name": "List SharePoint Sites",
-      "description": "List share point sites",
+      "description": "List SharePoint sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

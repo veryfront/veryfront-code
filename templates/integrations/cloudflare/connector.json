@@ -131,7 +131,7 @@
     {
       "id": "cloudflare__list_dns_records",
       "name": "List DNS Records",
-      "description": "List dns records",
+      "description": "List DNS records",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -209,7 +209,7 @@
     {
       "id": "cloudflare__create_dns_record",
       "name": "Create DNS Record",
-      "description": "Create dns record",
+      "description": "Create DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -261,7 +261,7 @@
     {
       "id": "cloudflare__update_dns_record",
       "name": "Update DNS Record",
-      "description": "Update dns record",
+      "description": "Update DNS record",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

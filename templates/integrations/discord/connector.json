@@ -165,7 +165,7 @@
     {
       "id": "discord__create_dm",
       "name": "Create DM Channel",
-      "description": "Create dm channel",
+      "description": "Create DM channel",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

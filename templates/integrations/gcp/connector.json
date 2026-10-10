@@ -228,7 +228,7 @@
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to start Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+            "description": "Name of the VM instance to start. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true
           }
         }
@@ -258,7 +258,7 @@
           "instance": {
             "type": "string",
             "in": "path",
-            "description": "Name of the VM instance to stop Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+            "description": "Name of the VM instance to stop. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
             "required": true
           }
         }
@@ -267,7 +267,7 @@
     {
       "id": "gcp__list_cloud_run_services",
       "name": "List Cloud Run Services",
-      "description": "List cloud run services",
+      "description": "List Cloud Run services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -311,7 +311,7 @@
     {
       "id": "gcp__get_cloud_run_service",
       "name": "Get Cloud Run Service",
-      "description": "Get cloud run service",
+      "description": "Get Cloud Run service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -341,7 +341,7 @@
     {
       "id": "gcp__list_cloud_functions",
       "name": "List Cloud Functions",
-      "description": "List cloud functions",
+      "description": "List Cloud Functions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -350,7 +350,7 @@
           "projectId": {
             "type": "string",
             "in": "path",
-            "description": "Google Cloud project ID Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
+            "description": "Google Cloud project ID. Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
             "required": true
           },
           "location": {

@@ -101,7 +101,7 @@
     {
       "id": "confluence__list_sites",
       "name": "List Atlassian Sites",
-      "description": "List atlassian sites",
+      "description": "List Atlassian sites",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -140,7 +140,7 @@
     {
       "id": "confluence__search_content",
       "name": "Search Confluence",
-      "description": "Search confluence",
+      "description": "Search Confluence",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

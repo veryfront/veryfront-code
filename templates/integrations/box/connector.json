@@ -244,7 +244,7 @@
           },
           "file": {
             "type": "string",
-            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+            "description": "Base64-encoded file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"
@@ -283,7 +283,7 @@
           },
           "file": {
             "type": "string",
-            "description": "Base64-encoded new file content, sent decoded as the binary multipart 'file' part The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+            "description": "Base64-encoded new file content, sent decoded as the binary multipart 'file' part. The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"

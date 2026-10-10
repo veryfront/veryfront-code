@@ -28,7 +28,7 @@
     {
       "id": "new-relic__run_nrql_query",
       "name": "Run NRQL Query",
-      "description": "Run nrql query",
+      "description": "Run NRQL query",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",

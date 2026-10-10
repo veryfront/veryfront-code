@@ -213,7 +213,7 @@
         "body": {
           "content": {
             "type": "string",
-            "description": "Raw object content sent as the request body Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+            "description": "Raw object content sent as the request body. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true
           }
         },
@@ -232,7 +232,7 @@
           "sourceBucket": {
             "type": "string",
             "in": "path",
-            "description": "Bucket containing the source object Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+            "description": "Bucket containing the source object. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true
           },
           "sourceObject": {
@@ -279,7 +279,7 @@
           "objectName": {
             "type": "string",
             "in": "path",
-            "description": "Object name to delete, URL-encoded — slashes in the name must be encoded as %2F Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+            "description": "Object name to delete, URL-encoded. Slashes in the name must be encoded as %2F. Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
             "required": true
           }
         }

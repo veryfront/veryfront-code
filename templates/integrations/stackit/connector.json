@@ -39,12 +39,12 @@
           "containerParentId": {
             "type": "string",
             "in": "query",
-            "description": "Identifier of the parent resource container (organization or folder); containerId or UUID At least one of containerParentId or member is required."
+            "description": "Identifier of the parent resource container (organization or folder); containerId or UUID. At least one of containerParentId or member is required."
           },
           "member": {
             "type": "string",
             "in": "query",
-            "description": "Email address of the user or service account whose visible projects should be listed At least one of containerParentId or member is required."
+            "description": "Email address of the user or service account whose visible projects should be listed. At least one of containerParentId or member is required."
           },
           "limit": {
             "type": "number",

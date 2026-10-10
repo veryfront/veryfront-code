@@ -70,7 +70,7 @@
     {
       "id": "notion__search_notion",
       "name": "Search Notion",
-      "description": "Search notion",
+      "description": "Search Notion",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

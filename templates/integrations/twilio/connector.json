@@ -42,7 +42,7 @@
     {
       "id": "twilio__send_sms",
       "name": "Send SMS",
-      "description": "Send sms",
+      "description": "Send SMS",
       "requiresWrite": true
     },
     {

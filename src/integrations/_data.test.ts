@@ -178,6 +178,77 @@ describe("integration endpoint specs", () => {
       assertEquals(getTool(connectorName, toolName).description, summary);
     }
   });
+  it("keeps acronyms and camel-case terms from tool names canonical in summaries", () => {
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        for (const term of tool.name.match(/[A-Za-z][A-Za-z0-9]*/g) ?? []) {
+          const isAcronym = /^[A-Z][A-Z0-9]+$/.test(term);
+          const isCamelCase = /[a-z][A-Z]/.test(term);
+          if (!isAcronym && !isCamelCase) continue;
+          const split = term.replace(/(?<=[a-z])(?=[A-Z])/g, " ");
+          const mentioned = new RegExp(`\\b(?:${term}|${split})\\b`, "i").test(tool.description);
+          if (!mentioned) continue;
+          assert(
+            new RegExp(`\\b${term}\\b`).test(tool.description),
+            `${connector.name}:${tool.id ?? tool.name} summary must spell ${term} canonically`,
+          );
+        }
+      }
+    }
+  });
+  it("keeps provider and product names canonical in summaries", () => {
+    const expected: [string, string, string][] = [
+      ["aws", "list-s3-buckets", "List S3 buckets"],
+      ["aws", "list-s3-objects", "List S3 objects"],
+      ["aws", "get-s3-object", "Get S3 object"],
+      ["aws", "list-ec2-instances", "List EC2 instances"],
+      ["aws", "list-lambda-functions", "List Lambda functions"],
+      ["confluence", "list_sites", "List Atlassian sites"],
+      ["confluence", "search_content", "Search Confluence"],
+      ["jira", "list_sites", "List Atlassian sites"],
+      ["notion", "search_notion", "Search Notion"],
+      ["gemini", "imagen_generate", "Generate image (Imagen)"],
+      ["gcp", "list_cloud_run_services", "List Cloud Run services"],
+      ["gcp", "get_cloud_run_service", "Get Cloud Run service"],
+      ["gcp", "list_cloud_functions", "List Cloud Functions"],
+      ["redis-cloud", "list_fixed_subscriptions", "List Essentials subscriptions"],
+      ["redis-cloud", "list_fixed_databases", "List Essentials databases"],
+      ["power-bi", "list_datasets", "List My workspace datasets"],
+      ["power-bi", "list_reports", "List My workspace reports"],
+    ];
+    for (const [connectorName, toolName, summary] of expected) {
+      const tool = getConnector(connectorName).tools.find((item) =>
+        item.id === getNamespacedToolId(connectorName, toolName) || item.name === toolName
+      );
+      assertExists(tool, `Expected ${connectorName}:${toolName} to exist`);
+      assertEquals(tool.description, summary);
+    }
+  });
+  it("keeps sentence boundaries and ASCII punctuation in migrated input qualifiers", () => {
+    const concatenatedQualifier =
+      /[A-Za-z0-9)\]}'] (?:Requires|At least|At most|The|Only accepted|Draft|Remote|Larger) /;
+    let checked = 0;
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const inputs = { ...tool.endpoint?.params, ...tool.endpoint?.body };
+        for (const [field, input] of Object.entries(inputs)) {
+          const description = input?.description;
+          if (!description) continue;
+          checked += 1;
+          assert(
+            !concatenatedQualifier.test(description),
+            `${connector.name}:${tool.id}:${field} must end a sentence before the next qualifier`,
+          );
+        }
+      }
+    }
+    assert(checked > 0, "expected input descriptions to be checked");
+    const objectName = String(
+      getTool("google-cloud-storage", "delete_object").endpoint?.params?.objectName?.description,
+    );
+    assert(!/[–—]/.test(objectName), "objectName description must not use dashes");
+    assertStringIncludes(objectName, "encoded as %2F. Requires the");
+  });
   it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
     const expected: [string, string, "params" | "body", string, string][] = [
       [

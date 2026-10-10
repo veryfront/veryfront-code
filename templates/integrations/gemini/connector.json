@@ -234,7 +234,7 @@
     {
       "id": "gemini__imagen_generate",
       "name": "Generate Image (Imagen)",
-      "description": "Generate image (imagen)",
+      "description": "Generate image (Imagen)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

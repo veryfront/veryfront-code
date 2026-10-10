@@ -156,7 +156,7 @@
           "leaveRequestId": {
             "type": "string",
             "in": "path",
-            "description": "ID of the leave request to process (from List Leave Requests) The leave request must be pending.",
+            "description": "ID of the leave request to process (from List Leave Requests). The leave request must be pending.",
             "required": true
           },
           "action": {

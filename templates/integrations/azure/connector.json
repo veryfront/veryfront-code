@@ -300,7 +300,7 @@
     {
       "id": "azure__get_vm_instance_view",
       "name": "Get VM Instance View",
-      "description": "Get vm instance view",
+      "description": "Get VM instance view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

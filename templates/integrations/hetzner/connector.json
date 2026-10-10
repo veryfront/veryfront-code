@@ -337,7 +337,7 @@
     {
       "id": "hetzner__list_ssh_keys",
       "name": "List SSH Keys",
-      "description": "List ssh keys",
+      "description": "List SSH keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
