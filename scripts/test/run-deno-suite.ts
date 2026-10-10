@@ -109,7 +109,7 @@ export const DENO_SUITE_PROFILES: Readonly<
     // Belt and braces: the planner already excludes these, and the ignore
     // keeps a stray positional path from pulling them back in.
     extraFlags: [
-      "--ignore=tests/bun,tests/e2e,tests/integration/compiled-binary-e2e.test.ts," +
+      "--ignore=tests/bun,tests/e2e," +
       "tests/integration/compiled-binary-e2e.memory-recycle.test.ts," +
       "tests/integration/compiled-binary-e2e.shard-1.test.ts," +
       "tests/integration/compiled-binary-e2e.shard-2.test.ts," +

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S deno test --allow-all
 /**
  * Compiled Binary E2E Tests - Kitchen Sink
  *
@@ -9,6 +8,11 @@
  * - SSR rendering with framework components
  * - Layout and app provider wrapping
  * - Page context sharing across components
+ *
+ * The tests are defined here and registered by the shard files
+ * (compiled-binary-e2e.shard-N.test.ts), which the e2e:binary suite runs in
+ * parallel. This module is not a `*.test.ts` file, so directory runs do not
+ * register its tests a second time.
  *
  * Run:
  *   deno task test:e2e:binary        # Uses cached binary if exists
@@ -57,9 +61,8 @@ try {
 }
 for (const key of PROVIDER_ENV_KEYS) Deno.env.delete(key);
 
-// The e2e:binary suite runs compiled-binary-e2e.shard-N.test.ts files side by
-// side, and each registers its share of these tests. Run directly, this file
-// registers all of them.
+// Each compiled-binary-e2e.shard-N.test.ts registers its share of these tests.
+// Imported without a selected shard, this module registers all of them.
 const it = shardCompiledBinaryE2ETests(registerTest);
 
 // Proxy startup requires an explicit API origin. Requests in these tests are
@@ -1927,7 +1930,7 @@ export default function ClientPage() {
   });
 
   it("should hydrate app-router client pages interactively in the compiled binary", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-browser-hydration-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-binary-browser-hydration-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2016,7 +2019,7 @@ export default function ClientPage() {
   });
 
   it("should render app-router layouts using veryfront/router and veryfront/context in the compiled binary", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-binary-app-router-hooks-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-binary-app-router-hooks-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2535,7 +2538,7 @@ export default function ErrorBoundary({ error }: { error: Error }) {
   // Test: app provider defined in veryfront.config.ts instead of file convention
   // Regression test: User reported bug when using config-based app/layout providers
   it("should render app provider defined in veryfront.config.ts", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-app-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-config-app-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2609,7 +2612,7 @@ export default function Home() {
 
   // Test: layout defined in veryfront.config.ts instead of file convention
   it("should render layout defined in veryfront.config.ts", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-wrap-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-config-wrap-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2695,7 +2698,7 @@ export default function Home() {
 
   // Test: both app AND layout defined in veryfront.config.ts
   it("should render both app and layout defined in veryfront.config.ts", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-both-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-config-both-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2790,7 +2793,7 @@ export default function Home() {
 
   // Test: config-based layout with useRouter hook (test framework imports work in config layouts)
   it("should handle config layout with framework hooks", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-hooks-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-config-layout-hooks-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -2932,7 +2935,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // path normalization double-stripping in getEntityInfo (components/ prefix matched, then
   // layouts/ prefix matched again, corrupting the path).
   it("should render layout from components/layouts/ via config", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-components-layouts-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-components-layouts-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -3085,7 +3088,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // Regression test: In split:binary mode (production + config layout), the layout was not
   // rendered because config loading or layout resolution failed silently.
   it("should render config layout in production mode", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-config-layout-prod-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-config-layout-prod-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -3175,7 +3178,7 @@ export default function Home() {
   // Test: MDX layout at components/layouts/ path via config
   // Tests the production pattern: config layout using .mdx file in components/layouts/
   it("should render MDX layout from components/layouts/ via config", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-mdx-components-layout-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-mdx-components-layout-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),
@@ -3361,7 +3364,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   // Configured component layouts obey the same fail-closed proxy boundary.
   it("should fail closed before loading a configured layout when PROXY_MODE=1", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
+    const projectDir = await makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
 
     await Deno.writeTextFile(
       join(projectDir, "package.json"),

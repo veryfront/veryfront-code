@@ -5,4 +5,4 @@
 import { selectCompiledBinaryE2EShard } from "./compiled-binary-e2e.test-helpers.ts";
 
 selectCompiledBinaryE2EShard(3);
-await import("./compiled-binary-e2e.test.ts");
+await import("./compiled-binary-e2e.suite.ts");

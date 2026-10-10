@@ -15,13 +15,19 @@ export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
   join(E2E_BINARY_DIR, `veryfront-e2e-bin-${Deno.pid}`);
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 // `deno test --parallel` runs each file in its own isolate inside one process, so
-// sibling files share Deno.pid and BINARY_PATH but not module state. The lock
-// serializes them around the compile, and the users file counts the files still
+// sibling files share Deno.pid and BINARY_PATH but not module state. A lock
+// serializes them around the compile, and a users file counts the files still
 // running against the binary so the first one to finish does not delete it.
-// The lock sits beside the binary and is never removed: unlinking a lock file
-// while another isolate waits on it would let a third take a second lock.
-const BINARY_LOCK_PATH = join(dirname(BINARY_PATH), ".compiled-binary-e2e.lock");
-const BINARY_USERS_PATH = `${BINARY_PATH}.users`;
+// Both live in a private per-user temp directory rather than beside the binary,
+// which VERYFRONT_BINARY may place in a read-only directory. The lock is never
+// removed: unlinking a lock file while another isolate waits on it would let a
+// third take a second lock.
+const COORDINATION_DIR = join(
+  Deno.env.get("TMPDIR") ?? "/tmp",
+  `veryfront-compiled-binary-e2e-${Deno.uid() ?? "user"}`,
+);
+const BINARY_LOCK_PATH = join(COORDINATION_DIR, "compile.lock");
+const BINARY_USERS_PATH = join(COORDINATION_DIR, `${Deno.pid}.users`);
 
 /**
  * The e2e:binary suite runs this many shard files side by side. The hosted CI
@@ -42,7 +48,7 @@ let binaryTestCacheRoot: string | undefined;
 
 /**
  * Select the 1-based shard this test file runs. Call it before importing
- * compiled-binary-e2e.test.ts, whose `it` then registers only every
+ * compiled-binary-e2e.suite.ts, whose `it` then registers only every
  * COMPILED_BINARY_E2E_SHARD_COUNT-th test, starting at this shard.
  */
 export function selectCompiledBinaryE2EShard(shard: number): void {
@@ -119,20 +125,63 @@ export interface BrowserPageSession {
 
 let binaryCompiled: Promise<void> | undefined;
 
-/** Files of this process still using the binary; a count left by another process is stale. */
-function readBinaryUsers(): number {
-  let content: string;
+/** Create the coordination directory, refusing one another user could write to. */
+async function ensureCoordinationDir(): Promise<void> {
   try {
-    content = Deno.readTextFileSync(BINARY_USERS_PATH);
+    await Deno.mkdir(COORDINATION_DIR, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+  }
+  const info = await Deno.lstat(COORDINATION_DIR);
+  const uid = Deno.uid();
+  if (
+    !info.isDirectory || (uid !== null && info.uid !== uid) ||
+    (info.mode !== null && (info.mode & 0o077) !== 0)
+  ) {
+    throw new Error(`Refusing shared coordination directory: ${COORDINATION_DIR}`);
+  }
+}
+
+/**
+ * Identify this process instance, not just its pid: a pid can be reused after a
+ * run is killed before its unload handlers clean up. Every isolate of the
+ * process sees the same pid and start time.
+ */
+async function getProcessIdentity(): Promise<string> {
+  const result = await new Deno.Command("ps", {
+    args: ["-o", "lstart=", "-p", String(Deno.pid)],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  const startedAt = new TextDecoder().decode(result.stdout).trim();
+  if (!result.success || !startedAt) throw new Error("Failed to read the test process start time");
+  return `${Deno.pid} ${startedAt}`;
+}
+
+let processIdentity = "";
+
+interface BinaryUsersRecord {
+  process: string;
+  binaryPath: string;
+  count: number;
+}
+
+/** Files of this process instance still using the binary; any other record is stale. */
+function readBinaryUsers(): number {
+  let record: Partial<BinaryUsersRecord>;
+  try {
+    record = JSON.parse(Deno.readTextFileSync(BINARY_USERS_PATH));
   } catch {
     return 0;
   }
-  const match = /^(\d+) (\d+)$/.exec(content.trim());
-  return match && Number(match[1]) === Deno.pid ? Number(match[2]) : 0;
+  const { count } = record;
+  if (record.process !== processIdentity || record.binaryPath !== BINARY_PATH) return 0;
+  return typeof count === "number" && Number.isInteger(count) && count > 0 ? count : 0;
 }
 
 function writeBinaryUsers(count: number): void {
-  Deno.writeTextFileSync(BINARY_USERS_PATH, `${Deno.pid} ${count}\n`);
+  const record: BinaryUsersRecord = { process: processIdentity, binaryPath: BINARY_PATH, count };
+  Deno.writeTextFileSync(BINARY_USERS_PATH, `${JSON.stringify(record)}\n`);
 }
 
 function releaseBinaryOnExit(): void {
@@ -166,10 +215,8 @@ export function ensureBinaryCompiled(): Promise<void> {
 }
 
 async function acquireBinary(): Promise<void> {
-  // The parent of the path actually being written, not E2E_BINARY_DIR: with
-  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
-  // it would fail on a read-only checkout.
-  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
+  await ensureCoordinationDir();
+  processIdentity = await getProcessIdentity();
   using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
   await lock.lock(true);
   const users = readBinaryUsers();
@@ -202,6 +249,11 @@ async function compileBinary(): Promise<void> {
 
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");

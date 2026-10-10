@@ -1,6 +1,6 @@
 /**
  * Compiled Binary E2E memory recycle regression. It lives beside the sharded
- * compiled-binary-e2e.test.ts so the e2e:binary suite runs it alongside the
+ * compiled-binary-e2e.suite.ts so the e2e:binary suite runs it alongside the
  * shards against the same compiled binary.
  */
 import "../_helpers/contract-init.ts";
