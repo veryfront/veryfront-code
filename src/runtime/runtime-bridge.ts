@@ -966,10 +966,10 @@ async function emitModelCallContextEvent(
       }
       : {}),
     ...(request ? { request } : {}),
-    messages: snapshotModelCallContextMessages(sanitizeModelCallContextMessages(directOptions.prompt)),
-    ...(directOptions.tools
-      ? { tools: snapshotModelCallContextTools(directOptions.tools) }
-      : {}),
+    messages: snapshotModelCallContextMessages(
+      sanitizeModelCallContextMessages(directOptions.prompt),
+    ),
+    ...(directOptions.tools ? { tools: snapshotModelCallContextTools(directOptions.tools) } : {}),
   };
 
   const assertActive = () => {
