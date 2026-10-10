@@ -1139,6 +1139,32 @@ describe("model call request projection", () => {
     assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
+  it("shares neutral Anthropic controls between capture and the native wire builder", () => {
+    const model = { provider: "anthropic", modelId: "claude-haiku-4-5" };
+    const stopSequences = ["original"];
+    const reasoning = { enabled: true, budgetTokens: 2048 };
+    const options = snapshotModelCallProviderOptions(model, {
+      prompt,
+      maxOutputTokens: 8192,
+      stopSequences,
+      reasoning,
+    });
+    const projected = buildModelCallContextRequest(model, options);
+    stopSequences[0] = "mutated";
+    reasoning.budgetTokens = 4096;
+    const body = buildAnthropicMessagesRequest(
+      model.modelId,
+      model.provider,
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(projected?.stopSequences, ["original"]);
+    assertEquals(body.stop_sequences, ["original"]);
+    assertEquals(projected?.reasoning, { enabled: true, budgetTokens: 2048 });
+    assertEquals(body.thinking, { type: "enabled", budget_tokens: 2048 });
+  });
+
   it("snapshots direct Anthropic controls once for capture and the native wire builder", () => {
     const anthropic = { max_tokens: 512, thinking: { type: "enabled", budget_tokens: 2048 } };
     const options = snapshotModelCallProviderOptions(

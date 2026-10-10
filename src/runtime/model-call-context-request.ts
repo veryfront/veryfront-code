@@ -614,6 +614,26 @@ function snapshotProviderBucket(providerName: string, bucket: unknown): unknown 
   );
 }
 
+function snapshotNeutralReasoning(reasoning: RuntimeReasoningOption): RuntimeReasoningOption {
+  const enabled = reasoning.enabled;
+  const effort = reasoning.effort;
+  const budgetTokens = reasoning.budgetTokens;
+  const output: RuntimeReasoningOption = {
+    ...(enabled === undefined && !ObjectHasOwn(reasoning, "enabled") ? {} : { enabled }),
+    ...(effort === undefined && !ObjectHasOwn(reasoning, "effort") ? {} : { effort }),
+    ...(budgetTokens === undefined && !ObjectHasOwn(reasoning, "budgetTokens")
+      ? {}
+      : { budgetTokens }),
+  };
+  forEachPrivateArray(ReflectOwnKeys(reasoning), (key) => {
+    if (key === "enabled" || key === "effort" || key === "budgetTokens") return;
+    const descriptor = ObjectGetOwnPropertyDescriptor(reasoning, key);
+    if (descriptor) ObjectDefineProperty(output, key, descriptor);
+  });
+  ReflectApply(ObjectFreeze, Object, [output]);
+  return output;
+}
+
 export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCallOptions>(
   model: ModelCallRuntimeMetadata,
   options: TOptions,
@@ -623,8 +643,17 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
     return options;
   }
 
+  const neutralOptions = {
+    ...options,
+    ...(options.stopSequences === undefined
+      ? {}
+      : { stopSequences: objectFreeze(slicePrivateArray(options.stopSequences)) }),
+    ...(options.reasoning === undefined
+      ? {}
+      : { reasoning: snapshotNeutralReasoning(options.reasoning) }),
+  };
   const providerOptions = options.providerOptions;
-  if (providerOptions === undefined) return options;
+  if (providerOptions === undefined) return neutralOptions;
 
   const output: Record<string, unknown> = {};
   const consumedBuckets: Record<string, unknown> = {};
@@ -667,7 +696,7 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
     if (descriptor) ReflectApply(ObjectDefineProperty, Object, [output, key, descriptor]);
   });
 
-  return { ...options, providerOptions: output } as TOptions;
+  return { ...neutralOptions, providerOptions: output } as TOptions;
 }
 
 /** Project effective request settings without persisting raw provider options. */

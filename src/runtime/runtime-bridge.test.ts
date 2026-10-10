@@ -1670,6 +1670,46 @@ describe("runtime-bridge", () => {
     assertEquals(recorded.request, undefined);
   });
 
+  it("keeps neutral controls stable while mandatory event persistence awaits", async () => {
+    const stopSequences = ["original"];
+    const reasoning = { enabled: true, budgetTokens: 2048 };
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedStops: ModelRuntimeCallOptions["stopSequences"];
+    let dispatchedBudget: number | undefined;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      async doGenerate(options) {
+        dispatchedStops = options.stopSequences;
+        dispatchedBudget = options.reasoning?.budgetTokens;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithMandatoryRunEventSink(async (event) => {
+      recorded = event;
+      stopSequences[0] = "mutated";
+      reasoning.budgetTokens = 4096;
+      await Promise.resolve();
+    }, () =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Synthetic request" }],
+        stopSequences,
+        reasoning,
+        maxOutputTokens: 8192,
+      }));
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.stopSequences, ["original"]);
+    assertEquals(recorded.request?.reasoning, { enabled: true, budgetTokens: 2048 });
+    assertEquals(dispatchedStops, ["original"]);
+    assertEquals(dispatchedBudget, 2048);
+  });
+
   it("uses one OpenAI provider-options snapshot for capture and dispatch", async () => {
     let bucketReads = 0;
     let reasoningReads = 0;
