@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -3519,9 +3518,8 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       latestExternalEventSequence: 0,
       maxEventsPerBatch: 100,
       fetch: (_input, init) => {
-        const observedRequest1 = observeFetchRequestInit(init);
         assert(init && "body" in init, "fetch must receive request options");
-        const bodyText = typeof observedRequest1.body === "string" ? observedRequest1.body : "{}";
+        const bodyText = typeof init?.body === "string" ? init.body : "{}";
         const body = JSON.parse(bodyText);
         appendBodies.push(body);
         return Promise.resolve(Response.json({

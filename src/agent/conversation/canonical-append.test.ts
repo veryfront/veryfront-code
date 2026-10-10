@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -210,9 +209,8 @@ it("recovers authenticated cursor mismatch by append hints without any event rea
     maxCursorResyncsPerFlush: 2,
     events: [{ type: "STATE_SNAPSHOT", snapshot: {} }],
     fetch: (_input, init) => {
-      const observedRequest1 = observeFetchRequestInit(init);
       assert(init && "method" in init, "fetch must receive request options");
-      methods.push(observedRequest1.method ?? "GET");
+      methods.push(init?.method ?? "GET");
       if (methods.length === 1) {
         return Promise.resolve(
           Response.json({ detail: "External run event cursor mismatch" }, {
@@ -677,9 +675,8 @@ it("stores queue tool call admissions by occurrence id and preserves sidecar ind
     latestExternalEventSequence: 4,
     maxEventsPerBatch: 100,
     fetch: (_input, init) => {
-      const observedRequest2 = observeFetchRequestInit(init);
       assert(init && "body" in init, "fetch must receive request options");
-      body = JSON.parse(String(observedRequest2.body)) as Record<string, unknown>;
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(
         Response.json(appendResponse({ toolCallAdmissions: [wireToolCallAdmission()] })),
       );
@@ -715,9 +712,8 @@ it("preserves queue runtime observation indexes across prior pending events", as
     latestExternalEventSequence: 4,
     maxEventsPerBatch: 100,
     fetch: (_input, init) => {
-      const observedRequest3 = observeFetchRequestInit(init);
       assert(init && "body" in init, "fetch must receive request options");
-      body = JSON.parse(String(observedRequest3.body)) as Record<string, unknown>;
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(Response.json(appendResponse({ appendedCount: 2 })));
     },
   });

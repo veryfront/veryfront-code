@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
@@ -31,7 +32,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { CommandStreamEvent } from "./sandbox.ts";
 import { hasTemporarySandboxPolicy } from "./response.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
-import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
+import { LazySandbox, resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
@@ -2985,7 +2986,7 @@ describe("Sandbox", () => {
       });
       try {
         await sandbox.runCommand("true");
-        assertEquals(fetchCalls[2]!.init?.signal, undefined);
+        assertEquals(fetchCalls[2]!.init?.signal instanceof AbortSignal, true);
         assertEquals(
           (jsonBody(fetchCalls, 2) as Record<string, unknown>).timeout_seconds,
           undefined,
@@ -3149,6 +3150,134 @@ describe("Sandbox", () => {
         await sandbox.close();
       }
     });
+
+    it("bounds a stalled synchronous proxy request when command options are omitted", async () => {
+      using time = new FakeTime();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      let release!: (response: Response) => void;
+      let signal: AbortSignal | null | undefined;
+      mockFetch([
+        jsonResponse({
+          id: "sync-deadline",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((resolve, reject) => {
+            release = resolve;
+            signal = init?.signal;
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")), { once: true });
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 120_000,
+      });
+      const execution = sandbox.runCommand("echo bounded");
+      try {
+        await started;
+        assertEquals(signal instanceof AbortSignal, true);
+        time.tick(61_000);
+        await assertRejects(() => execution, Error);
+        assertEquals(signal?.aborted, true);
+        assertEquals(fetchCalls.filter((call) => call.url.endsWith("/commands/run")).length, 1);
+      } finally {
+        release(jsonResponse({ stdout: "", stderr: "", exit_code: 0 }));
+        await execution.catch(() => {});
+        await sandbox.close();
+      }
+    });
+
+    it("retries failed bootstrap cleanup before allocating another workspace", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "bootstrap-owned",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        textResponse("heartbeat failed", 503),
+        textResponse("delete failed", 503),
+        textResponse("delete failed", 503),
+        textResponse("delete failed", 503),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({ authToken: "token", apiUrl: "https://api.test.com" });
+      try {
+        await assertRejects(() => sandbox.ensure(), Error);
+        assertEquals(sandbox.id, "bootstrap-owned");
+        await assertRejects(() => sandbox.ensure(), Error);
+        assertEquals(sandbox.id, "bootstrap-owned");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+          ).length,
+          1,
+        );
+      } finally {
+        mockFetch([jsonResponse({ ok: true })]);
+        await sandbox.close();
+      }
+    });
+
+    for (const lostResponse of [false, true]) {
+      it(`recovers lazy cleanup when its temporary workspace is unavailable, lostResponse=${lostResponse}`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "unavailable-old",
+            endpoint: "https://sb.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+          ...(lostResponse
+            ? [() => {
+              throw new TypeError("delete response lost");
+            }]
+            : []),
+          textResponse("Sandbox not found", 404),
+          jsonResponse({
+            id: "replacement",
+            endpoint: "https://new.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+        ]);
+        const sandbox = Sandbox.createLazy({ authToken: "token", apiUrl: "https://api.test.com" });
+        try {
+          await sandbox.ensure();
+          if (lostResponse) {
+            await assertRejects(() => sandbox.close(), Error);
+            assertEquals(sandbox.id, "unavailable-old");
+          }
+          await sandbox.close();
+          assertEquals(sandbox.id, null);
+          await sandbox.ensure();
+          assertEquals(sandbox.id, "replacement");
+          assertEquals(
+            fetchCalls.filter((call) =>
+              call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+            ).length,
+            2,
+          );
+        } finally {
+          mockFetch([jsonResponse({ ok: true })]);
+          await sandbox.close();
+        }
+      });
+    }
 
     it("times out stalled lazy background-command control requests", async () => {
       let capturedSignal: AbortSignal | undefined;

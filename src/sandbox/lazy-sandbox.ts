@@ -82,6 +82,8 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_HEARTBEAT_GRACE_MS = 5_000;
 const DEFAULT_CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
+// Maximum synchronous execution time plus transport slack.
+const DEFAULT_PROXY_COMMAND_TIMEOUT_MS = 60_000;
 const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
 const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
 const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
@@ -259,7 +261,9 @@ export class LazySandbox {
         try {
           const response = await fetchWithTimeout(
             `${route.baseUrl}/commands/run`,
-            options?.timeoutSeconds === undefined ? 0 : (options.timeoutSeconds + 5) * 1000,
+            options?.timeoutSeconds === undefined
+              ? DEFAULT_PROXY_COMMAND_TIMEOUT_MS
+              : (options.timeoutSeconds + 5) * 1000,
             {
               method: "POST",
               headers: this.#jsonHeaders(),
@@ -636,6 +640,13 @@ export class LazySandbox {
       return;
     }
 
+    // A failed cleanup must not be overwritten by the next provisioning attempt.
+    const pendingCleanupId = this.sessionId;
+    if (pendingCleanupId && this.deleteOnClose) {
+      await this.deleteSession(pendingCleanupId);
+      this.resetSessionState(pendingCleanupId);
+    }
+
     for (let attempt = 1; attempt <= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         await this.bootstrapCreatedSession();
@@ -681,6 +692,7 @@ export class LazySandbox {
       await this.heartbeat(true);
       this.startHeartbeatLoop();
     } catch (error) {
+      this.endpoint = null;
       const currentSessionId = this.sessionId;
       if (currentSessionId && this.deleteOnClose) {
         await this.deleteSession(currentSessionId);
@@ -859,7 +871,9 @@ export class LazySandbox {
         headers: this.#authHeaders(),
       },
     );
-    if (!response.ok) {
+    // A 404 means no sandbox is available to this client; cleanup is idempotent.
+    // Other denials and server failures must preserve the handle for retry.
+    if (!response.ok && response.status !== 404) {
       throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
     }
   }

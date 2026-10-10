@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
 import {
   createRunBoundAgentManualPause,
@@ -1220,9 +1219,8 @@ describe("managed broker handler", () => {
           signal: sessionController.signal,
           settlementSignal: controller.signal,
           fetch: (_url, init) => {
-            const observedRequest1 = observeFetchRequestInit(init);
             assert(init && "body" in init, "fetch must receive request options");
-            if (JSON.parse(String(observedRequest1.body)).settled) {
+            if (JSON.parse(String(init?.body)).settled) {
               receipts++;
               assertEquals(sessionController.signal.aborted, true);
               assertEquals(controller.signal.aborted, false);
@@ -1289,9 +1287,8 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          const observedRequest2 = observeFetchRequestInit(init);
           assert(init && "body" in init, "fetch must receive request options");
-          if (JSON.parse(String(observedRequest2.body)).settled) receipts++;
+          if (JSON.parse(String(init?.body)).settled) receipts++;
           return Promise.resolve(Response.json({ stop: true }));
         },
       });
@@ -1337,9 +1334,8 @@ describe("managed broker handler", () => {
         token: "synthetic-pause-token",
         signal: new AbortController().signal,
         fetch: (_url, init) => {
-          const observedRequest3 = observeFetchRequestInit(init);
           assert(init && "body" in init, "fetch must receive request options");
-          if (!JSON.parse(String(observedRequest3.body)).settled) {
+          if (!JSON.parse(String(init?.body)).settled) {
             return Promise.resolve(Response.json({ stop: true }));
           }
           assertEquals(f.managed.active, 0);

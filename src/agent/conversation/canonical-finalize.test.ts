@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "../../testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -109,10 +108,7 @@ it("retains terminal authority privately across the trusted root descriptor only
     fetch: (_input, init) => {
       assert(init && "headers" in init, "fetch must receive request options");
       calls++;
-      assertEquals(
-        new Headers(observeFetchRequestInit(init).headers).get("X-Veryfront-Run-Terminal-Token"),
-        token,
-      );
+      assertEquals(new Headers(init?.headers).get("X-Veryfront-Run-Terminal-Token"), token);
       return Promise.resolve(Response.json({ id: canonical, status: "completed" }));
     },
   });
