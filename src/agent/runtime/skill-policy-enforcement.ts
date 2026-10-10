@@ -42,6 +42,7 @@ import {
   UNREADABLE_TOOL_RESULT_PROPERTY,
 } from "#veryfront/tool/result.ts";
 import { isToolResultPart } from "./tool-result-part.ts";
+import { inheritRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
 import {
   extractSkillDelegationOverrides,
@@ -960,18 +961,21 @@ export function filterToolsAfterSubmittedFormInput(
     if (!activeSkill?.id || activeSkillReferences.length === 0) {
       continue;
     }
-    filtered[filtered.length] = markTrustedPlatformPolicyToolDefinition({
-      ...tool,
-      parameters: {
-        type: "object",
-        properties: {
-          skillId: { type: "string", enum: [activeSkill.id] },
-          file: { type: "string", enum: activeSkillReferences },
+    filtered[filtered.length] = inheritRuntimeProviderSchemaHiddenTool(
+      tool,
+      markTrustedPlatformPolicyToolDefinition({
+        ...tool,
+        parameters: {
+          type: "object",
+          properties: {
+            skillId: { type: "string", enum: [activeSkill.id] },
+            file: { type: "string", enum: activeSkillReferences },
+          },
+          required: ["skillId", "file"],
+          additionalProperties: false,
         },
-        required: ["skillId", "file"],
-        additionalProperties: false,
-      },
-    });
+      }),
+    );
   }
   return filtered;
 }

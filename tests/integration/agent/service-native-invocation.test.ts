@@ -815,6 +815,119 @@ for (const mutation of bodyMutations) {
   });
 }
 
+it("rejects a promise hook installed while a body chunk read is pending", async () => {
+  const canary = "synthetic-pending-read-canary";
+  const constructorDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!;
+  const thenDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "then")!;
+  const nativeThen = thenDescriptor.value as (...args: unknown[]) => Promise<unknown>;
+  let observations = 0;
+  let installed = false;
+  let removed = false;
+  const remove = () => {
+    if (removed) return;
+    removed = true;
+    Object.defineProperty(Promise.prototype, "constructor", constructorDescriptor);
+    Object.defineProperty(Promise.prototype, "then", thenDescriptor);
+  };
+  // Makes `await` call `then`, observes settled values and removes itself
+  // after it observes the body credential.
+  const install = () => {
+    installed = true;
+    Object.defineProperty(Promise.prototype, "constructor", {
+      configurable: true,
+      get: () => Object,
+    });
+    Object.defineProperty(Promise.prototype, "then", {
+      ...thenDescriptor,
+      value: function (this: Promise<unknown>, onFulfilled?: unknown, onRejected?: unknown) {
+        return BodyApply(nativeThen, this, [(value: unknown) => {
+          if (containsBodyCanary(value, canary)) {
+            observations++;
+            remove();
+          }
+          return typeof onFulfilled === "function" ? onFulfilled(value) : value;
+        }, onRejected]);
+      },
+    });
+  };
+  const encoder = new TextEncoder();
+  const chunks = [" ", " ", createRuntimeInvocationBody(canary)];
+  let pulls = 0;
+  const request = new Request(
+    "https://agent.example.test/api/control-plane/runs/run-1/stream",
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer authenticated-user-token",
+        "content-type": "application/json",
+        "X-Veryfront-Run-Event-Token": "verified-event-token",
+      },
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const pull = pulls++;
+          if (pull >= chunks.length) {
+            controller.close();
+            return;
+          }
+          if (pull !== 1) {
+            controller.enqueue(encoder.encode(chunks[pull]));
+            return;
+          }
+          // The second chunk arrives from a timer, after the body read awaits it.
+          return new Promise<void>((resolve) => {
+            setTimeout(() => {
+              install();
+              controller.enqueue(encoder.encode(chunks[pull]));
+              resolve();
+            }, 0);
+          });
+        },
+      }),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" },
+  );
+  let detachedDispatches = 0;
+  let response: Response | undefined;
+  let failure: unknown;
+  const routeSet = createHostedAgentServiceRouteSet({
+    runtimeSource,
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest> => ({
+      authToken: "authenticated-user-token",
+      userId: "user-1",
+    }),
+    verifyProjectAccess: async () => ({ success: true }),
+    verifyRunEventAppendToken: async () => true,
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {
+      detachedDispatches++;
+    },
+  });
+
+  try {
+    response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+      request,
+      runId: "run-1",
+    });
+  } catch (error) {
+    failure = error;
+  } finally {
+    remove();
+  }
+
+  assertEquals(installed, true, "the hook was installed during the body read");
+  assertEquals(observations, 0, "the promise hook never observes the body credential");
+  assertEquals(isNativeProcessingError(failure), true, "the native processing check fails");
+  assertEquals(
+    (failure as Error).message.includes("Promise.prototype.constructor"),
+    true,
+    "the error names the changed member",
+  );
+  assertEquals(response, undefined, "the route never substitutes a success response");
+  assertEquals(detachedDispatches, 0, "the route never starts detached execution");
+});
+
 it("preserves clean invocation semantics and withholds the body credential", async () => {
   const canary = "synthetic-clean-body-canary";
   let detachedRequest: Request | undefined;

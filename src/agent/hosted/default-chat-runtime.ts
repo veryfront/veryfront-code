@@ -36,7 +36,10 @@ import {
   revokeRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
-import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  markRuntimeLocalTool,
+} from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
@@ -384,6 +387,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       : {}),
     ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
+    __vfToolBootstrapNames: input.toolAssembly.modelVisibleToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
@@ -492,19 +496,22 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
     (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return inheritTrustedHostToolProvenance(tool, {
-        ...tool,
-        execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
-          try {
-            return snapshotHostedToolResult(
-              await apply(execute, tool, [toolInput, context]),
-            );
-          } catch (error) {
-            if (preserveTrustedError) throw error;
-            throw new TypeErrorConstructor("Hosted project tool execution failed");
-          }
-        },
-      });
+      return inheritRuntimeProviderSchemaHiddenTool(
+        tool,
+        inheritTrustedHostToolProvenance(tool, {
+          ...tool,
+          execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+            try {
+              return snapshotHostedToolResult(
+                await apply(execute, tool, [toolInput, context]),
+              );
+            } catch (error) {
+              if (preserveTrustedError) throw error;
+              throw new TypeErrorConstructor("Hosted project tool execution failed");
+            }
+          },
+        }),
+      );
     },
   );
 }
@@ -519,15 +526,18 @@ export function scopeHostedRuntimeTools(input: {
   return mapOwnRecord(
     scopedTools,
     (_toolName, tool) =>
-      inheritTrustedHostToolProvenance(tool, {
-        ...tool,
-        execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-          withoutHostedCredentials({
-            taskContext: input.taskContext,
-            cloudContext: input.cloudContext,
-            operation: () => apply(tool.execute, tool, [toolInput, context]),
-          }),
-      }),
+      inheritRuntimeProviderSchemaHiddenTool(
+        tool,
+        inheritTrustedHostToolProvenance(tool, {
+          ...tool,
+          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+            withoutHostedCredentials({
+              taskContext: input.taskContext,
+              cloudContext: input.cloudContext,
+              operation: () => apply(tool.execute, tool, [toolInput, context]),
+            }),
+        }),
+      ),
   );
 }
 

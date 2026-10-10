@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import { tool, type ToolDefinition } from "#veryfront/tool";
 import {
   createToolExposureCheckpoint,
   createToolExposurePlan,
@@ -10,6 +10,10 @@ import {
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
 } from "./tool-exposure.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 function definition(
   name: string,
@@ -26,6 +30,22 @@ function definition(
       },
     },
   };
+}
+
+function hiddenDefinition(
+  name: string,
+  description: string,
+  parameterDescription = `${name} unique parameter`,
+): ToolDefinition {
+  return inheritRuntimeProviderSchemaHiddenTool(
+    markRuntimeProviderSchemaHiddenTool(tool({
+      id: name,
+      description,
+      inputSchema: { type: "object", properties: {} },
+      execute: () => ({}),
+    })),
+    definition(name, description, parameterDescription),
+  );
 }
 
 const catalog = [
@@ -115,6 +135,47 @@ it("tool exposure plans eager and deferred visibility deterministically", () => 
   assertEquals(
     deferred.deferred.map((tool) => tool.name),
     ["archive_release", "create_release", "form_input", "get_release"],
+  );
+});
+
+it("keeps hidden provider-schema aliases authorized but out of model exposure", () => {
+  const state = createToolExposureState(["load_skill"]);
+  const hiddenLegacyLoader = hiddenDefinition("load_skill", "Hidden legacy loader");
+  const canonicalLoader = definition("veryfront__load_skill", "Canonical loader");
+  const deferredProjectTool = definition("project_loader", "Project loader");
+  const plan = createToolExposurePlan({
+    authorized: [hiddenLegacyLoader, canonicalLoader, deferredProjectTool],
+    bootstrapToolNames: new Set(["veryfront__load_skill"]),
+    mode: "deferred",
+    state,
+  });
+
+  assertEquals(plan.authorized.map((entry) => entry.name), [
+    "load_skill",
+    "veryfront__load_skill",
+    "project_loader",
+  ]);
+  assertEquals(plan.visible.map((entry) => entry.name), [
+    TOOL_SEARCH_TOOL_NAME,
+    "veryfront__load_skill",
+  ]);
+  assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
+  assertEquals(
+    searchToolExposure({
+      query: "legacy loader",
+      available: plan.visible,
+      authorized: plan.deferred,
+      state,
+    }).matches,
+    [],
+  );
+  assertEquals(createToolExposureCheckpoint(plan.authorized, state).loadedToolNames, []);
+  assertEquals(
+    [
+      ...restoreToolExposureState({ version: 2, loadedToolNames: ["load_skill"] }, plan.authorized)
+        .loadedToolNames,
+    ],
+    [],
   );
 });
 

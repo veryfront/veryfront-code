@@ -49,3 +49,14 @@ The managed broker reads this opt-in from the actual private persistence sink an
 Runtime observations travel through private carriers and are removed from public chunks and messages. Application context fields cannot enable this authority. A mirrored step reuses the runtime's observed step identity; it does not allocate a competing identity.
 
 Enable this path only with matching API and writer-generation support. Legacy history without these proofs remains readable through the existing run-event surface, but cannot supply missing target execution, step, or message provenance.
+
+## Event schema contributor verification
+
+The following commands run from the SDK source repository after changing parser behavior, schema artifacts, or generated payload types. They are not installed-project verification commands.
+
+```sh
+deno task test:file src/events/
+deno task generate
+deno run -A src/events/generate-payload-types.mjs
+git diff --exit-code -- src/events/payload-types.generated.ts
+```
