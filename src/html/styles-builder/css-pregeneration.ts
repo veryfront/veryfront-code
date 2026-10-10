@@ -27,6 +27,12 @@ import {
   type StyleScopeProfile,
 } from "./style-scope-profile.ts";
 
+const ArrayPrototypeFind = Array.prototype.find;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const ReflectApply = Reflect.apply;
+
 const logger = serverLogger.component("css-pregeneration");
 const inFlightPreparedCSSBuilds = new Map<string, Promise<void>>();
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
@@ -333,10 +339,15 @@ export function findStylesheetFromFiles(
   stylesheetPath?: string,
 ): string | undefined {
   if (stylesheetPath) {
-    const normalized = stylesheetPath.replace(/^\/+/, "");
-    const file = files.find(
-      (f) => f.content && (f.path === normalized || f.path.endsWith(`/${normalized}`)),
-    );
+    let start = 0;
+    while (stylesheetPath[start] === "/") start++;
+    const normalized = ReflectApply(StringPrototypeSlice, stylesheetPath, [start]) as string;
+    const file = ReflectApply(ArrayPrototypeFind, files, [
+      (f: { path: string; content?: string }) =>
+        f.content &&
+        (f.path === normalized ||
+          ReflectApply(StringPrototypeEndsWith, f.path, [`/${normalized}`])),
+    ]) as { path: string; content?: string } | undefined;
     if (file?.content) return file.content;
   }
 
@@ -368,8 +379,12 @@ export function findGlobalStylesheet(
     /(^|\/)src\/styles\/globals\.css$/,
   ];
 
-  for (const pattern of stylesheetPatterns) {
-    const file = files.find((f) => f.content && pattern.test(f.path));
+  for (let index = 0; index < stylesheetPatterns.length; index++) {
+    const pattern = stylesheetPatterns[index]!;
+    const file = ReflectApply(ArrayPrototypeFind, files, [
+      (f: { path: string; content?: string }) =>
+        f.content && ReflectApply(RegExpPrototypeExec, pattern, [f.path]),
+    ]) as { path: string; content?: string } | undefined;
     if (file?.content) return file.content;
   }
 

@@ -42,7 +42,10 @@ import {
   primordialPromiseResolve,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
-import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  primordialArrayFilter,
+  primordialArrayMap,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
@@ -4098,11 +4101,44 @@ async function executeStyleArtifactBuildRun(input: {
     apiClient.setProjectSlug(projectReference);
 
     selector = resolveStyleArtifactBuildSelector(config, input.ctx);
-    const styleProfile = createStyleScopeProfile(input.ctx.config);
     const requestedStyleProfileHash = getStringConfig(config, [
       "style_profile_hash",
       "styleProfileHash",
     ]);
+    styleProfileHash = requestedStyleProfileHash ?? null;
+    let styleConfig = input.ctx.config;
+    let releaseFiles: StyleArtifactSourceFile[] | undefined;
+    if (selector.releaseId) {
+      const listedFiles = await apiClient.listAllReleaseFiles(selector.releaseId, {}, input.signal);
+      releaseFiles = primordialArrayMap(listedFiles, (file) => {
+        if (typeof file.content !== "string") {
+          throw API_CLIENT_ERROR.create({
+            detail: "Release file list omitted file content",
+            status: 502,
+          });
+        }
+        return { path: file.path, content: file.content };
+      });
+      const { VERYFRONT_CONFIG_FILES } = await import("#veryfront/config/config-files.ts");
+      const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
+      let source: Parameters<typeof evaluateHostedConfigSource>[0]["source"] = null;
+      for (let index = 0; index < VERYFRONT_CONFIG_FILES.length; index++) {
+        const fileName = VERYFRONT_CONFIG_FILES[index]!;
+        const file = primordialArrayFilter(releaseFiles, (file) => file.path === fileName)[0];
+        if (typeof file?.content === "string") {
+          source = { fileName, source: file.content };
+          break;
+        }
+      }
+      styleConfig = await evaluateHostedConfigSource({
+        cacheKey: `release-style:${projectReference}:${selector.releaseId}`,
+        source,
+        environmentName: "release",
+        environment: {},
+        signal: input.signal,
+      });
+    }
+    const styleProfile = createStyleScopeProfile(styleConfig);
     styleProfileHash = requestedStyleProfileHash ?? styleProfile.hash;
 
     if (requestedStyleProfileHash && requestedStyleProfileHash !== styleProfile.hash) {
@@ -4112,11 +4148,20 @@ async function executeStyleArtifactBuildRun(input: {
       });
     }
 
-    const { files, contentContext } = await resolveStyleArtifactSourceFiles(
-      input.ctx,
-      styleProfile,
-      collectLocalProjectSourceFiles,
-    );
+    const { files, contentContext } = releaseFiles
+      ? {
+        files: releaseFiles,
+        contentContext: {
+          sourceType: "release" as const,
+          projectSlug: projectReference,
+          releaseId: selector.releaseId,
+        },
+      }
+      : await resolveStyleArtifactSourceFiles(
+        input.ctx,
+        styleProfile,
+        collectLocalProjectSourceFiles,
+      );
     input.signal.throwIfAborted();
     if (files.length === 0) {
       throw INVALID_ARGUMENT.create({
@@ -4124,9 +4169,11 @@ async function executeStyleArtifactBuildRun(input: {
       });
     }
 
-    const stylesheetPath = input.ctx.config?.tailwind?.stylesheet;
+    const stylesheetPath = styleConfig?.tailwind?.stylesheet;
     const stylesheet = findStylesheetFromFiles(files, stylesheetPath) ??
-      (getStyleArtifactSourceProvider(input.ctx)
+      (releaseFiles
+        ? undefined
+        : getStyleArtifactSourceProvider(input.ctx)
         ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
         : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
     input.signal.throwIfAborted();

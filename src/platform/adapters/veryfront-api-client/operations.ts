@@ -1,4 +1,8 @@
 import {
+  primordialArrayMap,
+  primordialArrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
   currentRequestContext,
   currentRuntimeRequestContext,
 } from "#veryfront/platform/request-context-access.ts";
@@ -368,7 +372,9 @@ async function listAllFiles(
 
   do {
     const result = await list(cursor);
-    allFiles.push(...result.files);
+    for (let index = 0; index < result.files.length; index++) {
+      primordialArrayPush(allFiles, result.files[index]!);
+    }
     cursor = result.page_info.next ?? undefined;
   } while (cursor);
 
@@ -773,7 +779,7 @@ export class VeryfrontAPIOperations {
     const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {
-      files: response.data.map(mapProjectFile),
+      files: primordialArrayMap(response.data, mapProjectFile),
       page_info: response.page_info,
       release_id: response.release_id,
       release_version: response.release_version,
