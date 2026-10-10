@@ -29,8 +29,7 @@ const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
 const BASE_HEAD = "e724246c0e05c8dcf0db41f024f4592128222937";
 const NEW_HEAD = "b8459394dd5bac3a6736ee4c7723d7f291abb382";
-const LIVE_CODEX_SUMMARY_HEAD =
-  "60c61968ce726689e6ab9e5438d08e8bf8a11ced";
+const LIVE_CODEX_SUMMARY_HEAD = "60c61968ce726689e6ab9e5438d08e8bf8a11ced";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -147,7 +146,9 @@ function codexReviewSummary(
       "",
       "| Review | Status | Commit | Review trigger |",
       "| --- | --- | --- | --- |",
-      `| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-09-06T14:32:42.547857Z">2026-09-06T14:32:42.547857Z</relative-time> | \`${HEAD.slice(0, 7)}\` | Manual request |`,
+      `| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-09-06T14:32:42.547857Z">2026-09-06T14:32:42.547857Z</relative-time> | \`${
+        HEAD.slice(0, 7)
+      }\` | Manual request |`,
       "",
       "",
       "",
@@ -174,15 +175,20 @@ function codexReviewSummary(
 function codexSecurityReviewSummary() {
   const summary = codexReviewSummary();
   const lines = (summary.body as string).split("\n");
-  const securityRow = lines[8].replace("📝 **Code Review**", "🔒 **Security Review**");
-  lines[1] = `<!-- codex-security-review:v1 ${JSON.stringify({
-    blockingSeverityThreshold: "P0",
-    headSha: HEAD,
-    mergeGateEnabled: false,
-    pullRequestNumber: 5013,
-    repository: "veryfront/veryfront-code",
-    status: "completed",
-  })} -->`;
+  const securityRow = lines[8].replace(
+    "📝 **Code Review**",
+    "🔒 **Security Review**",
+  );
+  lines[1] = `<!-- codex-security-review:v1 ${
+    JSON.stringify({
+      blockingSeverityThreshold: "P0",
+      headSha: HEAD,
+      mergeGateEnabled: false,
+      pullRequestNumber: 5013,
+      repository: "veryfront/veryfront-code",
+      status: "completed",
+    })
+  } -->`;
   lines.splice(9, 0, securityRow);
   summary.body = lines.join("\n");
   return summary;
@@ -280,30 +286,81 @@ function record(value: unknown, label: string): Record<string, unknown> {
 describe("automated review evidence", () => {
   it("accepts completed security metadata and rejects contradictory summary rows", async () => {
     const original = codexReviewSummary().body;
-    const metadata = `<!-- codex-security-review:v1 ${JSON.stringify({ blockingSeverityThreshold: "P0", headSha: HEAD, mergeGateEnabled: false, pullRequestNumber: 4425, repository: "veryfront/veryfront-code", status: "completed" })} -->`;
+    const metadata = `<!-- codex-security-review:v1 ${
+      JSON.stringify({
+        blockingSeverityThreshold: "P0",
+        headSha: HEAD,
+        mergeGateEnabled: false,
+        pullRequestNumber: 4425,
+        repository: "veryfront/veryfront-code",
+        status: "completed",
+      })
+    } -->`;
     const lines = original.split("\n");
     lines[1] = metadata;
-    lines.splice(9, 0, lines[8].replace("📝 **Code Review**", "🔒 **Security Review**"));
+    lines.splice(
+      9,
+      0,
+      lines[8].replace("📝 **Code Review**", "🔒 **Security Review**"),
+    );
     const body = lines.join("\n");
-    const evidence = (value: string) => ({ reviews: [], comments: [codexReviewSummary({ body: value })], reactions: [codexCompletionReaction()] });
+    const evidence = (value: string) => ({
+      reviews: [],
+      comments: [codexReviewSummary({ body: value })],
+      reactions: [codexCompletionReaction()],
+    });
     const resolveHead = () => Promise.resolve(HEAD);
-    assertEquals((await findAutomatedReview(evidence(body), HEAD, resolveHead))?.source, "codex-summary");
-    assertEquals((await findAutomatedReview(
-      evidence(body.replace(`"headSha":"${HEAD}"`, `"headSha":"${HEAD.toUpperCase()}"`)),
-      HEAD, resolveHead,
-    ))?.source, "codex-summary");
-    for (const invalid of [
-      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:11:43Z")),
-      body.replace(lines[9], lines[9].replaceAll("2026-09-06T14:32:42.547857Z", "2026-09-06T14:32:44Z")),
-      body.replace(metadata, "<!-- codex-security-review:v1 malformed -->"),
-      body.replace(`"headSha":"${HEAD}"`, `"headSha":"${"f".repeat(40)}"`),
-      body.replace('"status":"completed"', '"status":"pending"'),
-      body.replace(`"headSha":"${HEAD}"`, `"headSha":["${HEAD}"]`),
-      body.replace("🔒 **Security Review**", "📝 **Code Review**"),
-      body.replace("🔒 **Security Review**", "Unknown review"),
-      body.replace(lines[9], `${lines[9]}\n${lines[9]}`),
-      body.replace(lines[9], lines[9].replace(HEAD.slice(0, 7), "f".repeat(7))),
-    ]) assertEquals(await findAutomatedReview(evidence(invalid), HEAD, resolveHead), undefined);
+    assertEquals(
+      (await findAutomatedReview(evidence(body), HEAD, resolveHead))?.source,
+      "codex-summary",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        evidence(
+          body.replace(
+            `"headSha":"${HEAD}"`,
+            `"headSha":"${HEAD.toUpperCase()}"`,
+          ),
+        ),
+        HEAD,
+        resolveHead,
+      ))?.source,
+      "codex-summary",
+    );
+    for (
+      const invalid of [
+        body.replace(
+          lines[9],
+          lines[9].replaceAll(
+            "2026-09-06T14:32:42.547857Z",
+            "2026-09-06T14:11:43Z",
+          ),
+        ),
+        body.replace(
+          lines[9],
+          lines[9].replaceAll(
+            "2026-09-06T14:32:42.547857Z",
+            "2026-09-06T14:32:44Z",
+          ),
+        ),
+        body.replace(metadata, "<!-- codex-security-review:v1 malformed -->"),
+        body.replace(`"headSha":"${HEAD}"`, `"headSha":"${"f".repeat(40)}"`),
+        body.replace('"status":"completed"', '"status":"pending"'),
+        body.replace(`"headSha":"${HEAD}"`, `"headSha":["${HEAD}"]`),
+        body.replace("🔒 **Security Review**", "📝 **Code Review**"),
+        body.replace("🔒 **Security Review**", "Unknown review"),
+        body.replace(lines[9], `${lines[9]}\n${lines[9]}`),
+        body.replace(
+          lines[9],
+          lines[9].replace(HEAD.slice(0, 7), "f".repeat(7)),
+        ),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(evidence(invalid), HEAD, resolveHead),
+        undefined,
+      );
+    }
   });
 
   it("accepts fractional completion within GitHub's represented update second", async () => {
@@ -380,20 +437,37 @@ describe("automated review evidence", () => {
   it("accepts a completed code review with the connector's security summary format", async () => {
     const summary = codexSecurityReviewSummary();
     const evidence = {
-      reviews: [], comments: [summary], reactions: [codexCompletionReaction()],
+      reviews: [],
+      comments: [summary],
+      reactions: [codexCompletionReaction()],
     };
     assertEquals(
-      (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))?.source,
+      (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))
+        ?.source,
       "codex-summary",
     );
     assertEquals(
-      await findAutomatedReview({ ...evidence, reactions: [] }, HEAD, () => Promise.resolve(HEAD)),
+      await findAutomatedReview(
+        { ...evidence, reactions: [] },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
       undefined,
     );
-    assertEquals(await findAutomatedReview(evidence, OTHER_HEAD, () => Promise.resolve(HEAD)), undefined);
     assertEquals(
       await findAutomatedReview(
-        evidence, HEAD, () => Promise.resolve(HEAD), undefined,
+        evidence,
+        OTHER_HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+    assertEquals(
+      await findAutomatedReview(
+        evidence,
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
         Date.parse("2026-09-06T14:33:00Z"),
       ),
       undefined,
@@ -457,11 +531,21 @@ describe("automated review evidence", () => {
     const offset = codexSecurityReviewSummary();
     offset.created_at = "2024-02-29T14:11:42Z";
     offset.body = (offset.body as string).replaceAll(
-      "2026-09-06T14:32:42.547857Z", "2024-02-29T15:32:42.547857+01:00",
+      "2026-09-06T14:32:42.547857Z",
+      "2024-02-29T15:32:42.547857+01:00",
     );
-    assertEquals((await findAutomatedReview({
-      reviews: [], comments: [offset], reactions: [codexCompletionReaction()],
-    }, HEAD, () => Promise.resolve(HEAD)))?.source, "codex-summary");
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [offset],
+          reactions: [codexCompletionReaction()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-summary",
+    );
   });
 
   it("uses the explicit code-review row when the two display rows are reordered", async () => {
@@ -502,19 +586,51 @@ describe("automated review evidence", () => {
     const body = summary.body as string;
     const securityRow = body.split("\n")[9];
     const cases = [
-      { ...summary, body: body.replace('"status":"completed"', '"status":"pending"') },
-      { ...summary, body: body.replace(`"headSha":"${HEAD}"`, `"headSha":"${OTHER_HEAD}"`) },
-      { ...summary, body: body.replace("codex-security-review:v1 {", "codex-security-review:v1 [") },
-      { ...summary, body: body.replace("📝 **Code Review**", "🔒 **Security Review**") },
-      { ...summary, body: body.replace(`${securityRow}\n`, `${securityRow}\n${securityRow}\n`) },
-      { ...summary, body: body.replace(`${securityRow}\n`, `${securityRow}\n| Unknown review | ✅ | head | Manual |\n`) },
+      {
+        ...summary,
+        body: body.replace('"status":"completed"', '"status":"pending"'),
+      },
+      {
+        ...summary,
+        body: body.replace(`"headSha":"${HEAD}"`, `"headSha":"${OTHER_HEAD}"`),
+      },
+      {
+        ...summary,
+        body: body.replace(
+          "codex-security-review:v1 {",
+          "codex-security-review:v1 [",
+        ),
+      },
+      {
+        ...summary,
+        body: body.replace("📝 **Code Review**", "🔒 **Security Review**"),
+      },
+      {
+        ...summary,
+        body: body.replace(
+          `${securityRow}\n`,
+          `${securityRow}\n${securityRow}\n`,
+        ),
+      },
+      {
+        ...summary,
+        body: body.replace(
+          `${securityRow}\n`,
+          `${securityRow}\n| Unknown review | ✅ | head | Manual |\n`,
+        ),
+      },
       { ...summary, user: bot("chatgpt-codex-connector[bot]", CODEX_ID + 1) },
     ];
     for (const comment of cases) {
       assertEquals(
         await findAutomatedReview(
-          { reviews: [], comments: [comment], reactions: [codexCompletionReaction()] },
-          HEAD, () => Promise.resolve(HEAD),
+          {
+            reviews: [],
+            comments: [comment],
+            reactions: [codexCompletionReaction()],
+          },
+          HEAD,
+          () => Promise.resolve(HEAD),
         ),
         undefined,
       );
@@ -522,10 +638,14 @@ describe("automated review evidence", () => {
     assertEquals(
       await findAutomatedReview(
         {
-          reviews: [], comments: [summary],
-          reactions: [codexCompletionReaction({ created_at: summary.updated_at })],
+          reviews: [],
+          comments: [summary],
+          reactions: [
+            codexCompletionReaction({ created_at: summary.updated_at }),
+          ],
         },
-        HEAD, () => Promise.resolve(HEAD),
+        HEAD,
+        () => Promise.resolve(HEAD),
       ),
       undefined,
       "the pinned completion reaction must still be later than the entire updated summary",
@@ -582,7 +702,11 @@ describe("automated review evidence", () => {
     ];
     for (const evidence of rejectedEvidence) {
       assertEquals(
-        await findAutomatedReview({ reviews: [], ...evidence }, HEAD, resolveHead),
+        await findAutomatedReview(
+          { reviews: [], ...evidence },
+          HEAD,
+          resolveHead,
+        ),
         undefined,
       );
     }
@@ -612,22 +736,34 @@ describe("automated review evidence", () => {
     const body = codexReviewSummary().body as string;
     const row = body.split("\n")[8];
     const rejected = [
-      [codexReviewSummary({
-        body: body.replace(`\`${HEAD.slice(0, 7)}\``, "`d258d50`"),
-      }), OTHER_HEAD],
+      [
+        codexReviewSummary({
+          body: body.replace(`\`${HEAD.slice(0, 7)}\``, "`d258d50`"),
+        }),
+        OTHER_HEAD,
+      ],
       [codexReviewSummary(), undefined],
-      [codexReviewSummary({
-        body: body.replace("✅ **Completed**", "🟡 **In progress**"),
-      }), HEAD],
-      [codexReviewSummary({
-        body: body.replace(`${row}\n\n`, `${row}\n\n  ${row}\n`),
-      }), HEAD],
-      [codexReviewSummary({
-        body: body.replace(
-          "| Review | Status | Commit | Review trigger |",
-          "| Status | Review | Commit | Review trigger |",
-        ),
-      }), HEAD],
+      [
+        codexReviewSummary({
+          body: body.replace("✅ **Completed**", "🟡 **In progress**"),
+        }),
+        HEAD,
+      ],
+      [
+        codexReviewSummary({
+          body: body.replace(`${row}\n\n`, `${row}\n\n  ${row}\n`),
+        }),
+        HEAD,
+      ],
+      [
+        codexReviewSummary({
+          body: body.replace(
+            "| Review | Status | Commit | Review trigger |",
+            "| Status | Review | Commit | Review trigger |",
+          ),
+        }),
+        HEAD,
+      ],
       [codexReviewSummary({ updated_at: "2026-09-06T14:32:41Z" }), HEAD],
       [codexReviewSummary({ created_at: "not-a-date" }), HEAD],
     ] as const;
@@ -659,11 +795,17 @@ describe("automated review evidence", () => {
       "codex-summary",
     );
     evidence.reactions = [];
-    assertEquals(await findAutomatedReview(evidence, HEAD, resolveHead), undefined);
+    assertEquals(
+      await findAutomatedReview(evidence, HEAD, resolveHead),
+      undefined,
+    );
     for (const createdAt of ["2026-09-06T14:32:43Z", "not-a-date"]) {
       assertEquals(
         await findAutomatedReview(
-          { ...evidence, reactions: [codexCompletionReaction({ created_at: createdAt })] },
+          {
+            ...evidence,
+            reactions: [codexCompletionReaction({ created_at: createdAt })],
+          },
           HEAD,
           resolveHead,
         ),
@@ -1882,7 +2024,9 @@ describe("automated review publication", () => {
         pages: { comments: [[codexReviewSummary()]] },
         pullResponses: [
           associatedPull(),
-          associatedPull({ base: { ref: OTHER_BASE_REF, repo: { id: BASE_REPOSITORY_ID } } }),
+          associatedPull({
+            base: { ref: OTHER_BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
+          }),
         ],
         commit: HEAD,
       }),
@@ -3269,8 +3413,7 @@ describe("automated review publication", () => {
     const lateRateMarker = automatedReviewStatus({
       id: 109,
       state: "failure",
-      description:
-        "PR#1 automated review rate limited; queue retry pending",
+      description: "PR#1 automated review rate limited; queue retry pending",
       target_url: oldLimitComment.html_url,
       created_at: "2026-08-25T10:00:00Z",
     });
@@ -4000,10 +4143,14 @@ describe("automated review publication", () => {
         }),
         githubFixture({
           pages: {
-            timeline: Array.from({ length: 51 }, (_, page) =>
-              Array.from({ length: page === 50 ? 1 : 100 }, (_, index) => ({
-                event: "commented", id: 1000 + page * 100 + index,
-              }))),
+            timeline: Array.from(
+              { length: 51 },
+              (_, page) =>
+                Array.from({ length: page === 50 ? 1 : 100 }, (_, index) => ({
+                  event: "commented",
+                  id: 1000 + page * 100 + index,
+                })),
+            ),
           },
         }),
       ]
@@ -4348,10 +4495,12 @@ describe("automated review publication", () => {
       created_at: "2026-08-25T08:00:00Z",
     };
     const fixture = githubFixture({
-      pages: { comments: [[codexComment(HEAD.slice(0, 10), {
-        created_at: "2026-08-25T08:30:00Z",
-        updated_at: "2026-08-25T08:30:00Z",
-      })]] },
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          created_at: "2026-08-25T08:30:00Z",
+          updated_at: "2026-08-25T08:30:00Z",
+        })]],
+      },
       pageResponses: {
         events: [
           [[oldEpoch]],
@@ -4425,15 +4574,13 @@ describe("automated review timeout watchdog", () => {
       nodes: [{
         commit: {
           status: {
-            contexts: createdAt === undefined
-              ? []
-              : [{
-                context: "Automated review",
-                state: statusState,
-                description: statusDescription,
-                createdAt,
-                creator: statusCreator,
-              }],
+            contexts: createdAt === undefined ? [] : [{
+              context: "Automated review",
+              state: statusState,
+              description: statusDescription,
+              createdAt,
+              creator: statusCreator,
+            }],
           },
         },
       }],
@@ -4557,8 +4704,9 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("bounds scheduled fan-out when many reviews time out together", async () => {
-    const pulls = Array.from({ length: 26 }, (_, index) =>
-      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
+    const pulls = Array.from(
+      { length: 26 },
+      (_, index) => timeoutPull(index + 1, "2026-08-25T08:00:00Z"),
     );
     const github = timeoutDiscoveryFixture([pulls]);
 
@@ -4573,8 +4721,9 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("rotates bounded discovery across eligible pull requests", async () => {
-    const pulls = Array.from({ length: 30 }, (_, index) =>
-      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
+    const pulls = Array.from(
+      { length: 30 },
+      (_, index) => timeoutPull(index + 1, "2026-08-25T08:00:00Z"),
     );
     const discover = (now: string) =>
       findTimedOutAutomatedReviews({
@@ -4645,14 +4794,16 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("continues bounded discovery beyond 500 open pull requests", async () => {
-    const pages = Array.from({ length: 11 }, (_, pageIndex) =>
-      Array.from({ length: 50 }, (_, itemIndex) => {
-        const pullNumber = pageIndex * 50 + itemIndex + 1;
-        return timeoutPull(
-          pullNumber,
-          pullNumber === 550 ? "2026-08-25T08:00:00Z" : undefined,
-        );
-      })
+    const pages = Array.from(
+      { length: 11 },
+      (_, pageIndex) =>
+        Array.from({ length: 50 }, (_, itemIndex) => {
+          const pullNumber = pageIndex * 50 + itemIndex + 1;
+          return timeoutPull(
+            pullNumber,
+            pullNumber === 550 ? "2026-08-25T08:00:00Z" : undefined,
+          );
+        }),
     );
     const github = timeoutDiscoveryFixture(pages);
 
@@ -4669,10 +4820,14 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("fails visibly instead of silently truncating beyond 1,000 pulls", async () => {
-    const pages = Array.from({ length: 21 }, (_, pageIndex) =>
-      Array.from({ length: 50 }, (_, itemIndex) =>
-        timeoutPull(pageIndex * 50 + itemIndex + 1, undefined)
-      )
+    const pages = Array.from(
+      { length: 21 },
+      (_, pageIndex) =>
+        Array.from(
+          { length: 50 },
+          (_, itemIndex) =>
+            timeoutPull(pageIndex * 50 + itemIndex + 1, undefined),
+        ),
     );
     const github = timeoutDiscoveryFixture(pages);
 
@@ -5051,7 +5206,8 @@ describe("automated review timeout watchdog", () => {
       pages: {
         comments: [[{
           user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
-          body: `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+          body:
+            `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
         }]],
         events: [[{
           event: "base_ref_changed",
@@ -7349,7 +7505,8 @@ describe("automated review workflow", () => {
       )(
         { event_name: eventName, event },
         { target: { result: targetResult, outputs: { key } } },
-        (pattern: string, value: unknown) => pattern.replace("{0}", String(value)),
+        (pattern: string, value: unknown) =>
+          pattern.replace("{0}", String(value)),
         (value: string, suffix: string) => value.endsWith(suffix),
         () => false,
       );
@@ -7390,20 +7547,53 @@ describe("automated review workflow", () => {
       );
       const outputs: Record<string, string> = {};
       const targetScript = String(
-        record(record((target.steps as unknown[])[0], "resolver").with, "inputs").script,
+        record(
+          record((target.steps as unknown[])[0], "resolver").with,
+          "inputs",
+        ).script,
       );
-      await new Function("github", "core", "context", `return (async () => {${targetScript}})();`)(
-        { rest: {
-          git: { getRef: () => Promise.resolve({ data: { object: { sha: NEW_HEAD } } }) },
-          repos: { listCommitStatusesForRef: () => Promise.resolve({ data: [] }) },
-        } },
-        { setOutput: (key: string, value: string) => { outputs[key] = value; },
-          setFailed: (message: string) => { throw new Error(message); } },
-        { eventName, payload: event, repo: { owner: "veryfront", repo: "veryfront-code" } },
+      await new Function(
+        "github",
+        "core",
+        "context",
+        `return (async () => {${targetScript}})();`,
+      )(
+        {
+          rest: {
+            git: {
+              getRef: () =>
+                Promise.resolve({ data: { object: { sha: NEW_HEAD } } }),
+            },
+            repos: {
+              listCommitStatusesForRef: () => Promise.resolve({ data: [] }),
+            },
+          },
+        },
+        {
+          setOutput: (key: string, value: string) => {
+            outputs[key] = value;
+          },
+          setFailed: (message: string) => {
+            throw new Error(message);
+          },
+        },
+        {
+          eventName,
+          payload: event,
+          repo: { owner: "veryfront", repo: "veryfront-code" },
+        },
       );
       assertEquals(evaluate(expression, eventName, event), outputs.key);
-      assertEquals(outputs["head-sha"], NEW_HEAD, "queued events resolve the live head");
-      assertEquals(outputs["status-id"], "0", "resolution retains the failure boundary");
+      assertEquals(
+        outputs["head-sha"],
+        NEW_HEAD,
+        "queued events resolve the live head",
+      );
+      assertEquals(
+        outputs["status-id"],
+        "0",
+        "resolution retains the failure boundary",
+      );
       assertEquals(
         record(invalidator.concurrency, "invalidator lock").group,
         group,
@@ -7548,7 +7738,10 @@ describe("automated review workflow", () => {
 
     const timeoutJob = record(jobs.timeout, "timeout publisher job");
     assertEquals(timeoutJob.needs, "timeout_targets");
-    assertEquals(timeoutJob.if, "needs.timeout_targets.outputs.targets != '[]'");
+    assertEquals(
+      timeoutJob.if,
+      "needs.timeout_targets.outputs.targets != '[]'",
+    );
     assertEquals(
       record(
         record(timeoutJob.strategy, "timeout publisher strategy").matrix,
@@ -7815,14 +8008,18 @@ describe("automated review workflow", () => {
       statuses: "write",
     });
     const publisherConcurrency = {
-      group: "automated-review-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || needs.target.outputs.key }}",
+      group:
+        "automated-review-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'issue_comment' && format('pr-{0}', github.event.issue.number) || needs.target.outputs.key }}",
       queue: "max",
     };
     assertEquals(job.needs, "target");
     assertEquals(record(job.outputs, "review outputs"), {
-      head_sha: "${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}",
-      pull_number: "${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}",
-      status_id: "${{ steps.resolve.outputs.status-id || needs.target.outputs.status_id }}",
+      head_sha:
+        "${{ steps.resolve.outputs.head-sha || needs.target.outputs.head_sha }}",
+      pull_number:
+        "${{ steps.resolve.outputs.pull-number || needs.target.outputs.pull_number }}",
+      status_id:
+        "${{ steps.resolve.outputs.status-id || needs.target.outputs.status_id }}",
       force_invalidate: "${{ steps.publish.outputs.force-invalidate }}",
       source_status_id: "${{ steps.publish.outputs.source-status-id }}",
     });
@@ -7853,7 +8050,10 @@ describe("automated review workflow", () => {
       inJobResolver.if,
       "github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'",
     );
-    assertEquals(record(inJobResolver.with, "in-job resolver inputs").script, targetScript);
+    assertEquals(
+      record(inJobResolver.with, "in-job resolver inputs").script,
+      targetScript,
+    );
     const gate = record(steps[1], "gate");
     const script = String(record(gate.with, "gate inputs").script);
     assertTrustedGateLoad(script);
@@ -7889,7 +8089,7 @@ describe("automated review workflow", () => {
     assert(script.includes("result.baseRef"));
     assert(
       script.includes('entry?.state === "failure"') &&
-        !script.includes('entry?.published !== true') &&
+        !script.includes("entry?.published !== true") &&
         script.includes("active merge queue review failed"),
       "every merge queue failure must keep the source retryable",
     );
@@ -8091,9 +8291,12 @@ describe("automated review workflow", () => {
     assertEquals(
       record(invalidateJob.env, "invalidate environment"),
       {
-        TARGET_SHA: "${{ needs.review.outputs.head_sha || needs.target.outputs.head_sha }}",
-        PULL_NUMBER: "${{ needs.review.outputs.pull_number || needs.target.outputs.pull_number }}",
-        RECONCILIATION_STATUS_ID: "${{ needs.review.outputs.status_id || needs.target.outputs.status_id }}",
+        TARGET_SHA:
+          "${{ needs.review.outputs.head_sha || needs.target.outputs.head_sha }}",
+        PULL_NUMBER:
+          "${{ needs.review.outputs.pull_number || needs.target.outputs.pull_number }}",
+        RECONCILIATION_STATUS_ID:
+          "${{ needs.review.outputs.status_id || needs.target.outputs.status_id }}",
         SOURCE_STATUS_ID: "${{ needs.review.outputs.source_status_id }}",
         FORCE_INVALIDATE: "${{ needs.review.outputs.force_invalidate }}",
       },
@@ -8255,4 +8458,70 @@ describe("automated review workflow", () => {
     assert(Array.isArray(steps));
     assertEquals(record(steps[0], "wakeup step").run, "true");
   });
+});
+
+Deno.test("fresh run-bound lifecycle keys retain their epoch for review requests", async (t) => {
+  const createdAt = "2026-08-25T09:00:00Z";
+  const epochTime = Date.parse(createdAt);
+  for (
+    const [kind, event] of [
+      ["ready", "ready_for_review"],
+      ["base", "base_ref_changed"],
+      ["reopen", "reopened"],
+    ] as const
+  ) {
+    await t.step(kind, async () => {
+      const lifecycle = { event, id: 41, created_at: createdAt };
+      const fixture = githubFixture({ pages: { events: [[lifecycle]] } });
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+        now: epochTime + 1000,
+        reviewResetKey: kind,
+        reviewEpochNotBefore: createdAt,
+        reviewEpochRunKey: "9001",
+      });
+      assertEquals(result.state, "pending");
+      assertEquals(
+        result.reviewRequestKey,
+        `${kind}-r-15-t-${epochTime.toString(36)}-e-15`,
+      );
+      assertEquals(result.reviewRequestEpochTime, epochTime);
+      const request = requestFixture({ events: [lifecycle] });
+      const requested = await requestAutomatedReview({
+        github: request.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: result.reviewRequestKey,
+        reviewEpochNotAfter: new Date(result.reviewRequestEpochTime!)
+          .toISOString(),
+        validateRequestEpoch: true,
+        revalidateReviewEvidence: true,
+      });
+      assertEquals(requested.requested, true);
+      assertEquals(request.posted.length, 1);
+      const stale = requestFixture({ events: [{ ...lifecycle, id: 42 }] });
+      const rejected = await requestAutomatedReview({
+        github: stale.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: result.reviewRequestKey,
+        reviewEpochNotAfter: new Date(result.reviewRequestEpochTime!)
+          .toISOString(),
+        validateRequestEpoch: true,
+        revalidateReviewEvidence: true,
+      });
+      assertEquals(rejected.requested, false);
+      assertEquals(rejected.reason, "stale-epoch");
+      assertEquals(stale.posted, []);
+    });
+  }
 });
