@@ -19,7 +19,13 @@ import { throwIfAbortSignalAborted } from "#veryfront/platform/compat/abort-sign
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
-import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
+import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -47,6 +53,7 @@ import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/p
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   AgentRunModelCallContextEvent,
+  AgentRunRuntimeEventRecordedEvent,
   ModelCallMessage,
   ModelCallTool,
 } from "./model-call-context.ts";
@@ -970,6 +977,54 @@ function runWithModelCallCapture<T>(
   );
 }
 
+function resolveGenerateFailureObservation(error: unknown): AgentRunRuntimeEventRecordedEvent {
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  const knownProviderError = resolveKnownProviderTerminalError(
+    providerFailure.found ? providerFailure.cause : error,
+  );
+  const durable = buildRuntimeEventRecordedEvent({
+    runtime: "veryfront",
+    kind: "agent_error",
+    value: knownProviderError
+      ? { message: knownProviderError.message, code: knownProviderError.code }
+      : { message: "Provider stream failed" },
+  }).durable;
+  if (
+    durable.type !== "RUNTIME_EVENT_RECORDED" || typeof durable.runtime !== "string" ||
+    typeof durable.kind !== "string"
+  ) {
+    throw new TypeError("Invalid runtime event observation");
+  }
+  return {
+    type: durable.type,
+    runtime: durable.runtime,
+    kind: durable.kind,
+    value: durable.value,
+  };
+}
+
+async function emitGenerateFailureObservation(error: unknown): Promise<void> {
+  const sinks = getActiveRunEventSinks();
+  if (!sinks.mandatory && !sinks.public) return;
+  const event = resolveGenerateFailureObservation(error);
+  const mandatoryEvent = sinks.mandatory ? cloneStructuredValue(event) : undefined;
+  const publicEvent = sinks.public && sinks.public !== sinks.mandatory
+    ? cloneStructuredValue(event)
+    : undefined;
+  if (sinks.mandatory && mandatoryEvent) await sinks.mandatory(mandatoryEvent);
+  if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
+    await sinks.public(publicEvent);
+  }
+}
+
+function observeGenerateFailure<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+  const observed = chainPrivatePromise(resolvePrivatePromise(), operation);
+  return chainPrivatePromise(observed, (value) => value, async (error) => {
+    await emitGenerateFailureObservation(error);
+    throw error;
+  });
+}
+
 function isDirectToolCallPart(
   part: unknown,
 ): part is { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
@@ -1447,16 +1502,20 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
     const directOptions = buildDirectModelOptions(options, tools);
     const capture = await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
-      return runWithModelCallCapture(
-        capture,
-        () => options.model.doStream(directOptions),
-      ).then(({ stream }) => buildGenerateResultFromStream(stream));
+      return observeGenerateFailure(() =>
+        runWithModelCallCapture(
+          capture,
+          () => options.model.doStream(directOptions),
+        ).then(({ stream }) => buildGenerateResultFromStream(stream))
+      );
     }
 
-    return runWithModelCallCapture(
-      capture,
-      () => options.model.doGenerate(directOptions),
-    ).then(buildDirectGenerateResult);
+    return observeGenerateFailure(() =>
+      runWithModelCallCapture(
+        capture,
+        () => options.model.doGenerate(directOptions),
+      ).then(buildDirectGenerateResult)
+    );
   });
 }
 

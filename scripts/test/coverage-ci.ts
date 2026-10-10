@@ -25,7 +25,14 @@ interface LcovLineRecord {
   line: number;
 }
 
+export interface LcovMergeOptions {
+  projectRoot?: string;
+  validateProjectSources?: boolean;
+}
+
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
+const GENERATED_MDX_CACHE_PREFIX =
+  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -96,8 +103,13 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
   ];
 }
 
-export function mergeLcovReports(reports: string[]): string {
-  const blockLayouts = reports.map(collectBranchBlockLayouts);
+export function mergeLcovReports(
+  reports: string[],
+  options: LcovMergeOptions = {},
+): string {
+  const blockLayouts = reports.map((report) =>
+    collectBranchBlockLayouts(report, options)
+  );
   const shiftedBlockLines = findShiftedBranchBlockLines(blockLayouts);
   const files = new Map<string, {
     lines: Map<number, number>;
@@ -111,7 +123,8 @@ export function mergeLcovReports(reports: string[]): string {
 
     for (const line of report.split(/\r?\n/)) {
       if (line.startsWith("SF:")) {
-        currentFile = line.slice(3).trim();
+        currentFile = normalizeLcovSourcePath(line.slice(3).trim(), options);
+        if (currentFile === undefined) continue;
         if (!files.has(currentFile)) {
           files.set(currentFile, { lines: new Map(), branches: new Map() });
         }
@@ -207,13 +220,14 @@ interface BranchBlockLayout {
 
 function collectBranchBlockLayouts(
   report: string,
+  options: LcovMergeOptions,
 ): Map<string, Map<number, BranchBlockLayout>> {
   const blocks = new Map<string, Map<number, Map<number, Set<number>>>>();
   let currentFile: string | undefined;
 
   for (const line of report.split(/\r?\n/)) {
     if (line.startsWith("SF:")) {
-      currentFile = line.slice(3).trim();
+      currentFile = normalizeLcovSourcePath(line.slice(3).trim(), options);
       continue;
     }
     if (line === "end_of_record") {
@@ -297,6 +311,87 @@ function findShiftedBranchBlockLines(
   return shifted;
 }
 
+export function normalizeLcovSourcePath(
+  path: string,
+  options: LcovMergeOptions = {},
+): string | undefined {
+  const normalizedPath = path.replaceAll("\\", "/");
+  if (normalizedPath.startsWith(GENERATED_MDX_CACHE_PREFIX)) {
+    return undefined;
+  }
+
+  if (!normalizedPath.startsWith("/")) {
+    const relativePath = normalizeRelativeLcovPath(normalizedPath);
+    validateRelativeLcovSourcePath(relativePath, options);
+    return relativePath;
+  }
+
+  const projectRoot = options.projectRoot
+    ? normalizeProjectRoot(options.projectRoot)
+    : undefined;
+  if (projectRoot && normalizedPath.startsWith(`${projectRoot}/`)) {
+    const relativePath = normalizeRelativeLcovPath(
+      normalizedPath.slice(projectRoot.length + 1),
+    );
+    validateRelativeLcovSourcePath(relativePath, options);
+    return relativePath;
+  }
+
+  const githubWorkspaceMatch = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/
+    .exec(
+      normalizedPath,
+    );
+  if (githubWorkspaceMatch?.[2]) {
+    const relativePath = normalizeRelativeLcovPath(githubWorkspaceMatch[2]);
+    validateRelativeLcovSourcePath(relativePath, options);
+    return relativePath;
+  }
+
+  throw new Error(`Cannot map LCOV source path into the project: ${path}`);
+}
+
+function normalizeProjectRoot(path: string): string {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+function normalizeRelativeLcovPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) {
+        throw new Error(`LCOV source path escapes the project: ${path}`);
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  if (parts.length === 0) {
+    throw new Error(`LCOV source path is empty after normalization: ${path}`);
+  }
+  return parts.join("/");
+}
+
+function validateRelativeLcovSourcePath(
+  path: string,
+  options: LcovMergeOptions,
+): void {
+  if (!options.validateProjectSources || !options.projectRoot) return;
+
+  const projectRoot = normalizeProjectRoot(options.projectRoot);
+  try {
+    Deno.statSync(`${projectRoot}/${path}`);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${path}`,
+      );
+    }
+    throw error;
+  }
+}
+
 async function runShard(args: string[]): Promise<void> {
   const shardValue = readOption(args, "--shard");
   const coverageDir = readOption(args, "--coverage-dir") ?? "coverage";
@@ -350,6 +445,7 @@ async function runMerge(args: string[]): Promise<void> {
 
   const lcov = mergeLcovReports(
     await Promise.all(lcovFiles.map((path) => Deno.readTextFile(path))),
+    { projectRoot: Deno.cwd(), validateProjectSources: true },
   );
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([

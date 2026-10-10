@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertInstanceOf,
   assertMatch,
@@ -10,7 +11,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
-import type { AgentRunEventSink } from "./model-call-context.ts";
+import type { AgentRunEventSink, AgentRunModelCallContextEvent } from "./model-call-context.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { getCurrentVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
@@ -37,6 +38,18 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
+
+function isModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): event is AgentRunModelCallContextEvent {
+  return event?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+}
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): asserts event is AgentRunModelCallContextEvent {
+  assertEquals(isModelCallContextEvent(event), true);
+}
 
 /**
  * A provider response body that delivers one chunk and then goes quiet.
@@ -264,7 +277,8 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.messages[0], {
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.messages[0], {
       role: "system",
       content: "Shared prompt",
       providerOptions: {
@@ -784,6 +798,38 @@ describe("runtime-bridge", () => {
     }
   });
 
+  it("records a sanitized nonterminal generate failure after mandatory context persistence", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateDetail = "private upstream generate detail";
+    const model = createGenerateModel("test", "test/sanitized-generate-failure", async () => {
+      throw new Error(privateDetail);
+    });
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+      Error,
+      privateDetail,
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateDetail), false);
+  });
+
   it("awaits the mandatory sink before the public sink and provider dispatch", async () => {
     const order: string[] = [];
     const model = createGenerateModel("test", "test/composed-run-event-sinks", async () => {
@@ -815,6 +861,7 @@ describe("runtime-bridge", () => {
     let recordedEvent: AgentRunEvent | undefined;
     let dispatchCapture: unknown;
     const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
       recordedEvent = event;
       if (!event.modelCallId) throw new Error("expected model call id");
       return {
@@ -846,12 +893,13 @@ describe("runtime-bridge", () => {
       () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
     );
 
-    assertEquals(typeof recordedEvent?.modelCallId, "string");
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(typeof recordedEvent.modelCallId, "string");
     assertEquals(dispatchCapture, {
       eventId: "9007199254740993",
       projectId,
       runId: canonicalRunId,
-      modelCallId: recordedEvent?.modelCallId,
+      modelCallId: recordedEvent.modelCallId,
     });
   });
 
@@ -869,6 +917,7 @@ describe("runtime-bridge", () => {
     let recordedEvent: AgentRunEvent | undefined;
     let dispatches = 0;
     const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
       recordedEvent = event;
       if (!event.modelCallId) throw new Error("expected model call id");
       return {
@@ -905,7 +954,8 @@ describe("runtime-bridge", () => {
     }
 
     assertEquals(patchedRandomUUIDCalls, 0);
-    assertEquals(typeof recordedEvent?.modelCallId, "string");
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(typeof recordedEvent.modelCallId, "string");
     assertEquals(dispatches, 1);
   });
 
@@ -913,14 +963,17 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId === undefined
-        ? "33333333-3333-4333-8333-333333333333"
-        : "44444444-4444-4444-8444-444444444444",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId === undefined
+          ? "33333333-3333-4333-8333-333333333333"
+          : "44444444-4444-4444-8444-444444444444",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -954,12 +1007,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1008,6 +1064,7 @@ describe("runtime-bridge", () => {
       let dispatches = 0;
       let recorded: AgentRunEvent | undefined;
       const sink: AgentRunEventSink = (event) => {
+        assertModelCallContextEvent(event);
         recorded = event;
         return {
           eventId: "9007199254740993",
@@ -1032,7 +1089,8 @@ describe("runtime-bridge", () => {
             content: "Cached instructions",
             providerOptions,
           });
-          assertEquals(recorded?.messages?.[0], {
+          assertModelCallContextEvent(recorded);
+          assertEquals(recorded.messages[0], {
             role: "system",
             content: "Cached instructions",
             providerOptions,
@@ -1054,12 +1112,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1102,12 +1163,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1155,6 +1219,7 @@ describe("runtime-bridge", () => {
     let sinkCalls = 0;
     let dispatches = 0;
     const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
       sinkCalls += 1;
       return {
         eventId: "9007199254740993",
@@ -1244,10 +1309,14 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(dispatches, 1);
-    assertEquals((recordedEvent as { modelCallId?: string } | undefined)?.modelCallId, undefined);
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(recordedEvent.modelCallId, undefined);
+    const firstRecordedMessage = recordedEvent.messages[0];
+    assert(firstRecordedMessage !== undefined);
     assertEquals(
-      (recordedEvent?.messages[0] as { providerMetadata?: unknown } | undefined)
-        ?.providerMetadata,
+      "providerMetadata" in firstRecordedMessage
+        ? firstRecordedMessage.providerMetadata
+        : undefined,
       undefined,
     );
     assertEquals(
@@ -1260,12 +1329,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     const capability = bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1413,9 +1485,10 @@ describe("runtime-bridge", () => {
             } as never,
           }),
       );
-      assertEquals(recorded?.model, { id: bareModelId, modelProvider });
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.model, { id: bareModelId, modelProvider });
       assertEquals(
-        recorded?.request?.reasoning,
+        recorded.request?.reasoning,
         // Cloud Mistral uses the same OpenAI-compatible effort-only builder.
         modelProvider === "openai" || modelProvider === "mistral"
           ? { enabled: true, effort: "high" }
@@ -1439,7 +1512,8 @@ describe("runtime-bridge", () => {
         () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
       );
 
-      assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.request?.reasoning, { enabled: true, effort: "medium" });
     }
   });
 
@@ -1461,8 +1535,9 @@ describe("runtime-bridge", () => {
       () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
     );
 
-    assertEquals(recorded?.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
-    assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
+    assertEquals(recorded.request?.reasoning, { enabled: true, effort: "medium" });
   });
 
   it("omits reasoning when no canonical fields can be projected", async () => {
@@ -1485,7 +1560,8 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, undefined);
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, undefined);
   });
 
   it("persists adaptive Anthropic thinking as canonical reasoning without raw provider options", async () => {
@@ -1526,10 +1602,11 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, {
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, {
       reasoning: { enabled: true, effort: "high" },
     });
-    assertEquals("providerOptions" in (recorded?.request ?? {}), false);
+    assertEquals("providerOptions" in (recorded.request ?? {}), false);
   });
 
   it("persists enabled Anthropic thinking with its canonical token budget", async () => {
@@ -1558,7 +1635,8 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
   });
 
   it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
@@ -1598,7 +1676,8 @@ describe("runtime-bridge", () => {
           }),
       );
 
-      assertEquals(recorded?.request, {
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.request, {
         reasoning: { enabled: true, budgetTokens: 2048 },
       });
     }

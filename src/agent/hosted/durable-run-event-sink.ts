@@ -26,8 +26,10 @@ import {
 } from "../conversation/run-event-limits.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import {
+  type AgentRunEvent,
   type AgentRunEventSink,
   type AgentRunEventTimingOptions,
+  type AgentRunModelCallContextEvent,
   createTimedAgentRunEventSink,
 } from "../../runtime/model-call-context.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -291,6 +293,10 @@ function resolvePersistableEvent(event: unknown): ResolvedRunEvent {
   };
 }
 
+function isModelCallContextEvent(event: AgentRunEvent): event is AgentRunModelCallContextEvent {
+  return event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+}
+
 function buildOversizeError(
   oversize: { originalByteLength: number; omittedMessageCount: number },
 ): DurableRunEventPersistenceError {
@@ -385,14 +391,17 @@ export function createDurableRunEventSink(input: {
               }),
             );
             assertDrained(input.mirror.getSnapshot());
-            if (oversize || event.modelCallId === undefined) return undefined;
+            if (oversize || !isModelCallContextEvent(event) || event.modelCallId === undefined) {
+              return undefined;
+            }
+            const modelCallId = event.modelCallId;
             const receipt = getModelCallCaptureReceiptSchema().safeParse(
-              input.mirror.takeModelCallCaptureReceipt?.(event.modelCallId),
+              input.mirror.takeModelCallCaptureReceipt?.(modelCallId),
             );
             if (
               !receipt.success ||
               privateTextToLowerCase(receipt.data.modelCallId) !==
-                privateTextToLowerCase(event.modelCallId)
+                privateTextToLowerCase(modelCallId)
             ) {
               throw new DurableRunEventPersistenceError(
                 "Durable model capture receipt is missing or invalid",

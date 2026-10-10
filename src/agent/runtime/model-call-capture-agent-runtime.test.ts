@@ -8,7 +8,11 @@ import {
   registerVeryfrontCloudModelFacts,
   type VeryfrontCloudModelFacts,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import type {
+  AgentRunEvent,
+  AgentRunEventSink,
+  AgentRunModelCallContextEvent,
+} from "#veryfront/runtime/model-call-context.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import {
   bindRuntimeObservationWriterCapability,
@@ -19,6 +23,10 @@ import { AgentRuntime } from "./index.ts";
 const projectId = "11111111-1111-4111-8111-111111111111";
 const runId = "22222222-2222-4222-8222-222222222222";
 const localRunId = "33333333-3333-4333-8333-333333333333";
+
+function isModelCallContextEvent(event: AgentRunEvent): event is AgentRunModelCallContextEvent {
+  return event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+}
 
 function registerVeryfrontCloudTestModel(model: ModelRuntime): ModelRuntime {
   const facts = {
@@ -86,6 +94,7 @@ describe("agent runtime model-call capture", () => {
     let dispatchCapture: unknown;
     const sink: AgentRunEventSink = (event) => {
       order.push("event");
+      if (!isModelCallContextEvent(event)) return;
       recordedModelCallId = event.modelCallId;
       if (!event.modelCallId) return;
       return {
@@ -152,7 +161,7 @@ describe("agent runtime model-call capture", () => {
     const modelCallIds: string[] = [];
     const dispatchCaptures: unknown[] = [];
     const sink: AgentRunEventSink = (event) => {
-      if (!event.modelCallId) return;
+      if (!isModelCallContextEvent(event) || !event.modelCallId) return;
       modelCallIds.push(event.modelCallId);
       return {
         eventId: `${9007199254740993n + BigInt(modelCallIds.length - 1)}`,
@@ -239,7 +248,7 @@ describe("agent runtime model-call capture", () => {
       } satisfies ModelRuntime,
     );
     const sink: AgentRunEventSink = (event) =>
-      event.modelCallId
+      isModelCallContextEvent(event) && event.modelCallId
         ? { eventId: "9007199254740993", projectId, runId, modelCallId: event.modelCallId }
         : undefined;
     bindRuntimeObservationWriterCapability(
@@ -293,7 +302,7 @@ describe("agent runtime model-call capture", () => {
       } satisfies ModelRuntime,
     );
     const sink: AgentRunEventSink = (event) =>
-      event.modelCallId
+      isModelCallContextEvent(event) && event.modelCallId
         ? { eventId: "9007199254740993", projectId, runId, modelCallId: event.modelCallId }
         : undefined;
     bindRuntimeObservationWriterCapability(
@@ -344,7 +353,7 @@ describe("agent runtime model-call capture", () => {
       } satisfies ModelRuntime,
     );
     const sink: AgentRunEventSink = (event) => {
-      if (!event.modelCallId) return;
+      if (!isModelCallContextEvent(event) || !event.modelCallId) return;
       modelCallIds.push(event.modelCallId);
       return {
         eventId: `${9007199254740993n + BigInt(modelCallIds.length - 1)}`,
@@ -402,7 +411,7 @@ describe("agent runtime model-call capture", () => {
       } satisfies ModelRuntime,
     );
     const sink: AgentRunEventSink = (event) =>
-      event.modelCallId
+      isModelCallContextEvent(event) && event.modelCallId
         ? { eventId: "9007199254740993", projectId, runId, modelCallId: event.modelCallId }
         : undefined;
     bindRuntimeObservationWriterCapability(

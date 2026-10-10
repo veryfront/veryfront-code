@@ -16,12 +16,23 @@ import {
   createHostedExecutorModelBroker,
 } from "./executor-model-dispatch.ts";
 import type { ExecutorModelGrant } from "./executor-model-grant.ts";
+import type {
+  AgentRunEvent,
+  AgentRunEventSink,
+  AgentRunModelCallContextEvent,
+} from "#veryfront/runtime/model-call-context.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const tool = { type: "provider", name: "web_search", id: "openai.web_search", args: {} } as const;
 const binding = { allocationId: "allocation", generation: 1, invocationId: "invocation" };
 const prompt = [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }];
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent,
+): asserts event is AgentRunModelCallContextEvent {
+  assert(event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+}
 
 function grant(overrides: Partial<ExecutorModelGrant> = {}): ExecutorModelGrant {
   return {
@@ -45,9 +56,7 @@ function fixture(options: {
   mode?: "durable" | "ephemeral";
   generate?: ModelRuntime<ModelRuntimeCallOptions>["doGenerate"];
   stream?: ModelRuntime<ModelRuntimeCallOptions>["doStream"];
-  persist?: (
-    event: { request?: { maxOutputTokens?: number }; messages: unknown[] },
-  ) => void | Promise<void>;
+  persist?: AgentRunEventSink;
 } = {}) {
   const received: ModelRuntimeCallOptions[] = [];
   const input = {
@@ -234,6 +243,7 @@ describe("hosted executor model grant", () => {
     let audited: number | undefined;
     const { generate, received } = fixture({
       persist(event) {
+        assertModelCallContextEvent(event);
         audited = event.request?.maxOutputTokens;
         event.request!.maxOutputTokens = 999;
         event.messages.length = 0;

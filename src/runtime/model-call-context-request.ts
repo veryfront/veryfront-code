@@ -45,7 +45,7 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
 }
 
-function objectKeys(value: object): string[] {
+function objectKeys<TValue extends object>(value: TValue): string[] {
   return ObjectKeys(value);
 }
 

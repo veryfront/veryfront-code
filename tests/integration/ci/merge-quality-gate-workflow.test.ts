@@ -463,10 +463,10 @@ describe("merge quality gate workflow", () => {
     const mergeIndex = producerSteps.findIndex((step) =>
       step.name === "Merge coverage reports for SonarQube"
     );
-    const normalizeIndex = producerSteps.findIndex((step) => step.name === "Normalize lcov paths");
     const uploadIndex = producerSteps.findIndex((step) =>
       step.name === "Upload merged Sonar coverage"
     );
+    const coverageScript = await readRepoFile("scripts/test/coverage-ci.ts");
 
     assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
       actions: "read",
@@ -521,7 +521,7 @@ describe("merge quality gate workflow", () => {
     );
     assert(
       mergeIndex > setupIndex,
-      "sonar coverage must merge every report before normalizing",
+      "sonar coverage must merge and normalize every report before upload",
     );
     const mergeRun = String(producerSteps[mergeIndex].run);
     assertStringIncludes(
@@ -538,19 +538,35 @@ describe("merge quality gate workflow", () => {
       "coverage-profiles/coverage-integration-client",
     );
     assert(
-      normalizeIndex > mergeIndex,
-      "sonar coverage must normalize merged coverage",
+      !producerSteps.some((step) => step.name === "Normalize lcov paths"),
+      "sonar coverage path normalization must stay inside the merge task",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      'sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|"',
+      coverageScript,
+      "export function normalizeLcovSourcePath",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      "coverage/lcov.info",
+      coverageScript,
+      String.raw`/^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/`,
+    );
+    assertStringIncludes(
+      coverageScript,
+      'const GENERATED_MDX_CACHE_PREFIX =\n  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";',
+    );
+    assertStringIncludes(
+      coverageScript,
+      "validateProjectSources: true",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "Cannot map LCOV source path into the project",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "LCOV source path does not exist in the project",
     );
     assert(
-      uploadIndex > normalizeIndex,
+      uploadIndex > mergeIndex,
       "sonar coverage must upload the normalized report",
     );
     assertEquals(

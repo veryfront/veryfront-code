@@ -10748,6 +10748,126 @@ describe("project run inference credential header", () => {
     );
   });
 
+  it("records a caught agent.generate failure as a sanitized nonterminal observation", async () => {
+    const runId = "run_caught_generate_error";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const privateDetail = "private upstream generate detail";
+    let caught = false;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("caught-generate-error", {
+            name: "Caught generate error observation",
+            run: async () => {
+              const assistant = agent({
+                id: "caught-generate-error",
+                model: "veryfront-cloud/openai/gpt-test",
+                system: "Say observed.",
+                skills: false,
+              });
+              try {
+                await assistant.generate({ input: "Say observed." });
+              } catch {
+                caught = true;
+              }
+              return { text: "handled" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:caught-generate-error",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const url = String(input);
+          if (url.endsWith("/ai/models")) {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (url.endsWith("/ai/v1/chat/completions")) {
+            return Response.json({ error: privateDetail }, { status: 500 });
+          }
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertEquals(caught, true);
+    assertEquals(
+      appended.filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+      1,
+    );
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    assertEquals(errors[0]?.runtime, "veryfront");
+    assertEquals(errors[0]?.value, {
+      message: "The LLM provider is currently overloaded",
+      code: "OVERLOADED_ERROR",
+    });
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+    assertEquals(JSON.stringify(appended).includes(privateDetail), false);
+  });
+
   it("records a streamed agent failure without failing a successful parent task", async () => {
     const runId = "run_agent_stream_error";
     const canonicalRunId = "12121212-1212-4121-8121-121212121212";

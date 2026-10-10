@@ -741,8 +741,8 @@ function createTruncatedMessageFinishScalarObservation(
   };
 }
 
-function hasRemainingEligibleMessageFinishObjectProperty(
-  input: object,
+function hasRemainingEligibleMessageFinishObjectProperty<TInput extends object>(
+  input: TInput,
   keys: readonly (string | symbol)[],
   startIndex: number,
 ): boolean {

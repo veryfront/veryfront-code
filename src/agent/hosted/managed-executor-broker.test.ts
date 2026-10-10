@@ -1390,6 +1390,7 @@ function trustedFixture(
   if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
   let captureEventId = 0;
   f.input.model.runEventSink = async (event) => {
+    assert(event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
     if (scope.projectId === null) {
       assertEquals(event.modelCallId, undefined);
       return;

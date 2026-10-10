@@ -585,7 +585,7 @@
     "lint:core-deps": "deno run --allow-read scripts/lint/audit-core-deps.ts",
     "lint:cross-runtime-jsr": "deno run --allow-read scripts/lint/audit-cross-runtime-jsr.ts",
     "lint:dependency-boundaries": "deno run --allow-read scripts/lint/audit-dependency-boundaries.ts",
-    "lint:module-boundaries": "DENO_NO_PACKAGE_JSON=1 deno run --frozen --allow-read scripts/lint/check-module-boundaries.ts",
+    "lint:module-boundaries": "deno run --frozen --allow-read scripts/lint/check-module-boundaries.ts",
     "lint:extension-contracts": "deno run --config=scripts/test.deno.json --frozen --allow-read scripts/lint/audit-extension-contracts.ts",
     "lint:extension-capabilities": "deno run --config=scripts/test.deno.json --frozen --allow-read scripts/lint/audit-extension-capabilities.ts",
     "lint:ban-console": "deno run --allow-read scripts/lint/ban-console.ts",

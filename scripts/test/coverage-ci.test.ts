@@ -1,5 +1,9 @@
 import { fromFileUrl } from "#std/path";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCoverageCommandArgs,
@@ -112,6 +116,127 @@ describe("buildDenoTestCommandArgs leak tracing", () => {
 });
 
 describe("mergeLcovReports", () => {
+  it("normalizes GitHub workspace source paths before merging records", () => {
+    const merged = mergeLcovReports([
+      [
+        "SF:/home/runner/work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+        "DA:10,2",
+        "BRDA:10,0,0,1",
+        "end_of_record",
+      ].join("\n"),
+      [
+        "SF:/home/runner/_work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+        "DA:10,3",
+        "BRDA:10,0,1,2",
+        "end_of_record",
+      ].join("\n"),
+      [
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:11,4",
+        "end_of_record",
+      ].join("\n"),
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:10,5",
+        "DA:11,4",
+        "LH:2",
+        "LF:2",
+        "BRDA:10,0,0,1",
+        "BRDA:10,0,1,2",
+        "BRF:2",
+        "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("normalizes absolute project paths and validates mapped sources when requested", () => {
+    const repoRoot = fromFileUrl(new URL("../../", import.meta.url)).replace(
+      /\/+$/,
+      "",
+    );
+    const merged = mergeLcovReports([
+      [
+        `SF:${repoRoot}/scripts/test/coverage-ci.ts`,
+        "DA:1,1",
+        "end_of_record",
+      ].join("\n"),
+    ], { projectRoot: repoRoot, validateProjectSources: true });
+
+    assertEquals(
+      merged,
+      [
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:1,1",
+        "LH:1",
+        "LF:1",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("drops generated MDX cache records without dropping source records", () => {
+    const merged = mergeLcovReports([
+      [
+        "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+        "DA:1,99",
+        "BRDA:1,0,0,99",
+        "end_of_record",
+        "SF:src/eval/runner.ts",
+        "DA:2,3",
+        "BRDA:2,0,0,1",
+        "end_of_record",
+      ].join("\n"),
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/eval/runner.ts",
+        "DA:2,3",
+        "LH:1",
+        "LF:1",
+        "BRDA:2,0,0,1",
+        "BRF:1",
+        "BRH:1",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("fails closed on unmappable absolute source paths", () => {
+    assertThrows(
+      () => {
+        mergeLcovReports([
+          "SF:/tmp/not-the-project/src/task.ts\nDA:1,1\nend_of_record",
+        ]);
+      },
+      Error,
+      "Cannot map LCOV source path into the project",
+    );
+  });
+
+  it("fails closed when a mapped source path is missing from the project", () => {
+    const repoRoot = fromFileUrl(new URL("../../", import.meta.url)).replace(
+      /\/+$/,
+      "",
+    );
+
+    assertThrows(
+      () => {
+        mergeLcovReports([
+          "SF:/home/runner/_work/veryfront-code/veryfront-code/src/not-real-for-coverage.ts\nDA:1,1\nend_of_record",
+        ], { projectRoot: repoRoot, validateProjectSources: true });
+      },
+      Error,
+      "LCOV source path does not exist in the project",
+    );
+  });
+
   it("sums branch hits across reports and preserves uncovered branches", () => {
     const merged = mergeLcovReports([
       "SF:src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nBRDA:10,0,1,-\nBRDA:10,1,0,-\nBRF:3\nBRH:1\nend_of_record",
