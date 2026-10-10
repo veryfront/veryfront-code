@@ -249,8 +249,11 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   environmentProtected = false;
   /** What the API hands back for the stored API key; null means the exchange fails. */
   environmentAccessToken: string | null = null;
-  /** HTTP status the failed exchange reports, as the CLI API client attaches it. */
-  environmentAccessTokenFailureStatus = 404;
+  /**
+   * HTTP status the failed exchange reports, as the CLI API client attaches it.
+   * The default is an API that does not offer the exchange; 404 is a refusal.
+   */
+  environmentAccessTokenFailureStatus = 501;
   readonly environmentAccessTokenRequests: Array<{ projectId: string; environmentName: string }> =
     [];
   releaseVersion: string | null = "2026.07.30-1";

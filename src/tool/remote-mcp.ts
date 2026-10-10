@@ -431,7 +431,11 @@ function buildOauthConnectUrl(
     ? context.projectId
     : null;
   const path = `/oauth/connect/${encodedIntegration}`;
-  const query = projectId ? `?projectId=${nativeEncodeURIComponent(projectId)}` : "";
+  // The start-connection route requires a scope without a session token. Reconnect links
+  // default to the personal connection, as the SDK connect flow does.
+  const query = projectId
+    ? `?project_reference=${nativeEncodeURIComponent(projectId)}&scope=user`
+    : "";
 
   try {
     if (!urlOriginGetter) {

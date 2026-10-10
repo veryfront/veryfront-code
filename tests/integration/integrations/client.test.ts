@@ -962,6 +962,247 @@ describe("audited REST wire contract", () => {
   });
 });
 
+describe("canonical connection methods", () => {
+  const connectionId = "22222222-2222-4222-8222-222222222222";
+  const generationId = "33333333-3333-4333-8333-333333333333";
+  const base = `/v1/projects/${project.id}/integrations/github`;
+
+  async function withConnectionFetch<T>(
+    handle: (url: URL, init: RequestInit | undefined) => Response | Promise<Response>,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    return await withClientFetch(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === `/v1/projects/${project.slug}`) return Response.json(project);
+      return await handle(url, init);
+    }, run);
+  }
+
+  it("creates a connect session on the canonical path and hides the link from serialization", async () => {
+    const token = "a".repeat(64);
+    const connectUrl = `https://api.example.test/v1/oauth/connect/github?session_token=${token}`;
+    const requests: Array<{ method?: string; path: string; body: unknown }> = [];
+    await withConnectionFetch((url, init) => {
+      requests.push({
+        method: init?.method,
+        path: url.pathname,
+        body: JSON.parse(String(init?.body)),
+      });
+      return Response.json({
+        session_token: token,
+        connect_url: connectUrl,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      }, { status: 201 });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      const session = await client.createConnectSession("github", {
+        scope: "project",
+        redirectUri: "http://localhost:9876/callback",
+      });
+      assertEquals(session.sessionToken, token);
+      assertEquals(session.connectUrl, connectUrl);
+      assertEquals(session.expiresAt, "2099-01-01T00:00:00.000Z");
+      assertEquals(JSON.stringify(session), JSON.stringify({ expiresAt: session.expiresAt }));
+    });
+    assertEquals(requests, [{
+      method: "POST",
+      path: `${base}/connect-sessions`,
+      body: { scope: "project", redirect_uri: "http://localhost:9876/callback" },
+    }]);
+  });
+
+  it("rejects a connect session link for another integration", async () => {
+    const token = "a".repeat(64);
+    await withConnectionFetch(() =>
+      Response.json({
+        session_token: token,
+        connect_url: `https://api.example.test/v1/oauth/connect/slack?session_token=${token}`,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      }), async () => {
+      const client = await createIntegrationClient(context);
+      await assertRejects(
+        () =>
+          client.createConnectSession("github", {
+            scope: "user",
+            redirectUri: "http://localhost:9876/callback",
+          }),
+        IntegrationApiError,
+      );
+    });
+  });
+
+  it("reads connection status on the canonical path with camelCase fields", async () => {
+    const queries: string[] = [];
+    await withConnectionFetch((url, init) => {
+      assertEquals(init?.method, "GET");
+      assertEquals(url.pathname, `${base}/connection-status`);
+      queries.push(url.search);
+      return Response.json(
+        url.searchParams.get("scope") === "user"
+          ? {
+            integration: "github",
+            scope: "user",
+            connected: true,
+            connection_id: connectionId,
+            connection_generation_id: generationId,
+          }
+          : {
+            integration: "github",
+            scope: "project",
+            connected: false,
+            connection_id: null,
+            connection_generation_id: null,
+          },
+      );
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      assertEquals(await client.getConnectionStatus("github", "user"), {
+        integration: "github",
+        scope: "user",
+        connected: true,
+        connectionId,
+        connectionGenerationId: generationId,
+      });
+      assertEquals(await client.getConnectionStatus("github", "project"), {
+        integration: "github",
+        scope: "project",
+        connected: false,
+        connectionId: null,
+        connectionGenerationId: null,
+      });
+    });
+    assertEquals(queries, ["?scope=user", "?scope=project"]);
+  });
+
+  it("rejects a disconnected status that still carries connection IDs", async () => {
+    await withConnectionFetch(() =>
+      Response.json({
+        integration: "github",
+        scope: "user",
+        connected: false,
+        connection_id: connectionId,
+        connection_generation_id: generationId,
+      }), async () => {
+      const client = await createIntegrationClient(context);
+      await assertRejects(() => client.getConnectionStatus("github", "user"), IntegrationApiError);
+    });
+  });
+
+  it("deletes one connection on the canonical path and reports provider revocation", async () => {
+    const requests: Array<{ method?: string; path: string; query: string }> = [];
+    await withConnectionFetch((url, init) => {
+      requests.push({ method: init?.method, path: url.pathname, query: url.search });
+      return Response.json({ id: connectionId, status: "deleted", provider_revoked: false });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      assertEquals(await client.deleteConnection("github", connectionId, "project"), {
+        id: connectionId,
+        status: "deleted",
+        providerRevoked: false,
+      });
+      await assertRejects(
+        () => client.deleteConnection("github", "not-a-uuid", "project"),
+        TypeError,
+      );
+    });
+    assertEquals(requests, [{
+      method: "DELETE",
+      path: `${base}/connections/${connectionId}`,
+      query: "?scope=project",
+    }]);
+  });
+
+  it("reports a missing connection as an HTTP 404 failure", async () => {
+    await withConnectionFetch(
+      () => Response.json({ code: "not_found" }, { status: 404 }),
+      async () => {
+        const client = await createIntegrationClient(context);
+        const error = await assertRejects(
+          () => client.deleteConnection("github", connectionId, "user"),
+          IntegrationApiError,
+        ) as IntegrationApiError;
+        assertEquals(error.httpStatus, 404);
+        assertEquals(error.outcomeUnknown, false);
+      },
+    );
+  });
+
+  const lostDeletes: Array<[string, () => Response | Promise<Response>]> = [
+    ["a lost response", () => Promise.reject(new TypeError("connection reset"))],
+    [
+      "a malformed body",
+      () => new Response("{", { headers: { "content-type": "application/json" } }),
+    ],
+    ["an unexpected success body", () => Response.json({ id: connectionId, status: "pending" })],
+    ["a 502 response", () => Response.json({ code: "bad_gateway" }, { status: 502 })],
+    ["a 408 response", () => Response.json({ code: "timeout" }, { status: 408 })],
+  ];
+  for (const [label, respond] of lostDeletes) {
+    it(`reports an unknown outcome when a dispatched delete ends with ${label}`, async () => {
+      await withConnectionFetch(() => respond(), async () => {
+        const client = await createIntegrationClient(context);
+        const error = await assertRejects(
+          () => client.deleteConnection("github", connectionId, "user"),
+          IntegrationApiError,
+        ) as IntegrationApiError;
+        assertEquals(error.outcomeUnknown, true);
+      });
+    });
+  }
+
+  it("reports an unknown outcome when a delete is aborted after dispatch", async () => {
+    const controller = new AbortController();
+    await withConnectionFetch((_url, init) => {
+      controller.abort(new Error("synthetic abort"));
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      const error = await assertRejects(
+        () =>
+          client.deleteConnection("github", connectionId, "user", {
+            abortSignal: controller.signal,
+          }),
+        IntegrationApiError,
+      ) as IntegrationApiError;
+      assertEquals(error.outcomeUnknown, true);
+    });
+  });
+
+  it("forwards each method's abort signal before any request is sent", async () => {
+    let connectionRequests = 0;
+    await withConnectionFetch(() => {
+      connectionRequests++;
+      return Response.json({});
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      const controller = new AbortController();
+      const reason = new Error("synthetic abort");
+      controller.abort(reason);
+      const abortSignal = controller.signal;
+      for (
+        const operation of [
+          () =>
+            client.createConnectSession("github", {
+              scope: "user",
+              redirectUri: "http://localhost:9876/callback",
+              abortSignal,
+            }),
+          () => client.getConnectionStatus("github", "user", { abortSignal }),
+          () => client.deleteConnection("github", connectionId, "user", { abortSignal }),
+        ]
+      ) {
+        const error = await assertRejects(operation);
+        assertStrictEquals(error, reason);
+      }
+    });
+    assertEquals(connectionRequests, 0);
+  });
+});
+
 describe("native response resource budgets", () => {
   for (const type of ["image", "audio"]) {
     it(`preserves a 1.4MiB native ${type} without generic argument string limits`, async () => {
