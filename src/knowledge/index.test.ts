@@ -579,9 +579,12 @@ describe("projectKnowledge", () => {
       const knowledge = projectKnowledge({ projectDir });
       const capped = await knowledge.lookup({ query: "zxqv yjkp", limit: 100 });
       const floored = await knowledge.lookup({ query: "zxqv yjkp", limit: 0 });
+      const defaulted = await knowledge.lookup({ query: "zxqv yjkp" });
 
       assertEquals(capped.returned, 12, "lookup limits are capped at MAX_LOOKUP_LIMIT");
       assertEquals(floored.returned, 1, "a non-positive limit clamps up to one entry");
+      // Hosted search_knowledge defaults to 6; the local helper keeps 8 until that gap is decided.
+      assertEquals(defaulted.returned, 8, "an omitted limit returns the local default of 8");
       assertEquals(
         typeof floored.page_info.next,
         "string",
