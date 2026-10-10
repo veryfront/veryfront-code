@@ -26,7 +26,7 @@ const REGISTER_HEADING = "### Host execution grant register";
 const GUARD =
   /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==\s*true|===\s*false)\b/g;
 /** A literal grant that bypasses those decisions. */
-const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/;
+const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
 /**
  * Files that decide whether tenant code may run on the host, the surface each one guards,
@@ -150,17 +150,27 @@ function sources(): Promise<Map<string, string>> {
   return cachedSources;
 }
 
-/** Rows of the README register: file path, consumer, grant basis. */
-async function readRegister(): Promise<Map<string, { consumer: string; basis: string }>> {
+interface RegisterRow {
+  consumer: string;
+  basis: string;
+  grants: number;
+}
+
+/** Rows of the README register: file path, consumer, grant basis, grant count. */
+async function readRegister(): Promise<Map<string, RegisterRow>> {
   const text = await Deno.readTextFile(`${REPO_ROOT}${README}`);
   const start = text.indexOf(REGISTER_HEADING);
   if (start < 0) throw new Error(`${README} is missing "${REGISTER_HEADING}"`);
   const section = text.slice(start + REGISTER_HEADING.length).split(/\n#{1,3} /)[0]!;
-  const rows = new Map<string, { consumer: string; basis: string }>();
+  const rows = new Map<string, RegisterRow>();
   for (const line of section.split("\n")) {
-    const match = /^\|\s*`([^`]+)`\s*\|([^|]*)\|([^|]*)\|\s*$/.exec(line.trim());
+    const match = /^\|\s*`([^`]+)`\s*\|([^|]*)\|([^|]*)\|\s*(\d+)\s*\|\s*$/.exec(line.trim());
     if (match) {
-      rows.set(match[1]!, { consumer: match[2]!.trim(), basis: match[3]!.trim() });
+      rows.set(match[1]!, {
+        consumer: match[2]!.trim(),
+        basis: match[3]!.trim(),
+        grants: Number(match[4]),
+      });
     }
   }
   return rows;
@@ -202,13 +212,15 @@ describe("execution surface inventory", () => {
     );
   });
 
-  it("registers every literal host execution grant with its consumer and grant basis", async () => {
+  it("registers every literal host execution grant with its consumer, grant basis and count", async () => {
     const all = await sources();
     const register = await readRegister();
-    const grants = [...all.entries()]
-      .filter(([, code]) => LITERAL_GRANT.test(code))
-      .map(([path]) => path)
-      .toSorted();
+    const grantCounts = new Map(
+      [...all.entries()]
+        .map(([path, code]) => [path, countGuards(code, LITERAL_GRANT)] as const)
+        .filter(([, count]) => count > 0),
+    );
+    const grants = [...grantCounts.keys()].toSorted();
     assertEquals(
       grants.filter((path) => !register.has(path)),
       [],
@@ -226,6 +238,18 @@ describe("execution surface inventory", () => {
         .map(([path]) => path),
       [],
       "Each registered grant needs a consumer and a grant basis.",
+    );
+    assertEquals(
+      grants
+        .filter((path) => register.get(path)?.grants !== grantCounts.get(path))
+        .map((path) => ({
+          path,
+          registered: register.get(path)?.grants,
+          found: grantCounts.get(path),
+        })),
+      [],
+      "These files hold a different number of literal grants than the register lists. " +
+        "Register each new grant deliberately.",
     );
   });
 });
