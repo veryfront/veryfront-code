@@ -55,6 +55,10 @@ type HostedHttpCompositionBroker =
   & Pick<ReturnType<typeof createHostedHttpBroker>, "shutdown">;
 
 interface HostedHttpCompositionDependencies {
+  /** @internal Host file reader; replaced in hermetic tests. */
+  readFile?: (path: string, options: { signal?: AbortSignal }) => Promise<Uint8Array>;
+  /** @internal Host override check; replaced in hermetic tests. */
+  isOverrideEnabled?: () => boolean;
   createAllocatorClient?: typeof createHostedExecutorAllocatorClient;
   createBroker?: (options: HostedExecutorSessionPoolOptions) => HostedHttpCompositionBroker;
 }
@@ -125,8 +129,13 @@ export function readHostedHttpCompositionConfig(
   });
 }
 
-async function readBoundedText(path: string, maxBytes: number, signal?: AbortSignal) {
-  const bytes = await readFile(path, { signal });
+async function readBoundedText(
+  read: NonNullable<HostedHttpCompositionDependencies["readFile"]>,
+  path: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+) {
+  const bytes = await read(path, { signal });
   try {
     if (bytes.byteLength > maxBytes) throw new TypeError("Hosted HTTP host file is too large");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -144,15 +153,16 @@ export async function createHostedHttpComposition(
   config: HostedHttpCompositionConfig,
   dependencies: HostedHttpCompositionDependencies = {},
 ): Promise<HostedHttpComposition> {
-  if (isHostProjectExecutionOverrideEnabled()) {
+  if ((dependencies.isOverrideEnabled ?? isHostProjectExecutionOverrideEnabled)()) {
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }
+  const read = dependencies.readFile ?? readFile;
   const ca = config.allocatorCaFile
-    ? await readBoundedText(config.allocatorCaFile, MAX_CA_BYTES)
+    ? await readBoundedText(read, config.allocatorCaFile, MAX_CA_BYTES)
     : undefined;
   let records: unknown;
   try {
-    records = JSON.parse(await readBoundedText(config.sourceRecordsFile, MAX_RECORDS_BYTES));
+    records = JSON.parse(await readBoundedText(read, config.sourceRecordsFile, MAX_RECORDS_BYTES));
   } catch {
     throw new TypeError("Hosted HTTP source records file is unreadable");
   }
@@ -162,7 +172,7 @@ export async function createHostedHttpComposition(
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
-      const token = (await readBoundedText(tokenFile, MAX_TOKEN_BYTES, signal)).trim();
+      const token = (await readBoundedText(read, tokenFile, MAX_TOKEN_BYTES, signal)).trim();
       if (!token) throw new Error("Executor broker token is unavailable");
       return token;
     },

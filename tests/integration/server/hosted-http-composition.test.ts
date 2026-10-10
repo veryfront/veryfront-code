@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv, withTempDir } from "#veryfront/testing";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -71,61 +71,6 @@ async function writeHostFiles(dir: string, records: unknown = [{
 }
 
 describe("hosted HTTP host composition", () => {
-  it("is off unless the host flag enables it", () => {
-    assertEquals(readHostedHttpCompositionConfig(read({})), undefined);
-    for (const value of ["", "0", "false", "off", "no"]) {
-      assertEquals(
-        readHostedHttpCompositionConfig(read({ VERYFRONT_HOSTED_HTTP_ISOLATION: value })),
-        undefined,
-      );
-    }
-  });
-
-  it("refuses an unrecognized flag or an incomplete host configuration", () => {
-    assertThrows(
-      () =>
-        readHostedHttpCompositionConfig(
-          read({ ...hostEnv, VERYFRONT_HOSTED_HTTP_ISOLATION: "maybe" }),
-        ),
-      TypeError,
-    );
-    for (
-      const key of Object.keys(hostEnv).filter((key) => key !== "VERYFRONT_HOSTED_HTTP_ISOLATION")
-    ) {
-      assertThrows(
-        () => readHostedHttpCompositionConfig(read({ ...hostEnv, [key]: undefined })),
-        TypeError,
-        key,
-      );
-    }
-    for (
-      const invalid of [
-        { VERYFRONT_EXECUTOR_ALLOCATOR_URL: "http://allocator.internal.test" },
-        { VERYFRONT_EXECUTOR_BROKER_INSTANCE_ID: "../pod" },
-        { VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "0" },
-        { VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "257" },
-        { VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE: "relative/token" },
-      ]
-    ) {
-      assertThrows(
-        () => readHostedHttpCompositionConfig(read({ ...hostEnv, ...invalid })),
-        TypeError,
-      );
-    }
-  });
-
-  it("reads the host configuration with a bounded default admission limit", () => {
-    const config = readHostedHttpCompositionConfig(read(hostEnv))!;
-    assertEquals(config.maxActive, 16);
-    assertEquals(config.allocatorUrl, "https://allocator.internal.test");
-    assertEquals(config.allocatorCaFile, undefined);
-    assertEquals(
-      readHostedHttpCompositionConfig(read({ ...hostEnv, VERYFRONT_HOSTED_HTTP_MAX_ACTIVE: "64" }))!
-        .maxActive,
-      64,
-    );
-  });
-
   it("refuses to start while the shared host execution override is set", async () => {
     await withTempDir(async (dir) => {
       const config = await writeHostFiles(dir);
@@ -178,27 +123,6 @@ describe("hosted HTTP host composition", () => {
     });
   });
 
-  it("refuses unreadable or invalid publication records at startup", async () => {
-    await withTempDir(async (dir) => {
-      const conflicting = await writeHostFiles(dir, [
-        { project_id: PROJECT_ID },
-      ]);
-      await assertRejects(() =>
-        createHostedHttpComposition(conflicting, {
-          createAllocatorClient: () => allocator,
-          createBroker: () => fakeBroker().broker,
-        })
-      );
-      await Deno.writeTextFile(`${dir}/records.json`, "{not json");
-      await assertRejects(() =>
-        createHostedHttpComposition(conflicting, {
-          createAllocatorClient: () => allocator,
-          createBroker: () => fakeBroker().broker,
-        })
-      );
-    });
-  });
-
   it("refuses an unpublished release without dispatching to the broker", async () => {
     await withTempDir(async (dir) => {
       const config = await writeHostFiles(dir);
@@ -221,20 +145,6 @@ describe("hosted HTTP host composition", () => {
           ),
       );
       await composition.shutdown();
-    });
-  });
-
-  it("shuts the broker down once, however often the server stops", async () => {
-    await withTempDir(async (dir) => {
-      const config = await writeHostFiles(dir);
-      const broker = fakeBroker();
-      const composition = await createHostedHttpComposition(config, {
-        createAllocatorClient: () => allocator,
-        createBroker: () => broker.broker,
-      });
-      await Promise.all([composition.shutdown(), composition.shutdown()]);
-      await composition.shutdown();
-      assertEquals(broker.shutdowns, 1);
     });
   });
 });
