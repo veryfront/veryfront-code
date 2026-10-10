@@ -8,7 +8,10 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import {
+  buildModelCallContextRequest,
+  snapshotModelCallProviderOptions,
+} from "#veryfront/runtime/model-call-context-request.ts";
 import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
 import { buildOpenAIResponsesRequest } from "../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
@@ -41,6 +44,85 @@ const samplingFields = [
 ] as const;
 
 describe("model call request projection", () => {
+  it("snapshots Google controls once for capture and the native wire builder", () => {
+    let reads = 0;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "google") return undefined;
+        reads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: { generationConfig: { maxOutputTokens: reads === 1 ? 111 : 777 } },
+        };
+      },
+    });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "google", modelId: "gemini-synthetic" },
+      { prompt, providerOptions },
+    );
+    const projected = buildModelCallContextRequest({ provider: "google" }, options);
+    const body = buildGoogleGenerateContentRequest("google", options, createWarningCollector());
+    assertEquals(projected?.maxOutputTokens, 111);
+    assertEquals(body.generationConfig?.maxOutputTokens, 111);
+    assertEquals(reads, 1);
+  });
+
+  it("preserves ignored provider buckets without evaluating accessors", () => {
+    let getterReads = 0;
+    const unused = { callback() {} };
+    const providerOptions = { openai: { max_tokens: 111 }, unused };
+    Object.defineProperty(providerOptions, "other", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        throw new Error("unused provider getter must not run");
+      },
+    });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, providerOptions },
+    );
+    const body = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.max_completion_tokens, 111);
+    assert(options.providerOptions.unused === unused);
+    assertEquals(
+      Object.getOwnPropertyDescriptor(options.providerOptions, "other"),
+      Object.getOwnPropertyDescriptor(providerOptions, "other"),
+    );
+    assertEquals(getterReads, 0);
+  });
+
+  it("preserves non-enumerable array indices used in native provider controls", () => {
+    const stop = ["original"];
+    Object.defineProperty(stop, "0", { enumerable: false });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, providerOptions: { openai: { stop } } },
+    );
+    const body = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.stop, ["original"]);
+    assertEquals(
+      buildModelCallContextRequest({ provider: "openai", modelId: "gpt-4o" }, options)
+        ?.stopSequences,
+      ["original"],
+    );
+  });
+
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {

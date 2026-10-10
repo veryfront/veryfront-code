@@ -65,6 +65,7 @@ import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-recei
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallProviderOptions,
 } from "./model-call-context-request.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
@@ -1568,7 +1569,10 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
     await settleVeryfrontCloudModel(options);
-    const directOptions = buildDirectModelOptions(options, tools);
+    const directOptions = snapshotModelCallProviderOptions(
+      options.model,
+      buildDirectModelOptions(options, tools),
+    );
     const capture = await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return observeGenerateFailure(() =>
@@ -1591,7 +1595,10 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     await settleVeryfrontCloudModel(options);
-    const directOptions = buildDirectModelOptions(options, tools);
+    const directOptions = snapshotModelCallProviderOptions(
+      options.model,
+      buildDirectModelOptions(options, tools),
+    );
     const capture = await emitModelCallContextEvent(options, directOptions);
     return runWithModelCallCapture(capture, () => options.model.doStream(directOptions));
   });

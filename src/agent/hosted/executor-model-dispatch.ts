@@ -6,6 +6,7 @@ import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallProviderOptions,
 } from "#veryfront/runtime/model-call-context-request.ts";
 import type {
   AgentRunEventSink,
@@ -244,7 +245,11 @@ function createScopedHostedModelBroker(
     allowedModelIds: input.allowedModelIds,
     normalizeModelCall(request, context) {
       assertScope(context);
-      return admission.normalize(request);
+      const snapshot = {
+        ...request,
+        options: snapshotModelCallProviderOptions(request.model, request.options),
+      };
+      return admission.normalize(snapshot);
     },
     async beforeModelDispatch(request, context) {
       assertScope(context);

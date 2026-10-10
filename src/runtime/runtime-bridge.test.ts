@@ -12,7 +12,7 @@ import { FakeTime } from "#std/testing/time";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import type { AgentRunEventSink, AgentRunModelCallContextEvent } from "./model-call-context.ts";
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { getCurrentVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
@@ -1668,6 +1668,177 @@ describe("runtime-bridge", () => {
 
     assertModelCallContextEvent(recorded);
     assertEquals(recorded.request, undefined);
+  });
+
+  it("uses one OpenAI provider-options snapshot for capture and dispatch", async () => {
+    let bucketReads = 0;
+    let reasoningReads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedMaxTokens: unknown;
+    let dispatchedReasoningEffort: unknown;
+    const reasoning = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "effort") return undefined;
+        reasoningReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: reasoningReads === 1 ? "low" : "high",
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["effort"];
+      },
+    });
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        bucketReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: {
+            max_output_tokens: bucketReads === 1 ? 111 : 777,
+            reasoning,
+          },
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+      async doGenerate(options) {
+        const bucket = Object.getOwnPropertyDescriptor(options.providerOptions, "openai")?.value;
+        dispatchedMaxTokens = bucket?.max_output_tokens;
+        dispatchedReasoningEffort = Object.getOwnPropertyDescriptor(
+          bucket?.reasoning,
+          "effort",
+        )?.value;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, 111);
+    assertEquals(recorded.request?.reasoning, { enabled: true, effort: "low" });
+    assertEquals(dispatchedMaxTokens, 111);
+    assertEquals(dispatchedReasoningEffort, "low");
+    assertEquals(bucketReads, 1);
+    assertEquals(reasoningReads, 1);
+  });
+
+  it("shares a Google bucket snapshot between the owned event and dispatch", async () => {
+    let reads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedMaxTokens: unknown;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "google") return undefined;
+        reads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: { generationConfig: { maxOutputTokens: reads === 1 ? 111 : 777 } },
+        };
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "google",
+      modelId: "gemini-synthetic",
+      async doGenerate(options) {
+        const bucket = Object.getOwnPropertyDescriptor(options.providerOptions, "google")?.value;
+        dispatchedMaxTokens = bucket?.generationConfig?.maxOutputTokens;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+    await runWithRunEventSink((event) => {
+      recorded = event;
+    }, () =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Hello" }],
+        providerOptions,
+      }));
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, 111);
+    assertEquals(dispatchedMaxTokens, 111);
+    assertEquals(reads, 1);
+  });
+
+  it("does not reuse OpenAI providerOptions when boundary snapshot finds no bucket", async () => {
+    let bucketReads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedProviderOptions: unknown;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        bucketReads += 1;
+        if (bucketReads === 1) return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: { max_output_tokens: 777 },
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+      async doGenerate(options) {
+        dispatchedProviderOptions = options.providerOptions;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, undefined);
+    assertEquals(dispatchedProviderOptions, {});
+    assertEquals(bucketReads, 1);
   });
 
   it("persists adaptive Anthropic thinking as canonical reasoning without raw provider options", async () => {

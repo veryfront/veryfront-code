@@ -34,12 +34,24 @@ type ModelCallRequestSource =
     providerOptions?: unknown;
   };
 
+type SnapshotContainer = Record<PropertyKey, unknown> | readonly unknown[];
+
 const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
+const NativeWeakSet = WeakSet;
+const NativeNumber = Number;
+const NativeString = String;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeDelete = WeakSet.prototype.delete;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -53,17 +65,58 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
 }
 
-function objectKeys<TValue extends object>(value: TValue): string[] {
+function objectKeys(value: Record<string, unknown> | ModelCallRequest): string[] {
   return ReflectApply(ObjectKeys, Object, [value]) as string[];
 }
 
-function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+function reflectOwnKeys(value: SnapshotContainer): PropertyKey[] {
+  return ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
+}
+
+function createNullRecord(): Record<string, unknown> {
+  return ReflectApply(ObjectCreate, Object, [null]) as Record<string, unknown>;
+}
+
+function objectFreeze<TValue extends SnapshotContainer>(value: TValue): TValue {
+  return ReflectApply(ObjectFreeze, Object, [value]) as TValue;
+}
+
+function defineOwnDataProperty(target: SnapshotContainer, key: PropertyKey, value: unknown): void {
   ReflectApply(ObjectDefineProperty, Object, [target, key, {
     value,
     writable: true,
     enumerable: true,
     configurable: true,
   }]);
+}
+
+function defineHiddenImmutableProperty(
+  target: SnapshotContainer,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  ReflectApply(ObjectDefineProperty, Object, [target, key, {
+    value,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  }]);
+}
+
+function weakSetAdd(set: WeakSet<SnapshotContainer>, value: SnapshotContainer): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
+}
+
+function weakSetDelete(set: WeakSet<SnapshotContainer>, value: SnapshotContainer): void {
+  ReflectApply(WeakSetPrototypeDelete, set, [value]);
+}
+
+function weakSetHas(set: WeakSet<SnapshotContainer>, value: SnapshotContainer): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
+
+function numberIsFinite(value: number): boolean {
+  return ReflectApply(NumberIsFinite, Number, [value]) as boolean;
 }
 
 function numberIsInteger(value: number): boolean {
@@ -126,11 +179,21 @@ function readProviderControl(
   return selected;
 }
 
-function readRequiredProviderDataBucket(
+function readRequiredProviderDataBucketEntry(
   providerOptions: unknown,
   providerName: string,
-): unknown {
-  if (providerOptions === null || typeof providerOptions !== "object") return undefined;
+): { present: boolean; value: unknown } {
+  if (providerOptions === null || typeof providerOptions !== "object") {
+    return { present: false, value: undefined };
+  }
+  const entry = readProviderOptionsBucketEntry(providerOptions as SnapshotContainer, providerName);
+  return { present: entry.present, value: entry.value };
+}
+
+function readProviderOptionsBucketEntry(
+  providerOptions: SnapshotContainer,
+  providerName: string,
+): { enumerable: boolean; present: boolean; value: unknown } {
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
@@ -142,18 +205,26 @@ function readRequiredProviderDataBucket(
   } catch {
     throw new TypeError(`Provider options for "${providerName}" could not be read`);
   }
-  if (!descriptor) return undefined;
+  if (!descriptor) return { enumerable: false, present: false, value: undefined };
   if (!ObjectHasOwn(descriptor, "value")) {
     throw new TypeError(`Provider options for "${providerName}" must be a data property`);
   }
-  return descriptor.value;
+  return { enumerable: descriptor.enumerable === true, present: true, value: descriptor.value };
 }
 
-function readRequiredProviderOption(
+function readRequiredProviderDataBucket(
+  providerOptions: unknown,
   providerName: string,
-  bucket: Record<string, unknown>,
-  key: string,
 ): unknown {
+  return readRequiredProviderDataBucketEntry(providerOptions, providerName).value;
+}
+
+function readRequiredProviderOptionEntry(
+  providerName: string,
+  bucket: SnapshotContainer,
+  key: PropertyKey,
+  requireEnumerable = true,
+): { present: boolean; value: unknown } {
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [bucket, key]) as
@@ -162,11 +233,21 @@ function readRequiredProviderOption(
   } catch {
     throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
   }
-  if (!descriptor?.enumerable) return undefined;
+  if (!descriptor || (requireEnumerable && descriptor.enumerable !== true)) {
+    return { present: false, value: undefined };
+  }
   if (!ObjectHasOwn(descriptor, "value")) {
     throw new TypeError(`Provider options for "${providerName}" must contain data properties`);
   }
-  return descriptor.value;
+  return { present: true, value: descriptor.value };
+}
+
+function readRequiredProviderOption(
+  providerName: string,
+  bucket: SnapshotContainer,
+  key: string,
+): unknown {
+  return readRequiredProviderOptionEntry(providerName, bucket, key).value;
 }
 
 function readGoogleProviderControl(
@@ -278,6 +359,11 @@ function openAIProviderName(model: ModelCallRuntimeMetadata): string {
   return resolveModelCallProvider(model) ?? "openai";
 }
 
+function openAIProviderBucketNames(model: ModelCallRuntimeMetadata): readonly string[] {
+  const providerName = openAIProviderName(model);
+  return providerName === "openai" ? ["openai-compatible", "openai"] : ["openai", providerName];
+}
+
 function isProviderOptionsBucket(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
@@ -328,23 +414,16 @@ function openAIProviderOptions(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): Record<string, unknown> {
-  const providerName = openAIProviderName(model);
   const providerOptions = options.providerOptions as Record<string, unknown> | undefined;
-  const bucketNames = providerName === "openai"
-    ? ["openai-compatible", "openai", providerName]
-    : ["openai", providerName];
-  return readModelCallProviderOptions(providerOptions, bucketNames);
+  return readModelCallProviderOptions(providerOptions, openAIProviderBucketNames(model));
 }
 
 function openAIChatProviderOptions(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): Record<string, unknown> {
-  const providerName = openAIProviderName(model);
   const providerOptionsSource = options.providerOptions as Record<string, unknown> | undefined;
-  const bucketNames = providerName === "openai"
-    ? ["openai-compatible", "openai", providerName]
-    : ["openai", providerName];
+  const bucketNames = openAIProviderBucketNames(model);
   const providerOptions: Record<string, unknown> = {};
   forEachPrivateArray(bucketNames, (bucketName) => {
     const normalized = normalizeOpenAIProviderOptionsForChat(
@@ -401,6 +480,192 @@ function resolveOpenAIMaxOutputTokens(
     return chatMaxOutputTokens.value;
   }
   return options.maxOutputTokens;
+}
+
+const MaxProviderOptionSnapshotDepth = 64;
+const MaxProviderOptionSnapshotNodes = 65_536;
+
+type ProviderOptionSnapshotState = {
+  ancestors: WeakSet<SnapshotContainer>;
+  nodes: number;
+};
+
+function snapshotProviderOptionNode(
+  providerName: string,
+  state: ProviderOptionSnapshotState,
+): void {
+  if (state.nodes >= MaxProviderOptionSnapshotNodes) {
+    throw new TypeError(`Provider options for "${providerName}" exceeded the snapshot node limit`);
+  }
+  state.nodes += 1;
+}
+
+function readRequiredArrayLength(providerName: string, value: SnapshotContainer): number {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, "length"]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+  }
+  if (!descriptor || !ObjectHasOwn(descriptor, "value") || !numberIsSafeInteger(descriptor.value)) {
+    throw new TypeError(`Provider options for "${providerName}" contained an invalid array`);
+  }
+  const length = descriptor.value as number;
+  if (length > MaxProviderOptionSnapshotNodes - 1) {
+    throw new TypeError(`Provider options for "${providerName}" exceeded the snapshot node limit`);
+  }
+  return length;
+}
+
+function isArrayIndexKey(key: string, length: number): boolean {
+  if (key === "") return false;
+  const index = NativeNumber(key);
+  return numberIsInteger(index) && index >= 0 && index < length && NativeString(index) === key;
+}
+
+function snapshotProviderOptionValue(
+  providerName: string,
+  value: unknown,
+  state: ProviderOptionSnapshotState,
+  depth: number,
+): unknown {
+  snapshotProviderOptionNode(providerName, state);
+  if (value === null || value === undefined) return value;
+  switch (typeof value) {
+    case "boolean":
+    case "string":
+      return value;
+    case "number":
+      if (numberIsFinite(value)) return value;
+      break;
+    case "object":
+      break;
+    default:
+      break;
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
+  }
+  const container = value as SnapshotContainer;
+  if (depth >= MaxProviderOptionSnapshotDepth) {
+    throw new TypeError(`Provider options for "${providerName}" exceeded the snapshot depth limit`);
+  }
+  if (weakSetHas(state.ancestors, container)) {
+    throw new TypeError(`Provider options for "${providerName}" must not contain cycles`);
+  }
+
+  weakSetAdd(state.ancestors, container);
+  try {
+    let keys: PropertyKey[];
+    try {
+      keys = reflectOwnKeys(container);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+    }
+
+    if (ArrayIsArray(container)) {
+      const output: unknown[] = [];
+      const length = readRequiredArrayLength(providerName, container);
+      output.length = length;
+      forEachPrivateArray(keys, (key) => {
+        if (typeof key !== "string" || key === "length") return;
+        if (!isArrayIndexKey(key, length)) return;
+        const entry = readRequiredProviderOptionEntry(providerName, container, key, false);
+        if (entry.present) {
+          defineOwnDataProperty(
+            output,
+            key,
+            snapshotProviderOptionValue(providerName, entry.value, state, depth + 1),
+          );
+        }
+      });
+      defineHiddenImmutableProperty(output, "toJSON", undefined);
+      return objectFreeze(output);
+    }
+
+    const output = createNullRecord();
+    forEachPrivateArray(keys, (key) => {
+      if (typeof key !== "string") {
+        throw new TypeError(`Provider options for "${providerName}" must not contain symbol keys`);
+      }
+      const entry = readRequiredProviderOptionEntry(providerName, container, key);
+      if (entry.present) {
+        defineOwnDataProperty(
+          output,
+          key,
+          snapshotProviderOptionValue(providerName, entry.value, state, depth + 1),
+        );
+      }
+    });
+    return objectFreeze(output);
+  } finally {
+    weakSetDelete(state.ancestors, container);
+  }
+}
+
+function snapshotProviderBucket(providerName: string, bucket: unknown): unknown {
+  return snapshotProviderOptionValue(
+    providerName,
+    bucket,
+    { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+    0,
+  );
+}
+
+export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCallOptions>(
+  model: ModelCallRuntimeMetadata,
+  options: TOptions,
+): TOptions {
+  const protocol = resolveModelCallProtocol(model);
+  if (!usesOpenAIBuilder(model) && protocol !== "google") return options;
+
+  const providerOptions = options.providerOptions;
+  if (providerOptions === undefined) return options;
+
+  const output: Record<string, unknown> = {};
+  const consumedBuckets: Record<string, unknown> = {};
+  const bucketNames = protocol === "google"
+    ? ["google", resolveModelCallProvider(model), model.provider]
+    : openAIProviderBucketNames(model);
+  forEachPrivateArray(bucketNames, (providerName) => {
+    if (!providerName || ObjectHasOwn(consumedBuckets, providerName)) return;
+    defineOwnDataProperty(consumedBuckets, providerName, true);
+    const bucket = readRequiredProviderDataBucketEntry(providerOptions, providerName);
+    if (bucket.present) {
+      defineOwnDataProperty(
+        output,
+        providerName,
+        snapshotProviderBucket(providerName, bucket.value),
+      );
+    }
+  });
+  let keys: PropertyKey[];
+  try {
+    keys = reflectOwnKeys(providerOptions);
+  } catch {
+    throw new TypeError("Provider options could not be enumerated");
+  }
+  forEachPrivateArray(keys, (key) => {
+    if (typeof key !== "string" || ObjectHasOwn(consumedBuckets, key)) return;
+    // Unselected buckets remain available to admission checks without evaluating
+    // their getters or rejecting values ignored by this provider's builder.
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+        providerOptions,
+        key,
+      ]) as
+        | PropertyDescriptor
+        | undefined;
+    } catch {
+      throw new TypeError("Provider options could not be enumerated");
+    }
+    if (descriptor) ReflectApply(ObjectDefineProperty, Object, [output, key, descriptor]);
+  });
+
+  return { ...options, providerOptions: output } as TOptions;
 }
 
 /** Project effective request settings without persisting raw provider options. */
