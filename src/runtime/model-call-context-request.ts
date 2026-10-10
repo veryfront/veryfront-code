@@ -102,6 +102,22 @@ function readOwnEnumerableDataDescriptor(
     : undefined;
 }
 
+function readOwnDataDescriptor(
+  value: unknown,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, key]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    return undefined;
+  }
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor : undefined;
+}
+
 function readProviderControl(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -113,7 +129,7 @@ function readProviderControl(
   const bucketNames = [resolveModelCallProtocol(model), provider, model.provider ?? provider];
   forEachPrivateArray(bucketNames, (name) => {
     if (!name) return;
-    const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
+    const bucket = readOwnDataDescriptor(options.providerOptions, name)?.value;
     if (ArrayIsArray(bucket)) return;
     selected = readOwnEnumerableDataDescriptor(bucket, key) ?? selected;
   });

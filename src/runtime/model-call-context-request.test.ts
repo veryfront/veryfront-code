@@ -1057,6 +1057,36 @@ describe("model call request projection", () => {
     assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
+  it("matches non-enumerable Anthropic provider buckets accepted by the request builder", () => {
+    const providerOptions: NonNullable<ModelRuntimeCallOptions["providerOptions"]> = {};
+    Object.defineProperty(providerOptions, "anthropic", {
+      value: { max_tokens: 768 },
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions,
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, 768);
+    assertEquals(projected?.maxOutputTokens, body.max_tokens);
+  });
+
   it("preserves Anthropic native control overrides after neutral filtering", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
