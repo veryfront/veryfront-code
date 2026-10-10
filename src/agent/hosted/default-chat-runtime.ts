@@ -711,6 +711,7 @@ export function createPreparedHostedRuntimeAgent(
 ) {
   const resolvedRuntimeOptions = {
     ...runtimeOptions,
+    preserveToolCatalog: true,
     manualPause: runtimeOptions.manualPause ?? getHostedAgentPauseCreationOptions(input.options),
     modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
     runtimeObservationCapability: runtimeOptions.runtimeObservationCapability ??

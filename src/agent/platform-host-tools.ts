@@ -3,9 +3,15 @@ import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
-import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "./platform-tool-names.ts";
+import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  LOAD_SKILL_TOOL_ID,
+} from "./platform-tool-names.ts";
 
 const reflectApply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -24,6 +30,9 @@ function hasOwn(
   return reflectApply(objectHasOwn, Object, [value, key]) as boolean;
 }
 
+function ownDataValue(value: HostToolSet, key: string): HostToolDefinition | undefined;
+function ownDataValue(value: HostToolDefinition, key: string): unknown;
+function ownDataValue(value: HostToolSet | HostToolDefinition, key: string): unknown;
 function ownDataValue(value: HostToolSet | HostToolDefinition, key: string): unknown {
   const descriptor = reflectApply(objectGetOwnPropertyDescriptor, Object, [value, key]) as
     | PropertyDescriptor
@@ -110,6 +119,48 @@ export function withPlatformHostToolAliases(
       tools,
       canonicalName,
       markTrustedHostToolProvenance(cloneHostToolDefinitionWithId(definition, canonicalName)),
+    );
+  }
+  return tools;
+}
+
+/** @internal Preserve trusted loader aliases through the selected authorized implementation. */
+export function retainTrustedSkillLoaderAliases(input: {
+  tools: HostToolSet;
+  originalTools: HostToolSet;
+  deniedToolNames?: readonly string[];
+}): HostToolSet {
+  let tools = input.tools;
+  const pairs = [
+    { selectedName: LOAD_SKILL_TOOL_ID, siblingName: CANONICAL_LOAD_SKILL_TOOL_ID },
+    { selectedName: CANONICAL_LOAD_SKILL_TOOL_ID, siblingName: LOAD_SKILL_TOOL_ID },
+  ];
+  for (let index = 0; index < pairs.length; index++) {
+    const pair = pairs[index];
+    if (pair === undefined) continue;
+    const { selectedName, siblingName } = pair;
+    if (hasOwn(tools, siblingName)) continue;
+    const selected = ownDataValue(tools, selectedName);
+    const sibling = ownDataValue(input.originalTools, siblingName);
+    if (typeof selected !== "object" || selected === null) continue;
+    if (!hasTrustedHostToolProvenance(selected) || !hasTrustedHostToolProvenance(sibling)) continue;
+    if (
+      input.deniedToolNames !== undefined &&
+      (reflectApply(arrayIncludes, input.deniedToolNames, [selectedName]) === true ||
+        reflectApply(arrayIncludes, input.deniedToolNames, [siblingName]) === true)
+    ) continue;
+    if (tools === input.tools) {
+      tools = objectCreate(null);
+      copyOwnDataTools(tools, input.tools);
+    }
+    // Copy the granted definition and its execution closure, never invoke the
+    // unselected facade operation under a name outside the broker grant.
+    defineData(
+      tools,
+      siblingName,
+      markTrustedHostToolProvenance(
+        cloneHostToolDefinitionWithId(selected, siblingName),
+      ),
     );
   }
   return tools;
