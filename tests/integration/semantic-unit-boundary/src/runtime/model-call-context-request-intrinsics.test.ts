@@ -75,16 +75,20 @@ describe("model call request projection intrinsic boundaries", () => {
   });
 
   it("preserves native OpenAI provider options when Map is replaced before dispatch", () => {
-    const nativeOpenAIOptions = {
-      max_tokens: 777,
+    // JSON.parse defines "__proto__" as an own data property without touching the prototype.
+    const parsedOpenAIOptions: unknown = JSON.parse(
+      '{"max_tokens":777,"__proto__":"literal-proto"}',
+    );
+    if (
+      typeof parsedOpenAIOptions !== "object" || parsedOpenAIOptions === null ||
+      Array.isArray(parsedOpenAIOptions)
+    ) {
+      throw new Error("expected a JSON object fixture");
+    }
+    const nativeOpenAIOptions: Record<string, unknown> = {
+      ...parsedOpenAIOptions,
       seed: undefined,
     };
-    Object.defineProperty(nativeOpenAIOptions, "__proto__", {
-      value: "literal-proto",
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
     const protoDescriptor = Object.getOwnPropertyDescriptor(nativeOpenAIOptions, "__proto__");
     assertEquals(protoDescriptor?.value, "literal-proto");
     assertEquals(protoDescriptor?.enumerable, true);
