@@ -1,3 +1,4 @@
+import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "./tool-result-ownership.ts";
 import { isObservedToolResultStart } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -83,18 +84,20 @@ export function serializeConversationToolResultContent(value: unknown): {
 
 /**
  * Carry a chunk's provider-execution marker into the durable record.
+ * Explicit false preserves local ownership when a later result marks itself provider-executed.
  *
  * The version 1 reader replays a stored result as a provider tool result only
  * when the durable call records that it was provider-executed; a call that
  * dropped the marker replays as an opaque legacy custom event instead. The
- * marker is written on both the call start and the call end because producers
+ * marker is written on the call start, call end, and result because producers
  * do not agree on which one carries it: the live lifecycle adapter synthesizes
  * an unmarked `tool-input-start` and marks only `tool-input-available`.
  */
 function providerExecutionMarker(
   chunk: { providerExecuted?: boolean },
-): { providerExecuted?: true } {
-  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
+): { providerExecuted?: boolean } {
+  const providerExecuted = chunk.providerExecuted;
+  return typeof providerExecuted === "boolean" ? { providerExecuted } : {};
 }
 
 function encodeCustomDataEvent(
@@ -102,7 +105,7 @@ function encodeCustomDataEvent(
   parentMessageId: string | null,
 ): ConversationRunEvent[] {
   const name = chunk.type.slice("data-".length);
-  if (name.length === 0) {
+  if (name.length === 0 || name === TOOL_RESULT_OWNERSHIP_CORRECTION) {
     return [];
   }
 
@@ -420,6 +423,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
@@ -441,6 +445,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
@@ -458,6 +463,7 @@ export class ConversationRunEventEncoder {
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
           content: "Tool output denied",
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)

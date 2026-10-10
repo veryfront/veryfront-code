@@ -23,6 +23,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem } from "../combobox.tsx";
 import { useAdapter } from "./context.tsx";
 import type { ComboboxState } from "./contract.ts";
@@ -209,8 +210,10 @@ export function runComboboxConformance(
       try {
         assertEquals(h.input().value, "Astro");
         h.setValue("");
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        flushSync(() => {});
+        await waitFor(() => {
+          flushSync(() => {});
+          return h.input().value === "";
+        }, { timeout: 1000, interval: 10 });
         assertEquals(h.input().value, "");
       } finally {
         h.cleanup();

@@ -34,6 +34,8 @@ import {
   buildDetachedFallbackMessageState,
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
+  buildToolResultOwnershipCorrectionEvents,
+  persistToolResultOwnershipCorrections,
 } from "./finalized-message.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -655,26 +657,44 @@ export function createHostedChatFinalizeResponseBuildState(input: {
   finalStep: unknown,
 ) => Promise<HostedResponseFinalizationState<ChatUiMessage, ChatUiMessageChunk<MessageMetadata>>> {
   return async (finalStep) => {
-    const { persistedMessage, sanitizedFinalizedMessage, hasIncompleteFinalizedToolParts } =
-      buildFinalizedMessageState({
-        responseMessage: input.responseMessage,
-        isAborted: input.isAborted,
-        finalStep,
-        incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-      });
+    const {
+      persistedMessage,
+      sanitizedFinalizedMessage,
+      hasIncompleteFinalizedToolParts,
+      recoveredFallbackParts,
+    } = buildFinalizedMessageState({
+      responseMessage: input.responseMessage,
+      mirroredToolChunkState: input.mirroredToolChunkState,
+      isAborted: input.isAborted,
+      finalStep,
+      incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+    });
 
     return {
       persistedMessage,
       finalizedMessage: sanitizedFinalizedMessage,
+      persistFallbackMetadata: () =>
+        persistToolResultOwnershipCorrections(
+          buildToolResultOwnershipCorrectionEvents({
+            persistedMessage,
+            finalizedMessage: sanitizedFinalizedMessage,
+            mirroredToolChunkState: input.mirroredToolChunkState,
+            isAborted: input.isAborted,
+          }),
+          input.lifecycleAdapter.durableRunMirror,
+          input.mirroredToolChunkState,
+        ),
       fallbackChunks:
         sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
           ? buildFinalizedMessageFallbackChunks({
+            isAborted: input.isAborted,
             persistedMessage,
             sanitizedFinalizedMessage,
             finalStep,
             mirroredToolChunkState: input.mirroredToolChunkState,
             capturedMessageId: input.capturedMessageId,
             hasIncompleteFinalizedToolParts,
+            recoveredFallbackParts,
           })
           : [],
       hasIncompleteToolParts: hasIncompleteFinalizedToolParts,
@@ -709,6 +729,7 @@ export function createHostedChatFinalizeDetachedBuildState(input: {
       fallbackChunks: fallbackParts.length > 0 && input.lifecycleAdapter.durableRunMirror &&
           input.capturedMessageId
         ? buildDetachedFallbackChunks({
+          isAborted: input.isAborted,
           fallbackParts,
           finalStep,
           mirroredToolChunkState: input.mirroredToolChunkState,
@@ -879,7 +900,7 @@ export function createHostedChatExecutionRuntime(
 
   const capturedMirroredMessage = (): ChatUiMessage | undefined => {
     const snapshot = messageProjection.snapshot();
-    if (!snapshot.id || snapshot.parts.length === 0) return undefined;
+    if (!snapshot.id) return undefined;
     const message = getChatUiMessageSchema().parse(snapshot);
     type Part = (typeof message.parts)[number];
     const isDataPart = (part: Part): part is Extract<Part, { type: `data-${string}` }> =>
@@ -928,6 +949,7 @@ export function createHostedChatExecutionRuntime(
     }
 
     finishHandlerStarted = true;
+    const mirroredMessage = capturedMirroredMessage();
     await finalizeDetachedStreamEnd({
       capturedMessageId: input.bootstrap.capturedMessageId,
       streamResult: input.bootstrap.streamResult,
@@ -937,8 +959,9 @@ export function createHostedChatExecutionRuntime(
       }),
       lifecycleAdapter: input.bootstrap.lifecycleAdapter,
       mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
-      mirroredDurableOutput,
-      mirroredMessage: capturedMirroredMessage(),
+      // Missing identity cannot attest to a completed mirrored response.
+      mirroredDurableOutput: mirroredMessage !== undefined && mirroredDurableOutput,
+      mirroredMessage,
       incompleteToolCallsPartErrorText,
       cleanup: input.bootstrap.cleanup,
       logger: input.logger,

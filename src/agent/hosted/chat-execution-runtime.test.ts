@@ -50,6 +50,14 @@ import {
   recordHostedAgentPauseCleanup,
 } from "./manual-pause-settlement.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
+import {
+  type ConversationRunEvent,
+  ConversationRunEventEncoder,
+} from "../conversation/run-events.ts";
+import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
+import { recordMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
+import { finalizeHostedResponse } from "./stream-finalization.ts";
+import { shouldFailEmptyHostedFinalizedMessage } from "./stream-terminal-error.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
@@ -1760,6 +1768,128 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(flushes, ["flush"]);
   });
 
+  it("persists exported response ownership recovery once through the compatibility composition", async () => {
+    for (const mode of ["normal", "retry", "aborted", "explicit-false"] as const) {
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const flushes: string[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const state = createMirroredToolChunkState();
+      const encoder = new ConversationRunEventEncoder();
+      encoder.encode({ type: "start", messageId: "assistant-message-1" });
+      const output = { privatePayload: "must-not-copy" };
+      const originalChunks: ChatUiMessageChunk<MessageMetadata>[] = [
+        { type: "tool-input-start", toolCallId: "completed", toolName: "web_fetch" },
+        { type: "tool-input-available", toolCallId: "completed", toolName: "web_fetch", input: {} },
+        {
+          type: "tool-output-available",
+          toolCallId: "completed",
+          output,
+          ...(mode === "explicit-false" ? { providerExecuted: false } : {}),
+        },
+      ];
+      const events: ConversationRunEvent[] = originalChunks.flatMap((chunk) => {
+        recordMirroredToolChunkState(state, chunk);
+        if (chunk.type === "finish") throw new Error("Unexpected finish in tool fixture");
+        return encoder.encode(chunk);
+      });
+      let attempts = 0;
+      const mirror = createDurableRunMirror({ chunks, flushes });
+      mirror.appendEvents = async (corrections) => {
+        attempts++;
+        if (mode === "retry" && attempts === 1) throw new Error("append failed");
+        assertEquals(JSON.stringify(corrections).includes("must-not-copy"), false);
+        events.push(...corrections);
+      };
+      const lifecycleAdapter = createLifecycleAdapter({ durableRunMirror: mirror, terminalStates });
+      const buildState = createHostedChatFinalizeResponseBuildState({
+        responseMessage: createResponseMessage({
+          parts: [{
+            type: "tool-web_fetch",
+            toolCallId: "completed",
+            state: "output-available",
+            input: {},
+            output,
+            ...(mode === "explicit-false" ? { providerExecuted: false } : {}),
+          }],
+        }),
+        isAborted: mode === "aborted",
+        lifecycleAdapter,
+        mirroredToolChunkState: state,
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "incomplete",
+      });
+      const hooks = createHostedChatStreamFinalizationHooks({
+        lifecycleAdapter,
+        cleanup: async () => {},
+        streamError: null,
+      });
+      const finalize = () =>
+        finalizeHostedResponse({
+          ...hooks,
+          isAborted: mode === "aborted",
+          buildState,
+          getFinalStep: () =>
+            Promise.resolve({
+              toolCalls: [{
+                toolCallId: "completed",
+                toolName: "web_fetch",
+                input: {},
+                providerExecuted: true,
+              }],
+            }),
+          shouldFailEmptyMessage: shouldFailEmptyHostedFinalizedMessage,
+        });
+      if (mode === "retry") {
+        await assertRejects(finalize, Error, "append failed");
+        assertEquals(state.ownershipCorrectedToolCallIds?.has("completed"), false);
+        assertEquals(terminalStates, []);
+        assertEquals(flushes, []);
+      }
+      await finalize();
+      await finalize();
+      const corrected = mode !== "aborted" && mode !== "explicit-false";
+      assertEquals(attempts, corrected ? mode === "retry" ? 2 : 1 : 0);
+      assertEquals(chunks, []);
+      assertEquals(events.filter((event) => event.type === "TOOL_CALL_RESULT").length, 1);
+      assertEquals(
+        events.filter((event) => event.name === "veryfront.tool_result_ownership").length,
+        corrected ? 1 : 0,
+      );
+      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "provider_tool_result"
+          ).length,
+          corrected ? 1 : 0,
+        );
+      }
+      assertEquals(terminalStates[0]?.status, mode === "aborted" ? "cancelled" : "completed");
+    }
+  });
+
+  it("does not emit local tool inputs through the exported aborted response builder", async () => {
+    const metadata = { type: "data-veryfront.runtime_context" as const, data: {} };
+    const buildState = createHostedChatFinalizeResponseBuildState({
+      responseMessage: createResponseMessage({ parts: [metadata] }),
+      isAborted: true,
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+    });
+    const state = await buildState({
+      toolCalls: [{ toolCallId: "c", toolName: "web_fetch", input: {} }],
+    });
+    assertEquals(state.finalizedMessage.parts, [metadata]);
+    assertEquals(state.fallbackChunks, []);
+    assertEquals(state.hasIncompleteToolParts, false);
+  });
+
   it("builds finalized response state and metadata without mirror fallback chunks", async () => {
     const buildState = createHostedChatFinalizeResponseBuildState({
       responseMessage: createResponseMessage({
@@ -1906,6 +2036,79 @@ describe("agent/hosted-chat-execution-runtime", () => {
       },
     );
   });
+
+  for (const partType of ["text", "reasoning"] as const) {
+    for (
+      const mode of [
+        "framing",
+        "orphan-end",
+        "unidentified-end",
+        "substantive",
+        "fallback",
+      ] as const
+    ) {
+      it(`finalizes detached ${partType} ${mode} from the actual hosted mirroring path`, async () => {
+        const terminalStates: HostedLifecycleTerminalState[] = [];
+        const mirroredChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+        const runtime = createHostedChatExecutionRuntime({
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          originalMessages: [],
+          runContext: { withContext: (fn) => fn() },
+          abortSignal: new AbortController().signal,
+          bootstrap: {
+            cleanup: async () => {},
+            lifecycleAdapter: createLifecycleAdapter({
+              terminalStates,
+              ...(mode === "unidentified-end" ? { messageId: null } : {}),
+              durableRunMirror: createDurableRunMirror({ chunks: mirroredChunks, flushes: [] }),
+            }),
+            rootStreamWatchdog: createRootStreamWatchdog({ disposed: () => {} }),
+            streamResult: {
+              steps: Promise.resolve([mode === "fallback" ? { text: "Recovered content" } : {}]),
+              toUIMessageStream: async function* () {
+                yield {
+                  type: "start",
+                  ...(mode === "unidentified-end" ? {} : { messageId: "stream-message-1" }),
+                };
+                if (mode !== "orphan-end" && mode !== "unidentified-end") {
+                  yield { type: `${partType}-start`, id: "part-1" };
+                }
+                if (mode === "substantive") {
+                  yield { type: `${partType}-delta`, id: "part-1", delta: "Content" };
+                }
+                yield { type: `${partType}-end`, id: "part-1" };
+              },
+            },
+            streamingMessageId: "stream-message-1",
+            capturedMessageId: mode === "unidentified-end" ? null : "stream-message-1",
+            ...(mode === "unidentified-end" ? {} : { capturedConversationId: "conversation-1" }),
+            mirroredToolChunkState: createMirroredToolChunkState(),
+          },
+        });
+        for await (const _chunk of runtime.agentUIStream) {
+          /* Drain actual mirror and projection. */
+        }
+        await runtime.waitForFinish();
+        assertEquals(
+          mirroredChunks.some((chunk) => chunk.type === `${partType}-end`),
+          true,
+        );
+        assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [[
+          mode === "substantive" || mode === "fallback" ? "completed" : "failed",
+          mode === "substantive" || mode === "fallback" ? undefined : "EMPTY_RESPONSE",
+        ]]);
+        if (mode === "fallback") {
+          assertEquals(
+            mirroredChunks.some((chunk) =>
+              chunk.type === "text-delta" && chunk.delta === "Recovered content"
+            ),
+            true,
+          );
+        }
+      });
+    }
+  }
 
   it("finalizes detached streams when the finish handler never runs", async () => {
     let disposed = 0;

@@ -253,17 +253,93 @@ function gitSourcesAgree(
     (normalizedHeadSha === null || normalizedEnvSha === normalizedHeadSha);
 }
 
-function gitProbesAreIndeterminate(
+export function gitProbesAreIndeterminate(
   head: GitCommandResult,
   status: GitCommandResult,
   normalizedHeadSha: string | null,
   gitMetadataPresent: boolean,
   envShaDescribesCheckout: boolean,
+  verifiedUnborn = false,
 ): boolean {
+  if (head.outputTruncated || status.outputTruncated) return true;
   if (head.success && normalizedHeadSha === null) return true;
   if (head.success && !status.success) return true;
   if (!head.success && !status.success && gitMetadataPresent) return true;
-  return !head.success && envShaDescribesCheckout;
+  return !head.success &&
+    (envShaDescribesCheckout || (status.success && !(verifiedUnborn && head.code === 128)));
+}
+
+type GitProbeOutcome = {
+  outcome: "ok" | "timeout" | "output-limit" | "aborted" | "nonzero";
+  code: number;
+};
+const gitProbeWitnesses = new WeakMap<
+  GitSource,
+  { head: GitProbeOutcome; status: GitProbeOutcome }
+>();
+
+function probeOutcome(result: GitCommandResult): GitProbeOutcome {
+  return {
+    outcome: result.outputTruncated || result.code === 125
+      ? "output-limit"
+      : result.code === 124
+      ? "timeout"
+      : result.code === 130
+      ? "aborted"
+      : result.success
+      ? "ok"
+      : "nonzero",
+    code: result.code,
+  };
+}
+
+/** Internal error witness; no command output or checkout identifiers. */
+export function gitSourceProbeWitness(source: GitSource): string | undefined {
+  const witness = gitProbeWitnesses.get(source);
+  return witness ? JSON.stringify(witness) : undefined;
+}
+
+/** Sanitized witness for a strict before/after capture mismatch. */
+export function gitSourceComparisonWitness(before: GitSource, after: GitSource): string {
+  return JSON.stringify({
+    before: gitProbeWitnesses.get(before) ?? null,
+    after: gitProbeWitnesses.get(after) ?? null,
+    changed: {
+      commitSha: before.commitSha !== after.commitSha,
+      clean: before.clean !== after.clean,
+      repositoryAvailable: before.repositoryAvailable !== after.repositoryAvailable,
+      indeterminate: before.indeterminate !== after.indeterminate,
+    },
+  });
+}
+
+async function verifyUnbornHead(projectDir: string, head: GitCommandResult): Promise<boolean> {
+  if (head.success || head.code !== 128 || head.outputTruncated) return false;
+  const options = {
+    cwd: projectDir,
+    clearEnv: true,
+    env: gitCommandEnvironment(),
+    capture: true,
+    timeoutMs: 5_000,
+  };
+  try {
+    const symbolic = await runCommand("git", {
+      ...options,
+      args: ["symbolic-ref", "--quiet", "HEAD"],
+    });
+    const ref = symbolic.stdout?.trim();
+    if (!symbolic.success || symbolic.outputTruncated || !ref?.startsWith("refs/heads/")) {
+      return false;
+    }
+    const missing = await runCommand("git", {
+      ...options,
+      args: ["show-ref", "--verify", "--quiet", ref],
+    });
+    return !missing.success && missing.code === 1 && !missing.outputTruncated &&
+      (missing.stdout ?? "") === "" && (missing.stderr ?? "") === "";
+  } catch {
+    return false;
+  }
 }
 
 async function gitSourceFromProbes(
@@ -319,16 +395,19 @@ async function gitSourceFromProbes(
     normalizedHeadSha,
     gitMetadataPresent,
     envShaDescribesCheckout,
+    status.success && !envShaDescribesCheckout && await verifyUnbornHead(projectDir, head),
   );
   const commitSha = indeterminate || !repositoryAvailable
     ? null
     : normalizedEnvSha ?? normalizedHeadSha;
-  return {
+  const source: GitSource = {
     commitSha,
     clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
     repositoryAvailable,
     ...(indeterminate ? { indeterminate: true } : {}),
   };
+  gitProbeWitnesses.set(source, { head: probeOutcome(head), status: probeOutcome(status) });
+  return source;
 }
 
 export async function hasGitMetadata(projectDir: string): Promise<boolean> {

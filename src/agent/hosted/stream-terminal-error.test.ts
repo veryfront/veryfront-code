@@ -110,6 +110,70 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage fails non-aborted empty assista
   );
 });
 
+Deno.test("shouldFailEmptyHostedFinalizedMessage fails runtime-metadata-only responses", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [{
+          type: "data-veryfront.runtime_context",
+          data: {
+            currentDateUtc: "2026-10-07",
+            currentTimeUtc: "09:30:41",
+            runStartedAtUtc: "2026-10-07T09:30:40.526Z",
+          },
+        }],
+      },
+    }),
+    true,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage ignores stream framing beside runtime metadata", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "step-start" },
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+        ],
+      },
+    }),
+    true,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage treats completed step markers as framing", () => {
+  for (
+    const framing of [{ type: "step-end", stepIndex: 0 }, { type: "step-start", stepIndex: 0 }]
+  ) {
+    assertEquals(
+      shouldFailEmptyHostedFinalizedMessage({
+        isAborted: false,
+        message: {
+          parts: [
+            { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-09" } },
+            framing,
+          ],
+        },
+      }),
+      true,
+      framing.type,
+    );
+  }
+});
+
+Deno.test("blank streamed text shells do not make an empty response successful", () => {
+  for (const text of ["", " \n\t"]) {
+    const message = {
+      parts: [{ type: "data-veryfront.runtime_context", data: {} }, { type: "text", text }],
+    };
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message }), true);
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: true, message }), false);
+  }
+});
+
 Deno.test("shouldFailEmptyHostedFinalizedMessage keeps aborted empty assistant responses cancellable", () => {
   assertEquals(
     shouldFailEmptyHostedFinalizedMessage({
@@ -125,6 +189,57 @@ Deno.test("shouldFailEmptyHostedFinalizedMessage keeps non-empty assistant respo
     shouldFailEmptyHostedFinalizedMessage({
       isAborted: false,
       message: { parts: [{ type: "text", text: "Done" }] },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps form data responses successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [{
+          type: "data-form_input",
+          data: { requestId: "input-request-1" },
+        }],
+      },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps text beside runtime metadata successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+          { type: "text", text: "Done" },
+        ],
+      },
+    }),
+    false,
+  );
+});
+
+Deno.test("shouldFailEmptyHostedFinalizedMessage keeps tool output beside runtime metadata successful", () => {
+  assertEquals(
+    shouldFailEmptyHostedFinalizedMessage({
+      isAborted: false,
+      message: {
+        parts: [
+          { type: "data-veryfront.runtime_context", data: { currentDateUtc: "2026-10-07" } },
+          {
+            type: "dynamic-tool",
+            toolName: "search",
+            toolCallId: "tool-call-1",
+            state: "output-available",
+            output: { result: "found" },
+          },
+        ],
+      },
     }),
     false,
   );
@@ -212,4 +327,34 @@ Deno.test("getEmptyHostedFinalizedMessageTerminalError keeps unknown streamed er
       message: "Provider stream closed unexpectedly",
     },
   );
+});
+
+Deno.test("empty streamed reasoning shells do not make an empty response successful", () => {
+  for (
+    const extra of [{}, { signature: "" }, { redactedData: "" }, { text: " " }, { text: "\n\t" }]
+  ) {
+    const message = {
+      parts: [{ type: "data-veryfront.runtime_context" }, {
+        type: "reasoning",
+        text: "",
+        ...extra,
+      }],
+    };
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: false, message }), true);
+    assertEquals(shouldFailEmptyHostedFinalizedMessage({ isAborted: true, message }), false);
+  }
+  for (
+    const extra of [{ signature: "sig" }, { redactedData: "opaque" }, { text: "Reasoning" }, {
+      text: " ",
+      signature: "sig",
+    }, { text: "\n", redactedData: "opaque" }]
+  ) {
+    assertEquals(
+      shouldFailEmptyHostedFinalizedMessage({
+        isAborted: false,
+        message: { parts: [{ type: "reasoning", text: "", ...extra }] },
+      }),
+      false,
+    );
+  }
 });

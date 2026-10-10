@@ -297,10 +297,10 @@ export type ChatStreamEvent =
     output: unknown;
     preliminary?: boolean;
   } & ChatStreamEventBase)
-  | {
+  | ({
     type: "tool-output-denied";
     toolCallId: string;
-  }
+  } & ChatStreamEventBase)
   | ({
     type: "tool-output-error";
     toolCallId: string;

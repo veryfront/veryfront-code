@@ -1,3 +1,5 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   isReasoningPart,
   isRecord,
@@ -17,6 +19,12 @@ const STREAM_PROMISE_TIMEOUT_TOKEN = Symbol("stream-promise-timeout");
 /** Default value for stream promise timeout ms. */
 export const DEFAULT_STREAM_PROMISE_TIMEOUT_MS = 10_000;
 
+function providerExecutionFields(value: unknown): { providerExecuted?: boolean } {
+  return isRecord(value) && typeof value.providerExecuted === "boolean"
+    ? { providerExecuted: value.providerExecuted }
+    : {};
+}
+
 // --- Shared types ---
 
 /** Public API contract for chat fallback part. */
@@ -29,6 +37,7 @@ export interface FinalStepToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  providerExecuted?: boolean;
 }
 
 /** Result returned from final step tool. */
@@ -37,6 +46,7 @@ export interface FinalStepToolResult {
   toolName: string;
   input: unknown;
   output: unknown;
+  providerExecuted?: boolean;
 }
 
 /** State for fallback tool chunk. */
@@ -59,6 +69,7 @@ interface FallbackToolChunkDescriptor {
     | "output-error"
     | "output-denied";
   output?: unknown;
+  providerExecuted?: boolean;
   errorText?: string;
 }
 
@@ -73,6 +84,7 @@ function buildToolUiPart(descriptor: FallbackToolChunkDescriptor): ChatPart {
     toolName: descriptor.toolName,
     toolCallId: descriptor.toolCallId,
     input: descriptor.input,
+    ...providerExecutionFields(descriptor),
     state: descriptor.outputState === "started" ? "pending" : descriptor.outputState,
     ...(descriptor.outputState === "output-available" ? { output: descriptor.output } : {}),
     ...(descriptor.outputState === "output-error" && descriptor.errorText
@@ -97,8 +109,23 @@ function buildChatPartFromParsedPart(part: FallbackParsedPart): ChatPart {
   }
 }
 
+function isSubstantiveFallbackReasoningPart(
+  part: Extract<FallbackParsedPart, { kind: "reasoning" }>,
+): boolean {
+  return part.text.length > 0 || (part.signature?.length ?? 0) > 0 ||
+    (part.redactedData?.length ?? 0) > 0;
+}
+
 function toChatParts(parts: readonly FallbackParsedPart[]): ChatPart[] {
   return parts.map(buildChatPartFromParsedPart);
+}
+
+function retainSubstantiveFallbackParts(
+  parts: readonly FallbackParsedPart[],
+): FallbackParsedPart[] {
+  return parts.filter((part) =>
+    part.kind !== "reasoning" || isSubstantiveFallbackReasoningPart(part)
+  );
 }
 
 function upsertParsedToolResult(
@@ -128,6 +155,7 @@ function upsertParsedToolResult(
     toolName: result.toolName,
     toolCallId: result.toolCallId,
     input: toToolInput(result.input),
+    ...providerExecutionFields(result),
     outputState: "output-available",
     output: result.output,
   });
@@ -135,10 +163,100 @@ function upsertParsedToolResult(
 
 // --- Ordered-part building ---
 
+function ambiguousToolOwnership(calls: unknown[], results: unknown[]): Set<string> {
+  const evidence = createPrivateMap<
+    string,
+    { calls: number; results: number; name?: string; owner?: boolean }
+  >();
+  const ambiguous = createPrivateSet<string>();
+  for (const [role, records] of [["calls", calls], ["results", results]] as const) {
+    for (const record of records) {
+      if (!isRecord(record) || typeof record.toolCallId !== "string") continue;
+      const entry = evidence.get(record.toolCallId) ?? { calls: 0, results: 0 };
+      entry[role]++;
+      const name = typeof record.toolName === "string" ? record.toolName : undefined;
+      const owner = typeof record.providerExecuted === "boolean"
+        ? record.providerExecuted
+        : undefined;
+      if (
+        entry.calls > 1 || entry.results > 1 ||
+        (name !== undefined && entry.name !== undefined && name !== entry.name) ||
+        (owner !== undefined && entry.owner !== undefined && owner !== entry.owner)
+      ) {
+        ambiguous.add(record.toolCallId);
+      }
+      entry.name ??= name;
+      entry.owner ??= owner;
+      evidence.set(record.toolCallId, entry);
+    }
+  }
+  return ambiguous;
+}
+
+function serializeToolResultValue(record: Record<string, unknown>): string | null {
+  const value = "output" in record ? record.output : "result" in record ? record.result : null;
+  try {
+    return JSON.stringify(value) ?? "undefined";
+  } catch {
+    return null;
+  }
+}
+
+// Results are collapsed by toolCallId before ownership is read, so conflicting
+// duplicates must be recorded from the raw records.
+function conflictingToolResults(results: unknown[]): Set<string> {
+  const firstValues = createPrivateMap<string, string | null>();
+  const conflicting = createPrivateSet<string>();
+  for (const record of results) {
+    if (!isRecord(record) || typeof record.toolCallId !== "string") continue;
+    const value = serializeToolResultValue(record);
+    if (!firstValues.has(record.toolCallId)) {
+      firstValues.set(record.toolCallId, value);
+    } else if (value === null || firstValues.get(record.toolCallId) !== value) {
+      conflicting.add(record.toolCallId);
+    }
+  }
+  return conflicting;
+}
+
+function omitAmbiguousProviderOwnership<T extends FallbackParsedPart | FallbackToolChunkDescriptor>(
+  parts: T[],
+  ambiguous: Set<string>,
+  conflictingResults: Set<string>,
+): T[] {
+  return parts.map((part) => {
+    if (!("toolCallId" in part)) return part;
+    let result: FallbackToolChunkDescriptor & { kind?: "tool" } = part;
+    if (conflictingResults.has(part.toolCallId) && result.outputState === "output-available") {
+      const { output: _output, ...withoutOutput } = result;
+      result = { ...withoutOutput, outputState: "input-available" };
+    }
+    if (ambiguous.has(part.toolCallId) && result.providerExecuted === true) {
+      const { providerExecuted: _ownership, ...unowned } = result;
+      result = unowned;
+    }
+    return result as T;
+  });
+}
+
 function buildOrderedFallbackParsedPartsFromContentMessages(
   messages: unknown[],
 ): FallbackParsedPart[] {
   const orderedParts: FallbackParsedPart[] = [];
+  const contentToolResults = messages.flatMap((message) =>
+    isRecord(message) && Array.isArray(message.content)
+      ? message.content.filter(isToolResultPart)
+      : []
+  );
+  const ambiguous = ambiguousToolOwnership(
+    messages.flatMap((message) =>
+      isRecord(message) && Array.isArray(message.content)
+        ? message.content.filter(isToolCallPart)
+        : []
+    ),
+    contentToolResults,
+  );
+  const conflictingResults = conflictingToolResults(contentToolResults);
   const toolCallsById = new Map<string, FinalStepToolCall>();
   const toolResultsById = new Map<string, FinalStepToolResult>();
 
@@ -155,6 +273,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               input: part.input,
+              ...providerExecutionFields(part),
             } satisfies FinalStepToolCall,
           ]
           : []
@@ -178,6 +297,8 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
               toolName: part.toolName,
               input: toolCallsById.get(part.toolCallId)?.input ?? {},
               output: part.output,
+              ...providerExecutionFields(part),
+              ...providerExecutionFields(toolCallsById.get(part.toolCallId)),
             } satisfies FinalStepToolResult,
           ]
           : []
@@ -222,6 +343,8 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toToolInput(toolCall?.input ?? part.input),
+          ...providerExecutionFields(toolResult),
+          ...providerExecutionFields(toolCall ?? part),
           outputState: toolResult ? "output-available" : "input-available",
           ...(toolResult ? { output: toolResult.output } : {}),
         });
@@ -234,17 +357,37 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toolCall?.input ?? part.output,
+          ...providerExecutionFields(part),
+          ...providerExecutionFields(toolCall),
           output: part.output,
         });
       }
     }
   }
 
-  return orderedParts;
+  return omitAmbiguousProviderOwnership(orderedParts, ambiguous, conflictingResults);
 }
 
 function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): FallbackParsedPart[] {
   const orderedParts: FallbackParsedPart[] = [];
+  const uiToolResults = messages.flatMap((message) =>
+    isRecord(message) && message.role === "tool" && Array.isArray(message.parts)
+      ? message.parts.filter((part) => isRecord(part) && part.type === "tool-result")
+      : []
+  );
+  const ambiguous = ambiguousToolOwnership(
+    messages.flatMap((message) =>
+      isRecord(message) && message.role === "assistant" && Array.isArray(message.parts)
+        ? message.parts
+        : []
+    ),
+    messages.flatMap((message) =>
+      isRecord(message) && message.role === "tool" && Array.isArray(message.parts)
+        ? message.parts
+        : []
+    ),
+  );
+  const conflictingResults = conflictingToolResults(uiToolResults);
 
   for (const message of messages) {
     if (!isRecord(message) || !Array.isArray(message.parts)) {
@@ -292,6 +435,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
           toolName: derivedToolName,
           toolCallId,
           input: toToolInput("args" in part ? part.args : "input" in part ? part.input : {}),
+          ...providerExecutionFields(part),
           outputState: "input-available",
         });
       }
@@ -319,6 +463,8 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
 
         orderedParts[existingIndex] = {
           ...existingPart,
+          ...providerExecutionFields(part),
+          ...providerExecutionFields(existingPart),
           outputState: "output-available",
           output: "result" in part ? part.result : null,
         };
@@ -326,7 +472,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
     }
   }
 
-  return orderedParts;
+  return omitAmbiguousProviderOwnership(orderedParts, ambiguous, conflictingResults);
 }
 
 function buildFallbackParsedPartsFromResponseMessages(step: unknown): FallbackParsedPart[] {
@@ -377,35 +523,39 @@ function buildFallbackParsedPartsFromInput(input: {
   extractFinalStepToolCalls: (step: unknown) => FinalStepToolCall[];
   extractFinalStepToolResults: (step: unknown) => FinalStepToolResult[];
 }): FallbackParsedPart[] {
-  const orderedResponseParts = buildFallbackParsedPartsFromResponseMessages(input.step);
+  const orderedResponseParts = retainSubstantiveFallbackParts(
+    buildFallbackParsedPartsFromResponseMessages(input.step),
+  );
   if (orderedResponseParts.length > 0) {
     return orderedResponseParts;
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
-    const orderedTopLevelContentParts = buildOrderedFallbackParsedPartsFromContentMessages(
-      input.step.messages,
+    const orderedTopLevelContentParts = retainSubstantiveFallbackParts(
+      buildOrderedFallbackParsedPartsFromContentMessages(input.step.messages),
     );
     if (orderedTopLevelContentParts.length > 0) {
       return orderedTopLevelContentParts;
     }
   }
 
-  const orderedUiResponseParts = buildFallbackParsedPartsFromUiResponseMessages(input.step);
+  const orderedUiResponseParts = retainSubstantiveFallbackParts(
+    buildFallbackParsedPartsFromUiResponseMessages(input.step),
+  );
   if (orderedUiResponseParts.length > 0) {
     return orderedUiResponseParts;
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
-    const orderedUiTopLevelParts = buildOrderedFallbackParsedPartsFromUiMessages(
-      input.step.messages,
+    const orderedUiTopLevelParts = retainSubstantiveFallbackParts(
+      buildOrderedFallbackParsedPartsFromUiMessages(input.step.messages),
     );
     if (orderedUiTopLevelParts.length > 0) {
       return orderedUiTopLevelParts;
     }
   }
 
-  return buildFallbackParsedPartsFromExtractedStep(input);
+  return retainSubstantiveFallbackParts(buildFallbackParsedPartsFromExtractedStep(input));
 }
 
 // --- Part extraction ---
@@ -497,6 +647,7 @@ function extractMissingFallbackText(input: {
   const prefixCandidates = [
     existingTexts.join("\n\n").trim(),
     existingTexts.join("\n").trim(),
+    existingTexts.join(" ").trim(),
     existingTexts.join("").trim(),
   ].filter((candidate) => candidate.length > 0);
 
@@ -578,6 +729,14 @@ function buildToolChunkDescriptorsFromStep(input: {
   extractFinalStepToolResults: (step: unknown) => FinalStepToolResult[];
 }): FallbackToolChunkDescriptor[] {
   const descriptors: FallbackToolChunkDescriptor[] = [];
+  const stepToolResults = isRecord(input.step) && Array.isArray(input.step.toolResults)
+    ? input.step.toolResults
+    : [];
+  const ambiguous = ambiguousToolOwnership(
+    isRecord(input.step) && Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [],
+    stepToolResults,
+  );
+  const conflictingResults = conflictingToolResults(stepToolResults);
   const toolCalls = input.extractFinalStepToolCalls(input.step);
   const toolResults = new Map(
     input.extractFinalStepToolResults(input.step).map((
@@ -594,6 +753,8 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
       input: toToolInput(toolCall.input),
+      ...providerExecutionFields(toolResult),
+      ...providerExecutionFields(toolCall),
       outputState: toolResult ? "output-available" : "input-available",
       ...(toolResult ? { output: toolResult.output } : {}),
     });
@@ -608,12 +769,13 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolResult.toolCallId,
       toolName: toolResult.toolName,
       input: toToolInput(toolResult.input),
+      ...providerExecutionFields(toolResult),
       outputState: "output-available",
       output: toolResult.output,
     });
   }
 
-  return descriptors;
+  return omitAmbiguousProviderOwnership(descriptors, ambiguous, conflictingResults);
 }
 
 function buildToolChunkDescriptorsFromParts(
@@ -651,23 +813,22 @@ function buildToolChunkDescriptorsFromParts(
     const toolCallId = part.toolCallId;
     const input = toToolInput(part.input);
     const state = part.state;
+    const identity = { toolCallId, toolName, input, ...providerExecutionFields(part) };
 
     switch (state) {
       case "pending":
       case "input-streaming":
-        descriptors.push({ toolCallId, toolName, input, outputState: "started" });
+        descriptors.push({ ...identity, outputState: "started" });
         break;
       case "input-available":
       case "approval-requested":
       case "approval-responded":
-        descriptors.push({ toolCallId, toolName, input, outputState: "input-available" });
+        descriptors.push({ ...identity, outputState: "input-available" });
         break;
       case "output-available":
       case "completed":
         descriptors.push({
-          toolCallId,
-          toolName,
-          input,
+          ...identity,
           outputState: "output-available",
           output: "output" in part ? part.output : undefined,
         });
@@ -675,9 +836,7 @@ function buildToolChunkDescriptorsFromParts(
       case "output-error":
       case "error":
         descriptors.push({
-          toolCallId,
-          toolName,
-          input,
+          ...identity,
           outputState: "output-error",
           ...("errorText" in part && typeof part.errorText === "string"
             ? { errorText: part.errorText }
@@ -685,7 +844,7 @@ function buildToolChunkDescriptorsFromParts(
         });
         break;
       case "output-denied":
-        descriptors.push({ toolCallId, toolName, input, outputState: "output-denied" });
+        descriptors.push({ ...identity, outputState: "output-denied" });
         break;
     }
   }
@@ -701,10 +860,18 @@ function buildToolFallbackChunks(
   const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
 
   for (const descriptor of descriptors) {
+    // Durable terminal results are append-only, even if a late snapshot differs.
+    if (
+      normalizedState.outputAvailableToolCallIds.has(descriptor.toolCallId) ||
+      normalizedState.outputErrorToolCallIds?.has(descriptor.toolCallId) ||
+      normalizedState.outputDeniedToolCallIds?.has(descriptor.toolCallId)
+    ) continue;
+    const providerExecution = providerExecutionFields(descriptor);
     if (!normalizedState.startedToolCallIds.has(descriptor.toolCallId)) {
       chunks.push({
         type: "tool-input-start",
         toolCallId: descriptor.toolCallId,
+        ...providerExecution,
         toolName: descriptor.toolName,
       });
     }
@@ -716,6 +883,7 @@ function buildToolFallbackChunks(
       chunks.push({
         type: "tool-input-available",
         toolCallId: descriptor.toolCallId,
+        ...providerExecution,
         toolName: descriptor.toolName,
         input: descriptor.input,
       });
@@ -727,6 +895,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-available",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
             output: descriptor.output,
           });
         }
@@ -736,6 +905,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-error",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
             errorText: descriptor.errorText ?? "Tool execution failed",
           });
         }
@@ -745,6 +915,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-denied",
             toolCallId: descriptor.toolCallId,
+            ...providerExecution,
           });
         }
         break;
@@ -974,6 +1145,7 @@ export function extractFinalStepToolCalls(step: unknown): FinalStepToolCall[] {
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
         input: "input" in toolCall ? toolCall.input : {},
+        ...providerExecutionFields(toolCall),
       },
     ];
   });
@@ -985,8 +1157,8 @@ export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[
     return [];
   }
 
-  const toolInputs = new Map(
-    extractFinalStepToolCalls(step).map((toolCall) => [toolCall.toolCallId, toolCall.input]),
+  const toolCalls = new Map(
+    extractFinalStepToolCalls(step).map((toolCall) => [toolCall.toolCallId, toolCall]),
   );
 
   return step.toolResults.flatMap((toolResult) => {
@@ -1003,8 +1175,10 @@ export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[
         toolName: toolResult.toolName,
         input: "input" in toolResult
           ? toolResult.input
-          : (toolInputs.get(toolResult.toolCallId) ?? {}),
+          : (toolCalls.get(toolResult.toolCallId)?.input ?? {}),
         output: "output" in toolResult ? toolResult.output : null,
+        ...providerExecutionFields(toolResult),
+        ...providerExecutionFields(toolCalls.get(toolResult.toolCallId)),
       },
     ];
   });
@@ -1072,6 +1246,7 @@ export function appendMissingFallbackTextPart(
 export function buildFallbackUiMessageChunks(
   step: unknown,
   messageId: string,
+  state?: Partial<FallbackToolChunkState>,
 ): ChatUiMessageChunk<MessageMetadata>[] {
   return buildFallbackUiMessageChunksFromParsedParts(
     buildFallbackParsedPartsFromInput({
@@ -1081,7 +1256,35 @@ export function buildFallbackUiMessageChunks(
       extractFinalStepToolResults,
     }),
     messageId,
+    state,
   );
+}
+
+/** Builds fallback UI message chunks from already selected parts. */
+export function buildFallbackUiMessageChunksFromParts(
+  parts: readonly ChatPart[],
+  messageId: string,
+  state?: Partial<FallbackToolChunkState>,
+): ChatUiMessageChunk<MessageMetadata>[] {
+  const parsedParts = retainSubstantiveFallbackParts(parts.flatMap<FallbackParsedPart>((part) => {
+    if (part.type === "text") {
+      return [{ kind: "text" as const, text: part.text }];
+    }
+    if (part.type === "reasoning") {
+      return [{
+        kind: "reasoning" as const,
+        text: part.text,
+        ...(part.signature ? { signature: part.signature } : {}),
+        ...(part.redactedData ? { redactedData: part.redactedData } : {}),
+      }];
+    }
+    return buildToolChunkDescriptorsFromParts([part]).map((descriptor) => ({
+      kind: "tool" as const,
+      ...descriptor,
+    }));
+  }));
+
+  return buildFallbackUiMessageChunksFromParsedParts(parsedParts, messageId, state);
 }
 
 /** Builds missing fallback tool chunks. */
