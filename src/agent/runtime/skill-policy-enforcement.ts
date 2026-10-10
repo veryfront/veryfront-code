@@ -67,6 +67,7 @@ export {
 
 const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
 const arrayIsArray = Array.isArray;
 const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
 const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, string>();
@@ -214,7 +215,7 @@ function withPolicyMetadata<TMessage extends Message>(
   }
   let nextMessage = {
     ...message,
-    ...(Object.keys(metadata).length > 0 ? { metadata } : { metadata: undefined }),
+    ...(objectKeys(metadata).length > 0 ? { metadata } : { metadata: undefined }),
   };
   const providerMetadata = readAttachedProviderMetadata(message);
   if (providerMetadata !== undefined) {
