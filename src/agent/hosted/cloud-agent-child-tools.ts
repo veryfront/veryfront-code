@@ -1,3 +1,4 @@
+import { hasExplicitHostedToolName } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 /**
  * Hosted child tool assembly — MCP server resolution, delegation binding,
@@ -13,6 +14,7 @@ import {
   toolRegistry,
 } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -36,7 +38,17 @@ import {
 import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
-import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  isLoadSkillToolName,
+  LOAD_SKILL_TOOL_ID,
+} from "../platform-tool-names.ts";
+import {
+  buildVeryfrontCloudRuntimeInstructions,
+  resolveHostedRuntimeSkillLoaderToolName,
+} from "./cloud-runtime-system-messages.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
@@ -58,9 +70,49 @@ import {
 
 const HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES = new Set([
   "execute_skill_script",
-  "load_skill",
+  "veryfront__execute_skill_script",
+  LOAD_SKILL_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
   "load_skill_reference",
+  "veryfront__load_skill_reference",
 ]);
+const HOSTED_CHILD_PARENT_CONTROL_TOOL_NAMES = new Set([
+  "invoke_agent",
+  "veryfront__invoke_agent",
+  FORM_INPUT_TOOL_ID,
+  CANONICAL_FORM_INPUT_TOOL_ID,
+]);
+
+function resolveHostedChildSkillLoaderToolName(
+  agentConfig: RuntimeAgentMarkdownDefinition,
+  deniedToolNames: ReadonlySet<string>,
+): string | undefined {
+  if (
+    (deniedToolNames.has(LOAD_SKILL_TOOL_ID) ||
+      deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)) &&
+    !((hasExplicitHostedToolName(agentConfig, LOAD_SKILL_TOOL_ID) &&
+      !deniedToolNames.has(LOAD_SKILL_TOOL_ID)) ||
+      (hasExplicitHostedToolName(agentConfig, CANONICAL_LOAD_SKILL_TOOL_ID) &&
+        !deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)))
+  ) {
+    return undefined;
+  }
+  return hasExplicitHostedToolName(agentConfig, CANONICAL_LOAD_SKILL_TOOL_ID) &&
+      !deniedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID)
+    ? CANONICAL_LOAD_SKILL_TOOL_ID
+    : LOAD_SKILL_TOOL_ID;
+}
+
+function isHostedChildSkillLoaderExposed(
+  childConfig: Pick<
+    DefaultHostedChildAgentExecutionConfig,
+    "toolNames" | "deniedToolNames"
+  >,
+): boolean {
+  return childConfig.toolNames === undefined
+    ? childConfig.deniedToolNames?.some(isLoadSkillToolName) !== true
+    : childConfig.toolNames.some(isLoadSkillToolName);
+}
 
 /**
  * Task context carried through a hosted child agent run. Combines the invoke-agent
@@ -111,8 +163,15 @@ export function resolveMcpServers(
         return [];
       }
       const toolPolicy = mergeMcpToolPolicies(hostServer.toolPolicy, agentServer.toolPolicy);
+      const required =
+        hostServer.kind === "veryfront-studio" && agentServer.kind === "veryfront-studio"
+          ? hostServer.required === true || agentServer.required === true
+            ? true
+            : agentServer.required ?? hostServer.required
+          : undefined;
       return [{
         ...hostServer,
+        ...(required === undefined ? {} : { required }),
         ...(toolPolicy === undefined ? {} : { toolPolicy }),
       }];
     });
@@ -260,11 +319,16 @@ export function resolveHostedChildToolNames(
   return [
     ...new Set([
       ...(agentConfig.tools ?? []).filter((toolName) =>
-        !HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES.has(toolName)
+        !HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES.has(toolName) &&
+        !HOSTED_CHILD_PARENT_CONTROL_TOOL_NAMES.has(toolName)
       ),
       ...(agentConfig.providerTools ?? []),
       ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
-      ...(hasAuthorizedSkills && !deniedToolNames.has("load_skill") ? ["load_skill"] : []),
+      ...(hasAuthorizedSkills
+        ? [resolveHostedChildSkillLoaderToolName(agentConfig, deniedToolNames)].filter(
+          (toolName): toolName is string => toolName !== undefined,
+        )
+        : []),
     ]),
   ].filter((toolName) => !deniedToolNames.has(toolName));
 }
@@ -278,17 +342,29 @@ export function buildHostedChildGlobalTools(
     childToolContext: ChildRunContext;
   },
 ): HostToolSet {
+  const exposeLoadSkill = !input.childConfig ||
+    ((input.childConfig.availableSkillIds?.length ?? 0) > 0 &&
+      isHostedChildSkillLoaderExposed(input.childConfig));
+  const exposeLegacyLoader = exposeLoadSkill &&
+    (input.childConfig?.toolNames === undefined ||
+      input.childConfig.toolNames.includes(LOAD_SKILL_TOOL_ID));
+  const exposeCanonicalLoader = exposeLoadSkill &&
+    input.childConfig?.toolNames?.includes(CANONICAL_LOAD_SKILL_TOOL_ID) === true;
+  const loadSkillTools: HostToolSet = {};
+  if (exposeLegacyLoader || exposeCanonicalLoader) {
+    const loadSkillTool = markTrustedHostToolProvenance(
+      createLoadSkillTool(context, input.childToolContext),
+    );
+    if (exposeLegacyLoader) loadSkillTools[LOAD_SKILL_TOOL_ID] = loadSkillTool;
+    if (exposeCanonicalLoader) loadSkillTools[CANONICAL_LOAD_SKILL_TOOL_ID] = loadSkillTool;
+  }
+
   return {
     ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
     // An undefined selector (`tools: true`) authorizes the loader unless it is
-    // explicitly denied; a concrete selector must retain `load_skill` itself.
-    ...(!input.childConfig ||
-        ((input.childConfig.availableSkillIds?.length ?? 0) > 0 &&
-          (input.childConfig.toolNames === undefined
-            ? input.childConfig.deniedToolNames?.includes("load_skill") !== true
-            : input.childConfig.toolNames.includes("load_skill")))
-      ? { load_skill: createLoadSkillTool(context, input.childToolContext) }
-      : {}),
+    // explicitly denied; a concrete selector must retain the advertised loader
+    // spelling itself.
+    ...loadSkillTools,
     ...(input.childConfig?.delegateIds?.length
       ? buildHostedDelegateTools(context, {
         delegates: input.childConfig.delegateIds,
@@ -375,8 +451,8 @@ export async function resolveHostedChildAgentExecutionConfig(
   // selector (`tools: true`) exposes it unless explicitly denied, and a
   // concrete selector exposes it only when it survived denial filtering.
   const skillLoaderExposed = toolNames === undefined
-    ? agentConfig.deniedTools?.includes("load_skill") !== true
-    : toolNames.includes("load_skill");
+    ? agentConfig.deniedTools?.some(isLoadSkillToolName) !== true
+    : toolNames.some(isLoadSkillToolName);
   const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
 
   return {
@@ -387,6 +463,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       instructions: steering.instructions,
       skills: skillLoaderExposed ? skillSelectorSnapshot.definitions : [],
       availableToolNames: toolNames,
+      skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(toolNames),
     }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),

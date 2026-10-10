@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#veryfront/testing/deno-compat.ts";
 import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
@@ -17,6 +18,8 @@ import {
   runPreparedHostedChatExecutionDetached,
   streamPreparedHostedChatExecutionToAgUiResponse,
 } from "./prepared-chat-execution.ts";
+import { createAgUiCancelHandler } from "../ag-ui/run-control.ts";
+import { RunResumeSessionManager } from "../runtime/resume-session.ts";
 
 async function* emptyStream(): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {}
 
@@ -31,6 +34,17 @@ async function* throwingStream(
 ): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {
   yield { type: "text-start", id: "text-1" };
   throw error;
+}
+
+async function* activeToolStream(
+  signal: AbortSignal,
+  started: PromiseWithResolvers<void>,
+): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {
+  yield { type: "tool-input-start", toolCallId: "tool-1", toolName: "invoke_agent" };
+  started.resolve();
+  await new Promise<void>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
 }
 
 function createStreamAgent(
@@ -162,6 +176,94 @@ function createPreparedExecution(input?: {
 }
 
 describe("agent/prepared-hosted-chat-execution", () => {
+  for (
+    const stepsAbortError of [
+      "signal DOMException",
+      "Error-shaped AbortError",
+    ] as const
+  ) {
+    it(`keeps the process available after AG-UI cancels an active tool (${stepsAbortError})`, async () => {
+      const sessionManager = new RunResumeSessionManager();
+      const firstSignal = sessionManager.startRun({
+        runId: "run-cancelled",
+        threadId: crypto.randomUUID(),
+      });
+      const toolStarted = Promise.withResolvers<void>();
+      const steps = new Promise<readonly unknown[]>((_resolve, reject) => {
+        firstSignal.addEventListener("abort", () => {
+          reject(
+            stepsAbortError === "signal DOMException"
+              ? firstSignal.reason
+              : Object.assign(new Error("Run cancelled"), { name: "AbortError" }),
+          );
+        }, { once: true });
+      });
+      const firstExecution = runPreparedHostedChatExecutionDetached({
+        execution: {
+          ...createPreparedExecution({
+            stream: async () => ({
+              steps,
+              toUIMessageStream: () => activeToolStream(firstSignal, toolStarted),
+            }),
+          }),
+          abortSignal: firstSignal,
+        },
+        runtime: createRuntimeOptions(),
+      });
+      await toolStarted.promise;
+
+      const cancel = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: () => true,
+      });
+      const cancelResponse = await cancel(
+        new Request("https://agent.example.test/api/runs/run-cancelled", { method: "DELETE" }),
+      );
+      assertEquals(cancelResponse.status, 202);
+      await firstExecution;
+
+      const followUpSignal = sessionManager.startRun({
+        runId: "run-follow-up",
+        threadId: crypto.randomUUID(),
+      });
+      await runPreparedHostedChatExecutionDetached({
+        execution: {
+          ...createPreparedExecution({ stream: createStreamAgent(textStream()) }),
+          abortSignal: followUpSignal,
+        },
+        runtime: createRuntimeOptions(),
+      });
+      sessionManager.completeRun("run-follow-up", followUpSignal);
+      await delay(0);
+      assertEquals(sessionManager.getRunStatus("run-follow-up"), null);
+    });
+  }
+
+  it("observes an early provider step failure until finalization consumes it", async () => {
+    const providerError = new Error("provider failed before the tool stream settled");
+    const cleanup = Promise.withResolvers<void>();
+    const tracer = createTracer();
+    await runPreparedHostedChatExecutionDetached({
+      execution: {
+        ...createPreparedExecution({
+          cleanup: async () => cleanup.resolve(),
+          stream: async () => ({
+            steps: Promise.reject(providerError),
+            toUIMessageStream: () =>
+              (async function* () {
+                yield { type: "tool-input-start", toolCallId: "tool-1", toolName: "invoke_agent" };
+                await delay(10);
+              })(),
+          }),
+        }),
+        abortSignal: new AbortController().signal,
+      },
+      runtime: createRuntimeOptions({ tracer }),
+    });
+    await cleanup.promise;
+    assertEquals(tracer.attributes.at(-1)?.["agent.run.final_status"], "failed");
+  });
+
   it("streams a prepared execution to an AG-UI response with stable defaults", async () => {
     const traces: string[] = [];
     const activeAttributes: Record<string, unknown>[] = [];

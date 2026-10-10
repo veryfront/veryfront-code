@@ -1064,7 +1064,7 @@ export function SelectValue({
     <span
       {...valueProps}
       data-placeholder={placeholderVisible || undefined}
-      className={cn(placeholderVisible && "opacity-25", className)}
+      className={cn(placeholderVisible && "text-[var(--input-placeholder)]", className)}
     >
       {placeholderVisible ? placeholder : label}
     </span>

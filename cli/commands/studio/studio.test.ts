@@ -11,6 +11,13 @@ describe("buildStudioUrl", () => {
     );
   });
 
+  it("uses staging Studio for a staging API endpoint", () => {
+    assertEquals(
+      buildStudioUrl("myproject", { branch: "main" }, "https://api.veryfront.org/api"),
+      "https://veryfront.org/projects/myproject?branch=main",
+    );
+  });
+
   it("adds branch param", () => {
     assertEquals(
       buildStudioUrl("myproject", { branch: "main" }),

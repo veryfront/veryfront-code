@@ -29,6 +29,7 @@ import {
   getForkRuntimeAllowedToolNames,
   getProviderNativeToolNames,
 } from "../runtime/provider-native-tool-inventory.ts";
+import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
@@ -121,6 +122,8 @@ export type AgentRuntimeForkStepRunner = (
 
 /** Input payload for start agent runtime fork. */
 export type StartAgentRuntimeForkInput = {
+  /** @internal Exact-run inference resolver supplied by the trusted hosted runtime. */
+  createModelRuntimeResolver?: () => AgentModelRuntimeResolver | undefined;
   apiUrl: string;
   authToken: string;
   projectId: string | null;
@@ -207,6 +210,7 @@ export function startAgentRuntimeForkWithHostTools<
 
   return {
     streamResult: startAgentRuntimeFork(inheritForkInference({
+      createModelRuntimeResolver: input.createModelRuntimeResolver,
       apiUrl: input.apiUrl,
       authToken: input.authToken,
       projectId: input.projectId,
@@ -275,6 +279,8 @@ async function prepareForkRuntimeStep(input: {
 
 /** Input payload for run agent runtime fork step. */
 export type RunAgentRuntimeForkStepInput = {
+  /** @internal Exact-run inference resolver supplied by the trusted hosted runtime. */
+  resolveModelRuntime?: AgentModelRuntimeResolver;
   apiUrl: string;
   authToken: string;
   projectId: string | null;
@@ -365,7 +371,8 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
         : {}),
     };
-    const resolveModelRuntime = createHostedChildInferenceModelResolver(input);
+    const resolveModelRuntime = input.resolveModelRuntime ??
+      createHostedChildInferenceModelResolver(input);
     const runtime = new AgentRuntime(
       "invoke-agent-child-runtime",
       runtimeConfig,
@@ -415,6 +422,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
   responsePromise: Promise<AgentResponse>;
 }> {
   return runAgentRuntimeForkStep({
+    ...(input.resolveModelRuntime ? { resolveModelRuntime: input.resolveModelRuntime } : {}),
     apiUrl: input.apiUrl,
     authToken: input.authToken,
     projectId: input.projectId,
@@ -555,6 +563,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             authToken: input.authToken,
             projectId: input.projectId,
             model: input.model,
+            resolveModelRuntime: input.createModelRuntimeResolver?.(),
             ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
             messages: prepared.messages,
             system: prepared.system,

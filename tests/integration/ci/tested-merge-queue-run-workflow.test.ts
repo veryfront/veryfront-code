@@ -10,6 +10,11 @@ type YamlRecord = Record<string, unknown>;
 
 const TRUSTED =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)";
+const MAIN = "github.ref == 'refs/heads/main'";
+const MAIN_WITHOUT_MAINTENANCE = `${MAIN} && inputs.maintenance_release_number == ''`;
+const MAINTENANCE =
+  "(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))";
+const MAIN_OR_MAINTENANCE = `(${MAIN_WITHOUT_MAINTENANCE}) || ${MAINTENANCE}`;
 const SKIP_ON_REUSE = "!cancelled() && needs.tested-run.outputs.reuse != 'true'";
 const REUSED_RUN_ID_EXPRESSION =
   "${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}";
@@ -64,6 +69,8 @@ const KEPT = [
   "registry-validation-rc",
   "quality-gate-registry",
   "update-homebrew",
+  // Runs only on pull requests and the merge queue.
+  "queue-tree-observation",
 ] as const;
 
 function asRecord(value: unknown, context: string): YamlRecord {
@@ -151,23 +158,186 @@ async function runReleaseGate(env: Record<string, string>): Promise<Deno.Command
 }
 
 describe("tested merge-queue run workflow", () => {
-  it("decides on main only, with read access to other runs", async () => {
+  it("measures PR tree reuse in an observer that no gate depends on", async () => {
+    const jobs = await readJobs();
+    const observer = job(jobs, "queue-tree-observation");
+    assertEquals(
+      observer.if,
+      "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+    );
+    assertEquals(observer.needs, undefined, "the observer waits for no gate");
+    assertEquals(observer["continue-on-error"], true, "a broken observer cannot fail the run");
+    assertEquals(observer["timeout-minutes"], 10);
+    assertEquals(observer.permissions, {
+      actions: "read",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    for (const [name, other] of Object.entries(jobs)) {
+      const needs = asRecord(other, name).needs;
+      assertEquals(
+        [needs].flat().includes("queue-tree-observation"),
+        false,
+        `${name} must not depend on the observer`,
+      );
+    }
+    const record = namedStep(observer, "Record the tested PR tree");
+    assertEquals(record.if, "github.event_name == 'pull_request'");
+    assertStringIncludes(String(record.run), "git rev-parse HEAD^{tree}");
+    const artifact = namedStep(observer, "Upload the tested PR tree");
+    assertEquals(artifact.if, "github.event_name == 'pull_request'");
+    assertEquals(
+      asRecord(artifact.with, "tree artifact").name,
+      "tested-tree-${{ steps.pr-tree.outputs.tree }}",
+    );
+    assertEquals(asRecord(artifact.with, "tree artifact")["retention-days"], 14);
+    const dryRun = namedStep(observer, "Measure identical queue tree (dry run)");
+    assertEquals(dryRun.if, "github.event_name == 'merge_group'");
+    assertEquals(dryRun["timeout-minutes"], 3, "a hung lookup must not hold the queue entry");
+    assertStringIncludes(String(dryRun.run), "scripts/ci/queue-tree-dry-run.ts");
+    assertEquals(asRecord(dryRun.env, "queue env").QUEUE_HEAD_REF, "${{ github.ref_name }}");
+    assertEquals(dryRun.id, undefined, "dry-run decisions cannot drive gate conditions");
+
+    const tested = job(jobs, "tested-run");
+    const names = steps(tested, "tested-run").map((step) => step.name);
+    assertEquals(names.includes("Measure identical queue tree (dry run)"), false);
+    assertEquals(
+      asRecord(tested.outputs, "tested outputs").reuse,
+      "${{ steps.decide.outputs.reuse || 'false' }}",
+    );
+  });
+
+  it("decides tested runs on main while accepting explicit maintenance RC numbers", async () => {
     const tested = job(await readJobs(), "tested-run");
 
     assertEquals(tested.if, `\${{ ${TRUSTED} }}`);
-    for (const step of steps(tested, "tested-run")) {
-      assertEquals(step.if, "github.ref == 'refs/heads/main'", "tested-run works on main only");
-    }
+    assertEquals(
+      namedStep(tested, "Validate maintenance release number").if,
+      "github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''",
+    );
+    assertEquals(
+      namedStep(tested, "Find the tested merge-queue run").if,
+      MAIN_WITHOUT_MAINTENANCE,
+      "tested-run lookup works on main only for normal releases",
+    );
+    assertEquals(
+      namedStep(tested, "Record release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
+    assertEquals(
+      namedStep(tested, "Upload release number").if,
+      MAIN_OR_MAINTENANCE,
+    );
     assertEquals(tested.permissions, { actions: "read", contents: "read" });
     assertEquals(tested.outputs, {
       reuse: "${{ steps.decide.outputs.reuse || 'false' }}",
       run_id: "${{ steps.decide.outputs.run_id }}",
-      release_number: "${{ steps.decide.outputs.release_number || github.run_number }}",
+      release_number:
+        "${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number || github.run_number }}",
     });
     assertStringIncludes(
       String(namedStep(tested, "Find the tested merge-queue run").run),
       "scripts/ci/tested-merge-queue-run.ts",
     );
+  });
+
+  it("rejects maintenance RC publication from untrusted refs before recording a release number", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    for (
+      const [githubRef, message] of [
+        [
+          "refs/heads/main",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/fix/maintenance-rc-publication",
+          "Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch.",
+        ],
+        [
+          "refs/heads/maintenance/rc.21995",
+          "maintenance_release_number must match the maintenance branch suffix.",
+        ],
+      ] as const
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: ["-c", validation],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: githubRef,
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 1, githubRef);
+      assertStringIncludes(new TextDecoder().decode(output.stderr), message);
+    }
+  });
+
+  it("rejects unprotected, moved or unreadable maintenance branches before recording a release", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    for (
+      const [protectedRef, identity, failRead] of [
+        ["false", '{"sha":"expected-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":false}', "false"],
+        ["true", '{"sha":"different-head","protected":true}', "false"],
+        ["true", '{"sha":"expected-head","protected":true}', "true"],
+      ]
+    ) {
+      const output = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'gh() { if [ "$FAIL_READ" = true ]; then return 1; fi; echo "$BRANCH_IDENTITY"; }\n' +
+          validation,
+        ],
+        env: {
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+          GITHUB_REF_PROTECTED: protectedRef,
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
+          BRANCH_IDENTITY: identity,
+          FAIL_READ: failRead,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code === 0, false);
+      assertEquals(new TextDecoder().decode(output.stdout).includes("release_number="), false);
+    }
+  });
+
+  it("accepts maintenance RC publication only from the matching maintenance branch", async () => {
+    const tested = job(await readJobs(), "tested-run");
+    const validation = String(namedStep(tested, "Validate maintenance release number").run);
+    const outputPath = await Deno.makeTempFile();
+    try {
+      const output = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'gh() { echo "{\\"sha\\":\\"expected-head\\",\\"protected\\":true}"; }\n' + validation,
+        ],
+        env: {
+          GITHUB_REF_PROTECTED: "true",
+          GITHUB_REPOSITORY: "veryfront/test",
+          GITHUB_SHA: "expected-head",
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REF: "refs/heads/maintenance/rc.21996",
+          RELEASE_NUMBER: "21996",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+      assertEquals(await Deno.readTextFile(outputPath), "release_number=21996\n");
+    } finally {
+      await Deno.remove(outputPath);
+    }
   });
 
   it("requires every artifact a reused run consumes", async () => {
@@ -198,7 +368,7 @@ describe("tested merge-queue run workflow", () => {
 
     assertEquals(
       asRecord(upload.with, "release number upload").name,
-      "release-number-${{ steps.decide.outputs.release_number }}",
+      "release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}",
     );
     for (const name of ["build-binaries", "prerelease", "release"]) {
       assert(needs(job(jobs, name)).includes("tested-run"), `${name} must wait for tested-run`);
@@ -344,7 +514,7 @@ describe("tested merge-queue run workflow", () => {
     assertEquals(gate.name, "quality gate (release)");
     assertEquals(
       gate.if,
-      `\${{ always() && ${TRUSTED} && github.ref == 'refs/heads/main' }}`,
+      `\${{ always() && ${TRUSTED} && (${MAIN_OR_MAINTENANCE}) }}`,
     );
     assertEquals(
       asRecord(namedStep(gate, "Require release test results").env, "env").REUSED_RUN_ID,

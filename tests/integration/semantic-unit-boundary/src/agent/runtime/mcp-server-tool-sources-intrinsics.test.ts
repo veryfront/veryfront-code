@@ -9,8 +9,12 @@
  */
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
-import { getRuntimeRemoteToolSources } from "../../../../../../src/agent/runtime/mcp-server-tool-sources.ts";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
+import {
+  getRuntimeRemoteToolSources,
+  getRuntimeUnavailableOptionalRemoteTools,
+  VERYFRONT_STUDIO_MCP_SOURCE_ID,
+} from "../../../../../../src/agent/runtime/mcp-server-tool-sources.ts";
 
 async function resolveRemoteEndpoint(
   endpoint: RemoteMCPToolSourceConfig["endpoint"] | undefined,
@@ -54,6 +58,121 @@ describe("Veryfront API MCP bootstrap intrinsic boundary", () => {
       String.prototype.trim = originalTrim;
     }
     assertEquals(observed.includes("server-token"), false);
+  });
+
+  it("does not expose injected Studio source arrays to replaced Array map", () => {
+    const studioSource: RemoteToolSource = {
+      id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+      listTools: () => Promise.resolve([]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    };
+    const originalMap = Array.prototype.map;
+    let patchedMapCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype.map = function poisonedMap() {
+      patchedMapCalls += 1;
+      throw new Error("patched Array.prototype.map must not see remote sources");
+    } as typeof Array.prototype.map;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [studioSource],
+      );
+    } finally {
+      Array.prototype.map = originalMap;
+    }
+
+    assertEquals(patchedMapCalls, 0);
+    assertEquals(result, { names: [], prefixes: [] });
+  });
+
+  it("deduplicates unavailable Studio tools without replaced Array includes", () => {
+    const originalIncludes = Array.prototype.includes;
+    let patchedIncludesCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype.includes = function poisonedIncludes() {
+      patchedIncludesCalls += 1;
+      throw new Error("patched Array.prototype.includes must not dedupe unavailable tools");
+    } as typeof Array.prototype.includes;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          __vfUnavailableOptionalRemoteToolPrefixes: ["studio_"],
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [],
+      );
+    } finally {
+      Array.prototype.includes = originalIncludes;
+    }
+
+    assertEquals(patchedIncludesCalls, 0);
+    assertEquals(result, { names: [], prefixes: ["studio_"] });
+  });
+
+  it("records unavailable Studio tools without inherited numeric setters", () => {
+    const setterCalls: string[] = [];
+    Object.defineProperty(Array.prototype, "0", {
+      configurable: true,
+      set(value) {
+        setterCalls.push(String(value));
+        throw new Error("patched Array.prototype[0] must not observe unavailable tools");
+      },
+    });
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{ kind: "veryfront-studio", required: false }],
+        },
+        [],
+      );
+    } finally {
+      delete (Array.prototype as Record<string, unknown>)["0"];
+    }
+
+    assertEquals(setterCalls, []);
+    assertEquals(result, { names: [], prefixes: ["studio_"] });
+  });
+
+  it("copies optional Studio policy names without the mutable array iterator", () => {
+    const originalIterator = Array.prototype[Symbol.iterator];
+    let iteratorCalls = 0;
+    let result: { names: string[]; prefixes: string[] } | undefined;
+    Array.prototype[Symbol.iterator] = function poisonedIterator() {
+      iteratorCalls += 1;
+      throw new Error("patched Array.prototype iterator must not see Studio policy names");
+    } as typeof Array.prototype[typeof Symbol.iterator];
+    try {
+      result = getRuntimeUnavailableOptionalRemoteTools(
+        {
+          system: "Use Studio tools when available.",
+          tools: { studio_open_project: true },
+          mcpServers: [{
+            kind: "veryfront-studio",
+            required: false,
+            toolPolicy: { allow: ["studio_open_project", "studio_search"] },
+          }],
+        },
+        [],
+      );
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+    }
+
+    assertEquals(iteratorCalls, 0);
+    assertEquals(result, {
+      names: ["studio_open_project", "studio_search"],
+      prefixes: ["studio_"],
+    });
   });
 
   it("ignores a replaced string replace method when resolving its endpoint", async () => {

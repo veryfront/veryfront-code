@@ -3,6 +3,11 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  AGENT_PROVIDER_AUTH_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
+  registeredProviderFailure,
+} from "#veryfront/chat/provider-error-registry.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
@@ -16,6 +21,7 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 export const EXECUTOR_AGENT_MAX_PAYLOAD_BYTES = EXECUTOR_MAX_FRAME_BYTES - 2048;
 
 const failureStatus = {
+  "agent-provider-auth-error": 401,
   EXECUTOR_AGENT_INVALID_INPUT: 400,
   EXECUTOR_AGENT_INPUT_TOO_LARGE: 413,
   EXECUTOR_AGENT_ALREADY_STARTED: 409,
@@ -33,10 +39,12 @@ const failureStatus = {
   OUTPUT_SCHEMA_NOT_CLOSED: 400,
   OUTPUT_SCHEMA_INVALID: 400,
   AI_PROVIDER_SPEND_LIMIT_EXCEEDED: 402,
+  ai_provider_spend_check_unavailable: 503,
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: 502,
   AI_PROVIDER_BILLING_ERROR: 502,
   GATEWAY_PROJECT_REQUIRED: 400,
   PROVIDER_OUTPUT_TRUNCATED: 502,
+  PROVIDER_STREAM_PROTOCOL_ERROR: 502,
   MODEL_NOT_PERMITTED: 403,
   INFERENCE_POLICY_DENIED: 403,
   EXTERNAL_SERVICE_ERROR: 502,
@@ -48,6 +56,7 @@ const failureStatus = {
 /** @internal Fixed executor failure codes accepted by hosted response boundaries. */
 export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
   [
+    "agent-provider-auth-error",
     "EXECUTOR_AGENT_INVALID_INPUT",
     "EXECUTOR_AGENT_INPUT_TOO_LARGE",
     "EXECUTOR_AGENT_ALREADY_STARTED",
@@ -65,10 +74,12 @@ export const EXECUTOR_AGENT_FAILURE_CODES = Object.freeze(
     "OUTPUT_SCHEMA_NOT_CLOSED",
     "OUTPUT_SCHEMA_INVALID",
     "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+    "ai_provider_spend_check_unavailable",
     "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
     "AI_PROVIDER_BILLING_ERROR",
     "GATEWAY_PROJECT_REQUIRED",
     "PROVIDER_OUTPUT_TRUNCATED",
+    "PROVIDER_STREAM_PROTOCOL_ERROR",
     "MODEL_NOT_PERMITTED",
     "INFERENCE_POLICY_DENIED",
     "EXTERNAL_SERVICE_ERROR",
@@ -86,13 +97,18 @@ type FailureCode = InferSchema<ReturnType<typeof getExecutorAgentFailureCodeSche
 /** @internal Fixed diagnostics contain neither rejected inputs nor upstream error bodies. */
 export class ExecutorAgentError extends VeryfrontError {
   constructor(readonly code: FailureCode) {
+    const message = code === AGENT_PROVIDER_AUTH_ERROR.code
+      ? AGENT_PROVIDER_AUTH_ERROR.message
+      : code === PROVIDER_STREAM_PROTOCOL_ERROR.code
+      ? PROVIDER_STREAM_PROTOCOL_ERROR.message
+      : code;
     const definition = defineError({
       slug: code.toLowerCase().replaceAll("_", "-"),
       category: "AGENT",
       status: failureStatus[code],
-      title: code,
+      title: message,
     });
-    super(code, definition);
+    super(message, definition);
     this.name = "ExecutorAgentError";
   }
 }
@@ -105,7 +121,10 @@ export function executorAgentFailureCode(error: unknown, fallback: FailureCode):
     if (explicit.success) return explicit.data;
   }
   const snapshot = snapshotVeryfrontError(error);
-  const code = snapshot?.slug.toUpperCase().replaceAll("-", "_") ?? parseProviderError(error).code;
+  const exactSlug = getExecutorAgentFailureCodeSchema().safeParse(snapshot?.slug);
+  if (exactSlug.success) return exactSlug.data;
+  const code = registeredProviderFailure(error)?.code ??
+    snapshot?.slug.toUpperCase().replaceAll("-", "_") ?? parseProviderError(error).code;
   const result = getExecutorAgentFailureCodeSchema().safeParse(code);
   return result.success ? result.data : fallback;
 }

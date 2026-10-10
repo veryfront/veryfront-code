@@ -1,3 +1,4 @@
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   bindHostedTerminalRun,
   hostedInheritedRunAdmitter,
@@ -18,6 +19,7 @@ import type {
   HostedChatRuntimeProjectSteering,
 } from "./chat-runtime-contract.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { RuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   type HostedConversationRootRunContext,
   prepareHostedConversationRootRunContext,
@@ -28,11 +30,20 @@ import {
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "../runtime/message-preparation.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { AgentConfig } from "../types.ts";
 import {
+  hasExplicitHostedToolName,
   type ResolvedHostedRuntimeRequestConfig,
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
+import {
+  inheritTrustedHostedHistorySourceIdentity,
+  inheritTrustedPlatformPolicyMessageMetadata,
+  inheritTrustedPlatformPolicyToolResultMetadata,
+  isLoadSkillToolName,
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
+} from "../runtime/skill-policy-enforcement.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import {
   resolveRuntimeSkillSelectorForAgent,
@@ -61,9 +72,14 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+
+const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
 
 /** Host-owned opt-in for new provider replay checkpoint emission. */
 export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV =
@@ -99,6 +115,8 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     apiUrl?: string | URL;
     projectId?: string | null;
     providerReplayCheckpointMessageIds?: readonly string[];
+    trustedHostedHistoryMessageIds?: readonly string[];
+    legacyLoadSkillReplayAllowed?: boolean;
   };
 
 /** Context for hosted chat runtime preparation root run. */
@@ -109,6 +127,9 @@ export type HostedChatRuntimePreparationRootRunContext = {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   durableRunMirror?: ConversationRunChunkMirror | null;
   privateDurableRunMirror?: ConversationRunChunkMirror | null;
+  privateRuntimeObservationWriterCapability?: HostedConversationRootRunContext[
+    "privateRuntimeObservationWriterCapability"
+  ];
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */
@@ -118,13 +139,12 @@ export type HostedChatRuntimePreparationSteering = {
 };
 
 function mergePreservedSourceMessageIds(
-  checkpointIds: readonly string[] | undefined,
-  retentionIds: readonly string[] | undefined,
+  ...sourceIdGroups: Array<readonly string[] | undefined>
 ): readonly string[] | undefined {
-  if (checkpointIds === undefined && retentionIds === undefined) {
+  if (sourceIdGroups.every((ids) => ids === undefined)) {
     return undefined;
   }
-  return [...new Set([...(checkpointIds ?? []), ...(retentionIds ?? [])])];
+  return [...new Set(sourceIdGroups.flatMap((ids) => ids ?? []))];
 }
 
 /** Input payload for hosted chat runtime instructions. */
@@ -136,6 +156,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   instructions: string;
   skills: RuntimeSkillDefinition[];
   availableToolNames?: readonly string[];
+  skillLoaderToolName?: RuntimeSkillLoaderToolName;
 };
 
 /** Input payload for hosted chat runtime creation preparation. */
@@ -171,6 +192,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -379,8 +402,14 @@ export type HostedChatExecutionPreparationInput<
   providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
+  /** Host-owned default-off opt-in for exact model-call capture. */
+  runtimeObservationCaptureOptIn?: RuntimeObservationCaptureOptIn;
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /** True only when the legacy form_input spelling still maps to the platform form. */
+  legacyFormInputReplayAllowed?: boolean;
+  /** True only when the legacy load_skill spelling still maps to the platform loader. */
+  legacyLoadSkillReplayAllowed?: boolean;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -437,6 +466,7 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
 }
 
 function resolveInitialModelVisibleToolNames(input: {
+  agentConfig: Pick<HostedChatRuntimeCreationPreparationInput<unknown>["agentConfig"], "tools">;
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
   selectedSkills: readonly RuntimeSkillDefinition[];
   hostToolPolicy?: HostedHostToolPolicy;
@@ -447,24 +477,51 @@ function resolveInitialModelVisibleToolNames(input: {
   const deniedToolNames = new Set(input.runtimeConfig.deniedToolNames ?? []);
   const isHostAllowed = (toolName: string): boolean =>
     (hostAllow === undefined || hostAllow.has(toolName)) && !deniedToolNames.has(toolName);
+  const isPlatformPairDenied = (legacyToolName: string): boolean => {
+    const pair = [legacyToolName, `veryfront__${legacyToolName}`];
+    return somePrivateArray(pair, (name) => deniedToolNames.has(name)) &&
+      !somePrivateArray(pair, (name) =>
+        hasExplicitHostedToolName(input.agentConfig, name) &&
+        hasExplicitHostedToolName({ tools: input.runtimeConfig.requestedAllowedTools }, name) &&
+        !deniedToolNames.has(name));
+  };
+  const visibleLoadSkillToolNames = isPlatformPairDenied("load_skill")
+    ? []
+    : ["veryfront__load_skill", "load_skill"].filter(isHostAllowed).slice(0, 1);
+  const visibleFormInputToolNames = isPlatformPairDenied("form_input")
+    ? []
+    : ["form_input", "veryfront__form_input"].filter(isHostAllowed);
+  const requestedLoadSkillToolNames = input.runtimeConfig.requestedAllowedTools?.filter(
+    isLoadSkillToolName,
+  ) ?? [];
 
   if (input.runtimeConfig.requestedAllowedTools === undefined) {
     return [
-      ...(isHostAllowed("form_input") ? ["form_input"] : []),
-      ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
+      ...visibleFormInputToolNames,
+      ...(input.selectedSkills.length > 0 ? visibleLoadSkillToolNames : []),
       ...(isHostAllowed(TOOL_SEARCH_TOOL_NAME) ? [TOOL_SEARCH_TOOL_NAME] : []),
     ].sort(compareStrings);
   }
 
+  const selectedLoadSkillToolName = visibleLoadSkillToolNames[0];
+  const shouldNormalizeLoadSkillAlias = input.selectedSkills.length > 0 &&
+    selectedLoadSkillToolName !== undefined && requestedLoadSkillToolNames.length > 1;
   const visibleToolNames = new Set(
-    input.runtimeConfig.requestedAllowedTools.filter(isHostAllowed),
+    input.runtimeConfig.requestedAllowedTools.filter((toolName) =>
+      isHostAllowed(toolName) &&
+      (!shouldNormalizeLoadSkillAlias || !isLoadSkillToolName(toolName) ||
+        toolName === selectedLoadSkillToolName)
+    ),
   );
   if (
     input.selectedSkills.length > 0 &&
-    isHostAllowed("load_skill") &&
-    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty)
+    visibleLoadSkillToolNames.length > 0 &&
+    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty) &&
+    !somePrivateArray([...visibleToolNames], isLoadSkillToolName)
   ) {
-    visibleToolNames.add("load_skill");
+    for (const toolName of visibleLoadSkillToolNames) {
+      visibleToolNames.add(toolName);
+    }
   }
   return [...visibleToolNames].sort(compareStrings);
 }
@@ -493,11 +550,14 @@ export async function prepareHostedChatRuntimeCreationOptions<
     resolveModelThinking: input.resolveModelThinking,
   });
   const initialModelVisibleToolNames = resolveInitialModelVisibleToolNames({
+    agentConfig: input.agentConfig,
     runtimeConfig,
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const promptSkills = initialModelVisibleToolNames.includes("load_skill") ? selectedSkills : [];
+  const promptSkills = apply(arraySome, initialModelVisibleToolNames, [isLoadSkillToolName])
+    ? selectedSkills
+    : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
@@ -506,6 +566,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
     instructions: steering.instructions,
     skills: promptSkills,
     availableToolNames: initialModelVisibleToolNames,
+    skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(initialModelVisibleToolNames),
   });
   return {
     creationOptions: {
@@ -602,6 +663,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
           isProviderReplayCheckpointEmissionEnabled(),
         input.serverResolvedProviderReplayCheckpoints,
       ),
+      ...(input.rootRunContext?.privateRuntimeObservationWriterCapability
+        ? {
+          runtimeObservationWriterCapability:
+            input.rootRunContext.privateRuntimeObservationWriterCapability,
+        }
+        : {}),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
@@ -676,6 +743,9 @@ export async function prepareHostedChatExecution<
         parentMessageId: normalized.parentMessageId,
         providedRun: input.request.durableRootRun,
         persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...(input.runtimeObservationCaptureOptIn
+          ? { runtimeObservationCaptureOptIn: input.runtimeObservationCaptureOptIn }
+          : {}),
         ...input.rootRun,
       }, { abortSignal: input.abortSignal }),
   );
@@ -703,7 +773,10 @@ export async function prepareHostedChatExecution<
     serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
+  const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages, {
+    legacyFormInputReplayAllowed: input.legacyFormInputReplayAllowed,
+    trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
+  });
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
     (checkpoint) => checkpoint.messageId,
@@ -720,6 +793,8 @@ export async function prepareHostedChatExecution<
       }),
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
+      trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
+      legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
@@ -802,13 +877,59 @@ export async function prepareHostedChatExecution<
   };
 }
 
+export function restoreTrustedHostedPolicyMetadataFromUiMessages(
+  runtimeMessages: readonly AgentRuntimeMessage[],
+  sourceMessages: readonly ChatUiMessage[],
+  trustedSourceMessageIds: readonly string[] | undefined,
+): AgentRuntimeMessage[] {
+  if (!trustedSourceMessageIds || trustedSourceMessageIds.length === 0) {
+    return [...runtimeMessages];
+  }
+  const trustedSourceIds = createPrivateMap<string, true>();
+  for (let index = 0; index < trustedSourceMessageIds.length; index++) {
+    if (!Object.hasOwn(trustedSourceMessageIds, index)) continue;
+    const messageId = trustedSourceMessageIds[index];
+    if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
+  }
+  const sourceById = createPrivateMap<string, ChatUiMessage | null>();
+  for (let index = 0; index < sourceMessages.length; index++) {
+    if (!Object.hasOwn(sourceMessages, index)) continue;
+    const message = sourceMessages[index]!;
+    if (!message.id || !trustedSourceIds.has(message.id)) continue;
+    if (
+      sourceById.has(message.id) ||
+      (message.role !== "assistant" && message.role !== "tool")
+    ) {
+      sourceById.set(message.id, null);
+    } else {
+      sourceById.set(message.id, message);
+    }
+  }
+
+  const restoredMessages: AgentRuntimeMessage[] = [];
+  for (let index = 0; index < runtimeMessages.length; index++) {
+    if (!Object.hasOwn(runtimeMessages, index)) continue;
+    const message = runtimeMessages[index]!;
+    const sourceMessage = sourceById.get(message.id);
+    const restoredMessage = message.role === "tool"
+      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
+      : sourceMessage && sourceMessage.role === "assistant" && message.role === "assistant"
+      ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
+      : message;
+    restoredMessages[restoredMessages.length] = sourceMessage
+      ? inheritTrustedHostedHistorySourceIdentity(sourceMessage, restoredMessage)
+      : restoredMessage;
+  }
+  return restoredMessages;
+}
+
 /** Prepare hosted chat runtime messages. */
 export async function prepareHostedChatRuntimeMessages(
   messages: readonly ChatUiMessage[],
   options: PrepareHostedChatRuntimeMessagesOptions = {},
 ): Promise<AgentRuntimeMessage[]> {
   if (!options.authToken || !options.apiUrl) {
-    return await prepareAgentRuntimeMessagesFromUiMessages({
+    const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
@@ -819,15 +940,27 @@ export async function prepareHostedChatRuntimeMessages(
         ...options.historicalToolInputRetention,
         preserveSourceMessageIds: mergePreservedSourceMessageIds(
           options.providerReplayCheckpointMessageIds,
+          options.trustedHostedHistoryMessageIds,
           options.historicalToolInputRetention?.preserveSourceMessageIds,
         ),
       },
     });
+    const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromUiMessages(
+      runtimeMessages,
+      messages,
+      options.trustedHostedHistoryMessageIds,
+    );
+    restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
+      legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+      trustedMessageIds: options.trustedHostedHistoryMessageIds,
+      sourceMessages: messages,
+    });
+    return trustedRuntimeMessages;
   }
   const authToken = options.authToken;
   const apiUrl = options.apiUrl;
 
-  return await prepareAgentRuntimeMessagesFromUiMessages({
+  const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,
@@ -838,6 +971,7 @@ export async function prepareHostedChatRuntimeMessages(
       ...options.historicalToolInputRetention,
       preserveSourceMessageIds: mergePreservedSourceMessageIds(
         options.providerReplayCheckpointMessageIds,
+        options.trustedHostedHistoryMessageIds,
         options.historicalToolInputRetention?.preserveSourceMessageIds,
       ),
     },
@@ -850,4 +984,15 @@ export async function prepareHostedChatRuntimeMessages(
       }),
     onUnresolvableAttachment: options.onUnresolvableAttachment,
   });
+  const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromUiMessages(
+    runtimeMessages,
+    messages,
+    options.trustedHostedHistoryMessageIds,
+  );
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
+    legacyLoadSkillReplayAllowed: options.legacyLoadSkillReplayAllowed,
+    trustedMessageIds: options.trustedHostedHistoryMessageIds,
+    sourceMessages: messages,
+  });
+  return trustedRuntimeMessages;
 }

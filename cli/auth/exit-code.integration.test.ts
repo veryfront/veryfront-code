@@ -57,11 +57,22 @@ describe("cli/auth exit codes", () => {
     assertStringIncludes(result.stdout, "veryfront login");
   });
 
-  it("whoami --json exits non-zero and still reports authenticated: false", async () => {
+  it("whoami --json exits non-zero with a failure envelope", async () => {
     const result = await runUnauthenticated(["whoami", "--json"]);
 
     assertEquals(result.code, 1);
-    assertEquals(JSON.parse(result.stdout).data, { authenticated: false });
+    assertEquals(JSON.parse(result.stdout), {
+      success: false,
+      command: "whoami",
+      error: {
+        code: "AUTHENTICATION_ERROR",
+        slug: "authentication-required",
+        registrySlug: "authentication-required",
+        message: "Not logged in. Run 'veryfront login' to authenticate.",
+        context: { authenticated: false },
+      },
+    });
+    assertEquals(result.stderr, "");
   });
 
   it("login exits non-zero when it cannot obtain a credential", async () => {

@@ -198,6 +198,9 @@ function resolveSerializableMcpServers(
 
     defineOwnDataProperty(serialized, serialized.length, {
       kind: server.kind,
+      ...(server.kind === "veryfront-studio" && server.required !== undefined
+        ? { required: server.required }
+        : {}),
       ...(server.id === undefined ? {} : { id: server.id }),
       ...(server.toolPolicy === undefined ? {} : { toolPolicy: server.toolPolicy }),
     }, { enumerable: true, configurable: true, writable: true });

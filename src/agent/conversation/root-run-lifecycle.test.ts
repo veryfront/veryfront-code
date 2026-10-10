@@ -1,5 +1,6 @@
+import { getCanonicalRunStatus } from "#veryfront/agent/conversation/durable.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   prepareConversationRootRunLifecycle,
@@ -10,6 +11,11 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "../hosted/child-run-event-writer-token.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationCaptureOptIn,
+  getRuntimeObservationWriterScope,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -120,6 +126,7 @@ describe("agent/conversation-root-run-lifecycle", () => {
         createHostedRunEventWriterCapability({
           apiUrl: "https://api.example.test",
           runId: "22222222-2222-4222-a222-222222222222",
+          canonicalRunId: "33333333-3333-4333-8333-333333333333",
           runEventAppendToken: "run-event-service-token",
           fetch: globalThis.fetch,
         }),
@@ -129,7 +136,7 @@ describe("agent/conversation-root-run-lifecycle", () => {
               authToken: "user-api-token",
               apiUrl: "https://api.example.test",
               conversationId,
-              projectId: "project-1",
+              projectId: "44444444-4444-4444-8444-444444444444",
               branchId: "branch-1",
               agentId: "agent-1",
               messages: [],
@@ -142,6 +149,7 @@ describe("agent/conversation-root-run-lifecycle", () => {
               persistLatestUserMessageBeforeRun: true,
               parentRunId: "parent-run",
               parentMessageId: "parent-message",
+              runtimeObservationCaptureOptIn: createRuntimeObservationCaptureOptIn(),
               instrumentation: {
                 debug: (message) => {
                   debugMessages.push(message);
@@ -176,6 +184,7 @@ describe("agent/conversation-root-run-lifecycle", () => {
         );
         assertEquals(context.durableRunMirror?.getSnapshot().pendingEventCount, 0);
         assertEquals(context.privateDurableRunMirror, context.durableRunMirror);
+        assertEquals(context.privateRuntimeObservationWriterCapability !== undefined, true);
         assertEquals(authorizationHeaders, ["Bearer run-event-service-token"]);
       } finally {
         context.durableRunMirror?.dispose();
@@ -183,6 +192,170 @@ describe("agent/conversation-root-run-lifecycle", () => {
     } finally {
       restoreMockFetch();
     }
+  });
+
+  it("binds exact capture to admitted UUIDv6-v8 run and project scopes", async () => {
+    for (const version of [6, 7, 8]) {
+      const runId = `22222222-2222-${version}222-a222-222222222222`;
+      const canonicalRunId = `33333333-3333-${version}333-8333-333333333333`;
+      const projectId = `44444444-4444-${version}444-8444-444444444444`;
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId,
+          canonicalRunId,
+          runEventAppendToken: "run-event-service-token",
+        }),
+        () =>
+          prepareHostedConversationRootRunContext({
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId,
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId,
+              messageId: "msg-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            persistLatestUserMessageBeforeRun: false,
+            runtimeObservationCaptureOptIn: createRuntimeObservationCaptureOptIn(),
+          }, { abortSignal: new AbortController().signal }),
+      );
+      try {
+        assertExists(context.privateRuntimeObservationWriterCapability);
+        const sink = () => {};
+        bindRuntimeObservationWriterCapability(
+          sink,
+          context.privateRuntimeObservationWriterCapability,
+        );
+        assertEquals(getRuntimeObservationWriterScope(sink), { runId, canonicalRunId, projectId });
+      } finally {
+        context.durableRunMirror?.dispose();
+      }
+    }
+  });
+
+  it("keeps exact model-call capture default-off without the host opt-in", async () => {
+    const context = await runWithHostedRunEventWriterCapability(
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.test",
+        runId: "22222222-2222-4222-a222-222222222222",
+        canonicalRunId: "33333333-3333-4333-8333-333333333333",
+        runEventAppendToken: "run-event-service-token",
+      }),
+      () =>
+        prepareHostedConversationRootRunContext(
+          {
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId: "44444444-4444-4444-8444-444444444444",
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId: "22222222-2222-4222-a222-222222222222",
+              messageId: "msg-1",
+              latestEventId: 5,
+              latestExternalEventSequence: 6,
+            },
+            persistLatestUserMessageBeforeRun: false,
+          },
+          { abortSignal: new AbortController().signal },
+        ),
+    );
+
+    try {
+      assertEquals(context.privateDurableRunMirror, context.durableRunMirror);
+      assertEquals(context.privateRuntimeObservationWriterCapability, undefined);
+    } finally {
+      context.durableRunMirror?.dispose();
+    }
+  });
+
+  it("does not bind exact capture to embedded canonical run or project UUIDs", async () => {
+    const cases = [
+      {
+        name: "embedded canonical run UUID",
+        runId: "11111111-1111-6111-8111-111111111111",
+        canonicalRunId: "prefix-11111111-1111-6111-8111-111111111111",
+        projectId: "66666666-6666-6666-8666-666666666666",
+      },
+      {
+        name: "embedded project UUID",
+        runId: "33333333-3333-8333-a333-333333333333",
+        canonicalRunId: "33333333-3333-8333-a333-333333333333",
+        projectId: "88888888-8888-8888-a888-888888888888-suffix",
+      },
+    ];
+
+    for (const current of cases) {
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId: current.runId,
+          canonicalRunId: current.canonicalRunId,
+          runEventAppendToken: "run-event-service-token",
+        }),
+        () =>
+          prepareHostedConversationRootRunContext({
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId: current.projectId,
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId: current.runId,
+              messageId: "msg-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            persistLatestUserMessageBeforeRun: false,
+            runtimeObservationCaptureOptIn: createRuntimeObservationCaptureOptIn(),
+          }, { abortSignal: new AbortController().signal }),
+      );
+      try {
+        assertEquals(context.privateRuntimeObservationWriterCapability, undefined, current.name);
+      } finally {
+        context.durableRunMirror?.dispose();
+      }
+    }
+  });
+
+  it("validates the actual canonical status run-ID fallback before transport", async () => {
+    const runId = "11111111-1111-6111-8111-111111111111";
+    const urls: string[] = [];
+    const fetch = ((input: string | URL | Request) => {
+      urls.push(String(input));
+      return Promise.resolve(Response.json({ id: runId, status: "completed" }));
+    }) as typeof globalThis.fetch;
+    for (const malformed of [`prefix-${runId}`, `${runId}-suffix`]) {
+      await assertRejects(
+        () =>
+          getCanonicalRunStatus({
+            authToken: "token",
+            apiUrl: "https://api.example.test",
+            runId: malformed,
+            fetch,
+          }),
+        Error,
+        "Canonical run identity is required",
+      );
+    }
+    assertEquals(urls, []);
+    assertEquals(
+      await getCanonicalRunStatus({
+        authToken: "token",
+        apiUrl: "https://api.example.test",
+        runId,
+        fetch,
+      }),
+      { runId, status: "completed" },
+    );
+    assertEquals(urls, [`https://api.example.test/runs/${runId}`]);
   });
 
   it("rejects a missing API-issued root before persisting any user message", async () => {

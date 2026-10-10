@@ -27,13 +27,8 @@ import {
 } from "#veryfront/security/http/ingress-credentials.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
-import {
-  errorToRFC9457Response,
-  getErrorMessage,
-  isVeryfrontError,
-  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
-  UNKNOWN_ERROR,
-} from "#veryfront/errors";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
+import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { OptionsMiddlewareAdmission as ApiOptionsMiddlewareAdmission } from "#veryfront/routing/api/handler.ts";
 import type { Handler } from "#veryfront/types";
@@ -182,7 +177,8 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
-const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
+// A cold saved project may receive more than one delayed source invalidation.
+const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 2;
 
 type RuntimeOptionsMiddlewareAdmission =
   | ApiOptionsMiddlewareAdmission
@@ -240,8 +236,7 @@ export function shouldRetrySourceSnapshotFreshness(
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
     !projectMiddlewareStarted &&
     methodCanRetry &&
-    isVeryfrontError(error) &&
-    error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
+    isSourceSnapshotChangedError(error);
 }
 
 function skipsApplicationAuth(

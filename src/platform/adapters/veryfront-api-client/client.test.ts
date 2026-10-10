@@ -271,6 +271,67 @@ describe("VeryfrontApiClient", () => {
       );
     });
 
+    it("keeps shared initialization alive when only one reader aborts", async () => {
+      const client = createClient();
+      const project = Promise.withResolvers<{ id: string }>();
+      let calls = 0;
+      let transportSignal: AbortSignal | undefined;
+      const mutable = client as unknown as { operations: object };
+      Object.defineProperty(mutable.operations, "getProject", {
+        value: (_reference: string, signal?: AbortSignal) => {
+          calls++;
+          transportSignal = signal;
+          return project.promise;
+        },
+      });
+      const controller = new AbortController();
+      const first = client.initialize(controller.signal);
+      const rejected = assertRejects(() => first, Error);
+      const peer = client.initialize();
+      controller.abort();
+      assertEquals(transportSignal?.aborted, false);
+      project.resolve({ id: "11111111-2222-3333-4444-555555555555" });
+      await rejected;
+      await peer;
+      assertEquals(calls, 1);
+      assertEquals(client.isInitialized(), true);
+    });
+
+    it("keeps the owner flight for a third initialize call after one peer aborts", async () => {
+      const client = createClient();
+      const project = Promise.withResolvers<{ id: string }>();
+      let getProjectCalls = 0;
+      const mutable = client as unknown as {
+        operations: {
+          getProject: (projectRef: string, signal?: AbortSignal) => Promise<{ id: string }>;
+        };
+      };
+      Object.defineProperty(mutable.operations, "getProject", {
+        value: (_reference: string, _signal?: AbortSignal) => {
+          getProjectCalls++;
+          return project.promise;
+        },
+      });
+
+      const controller = new AbortController();
+      const first = client.initialize(controller.signal);
+      const firstRejected = assertRejects(() => first, Error);
+      const second = client.initialize();
+      controller.abort();
+      await firstRejected;
+
+      const third = client.initialize();
+      assertEquals(
+        getProjectCalls,
+        1,
+        "a later waiter must join the original healthy flight instead of starting another API call",
+      );
+      project.resolve({ id: "11111111-2222-3333-4444-555555555555" });
+      await Promise.all([second, third]);
+      assertEquals(getProjectCalls, 1);
+      assertEquals(client.isInitialized(), true);
+    });
+
     it("initialize throws when no slug available", async () => {
       const client = createClient({ apiBaseUrl: "http://test.api", apiToken: "token" });
       await assertRejects(
@@ -362,6 +423,59 @@ describe("VeryfrontApiClient", () => {
         0,
         "files returned with content must not be re-fetched individually",
       );
+    });
+
+    it("passes abort signals through extensionless search listing and content fetches", async () => {
+      const client = createClient();
+      const controller = new AbortController();
+      const observedSignals: Array<AbortSignal | undefined> = [];
+      const mutable = client as unknown as {
+        operations: {
+          listBranchFiles: (
+            projectRef: string,
+            branchRef: string,
+            options: { signal?: AbortSignal },
+          ) => Promise<{ files: Array<{ path: string; content?: string }> }>;
+          getBranchFile: (
+            projectRef: string,
+            branchRef: string,
+            path: string,
+            options: { signal?: AbortSignal },
+          ) => Promise<{ path: string; content: string }>;
+        };
+      };
+      Object.defineProperties(mutable.operations, {
+        listBranchFiles: {
+          value: (_projectRef: string, _branchRef: string, options: { signal?: AbortSignal }) => {
+            observedSignals.push(options.signal);
+            return Promise.resolve({ files: [{ path: "components/Button.tsx" }] });
+          },
+        },
+        getBranchFile: {
+          value: (
+            _projectRef: string,
+            _branchRef: string,
+            path: string,
+            options: { signal?: AbortSignal },
+          ) => {
+            observedSignals.push(options.signal);
+            return Promise.resolve({ path, content: "export default Button;" });
+          },
+        },
+      });
+
+      assertEquals(
+        await client.resolveFileWithExtension(
+          "components/Button",
+          [".tsx"],
+          { type: "branch", name: "main" },
+          { signal: controller.signal },
+        ),
+        { path: "components/Button.tsx", content: "export default Button;" },
+      );
+      assertEquals(observedSignals, [controller.signal, controller.signal]);
+      controller.abort();
+      assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
     });
   });
 

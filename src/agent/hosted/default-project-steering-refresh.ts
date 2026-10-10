@@ -17,7 +17,10 @@ import {
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
+import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
+import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import {
   assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
@@ -275,8 +278,14 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    const bootstrapToolNames = toolNames.filter((toolName) => toolName === "load_skill");
-    const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
+    const bootstrapToolNames = (input.toolAssembly.modelVisibleToolNames ?? toolNames).filter(
+      isLoadSkillToolName,
+    );
+    const selectedBootstrapToolNames = new Set(bootstrapToolNames);
+    const hasDeferredTools = toolNames.some((toolName) => {
+      if (selectedBootstrapToolNames.has(toolName)) return false;
+      return !isRuntimeProviderSchemaHiddenTool(input.toolAssembly.runtimeTools[toolName]);
+    });
     const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
       ? [
         ...bootstrapToolNames,
@@ -284,7 +293,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       ].sort(compareStrings)
       : toolNames;
     input.taskContext.availableToolNames = modelVisibleToolNames;
-    const promptSkills = modelVisibleToolNames.includes("load_skill")
+    const promptSkills = modelVisibleToolNames.some(isLoadSkillToolName)
       ? skillSelectorSnapshot.definitions
       : [];
 
@@ -296,6 +305,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       instructions: projectInstructions,
       skills: promptSkills,
       availableToolNames: modelVisibleToolNames,
+      skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(modelVisibleToolNames),
     });
 
     const instructionsWithToolInventory = withRuntimeToolInventory(

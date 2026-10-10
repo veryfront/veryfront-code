@@ -27,11 +27,13 @@ export function SkillBadge({ tool, className, icon }: SkillBadgeProps): React.JS
   const isError = tool.state === "output-error";
 
   let label: string;
-  if (tool.toolName === "load_skill") {
+  if (tool.toolName === "load_skill" || tool.toolName === "veryfront__load_skill") {
     label = isComplete
       ? `Skill: ${skillId ?? "unknown"}`
       : `Loading skill${skillId ? `: ${skillId}` : ""}...`;
-  } else if (tool.toolName === "load_skill_reference") {
+  } else if (
+    tool.toolName === "load_skill_reference" || tool.toolName === "veryfront__load_skill_reference"
+  ) {
     const ref = input?.reference as string | undefined;
     label = isComplete ? `Reference: ${ref ?? "unknown"}` : `Reading${ref ? `: ${ref}` : ""}...`;
   } else {

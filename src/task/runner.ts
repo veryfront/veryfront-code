@@ -43,6 +43,9 @@ export interface RunnableTask {
  * Options for running a task
  */
 export interface RunTaskOptions {
+  /** Trusted platform capability; local Task contexts omit it. */
+  runChild?: TaskContext["runChild"];
+
   /** The discovered task to run */
   task: RunnableTask;
 
@@ -173,6 +176,7 @@ export async function runTask(
 ): Promise<TaskRunResult> {
   const {
     task,
+    runChild,
     config = {},
     input,
     runId,
@@ -240,6 +244,7 @@ export async function runTask(
     assertInjectedTaskEnvIsValid(allEnv);
     const env = buildTaskContextEnv(allEnv, envAllowlist);
     const ctx: TaskContext = {
+      ...(runChild === undefined ? {} : { runChild }),
       env,
       config,
       input: taskInput,

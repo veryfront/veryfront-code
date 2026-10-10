@@ -1867,3 +1867,27 @@ describe("local cache root version-control hygiene", () => {
     }
   });
 });
+
+describe("server startup cache scope", () => {
+  it("preserves materialized HTTP dependencies while clearing generated transforms", async () => {
+    const cacheBase = await makeTempDir({ prefix: "startup-cache-scope-" });
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const http = join(cacheBase, "veryfront-http-bundle", "http-seeded.mjs");
+        await getLocalFs().mkdir(join(http, ".."), { recursive: true });
+        await writeTextFile(http, "export const seeded = true;");
+        const generated = join(await getMdxEsmSsrCacheDir("19.2.4", "source"), "stale.mjs");
+        await getLocalFs().mkdir(join(generated, ".."), { recursive: true });
+        await writeTextFile(generated, "export const stale = true;");
+        await clearAllLocalCaches({ preserveHttpBundles: true });
+        assertEquals(await exists(generated), false);
+        assertEquals(await readTextFile(http), "export const seeded = true;");
+        await clearAllLocalCaches();
+        assertEquals(await exists(http), false);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+});

@@ -12,7 +12,7 @@ import { cva, type VariantProps } from "./cva.ts";
 const inputVariants = cva(
   [
     "flex w-full text-[var(--foreground)]",
-    "placeholder:text-[var(--foreground)] placeholder:opacity-25",
+    "placeholder:text-[var(--input-placeholder)]",
     "transition-[background-color,box-shadow,border-color] duration-150 ease-in",
     "focus-visible:outline-none",
     "disabled:cursor-not-allowed disabled:opacity-50",
@@ -68,7 +68,7 @@ export function Input({
         </span>
         <input
           type={type}
-          className="flex-1 min-w-0 bg-transparent text-inherit placeholder:text-[var(--foreground)] placeholder:opacity-25 outline-none border-0 p-0 h-full"
+          className="flex-1 min-w-0 bg-transparent text-inherit placeholder:text-[var(--input-placeholder)] outline-none border-0 p-0 h-full"
           data-invalid={dataInvalid}
           ref={ref}
           {...props}

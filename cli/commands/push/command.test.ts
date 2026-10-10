@@ -255,6 +255,13 @@ describe("buildPushUrls", () => {
     });
   });
 
+  it("keeps staging Studio and preview URLs in the staging environment", () => {
+    assertEquals(buildPushUrls("my-project", "feature-auth", "https://api.veryfront.org"), {
+      studio: "https://veryfront.org/projects/my-project?branch=feature-auth",
+      preview: "https://my-project--feature-auth.preview.veryfront.org",
+    });
+  });
+
   it("uses the exact branch name in named preview URLs", () => {
     assertEquals(buildPushUrls("my-project", "feature-auth"), {
       studio: "https://veryfront.com/projects/my-project?branch=feature-auth",

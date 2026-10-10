@@ -89,7 +89,7 @@
   --border: var(--outline-border);
   --input: var(--input-bg);
   --input-border: var(--edge-medium);
-  --input-placeholder: var(--faint);
+  --input-placeholder: var(--soft);
   --ring: var(--edge-medium);
   --chat-bubble: var(--primary);
   --chat-bubble-foreground: var(--secondary);

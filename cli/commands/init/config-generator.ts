@@ -66,12 +66,12 @@ export function buildPackageJson(
     }
   }
 
-  const veryfrontVersionRange = `^${VERSION}`;
+  const firstPartyPackageVersion = VERSION;
   const firstPartyExtensionPackages = options.firstPartyExtensions ?? [];
   const requiredExtensionDeps = Object.fromEntries(
     [...new Set(firstPartyExtensionPackages)].map((packageName) => [
       packageName,
-      veryfrontVersionRange,
+      firstPartyPackageVersion,
     ]),
   );
   const packageJson = {
@@ -95,7 +95,7 @@ export function buildPackageJson(
       ...requiredExtensionDeps,
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
-      veryfront: veryfrontVersionRange,
+      veryfront: firstPartyPackageVersion,
     },
     devDependencies: {
       "@types/react": `^${DEFAULT_INIT_REACT_TYPES_VERSION}`,

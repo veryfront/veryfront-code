@@ -2829,6 +2829,91 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("runs optional Studio agents without an eligible project transport", async () => {
+    const previousUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+    try {
+      for (
+        const forwardedProps of [
+          { clientId: "external-client" },
+          {
+            clientId: "veryfront-studio",
+            veryfront: { client: { id: "veryfront-studio", type: "web", platform: "browser" } },
+          },
+        ]
+      ) {
+        let remoteSources = -1;
+        let unavailableNames: string[] | undefined;
+        let unavailablePrefixes: string[] | undefined;
+        let availableToolNames: string[] | undefined;
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: () =>
+            createAgentWithConfig("assistant-1", {
+              tools: { studio_todo_write: true },
+              mcpServers: [{
+                kind: "veryfront-studio",
+                required: false,
+                toolPolicy: { allow: ["studio_todo_write"] },
+              }],
+            }),
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            remoteSources = getRuntimeRemoteToolSources(runtimeConfig)?.length ?? 0;
+            unavailableNames = runtimeConfig.__vfUnavailableOptionalRemoteToolNames;
+            unavailablePrefixes = runtimeConfig.__vfUnavailableOptionalRemoteToolPrefixes;
+            return {
+              stream: async (_messages, _context, callbacks) => {
+                availableToolNames = (await getAvailableTools(runtimeAgent.config.tools, {
+                  remoteToolSources: runtimeConfig.__vfRemoteToolSources,
+                  unavailableOptionalRemoteToolNames: unavailableNames,
+                  unavailableOptionalRemoteToolPrefixes: unavailablePrefixes,
+                })).map((tool) => tool.name);
+                callbacks?.onFinish?.({
+                  text: "ok",
+                  messages: [],
+                  toolCalls: [],
+                  status: "completed",
+                  usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+                });
+                return new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                });
+              },
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({ forwardedProps });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          requestId: "run_1",
+        });
+        const result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+        assertExists(result.response);
+        assertEquals(result.response.status, 200, await result.response.clone().text());
+        assertEquals(remoteSources, 0);
+        assertEquals(unavailableNames, ["studio_todo_write"]);
+        assertEquals(unavailablePrefixes, ["studio_"]);
+        assertEquals(availableToolNames?.includes("studio_todo_write"), false);
+      }
+    } finally {
+      if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", previousUrl);
+    }
+  });
+
   it("rejects explicit Studio MCP for a non-Studio client", async () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
@@ -2900,6 +2985,58 @@ describe("server/handlers/request/agent-stream.handler", () => {
     );
 
     assertEquals(result.response?.status, 401);
+  });
+  it("rejects required Studio MCP without a configured transport", async () => {
+    const previousUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: true,
+              mcpServers: [{ kind: "veryfront-studio" }],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+      });
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: {
+            client: { id: "veryfront-studio", type: "web", platform: "browser" },
+          },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response.json()).type,
+        "https://veryfront.com/docs/code/guides/errors#config-invalid",
+      );
+    } finally {
+      if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", previousUrl);
+    }
   });
 
   it("preserves an explicit Studio MCP opt-out", async () => {

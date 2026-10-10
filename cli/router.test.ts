@@ -529,6 +529,89 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("prints main help as JSON when --help and --json are combined", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit({ help: true, json: true, _: [] } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.command, "help");
+        assertEquals(parsed.data.usage, "veryfront <command> [options]");
+        assertEquals(parsed.data.showAll, false);
+        assertEquals(
+          parsed.data.commands.some((command: { name: string }) => command.name === "deploy"),
+          true,
+        );
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("prints command help as JSON from the help command", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["help", "deploy"], json: true } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.command, "help");
+        assertEquals(parsed.data.topic, "deploy");
+        assertEquals(parsed.data.help.name, "deploy");
+        assertEquals(parsed.data.help.category, "deploy");
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("prints command help as JSON from a command help flag", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["deploy"], help: true, json: true } as ParsedArgs,
+        );
+        assertEquals(code, 0);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.command, "help");
+        assertEquals(parsed.data.topic, "deploy");
+        assertEquals(parsed.data.help.name, "deploy");
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("reports unknown JSON help topics as usage errors", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["help", "does-not-exist"], json: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "help");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.registrySlug, "unknown-command");
+        assertEquals(parsed.error.message, "Unknown command: does-not-exist");
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("routes env to its subcommand handler", async () => {
       stubExit();
       stubConsole();

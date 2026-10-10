@@ -7,6 +7,7 @@
     "strict": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "noEmit": true,
     "jsx": "react-jsx",
     "paths": {
@@ -166,6 +167,16 @@
     },
     "baseUrl": "."
   },
-  "include": ["src/**/*", "cli/**/*", "tests/**/*"],
+  "include": [
+    "src/**/*",
+    "cli/**/*",
+    "tests/**/*",
+    "scripts/**/*",
+    "extensions/**/*",
+    "react/**/*",
+    "templates/*.ts",
+    "templates/integrations/**/*",
+    "templates/auth/**/*"
+  ],
   "exclude": ["node_modules", "dist", ".cache", "npm"]
 }

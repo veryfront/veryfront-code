@@ -1274,8 +1274,9 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await adapter.getToken("alice", "github"), null);
   });
 
-  it("exports compare-and-clear as a required encrypted-store capability", () => {
+  it("exports compare-and-clear as a required encrypted-store capability", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
+    await store.setTokens("github", "capability-check", { accessToken: "fixture-token" });
     const compareAndClearTokens: (
       serviceId: string,
       userId: string,

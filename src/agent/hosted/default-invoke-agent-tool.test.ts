@@ -212,6 +212,89 @@ it("fixed hosted delegates cannot override an empty fail-closed tool ceiling", (
   assertEquals(configured.tools, []);
 });
 
+it("fixed hosted delegates prune unavailable optional Studio tool requests", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["studio_todo_write", "create_file"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_todo_write"] },
+        }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {
+          create_file: { description: "Create file", execute: () => ({ ok: true }) },
+        },
+      },
+      provider: "anthropic",
+      forkModel: "sonnet",
+    });
+
+  assertEquals(requestedTools, ["create_file"]);
+});
+
+it("fixed hosted delegates preserve requested Studio names from another source", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["studio_todo_write", "create_file"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_todo_write"] },
+        }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {
+          studio_todo_write: { description: "Generic todo", execute: () => ({ ok: true }) },
+          create_file: { description: "Create file", execute: () => ({ ok: true }) },
+        },
+      },
+      provider: "anthropic",
+      forkModel: "sonnet",
+    });
+
+  assertEquals(requestedTools, ["studio_todo_write", "create_file"]);
+});
+
+it("fixed hosted delegates preserve requested provider-native tools during Studio pruning", () => {
+  const requestedTools = defaultHostedInvokeAgentToolInternals
+    .withoutUnavailableOptionalStudioRequestedTools({
+      requestedTools: ["web_search", "studio_todo_write"],
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        studioMcpUrl: undefined,
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["web_search", "studio_todo_write"] },
+        }],
+      },
+      clientProfile: null,
+      toolSources: {
+        ok: true,
+        forkTools: {},
+      },
+      provider: "openai",
+      forkModel: "gpt-4.1",
+    });
+
+  assertEquals(requestedTools, ["web_search"]);
+});
+
 it("fixed hosted delegates drop denied tools from assembled fork tool sources", () => {
   const echoTool = {
     description: "Echo",
@@ -410,6 +493,79 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
+it("default hosted invoke prunes unavailable optional Studio child tools before selection", async () => {
+  let capturedForkToolNames: readonly string[] | undefined;
+  let started = false;
+
+  const result = await executeDefaultHostedInvokeAgentTool(
+    createTestOptions({
+      enableDurableInvokeAgent: false,
+      config: {
+        studioMcpUrl: undefined,
+        mcpServers: [{
+          kind: "veryfront-studio",
+          required: false,
+          toolPolicy: { allow: ["studio_todo_write"] },
+        }],
+      },
+      options: {
+        resolveChildAgentExecutionConfig: () =>
+          Promise.resolve({
+            system: "Use Studio when it is available.",
+            toolNames: ["studio_todo_write"],
+            mcpServers: [{
+              kind: "veryfront-studio",
+              required: false,
+              toolPolicy: { allow: ["studio_todo_write"] },
+            }],
+          }),
+        createAgentServiceSandboxTools: () =>
+          Promise.resolve({
+            tools: {},
+            sandbox: {} as never,
+            closeSandbox: () => Promise.resolve(),
+          }),
+        startRuntime: (input) => {
+          started = true;
+          capturedForkToolNames = input.forkToolNames;
+          return {
+            forkStreamAbortController: new AbortController(),
+            childRunMonitorAbortController: null,
+            childRunMonitorPromise: Promise.resolve(),
+            forkToolNames: [...(input.forkToolNames ?? [])],
+            streamResult: {
+              fullStream: (async function* () {
+                yield { type: "text-delta", text: "Studio skipped." } as const;
+              })(),
+              steps: Promise.resolve([
+                {
+                  text: "Studio skipped.",
+                  finishReason: "stop",
+                  messages: [],
+                  toolCalls: [],
+                  toolResults: [],
+                },
+              ]),
+              totalUsage: Promise.resolve(undefined),
+            },
+          };
+        },
+      },
+    }),
+    {
+      description: "inspect application",
+      prompt: "Inspect the application.",
+      agent_id: "extraction-agent",
+    },
+    "extraction-agent",
+    { toolCallId: "tool-call-optional-studio-child" },
+  );
+
+  assertEquals("success" in result && result.success, true);
+  assertEquals(started, true);
+  assertEquals(capturedForkToolNames, []);
+});
+
 describe("default hosted invoke agent", () => {
   it("runs a generic local child with inherited assembled tools", async () => {
     const context: DefaultHostedInvokeAgentContext = {
@@ -489,7 +645,7 @@ describe("default hosted invoke agent", () => {
     );
 
     assertEquals("success" in result && result.success, true);
-    assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+    assertEquals(capturedForkToolNames, ["lookup_job", "sleep", "veryfront__sleep"]);
   });
 });
 
@@ -934,6 +1090,24 @@ it("child denials apply to both platform spellings without denying a colliding p
       denied === "update_file" ? "veryfront__update_file" : "update_file",
     ]);
   }
+});
+
+it("child denials preserve an explicitly selected platform loader alias", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        load_skill: platform,
+        veryfront__load_skill: platform,
+      },
+    },
+    ["load_skill"],
+    ["veryfront__load_skill"],
+  );
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["veryfront__load_skill"]);
 });
 
 it("child platform denials respect owner-qualified project short names", () => {

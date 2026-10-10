@@ -465,3 +465,35 @@ Help users.`,
   assertEquals(definition.tools, ["search_tickets"]);
   assertEquals(definition.deniedTools, ["delete_ticket"]);
 });
+
+it("Markdown agent definitions preserve optional Studio MCP", () => {
+  const definition = parseRuntimeAgentMarkdownDefinition({
+    id: "optional-studio",
+    content: `---
+name: Optional Studio
+mcp-servers:
+  - kind: veryfront-studio
+    required: false
+---
+Use available project tools.
+`,
+  });
+  assertEquals(definition.mcpServers, [{ kind: "veryfront-studio", required: false }]);
+});
+
+it("Markdown agent definitions reject required on API MCP", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "api-required",
+        content: `---
+name: API Required
+mcp-servers:
+  - kind: veryfront-api
+    required: false
+---
+Use available project tools.
+`,
+      }),
+  );
+});

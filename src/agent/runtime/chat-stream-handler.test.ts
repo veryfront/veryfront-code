@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -14,8 +19,14 @@ import {
   resolveRelayableExecutionFailure,
   resolveRuntimeExecutionErrorEvent,
 } from "./chat-stream-handler.ts";
-import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
-import { ProviderOutputTruncatedError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  ProviderOutputTruncatedError,
+  ProviderStreamProtocolError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   announceStreamedToolCallInput,
   createRuntimeStreamSource,
@@ -1095,7 +1106,7 @@ describe("chat-stream-handler", () => {
       assertEquals(chunks, ["a", "b"]);
     });
 
-    it("times out an idle stream before any output starts", async () => {
+    it("rejects an idle stream before any output instead of completing with zero usage", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
       const result = {
@@ -1103,13 +1114,57 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", {
-        streamIdleTimeoutMs: 10,
-      });
+      const error = await assertRejects(
+        () =>
+          processStream(result, state, controller, encoder, "t", {
+            streamIdleTimeoutMs: 10,
+          }),
+        Error,
+        "Provider stream failed",
+      ) as Error;
+      assertEquals(error.name, "RuntimeProviderStreamFailure");
+      const provenance = readRuntimeProviderStreamFailureCause(error);
+      assertEquals(provenance.found, true);
+      if (provenance.found) {
+        assertEquals(
+          (provenance.cause as Error).message,
+          "Provider stream timed out before producing output",
+        );
+      }
 
-      assertEquals(state.finishReason, "stop");
+      assertEquals(state.finishReason, null);
       assertEquals(events, []);
     });
+
+    for (const kind of ["reasoning", "tool", "signature", "redactedData"] as const) {
+      it(`preserves ${kind}-only idle completion when provider finish is optional`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const result = {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              if (kind === "reasoning") {
+                yield { type: "reasoning-delta", id: "r1", delta: "Thinking." };
+              } else if (kind === "signature" || kind === "redactedData") {
+                yield { type: "reasoning-start", id: "r1" };
+                yield { type: "reasoning-end", id: "r1", [kind]: "opaque-provider-data" };
+              } else {
+                yield { type: "tool-input-start", id: "t1", toolName: "lookup" };
+                yield { type: "tool-input-delta", id: "t1", delta: "{}" };
+                yield { type: "tool-input-end", id: "t1" };
+              }
+              await new Promise(() => {});
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        };
+        await processStream(result, state, controller, encoder, "t", {
+          streamIdleTimeoutMs: 10,
+          requireProviderFinish: false,
+        });
+        assertEquals(state.finishReason, kind === "tool" ? "tool-calls" : "stop");
+      });
+    }
 
     for (const requireProviderFinish of [true, false]) {
       it(`preserves text-only idle behavior with required finish (${requireProviderFinish})`, async () => {
@@ -3463,6 +3518,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       latestExternalEventSequence: 0,
       maxEventsPerBatch: 100,
       fetch: (_input, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         const bodyText = typeof init?.body === "string" ? init.body : "{}";
         const body = JSON.parse(bodyText);
         appendBodies.push(body);
@@ -4269,5 +4325,67 @@ describe("resolveRelayableExecutionFailure", () => {
 
     // The whole point of #1467: the real classified cause reaches the run error.
     assertEquals(relayed?.code, "PROVIDER_OUTPUT_TRUNCATED");
+  });
+
+  it("reports a rejected successful provider stream as a stream protocol error", () => {
+    for (const provider of ["openai", "anthropic", "google", "mistral"] as const) {
+      const rejected = new ProviderStreamProtocolError({
+        provider,
+        status: 200,
+        message: `${provider} request failed: invalid successful stream (private-provider-event)`,
+        retryable: false,
+      });
+      const failure = createRuntimeProviderStreamFailure(rejected);
+
+      assertEquals(resolveRuntimeExecutionErrorEvent(failure), {
+        type: "error",
+        error:
+          "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
+        code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+      });
+      assertEquals(
+        resolveRelayableExecutionFailure(failure)?.code,
+        "PROVIDER_STREAM_PROTOCOL_ERROR",
+      );
+    }
+  });
+
+  it("keeps an unclassified successful-status provider failure generic", () => {
+    const unclassified = new ProviderRequestError({
+      provider: "openai",
+      status: 200,
+      message: "openai request failed: private detail",
+      retryable: false,
+    });
+
+    assertEquals(
+      resolveRuntimeExecutionErrorEvent(createRuntimeProviderStreamFailure(unclassified)),
+      { type: "error", error: "Provider stream failed" },
+    );
+  });
+});
+
+describe("native provider authentication failures", () => {
+  it("projects private provider stream causes to curated SSE and replay errors", () => {
+    for (const status of [401, 403]) {
+      const cause = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      const error = createRuntimeProviderStreamFailure(cause);
+      assertEquals(resolveRuntimeExecutionErrorEvent(error), {
+        type: "error",
+        code: "agent-provider-auth-error",
+        error: "Agent provider authentication failed",
+      });
+      assertEquals(resolveRelayableExecutionFailure(error), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+      });
+      assertEquals(Object.keys(error).includes("cause"), false);
+      assertEquals(cause.retryable, false);
+    }
   });
 });

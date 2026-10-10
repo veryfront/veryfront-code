@@ -1,6 +1,27 @@
-import { privateJsonParse } from "#veryfront/security/private-json.ts";
-import type { Message } from "../types.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { slicePrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import type { Message, ToolResultPart } from "../types.ts";
 import type { ToolDefinition } from "#veryfront/tool";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   isSkillToolAvailable,
@@ -10,6 +31,7 @@ import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
@@ -19,20 +41,42 @@ import {
   readToolResultOwnDataProperty,
   UNREADABLE_TOOL_RESULT_PROPERTY,
 } from "#veryfront/tool/result.ts";
-import { isToolResultPart } from "./tool-result-continuation.ts";
+import { isToolResultPart } from "./tool-result-part.ts";
+import { inheritRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
 import {
   extractSkillDelegationOverrides,
   type SkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
 import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
+import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  isFormInputToolName,
+  isLoadSkillToolName,
+  LOAD_SKILL_TOOL_ID,
+} from "../platform-tool-names.ts";
+export {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  isFormInputToolName,
+  isLoadSkillToolName,
+  LOAD_SKILL_TOOL_ID,
+} from "../platform-tool-names.ts";
 
 const logger = serverLogger.component("agent");
 const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
 const arrayIsArray = Array.isArray;
+const trustedPlatformPolicyToolDefinitions = createPrivateWeakStore<object, true>();
+const trustedPlatformPolicyToolResults = createPrivateWeakStore<object, string>();
+const trustedHostedSourceIdentities = createPrivateWeakStore<object, object>();
+const inheritedHostedPolicyToolResultIds = createPrivateWeakStore<object, Set<string>>();
+const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
+  "__veryfrontTrustedPlatformPolicyToolResultIds";
 
-export const LOAD_SKILL_TOOL_ID = "load_skill";
-export const FORM_INPUT_TOOL_ID = "form_input";
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 
@@ -46,7 +90,170 @@ export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = Object.fr
 
 const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set([
   FORM_INPUT_TOOL_ID,
+  CANONICAL_FORM_INPUT_TOOL_ID,
 ]);
+
+/** Mark a model-facing tool schema as the framework-owned platform control tool it represents. */
+export function markTrustedPlatformPolicyToolDefinition<T extends ToolDefinition>(
+  definition: T,
+): T {
+  trustedPlatformPolicyToolDefinitions.set(definition, true);
+  return definition;
+}
+
+/** Check platform control provenance without trusting the public tool name. */
+export function hasTrustedPlatformPolicyToolDefinition(definition: unknown): boolean {
+  return typeof definition === "object" && definition !== null &&
+    trustedPlatformPolicyToolDefinitions.get(definition) === true;
+}
+
+function snapshotPlatformPolicyToolResult(part: ToolResultPart): string | undefined {
+  const type = readToolResultOwnDataProperty(part, "type");
+  const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+  const toolName = readToolResultOwnDataProperty(part, "toolName");
+  if (
+    type !== "tool-result" || typeof toolCallId !== "string" || toolCallId.length === 0 ||
+    typeof toolName !== "string" || toolName.length === 0
+  ) return undefined;
+  const isSkillLoad = toolName === "load_skill" || toolName === "veryfront__load_skill";
+  const resultValue = readToolResultOwnDataProperty(part, "result");
+  const providerExecuted = readToolResultOwnDataProperty(part, "providerExecuted");
+  if (
+    resultValue === UNREADABLE_TOOL_RESULT_PROPERTY ||
+    providerExecuted === UNREADABLE_TOOL_RESULT_PROPERTY
+  ) return undefined;
+  // Match admitted payload sizes, including the small platform-result envelope.
+  // A valid UTF-16 skill character uses at most three UTF-8 bytes, or six JSON
+  // escape bytes. Include the existing bounded reference/script path inventory.
+  const maxJsonBytes = isSkillLoad
+    ? 6 * SKILL_DOCUMENT_MAX_CHARACTERS +
+      6 * SKILL_RELATIVE_PATH_MAX_LENGTH *
+        (SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + SKILL_SUBDIR_MAX_ENTRIES) +
+      65_536
+    : JSON_VALUE_MAX_SERIALIZED_BYTES + 4_096;
+  const encoded = typeof resultValue === "string";
+  // Stored results may already be JSON strings. Snapshotting their literal text
+  // can double JSON escape bytes; it must retain the same accepted payload.
+  const result = snapshotBoundedJsonValue(
+    resultValue,
+    encoded
+      ? maxJsonBytes
+      : isSkillLoad
+      ? 3 * SKILL_DOCUMENT_MAX_CHARACTERS
+      : JSON_VALUE_MAX_STRING_BYTES,
+    encoded ? 2 * maxJsonBytes + 2 : maxJsonBytes,
+  );
+  if (!result.success) return undefined;
+  try {
+    return privateJsonStringify({
+      toolCallId,
+      toolName,
+      providerExecuted,
+      result: normalizeToolResultPayload(result.value),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Bind runtime-created control provenance to its data-only identity and result. */
+export function markTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
+  part: T,
+): T {
+  const snapshot = snapshotPlatformPolicyToolResult(part);
+  if (snapshot !== undefined && trustedPlatformPolicyToolResults.get(part) === undefined) {
+    trustedPlatformPolicyToolResults.set(part, snapshot);
+  }
+  return part;
+}
+
+export function hasTrustedPlatformPolicyToolResultPart(part: ToolResultPart): boolean {
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(part);
+  return trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(part) === trustedSnapshot;
+}
+
+/** Preserve control provenance only across clones with the original identity and result. */
+export function inheritTrustedPlatformPolicyToolResultPart<T extends ToolResultPart>(
+  source: ToolResultPart,
+  target: T,
+): T {
+  const trustedSnapshot = trustedPlatformPolicyToolResults.get(source);
+  if (
+    trustedSnapshot !== undefined &&
+    snapshotPlatformPolicyToolResult(source) === trustedSnapshot &&
+    snapshotPlatformPolicyToolResult(target) === trustedSnapshot
+  ) {
+    trustedPlatformPolicyToolResults.set(target, trustedSnapshot);
+  }
+  return target;
+}
+
+function getTrustedPlatformPolicyToolResultIdsForPersistence(
+  message: Message,
+): string[] {
+  const toolCallIds: string[] = [];
+  for (let index = 0; index < message.parts.length; index++) {
+    if (!objectHasOwn(message.parts, index)) continue;
+    const part = message.parts[index]!;
+    if (isToolResultPart(part) && hasTrustedPlatformPolicyToolResultPart(part)) {
+      toolCallIds[toolCallIds.length] = part.toolCallId;
+    }
+  }
+  return toolCallIds;
+}
+
+function withPolicyMetadata<TMessage extends Message>(
+  message: TMessage,
+  toolCallIds: readonly string[],
+): TMessage {
+  const metadata: Record<string, unknown> = {
+    ...(objectHasOwn(message, "metadata") ? message.metadata ?? {} : {}),
+  };
+  delete metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY];
+  if (toolCallIds.length > 0) {
+    metadata[TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY] = slicePrivateArray(toolCallIds);
+  }
+  let nextMessage = {
+    ...message,
+    ...(objectKeys(metadata).length > 0 ? { metadata } : { metadata: undefined }),
+  };
+  const providerMetadata = readAttachedProviderMetadata(message);
+  if (providerMetadata !== undefined) {
+    nextMessage = attachProviderMetadata(nextMessage, providerMetadata);
+  }
+  if (isProviderReplayDelivered(message)) {
+    markProviderReplayDelivered(nextMessage);
+  }
+  return isRuntimeGeneratedUserMessage(message)
+    ? markRuntimeGeneratedUserMessage(nextMessage)
+    : nextMessage;
+}
+
+/**
+ * Prepare a runtime-created message for durable memory. Caller-supplied
+ * metadata is cleared first; only live WeakStore provenance can create the
+ * persisted ownership sidecar.
+ */
+export function prepareTrustedPlatformPolicyMessageForPersistence(message: Message): Message {
+  const trustedToolCallIds = getTrustedPlatformPolicyToolResultIdsForPersistence(message);
+  return withPolicyMetadata(message, trustedToolCallIds);
+}
+
+/** Remove persisted ownership sidecars from caller-supplied messages before admission. */
+export function stripTrustedPlatformPolicyMessageMetadata(message: Message): Message {
+  return withPolicyMetadata(message, []);
+}
+
+function isTrustedPlatformPolicyTool(
+  toolName: string,
+  definition?: ToolDefinition,
+): boolean {
+  if (!isFormInputToolName(toolName) && !isLoadSkillToolName(toolName)) {
+    return false;
+  }
+  return hasTrustedPlatformPolicyToolDefinition(definition);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   try {
@@ -108,11 +315,23 @@ function getActiveSkillReferenceSnapshot(
   return snapshot;
 }
 
-function isSkillActivationResult(result: unknown): result is Record<string, unknown> {
-  if (!isRecord(result) || hasToolExecutionErrorMarker(result)) return false;
-  const skillId = readToolResultOwnDataProperty(result, "skillId");
-  const instructions = readToolResultOwnDataProperty(result, "instructions");
-  return typeof skillId === "string" &&
+function normalizeToolResultPayload(result: unknown): unknown {
+  const parsed = typeof result === "string" ? parseToolResultJson(result) : result;
+  if (!isRecord(parsed)) return parsed;
+  const type = readToolResultOwnDataProperty(parsed, "type");
+  if (type === "json" && objectHasOwn(parsed, "value")) {
+    const value = readToolResultOwnDataProperty(parsed, "value");
+    return typeof value === "string" ? parseToolResultJson(value) : value;
+  }
+  return parsed;
+}
+
+function getSkillActivationResult(result: unknown): Record<string, unknown> | undefined {
+  const normalized = normalizeToolResultPayload(result);
+  if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return undefined;
+  const skillId = readToolResultOwnDataProperty(normalized, "skillId");
+  const instructions = readToolResultOwnDataProperty(normalized, "instructions");
+  const isActivation = typeof skillId === "string" &&
     skillId.length > 0 &&
     skillId.length <= SKILL_ID_MAX_LENGTH &&
     isWellFormedUtf16(skillId) &&
@@ -120,6 +339,11 @@ function isSkillActivationResult(result: unknown): result is Record<string, unkn
     typeof instructions === "string" &&
     instructions.length <= SKILL_DOCUMENT_MAX_CHARACTERS &&
     isWellFormedUtf16(instructions);
+  return isActivation ? normalized : undefined;
+}
+
+function isSkillActivationResult(result: unknown): boolean {
+  return getSkillActivationResult(result) !== undefined;
 }
 
 export type ActiveSkillState = {
@@ -153,7 +377,11 @@ export function hydrateActiveSkillStateFromMessages(
     for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
       if (!objectHasOwn(message.parts, partIndex)) continue;
       const part = message.parts[partIndex]!;
-      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
+      if (
+        !isToolResultPart(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName)
+      ) continue;
       state = applySkillActivationResult(state, part.result);
     }
   }
@@ -162,8 +390,9 @@ export function hydrateActiveSkillStateFromMessages(
 }
 
 export function extractSkillId(result: unknown): string | undefined {
-  if (!isRecord(result)) return undefined;
-  const skillId = readToolResultOwnDataProperty(result, "skillId");
+  const activation = getSkillActivationResult(result);
+  if (!activation) return undefined;
+  const skillId = readToolResultOwnDataProperty(activation, "skillId");
   return typeof skillId === "string" ? skillId : undefined;
 }
 
@@ -201,18 +430,19 @@ function extractStringArrayField(
 export function extractSkillToolAvailability(
   result: unknown,
 ): SkillToolAvailability | undefined {
-  if (!isSkillActivationResult(result)) return undefined;
+  const activation = getSkillActivationResult(result);
+  if (!activation) return undefined;
 
   return Object.freeze({
     hasActiveSkill: true,
     references: extractStringArrayField(
-      result,
+      activation,
       "references",
       SKILL_READABLE_DIRS,
       SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
     ),
     scripts: extractStringArrayField(
-      result,
+      activation,
       "scripts",
       ["scripts"],
       SKILL_SUBDIR_MAX_ENTRIES,
@@ -236,15 +466,16 @@ export function applySkillActivationResult(
   result: unknown,
   options: SkillActivationOptions = {},
 ): ActiveSkillState {
-  if (!isSkillActivationResult(result)) return current;
+  const activation = getSkillActivationResult(result);
+  if (!activation) return current;
 
   try {
     return {
-      activeSkillId: extractSkillId(result),
-      activeSkillToolAvailability: extractSkillToolAvailability(result) ??
+      activeSkillId: extractSkillId(activation),
+      activeSkillToolAvailability: extractSkillToolAvailability(activation) ??
         INACTIVE_SKILL_TOOL_AVAILABILITY,
       activeSkillDelegationOverrides: options.trustDelegationOverrides === true
-        ? extractSkillDelegationOverrides(result)
+        ? extractSkillDelegationOverrides(activation)
         : undefined,
     };
   } catch (error) {
@@ -264,7 +495,7 @@ function parseToolResultJson(result: string): unknown {
 }
 
 export function isSubmittedFormInputResult(result: unknown): boolean {
-  const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
+  const normalized = normalizeToolResultPayload(result);
   if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return false;
   const submitted = readToolResultOwnDataProperty(normalized, "submitted");
   if (submitted === UNREADABLE_TOOL_RESULT_PROPERTY) return false;
@@ -280,6 +511,382 @@ export function isSubmittedFormInputResult(result: unknown): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Restore form-submission provenance after reading messages from runtime-owned
+ * persistence. Do not apply this to caller-supplied message arrays: public
+ * payloads can forge names and result shapes, while this boundary only receives
+ * history previously admitted by the runtime.
+ */
+function getTrustedPlatformPolicyToolCallIdsFromMetadata(
+  metadata: unknown,
+): string[] {
+  const trustedToolCallIds = isRecord(metadata)
+    ? readToolResultOwnDataProperty(metadata, TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY)
+    : undefined;
+  if (!arrayIsArray(trustedToolCallIds)) return [];
+
+  const result: string[] = [];
+  for (let idIndex = 0; idIndex < trustedToolCallIds.length; idIndex++) {
+    if (!objectHasOwn(trustedToolCallIds, idIndex)) continue;
+    const toolCallId = trustedToolCallIds[idIndex];
+    if (typeof toolCallId === "string") result[result.length] = toolCallId;
+  }
+  return result;
+}
+
+function getTrustedPlatformPolicyToolCallIdSet(message: Message): Set<string> | null {
+  const trustedToolCallIds = getTrustedPlatformPolicyToolCallIdsFromMetadata(
+    objectHasOwn(message, "metadata") ? message.metadata : undefined,
+  );
+  if (trustedToolCallIds.length === 0) return null;
+
+  const trustedToolCallIdSet = createPrivateSet<string>();
+  for (let idIndex = 0; idIndex < trustedToolCallIds.length; idIndex++) {
+    if (!objectHasOwn(trustedToolCallIds, idIndex)) continue;
+    trustedToolCallIdSet.add(trustedToolCallIds[idIndex]!);
+  }
+  return trustedToolCallIdSet.size > 0 ? trustedToolCallIdSet : null;
+}
+
+export function inheritTrustedPlatformPolicyMessageMetadata<TMessage extends Message>(
+  source: { metadata?: unknown },
+  target: TMessage,
+): TMessage {
+  return withPolicyMetadata(
+    target,
+    getTrustedPlatformPolicyToolCallIdsFromMetadata(
+      readToolResultOwnDataProperty(source, "metadata"),
+    ),
+  );
+}
+
+/** Restore only the sidecar IDs owned by each result's authenticated original source. */
+export function inheritTrustedPlatformPolicyToolResultMetadata<TMessage extends Message>(
+  target: TMessage,
+  getTrustedSource: (sourceId: string) => { metadata?: unknown } | null | undefined,
+): TMessage {
+  const toolCallIds: string[] = [];
+  for (let index = 0; index < target.parts.length; index++) {
+    if (!objectHasOwn(target.parts, index)) continue;
+    const part = target.parts[index]!;
+    if (!isToolResultPart(part)) continue;
+    const sourceId = getToolResultSource(part);
+    if (sourceId === undefined) continue;
+    const source = getTrustedSource(sourceId);
+    if (!source) continue;
+    const sourceIds = getTrustedPlatformPolicyToolCallIdsFromMetadata(
+      readToolResultOwnDataProperty(source, "metadata"),
+    );
+    for (let sourceIndex = 0; sourceIndex < sourceIds.length; sourceIndex++) {
+      if (sourceIds[sourceIndex] === part.toolCallId) {
+        toolCallIds[toolCallIds.length] = part.toolCallId;
+        break;
+      }
+    }
+  }
+  const restoredMessage = withPolicyMetadata(target, toolCallIds);
+  if (toolCallIds.length > 0) {
+    const inheritedIds = createPrivateSet<string>();
+    for (let index = 0; index < toolCallIds.length; index++) {
+      inheritedIds.add(toolCallIds[index]!);
+    }
+    inheritedHostedPolicyToolResultIds.set(restoredMessage, inheritedIds);
+  }
+  return restoredMessage;
+}
+
+/** Reject every result sharing an ID, including malformed or differently named duplicates. */
+function ambiguousResultIds(message: Message): Set<string> {
+  const seen = createPrivateSet<string>();
+  const duplicates = createPrivateSet<string>();
+  const parts = message.parts;
+  for (let index = 0; index < parts.length; index++) {
+    if (!objectHasOwn(parts, index)) continue;
+    const part = parts[index];
+    if (readToolResultOwnDataProperty(part, "type") !== "tool-result") continue;
+    const id = readToolResultOwnDataProperty(part, "toolCallId");
+    if (typeof id !== "string") continue;
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  return duplicates;
+}
+
+function isOwnHistoryToolResult(part: unknown): part is ToolResultPart {
+  return readToolResultOwnDataProperty(part, "type") === "tool-result" &&
+    typeof readToolResultOwnDataProperty(part, "toolCallId") === "string" &&
+    typeof readToolResultOwnDataProperty(part, "toolName") === "string" &&
+    readToolResultOwnDataProperty(part, "result") !== UNREADABLE_TOOL_RESULT_PROPERTY;
+}
+
+function countHistoryToolResultIds(
+  messages: readonly Message[],
+  messageCount: number,
+  shouldCount: (message: Message, part: ToolResultPart) => boolean,
+): Map<string, number> {
+  const counts = createPrivateMap<string, number>();
+  for (let index = 0; index < messageCount; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const parts = readToolResultOwnDataProperty(message, "parts");
+    if (!arrayIsArray(parts)) continue;
+    const length = readToolResultOwnDataProperty(parts, "length");
+    if (typeof length !== "number") continue;
+    for (let partIndex = 0; partIndex < length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = readToolResultOwnDataProperty(parts, partIndex);
+      if (!isOwnHistoryToolResult(part)) continue;
+      const id = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof id === "string" && shouldCount(message, part)) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
+function restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+  message: Message,
+  isTrustedSource: (part: ToolResultPart) => boolean = () => true,
+): void {
+  const trustedToolCallIdSet = getTrustedPlatformPolicyToolCallIdSet(message);
+  if (!trustedToolCallIdSet) return;
+  const duplicates = ambiguousResultIds(message);
+  const parts = message.parts;
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    if (!objectHasOwn(parts, partIndex)) continue;
+    const part = parts[partIndex]!;
+    if (
+      isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedSource(part) &&
+      trustedToolCallIdSet.has(part.toolCallId) &&
+      ((isFormInputToolName(part.toolName) && isSubmittedFormInputResult(part.result)) ||
+        (isLoadSkillToolName(part.toolName) && isSkillActivationResult(part.result)))
+    ) {
+      markTrustedPlatformPolicyToolResultPart(part);
+    }
+  }
+}
+
+export function restoreTrustedPlatformPolicyResultsFromPersistedHistory(
+  messages: readonly Message[],
+  messageCount: number = messages.length,
+): void {
+  const boundedMessageCount = Math.max(0, Math.min(messages.length, messageCount));
+  const resultCounts = countHistoryToolResultIds(
+    messages,
+    boundedMessageCount,
+    (message, part) =>
+      getTrustedPlatformPolicyToolCallIdSet(message)?.has(part.toolCallId) === true,
+  );
+  for (let index = 0; index < boundedMessageCount; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+      messages[index]!,
+      (part) => resultCounts.get(part.toolCallId) === 1,
+    );
+  }
+}
+
+function getTrustedHostedLoadSkillCallMapFromAssistant(
+  message: Message,
+): Map<string, string> | null {
+  if (message.role !== "assistant") return null;
+  const trustedToolCallIdSet = getTrustedPlatformPolicyToolCallIdSet(message);
+  if (!trustedToolCallIdSet) return null;
+
+  const trustedHostedLoadSkillCalls = createPrivateMap<string, string>();
+  const seenTrustedToolCallIds = createPrivateSet<string>();
+  const ambiguousTrustedToolCallIds = createPrivateSet<string>();
+  const parts = message.parts;
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    if (!objectHasOwn(parts, partIndex)) continue;
+    const part = parts[partIndex]!;
+    if (!isRecord(part) || part.type !== "tool-call") continue;
+    const toolCallId = part.toolCallId;
+    if (typeof toolCallId !== "string" || !trustedToolCallIdSet.has(toolCallId)) continue;
+    if (seenTrustedToolCallIds.has(toolCallId)) {
+      trustedHostedLoadSkillCalls.delete(toolCallId);
+      ambiguousTrustedToolCallIds.add(toolCallId);
+      continue;
+    }
+    seenTrustedToolCallIds.add(toolCallId);
+    if (ambiguousTrustedToolCallIds.has(toolCallId)) continue;
+
+    const toolName = part.toolName;
+    if (typeof toolName === "string" && isLoadSkillToolName(toolName)) {
+      trustedHostedLoadSkillCalls.set(toolCallId, toolName);
+    }
+  }
+  return trustedHostedLoadSkillCalls.size > 0 ? trustedHostedLoadSkillCalls : null;
+}
+
+function restoreAdjacentTrustedHostedLoadSkillResults(
+  message: Message,
+  pendingTrustedLoadSkillCalls: Map<string, string>,
+  isTrustedSource: (part: ToolResultPart) => boolean,
+): void {
+  if (message.role !== "tool") return;
+  const duplicates = ambiguousResultIds(message);
+  const parts = message.parts;
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    if (!objectHasOwn(parts, partIndex)) continue;
+    const part = parts[partIndex]!;
+    if (
+      !isToolResultPart(part) || duplicates.has(part.toolCallId) || !isTrustedSource(part) ||
+      !pendingTrustedLoadSkillCalls.has(part.toolCallId)
+    ) continue;
+    const expectedToolName = pendingTrustedLoadSkillCalls.get(part.toolCallId);
+    pendingTrustedLoadSkillCalls.delete(part.toolCallId);
+    if (
+      expectedToolName === part.toolName &&
+      isLoadSkillToolName(part.toolName) &&
+      isSkillActivationResult(part.result)
+    ) {
+      markTrustedPlatformPolicyToolResultPart(part);
+    }
+  }
+}
+
+function createTrustedHostedHistoryMessageIdSet(
+  messageIds: readonly string[] | undefined,
+): Set<string> | null {
+  if (!messageIds || messageIds.length === 0) return null;
+  const trustedMessageIds = createPrivateSet<string>();
+  for (let index = 0; index < messageIds.length; index++) {
+    if (!objectHasOwn(messageIds, index)) continue;
+    const messageId = messageIds[index];
+    if (typeof messageId === "string") trustedMessageIds.add(messageId);
+  }
+  return trustedMessageIds.size > 0 ? trustedMessageIds : null;
+}
+
+/** @internal Bind a converted runtime message to its unique server-loaded UI source. */
+export function inheritTrustedHostedHistorySourceIdentity<
+  TSource extends object,
+  TMessage extends Message,
+>(
+  source: TSource,
+  message: TMessage,
+): TMessage {
+  trustedHostedSourceIdentities.set(message, source);
+  return message;
+}
+
+/**
+ * Restore platform provenance only from unique admitted history sources.
+ * UI projections require an opaque per-result origin. Direct runtime callers
+ * explicitly admit unique IDs or host-bound splits sharing a private source.
+ */
+
+export function restoreTrustedHostedPlatformPolicyResultsFromServerHistory(
+  messages: readonly Message[],
+  options: {
+    legacyLoadSkillReplayAllowed?: boolean;
+    trustedMessageIds?: readonly string[];
+    /** Original UI sources, before one source can project into assistant and tool messages. */
+    sourceMessages?: readonly Pick<ChatUiMessage, "id">[];
+  } = {},
+): void {
+  const trustedMessageIds = createTrustedHostedHistoryMessageIdSet(options.trustedMessageIds);
+  if (!trustedMessageIds) return;
+  const sourceCounts = createPrivateMap<string, number>();
+  const sources = options.sourceMessages ?? messages;
+  for (let index = 0; index < sources.length; index++) {
+    if (!objectHasOwn(sources, index)) continue;
+    const id = readToolResultOwnDataProperty(sources[index], "id");
+    if (typeof id === "string") sourceCounts.set(id, (sourceCounts.get(id) ?? 0) + 1);
+  }
+
+  const observedMessages = createPrivateMap<string, Message>();
+  const duplicateIds = createPrivateSet<string>();
+  for (let index = 0; index < messages.length; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const id = readToolResultOwnDataProperty(message, "id");
+    if (typeof id !== "string" || !trustedMessageIds.has(id)) continue;
+    const previous = observedMessages.get(id);
+    if (!previous) {
+      observedMessages.set(id, message);
+      continue;
+    }
+    // One UI tool result becomes an assistant call and a tool response with the same source ID.
+    // Permit that host-produced split only when both messages have the same private source identity.
+    const source = trustedHostedSourceIdentities.get(previous);
+    if (!source || source !== trustedHostedSourceIdentities.get(message)) {
+      duplicateIds.add(id);
+    }
+  }
+
+  const isAdmittedResultSource = (message: Message, part: ToolResultPart): boolean => {
+    const messageId = readToolResultOwnDataProperty(message, "id");
+    const sourceId = getToolResultSource(part) ??
+      (options.sourceMessages === undefined && typeof messageId === "string"
+        ? messageId
+        : undefined);
+    return sourceId !== undefined && trustedMessageIds.has(sourceId) &&
+      (options.sourceMessages === undefined
+        ? observedMessages.has(sourceId) && !duplicateIds.has(sourceId)
+        : sourceCounts.get(sourceId) === 1);
+  };
+  const resultCounts = countHistoryToolResultIds(messages, messages.length, isAdmittedResultSource);
+
+  let pendingTrustedLoadSkillCalls: Map<string, string> | null = null;
+  for (let index = 0; index < messages.length; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const messageId = readToolResultOwnDataProperty(message, "id");
+    const messageIsTrustedHistory = typeof messageId === "string" &&
+      trustedMessageIds.has(messageId) && !duplicateIds.has(messageId) &&
+      (options.sourceMessages === undefined || sourceCounts.get(messageId) === 1);
+    const isTrustedResultSource = (part: ToolResultPart): boolean =>
+      resultCounts.get(part.toolCallId) === 1 && isAdmittedResultSource(message, part);
+
+    const inheritedResultIds = inheritedHostedPolicyToolResultIds.get(message);
+    restoreTrustedPlatformPolicyResultsFromPersistedMessage(
+      message,
+      (part) =>
+        isTrustedResultSource(part) &&
+        (messageIsTrustedHistory || inheritedResultIds?.has(part.toolCallId) === true),
+    );
+    if (message.role === "assistant" && messageIsTrustedHistory) {
+      pendingTrustedLoadSkillCalls = getTrustedHostedLoadSkillCallMapFromAssistant(message);
+    } else if (message.role === "tool") {
+      if (pendingTrustedLoadSkillCalls) {
+        restoreAdjacentTrustedHostedLoadSkillResults(
+          message,
+          pendingTrustedLoadSkillCalls,
+          isTrustedResultSource,
+        );
+        if (pendingTrustedLoadSkillCalls.size === 0) pendingTrustedLoadSkillCalls = null;
+      } else {
+        pendingTrustedLoadSkillCalls = null;
+      }
+    } else {
+      pendingTrustedLoadSkillCalls = null;
+    }
+
+    const duplicates = ambiguousResultIds(message);
+    const parts = message.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) && !duplicates.has(part.toolCallId) && isTrustedResultSource(part) &&
+        (
+          (part.toolName === CANONICAL_FORM_INPUT_TOOL_ID &&
+            isSubmittedFormInputResult(part.result)) ||
+          ((part.toolName === CANONICAL_LOAD_SKILL_TOOL_ID ||
+            (options.legacyLoadSkillReplayAllowed === true &&
+              part.toolName === LOAD_SKILL_TOOL_ID)) &&
+            isSkillActivationResult(part.result))
+        )
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part);
+      }
+    }
+  }
 }
 
 function latestUserMessageIndex(messages: readonly Message[]): number {
@@ -303,7 +910,9 @@ export function hasSubmittedFormInputResult(messages: readonly Message[]): boole
       if (!objectHasOwn(parts, partIndex)) continue;
       const part = parts[partIndex]!;
       if (
-        isToolResultPart(part) && part.toolName === FORM_INPUT_TOOL_ID &&
+        isToolResultPart(part) &&
+        hasTrustedPlatformPolicyToolResultPart(part) &&
+        isFormInputToolName(part.toolName) &&
         isSubmittedFormInputResult(part.result)
       ) return true;
     }
@@ -339,28 +948,34 @@ export function filterToolsAfterSubmittedFormInput(
   for (let index = 0; index < tools.length; index++) {
     const tool = tools[index];
     if (tool === undefined) continue;
-    if (POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name)) {
+    if (
+      POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name) &&
+      isTrustedPlatformPolicyTool(tool.name, tool)
+    ) {
       continue;
     }
-    if (tool.name !== LOAD_SKILL_TOOL_ID) {
+    if (!isLoadSkillToolName(tool.name) || !isTrustedPlatformPolicyTool(tool.name, tool)) {
       filtered[filtered.length] = tool;
       continue;
     }
     if (!activeSkill?.id || activeSkillReferences.length === 0) {
       continue;
     }
-    filtered[filtered.length] = {
-      ...tool,
-      parameters: {
-        type: "object",
-        properties: {
-          skillId: { type: "string", enum: [activeSkill.id] },
-          file: { type: "string", enum: activeSkillReferences },
+    filtered[filtered.length] = inheritRuntimeProviderSchemaHiddenTool(
+      tool,
+      markTrustedPlatformPolicyToolDefinition({
+        ...tool,
+        parameters: {
+          type: "object",
+          properties: {
+            skillId: { type: "string", enum: [activeSkill.id] },
+            file: { type: "string", enum: activeSkillReferences },
+          },
+          required: ["skillId", "file"],
+          additionalProperties: false,
         },
-        required: ["skillId", "file"],
-        additionalProperties: false,
-      },
-    };
+      }),
+    );
   }
   return filtered;
 }
@@ -374,6 +989,7 @@ export type SkillPolicyOptions = {
   skillToolAvailability?: SkillToolAvailability;
   activeSkillId?: string;
   toolInput?: unknown;
+  toolDefinition?: ToolDefinition;
 };
 
 function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
@@ -403,7 +1019,7 @@ function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
 
 /** Identify a valid skill-body activation call without confusing reference reads for activation. */
 export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolean {
-  if (toolName !== LOAD_SKILL_TOOL_ID || !isRecord(input)) return false;
+  if (!isLoadSkillToolName(toolName) || !isRecord(input)) return false;
   const skillId = readToolResultOwnDataProperty(input, "skillId");
   const file = readToolResultOwnDataProperty(input, "file");
   return typeof skillId === "string" && skillId.length > 0 && file === undefined;
@@ -415,7 +1031,8 @@ export function enforceSkillPolicy(
 ): SkillPolicyResult {
   if (
     options.hasSubmittedFormInput === true &&
-    POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName)
+    POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(toolName) &&
+    isTrustedPlatformPolicyTool(toolName, options.toolDefinition)
   ) {
     return {
       allowed: false,
@@ -426,7 +1043,8 @@ export function enforceSkillPolicy(
 
   if (
     options.hasSubmittedFormInput === true &&
-    toolName === LOAD_SKILL_TOOL_ID &&
+    isLoadSkillToolName(toolName) &&
+    isTrustedPlatformPolicyTool(toolName, options.toolDefinition) &&
     !isActiveSkillReferenceLoad(options)
   ) {
     return {

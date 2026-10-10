@@ -106,6 +106,7 @@ it("retains terminal authority privately across the trusted root descriptor only
   bindHostedTerminalRun(request, run, {
     apiUrl: base.apiUrl,
     fetch: (_input, init) => {
+      assert(init && "headers" in init, "fetch must receive request options");
       calls++;
       assertEquals(new Headers(init?.headers).get("X-Veryfront-Run-Terminal-Token"), token);
       return Promise.resolve(Response.json({ id: canonical, status: "completed" }));

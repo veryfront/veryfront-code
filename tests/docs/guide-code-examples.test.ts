@@ -12,7 +12,9 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   agent,
+  ConversationRunEventEncoder,
   createAgUiHandler,
+  createExternalAgentWorkerClient,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
@@ -116,6 +118,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "coding-agents.md",
   "cloud-environment-access.md",
   "cloud-quickstart.md",
+  "connect-runtime.md",
   "create-agent.md",
   "deploy-from-ci.md",
   "deploying.md",
@@ -613,6 +616,56 @@ describe("Guide: agent-service-runtime.md", () => {
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
+  });
+});
+
+describe("Guide: connect-runtime.md", () => {
+  it("keeps admission identifiers visible when the claim is empty", async () => {
+    const guide = await readGuide("connect-runtime.md");
+    const claim = guide.indexOf("const run = await client.claimRun(");
+    const execution = guide.indexOf("  let output: string;", claim);
+    const emptyClaim = guide.slice(claim, execution);
+    assertStringIncludes(emptyClaim, "return Response.json(");
+    assertStringIncludes(emptyClaim, "worker_id: worker.id");
+    assertStringIncludes(emptyClaim, "run_id: accepted.id");
+    assertStringIncludes(emptyClaim, "conversation_id: conversation.id");
+  });
+
+  it("does not retry an ambiguous successful finalization as failed", async () => {
+    const guide = await readGuide("connect-runtime.md");
+    const completed = guide.indexOf(
+      'await client.completeRun({ runId: run.run_id, status: "completed"',
+    );
+    const failed = guide.indexOf('status: "failed"');
+    assert(
+      failed >= 0 && completed > failed,
+      "Successful finalization must follow the generation/event failure handler",
+    );
+  });
+
+  it("encodes the demonstrated output with matching message boundaries", () => {
+    assertEquals(typeof createExternalAgentWorkerClient, "function");
+    const run = { message_id: "runtime-demo-message" };
+    const messageId = run.message_id;
+    const result = { text: "Hello from the connected runtime." };
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "start", messageId }),
+      ...encoder.encode({ type: "text-start", id: messageId }),
+      ...encoder.encode({ type: "text-delta", id: messageId, delta: result.text }),
+      ...encoder.encode({ type: "text-end", id: messageId }),
+    ];
+    assertEquals(events.map((event) => event.type), [
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+    ]);
+    assert(events.every((event) => event.messageId === messageId));
+    const [start, content] = events;
+    assertExists(start);
+    assertExists(content);
+    assert(events.every((event) => event.contentId === start.contentId));
+    assertEquals(content.delta, result.text);
   });
 });
 

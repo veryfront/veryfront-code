@@ -11,7 +11,7 @@ import { cva, type VariantProps } from "./cva.ts";
 const textareaVariants = cva(
   [
     "flex w-full text-[var(--foreground)]",
-    "placeholder:text-[var(--foreground)] placeholder:opacity-25",
+    "placeholder:text-[var(--input-placeholder)]",
     "transition-[background-color,box-shadow,border-color] duration-150 ease-in",
     "focus-visible:outline-none",
     "disabled:cursor-not-allowed disabled:opacity-50",

@@ -39,6 +39,11 @@ the AI Gateway, it does not authenticate you to a vendor.
 
 Model selection follows these rules:
 
+Hosted chat retains the route selected during trusted preparation when execution
+has no ambient API token. A managed run's private inference credential stays
+separate from its callback credential. The catalog model ID and publisher remain
+unchanged, and application-registered direct providers retain their own route.
+
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
 | -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
 | Omitted                                | Uses the Cloud default through the AI Gateway       | Uses the direct default only without Cloud context       |
@@ -485,6 +490,15 @@ import { resolveModel } from "veryfront/provider";
 const model = resolveModel("openai/gpt-5.5");
 const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.5");
 ```
+
+## Provider authentication errors
+
+Native provider HTTP 401 and 403 refusals produce `agent-provider-auth-error`
+with the message "Agent provider authentication failed". Check your provider
+credential and its permissions before running the agent again. Provider response
+text and credentials stay private. Gateway inference policy refusals retain their
+specific policy error; rate limits and service failures retain their existing
+classification.
 
 ## Verify it worked
 

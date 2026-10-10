@@ -1,13 +1,18 @@
+import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import {
   ProviderError,
   ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderStreamProtocolError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
+  AGENT_PROVIDER_AUTH_ERROR,
   AI_PROVIDER_BILLING_ERROR,
+  AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR,
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
@@ -18,6 +23,7 @@ import {
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
   PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR,
   registeredProviderFailure,
 } from "./provider-error-registry.ts";
 export { safeJsonParse };
@@ -211,6 +217,13 @@ function parseKnownProblemBodyInternal(
   // whatever status an older gateway sent (503).
   if (allowInferencePolicy && getOwnDataProperty(body, "code") === "eu_inference_policy") {
     return inferencePolicyError(getOwnDataProperty(body, "model"));
+  }
+
+  if (
+    allowInferencePolicy &&
+    getOwnDataProperty(body, "code") === "ai_provider_spend_check_unavailable"
+  ) {
+    return { ...AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR };
   }
 
   const slugValue = getOwnDataProperty(body, "slug");
@@ -509,11 +522,21 @@ function parseProviderErrorInner(
   const registered = registeredProviderFailure(error);
   if (registered) return registered;
 
+  if (error instanceof ProviderRateLimitError) {
+    return {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    };
+  }
   if (error instanceof ProviderQuotaError) {
     return AI_PROVIDER_BILLING_ERROR;
   }
   if (error instanceof ProviderOutputTruncatedError) {
     return PROVIDER_OUTPUT_TRUNCATED_ERROR;
+  }
+  if (error instanceof ProviderStreamProtocolError) {
+    return PROVIDER_STREAM_PROTOCOL_ERROR;
   }
   if (error instanceof ProviderOverloadedError) {
     return {
@@ -527,6 +550,20 @@ function parseProviderErrorInner(
       return DEFAULT_EXTERNAL_SERVICE_ERROR;
     }
     seen.add(error);
+  }
+
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  if (providerFailure.found) {
+    return parseProviderErrorInner(providerFailure.cause, seen, depth + 1);
+  }
+
+  // Native provider status has authority over response text. Gateway refusals
+  // belong to platform admission or inference policy, not vendor credentials.
+  if (
+    error instanceof ProviderError && error.viaVeryfrontGateway !== true &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    return { ...AGENT_PROVIDER_AUTH_ERROR, status: error.status };
   }
 
   const responseBody = extractResponseBody(error);
@@ -546,13 +583,15 @@ function parseProviderErrorInner(
     }
   }
 
-  if (isErrorRecord(error) && "lastError" in error) {
-    const nested = parseProviderErrorInner(error.lastError, seen, depth + 1);
-    if (
-      nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
-      nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
-    ) {
-      return nested;
+  if (isErrorRecord(error)) {
+    for (const key of ["lastError", "cause"]) {
+      const nested = parseProviderErrorInner(getOwnDataProperty(error, key), seen, depth + 1);
+      if (
+        nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
+        nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
+      ) {
+        return nested;
+      }
     }
   }
 

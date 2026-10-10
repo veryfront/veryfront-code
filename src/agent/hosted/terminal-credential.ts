@@ -1,5 +1,10 @@
+import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
+} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -41,6 +46,7 @@ const credentials = createPrivateWeakStore<
     token: string;
     renewalToken?: string;
     eventToken?: string;
+    inferenceToken?: string;
     leaseExpiresAt?: number;
     projectId: string;
     runId: string;
@@ -137,6 +143,7 @@ export function hostedTerminalToolSourceFactory(
   const authority = request ? credentials.get(request) : undefined;
   if (!authority) return fallback;
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
+  const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
     const ordinary = fallback(config);
@@ -174,10 +181,38 @@ export function hostedTerminalToolSourceFactory(
     return {
       id: ordinary.id,
       listTools: (context) => ordinary.listTools(context),
-      executeTool: (name, args, context) =>
-        isTerminalRunToolName(name)
-          ? terminal.executeTool(name, args, context)
-          : ordinary.executeTool(name, args, context),
+      executeTool: async (name, args, context) => {
+        if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);
+        if (
+          (name === "create_run" || name === "veryfront__create_run") &&
+          context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+          terminalToolCallIdHeaderValue(context) &&
+          typeof args === "object" && args !== null && !Array.isArray(args) && "input" in args &&
+          typeof args.input === "object" && args.input !== null && !Array.isArray(args.input) &&
+          "target" in args.input
+        ) {
+          // Runtime-owned invocation identity reaches ordinary admission; the API
+          // still verifies the authenticated parent and its recorded tool start.
+          await waitForHostedParentToolStart(
+            parentEventWriter,
+            authority.runId,
+            terminalToolCallIdHeaderValue(context)!,
+          );
+          const parentRunId = terminalRoute(authority.token, authority.runId).id;
+          const input = args.input as Record<string, unknown>;
+          return ordinary.executeTool(name, {
+            ...args,
+            input: {
+              ...input,
+              ...(input.parent_run_id === undefined ? { parent_run_id: parentRunId } : {}),
+              ...(input.tool_call_id === undefined
+                ? { tool_call_id: terminalToolCallIdHeaderValue(context) }
+                : {}),
+            },
+          }, context);
+        }
+        return ordinary.executeTool(name, args, context);
+      },
     };
   };
 }
@@ -211,6 +246,7 @@ export function hostedInheritedRunAdmitter(
         "Content-Type": "application/json",
         "Idempotency-Key": `inherited:${await computeHash(`${parentId}:${toolCallId}`)}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
+        Accept: "application/vnd.veryfront.inherited-run+json",
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
       },
       body: JSON.stringify({
@@ -226,10 +262,67 @@ export function hostedInheritedRunAdmitter(
     return acceptInheritedRunAdmission(response, {
       projectId: parent.projectId,
       conversationId: input.conversationId,
+      parentRunId: parentId,
+      agentId: input.agentId,
       apiUrl: transport.apiUrl,
       fetch: send,
     });
   };
+}
+
+/** Private execution transport does not grant ordinary child resource reads. */
+async function normalizeInheritedExecutionResponse(
+  response: Response,
+  binding: { projectId: string; parentRunId?: string; agentId?: string; conversationId?: string },
+): Promise<Response> {
+  if (
+    response.headers.get("Content-Type")?.split(";")[0]?.trim() !==
+      "application/vnd.veryfront.inherited-run+json"
+  ) return response;
+  const mismatch = () => new Error("Inherited child resource binding mismatch");
+  let value;
+  let route: { id: string; generation: string };
+  try {
+    value = await response.clone().json();
+    const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER) ?? "";
+    route = terminalRoute(token, terminalRoutingRunId(token));
+  } catch {
+    throw mismatch();
+  }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const terminal = ["completed", "failed", "cancelled"].includes(value?.status);
+  if (
+    value?.version !== 1 || !response.ok ||
+    !response.headers.get("Cache-Control")?.includes("no-store") ||
+    !binding.parentRunId || !binding.agentId || value.parentRunId !== binding.parentRunId ||
+    value.projectId !== binding.projectId || value.agentId !== binding.agentId ||
+    value.canonicalRunId !== route.id || value.dispatchNonce !== route.generation ||
+    ![value.canonicalRunId, value.parentRunId, value.conversationId, value.outputMessageId].every((
+      id,
+    ) => typeof id === "string" && uuid.test(id)) ||
+    (binding.conversationId !== undefined && value.conversationId !== binding.conversationId) ||
+    !["pending", "running", "waiting", "completed", "failed", "cancelled"].includes(value.status) ||
+    (terminal && !Object.hasOwn(value, "output")) ||
+    (value.error != null &&
+      (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
+  ) throw mismatch();
+  const headers = new Headers(response.headers);
+  headers.set("Content-Type", "application/json");
+  headers.delete("Content-Length");
+  headers.delete("Content-Encoding");
+  return new Response(
+    JSON.stringify({
+      id: value.canonicalRunId,
+      parent_run_id: value.parentRunId,
+      project_id: value.projectId,
+      target: { type: "agent", id: value.agentId },
+      status: value.status,
+      conversation_id: value.conversationId,
+      output_message_id: value.outputMessageId,
+      ...(terminal ? { output: value.output, ...(value.error ? { error: value.error } : {}) } : {}),
+    }),
+    { status: response.status, headers },
+  );
 }
 
 export type InheritedRunResult = { readonly terminalReceipt: InheritedTerminalReceipt };
@@ -245,6 +338,7 @@ export async function acceptWorkflowInheritedRunAdmission(
     fetch: typeof globalThis.fetch;
   },
 ): Promise<ConversationRunProjection | InheritedRunResult> {
+  response = await normalizeInheritedExecutionResponse(response, binding);
   const row = await response.clone().json();
   if (row?.status !== "completed" && row?.status !== "failed" && row?.status !== "cancelled") {
     return await acceptInheritedRunAdmission(response, binding);
@@ -276,10 +370,13 @@ export async function acceptInheritedRunAdmission(
   binding: {
     projectId: string;
     conversationId?: string;
+    parentRunId?: string;
+    agentId?: string;
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
 ): Promise<ConversationRunProjection> {
+  response = await normalizeInheritedExecutionResponse(response, binding);
   if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
   if (!response.headers.get("Cache-Control")?.includes("no-store")) {
     throw new Error("Inherited child credentials require no-store");
@@ -287,6 +384,7 @@ export async function acceptInheritedRunAdmission(
   const row = await response.json();
   const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER);
   const authToken = response.headers.get("X-Veryfront-Run-Invocation-Token");
+  const inferenceToken = response.headers.get("X-Veryfront-Inference-Token");
   const renewalToken = response.headers.get("X-Veryfront-Run-Renewal-Token");
   const eventToken = response.headers.get("X-Veryfront-Run-Event-Token");
   if (!token || !authToken || !renewalToken || !eventToken) {
@@ -335,6 +433,7 @@ export async function acceptInheritedRunAdmission(
     authToken,
     renewalToken,
     eventToken,
+    ...(inferenceToken ? { inferenceToken } : {}),
     leaseExpiresAt: Date.parse(response.headers.get("X-Veryfront-Run-Lease-Expires-At") ?? ""),
     runId: run.runId,
     projectId: binding.projectId,
@@ -342,6 +441,18 @@ export async function acceptInheritedRunAdmission(
     fetch: binding.fetch,
   });
   return run;
+}
+
+/** Create inference transport only from this inherited child's private admission authority. */
+export function hostedInheritedInferenceModelResolver(descriptor: HostedTerminalDescriptor) {
+  const authority = credentials.get(descriptor);
+  if (!authority) return undefined;
+  if (!authority.inferenceToken || !authority.apiUrl) {
+    throw new Error("Inherited child inference authority is required");
+  }
+  return createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+    apiBaseUrl: authority.apiUrl,
+  });
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */

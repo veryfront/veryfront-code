@@ -102,6 +102,7 @@ describe("agent/hosted-child-bootstrap", () => {
               status: 202,
               headers: {
                 "Cache-Control": "no-store",
+                "X-Veryfront-Inference-Token": "child-inference",
                 "X-Veryfront-Run-Invocation-Token": "child-invocation",
                 "X-Veryfront-Run-Terminal-Token": token("run_child_1", childId),
                 "X-Veryfront-Run-Renewal-Token": "child-renewal",

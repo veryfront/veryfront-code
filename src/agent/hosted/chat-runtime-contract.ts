@@ -13,6 +13,7 @@ import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import type { AgentConfig } from "../types.ts";
+import type { RuntimeObservationWriterCapability } from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -192,6 +193,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   ) => void | Promise<void>;
   /** @internal Fail closed when a hosted durable run cannot persist provider replay state. */
   requireProviderReplayCheckpointPersistence?: true;
+  /** @internal Opaque exact writer capability for default-off runtime observation capture. */
+  runtimeObservationWriterCapability?: RuntimeObservationWriterCapability;
   /** @internal Persists private checkpoint state outside model messages. */
   persistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,

@@ -19,6 +19,7 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { installArrayWriteProbe } from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   HEADER_METHODS,
@@ -955,7 +956,6 @@ describe("metrics public SDK", () => {
     const nativeIterator = Array.prototype[Symbol.iterator];
     const nativeToJSONDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
     const nativeDefineProperty = Object.defineProperty;
-    const nativeIndexDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "0");
     const recordObserved = (value: string): void => {
       nativeDefineProperty(observed, String(observed.length), {
         value,
@@ -1003,11 +1003,6 @@ describe("metrics public SDK", () => {
         nativeDefineProperty(Array.prototype, "toJSON", nativeToJSONDescriptor);
       } else {
         delete (Array.prototype as { toJSON?: unknown }).toJSON;
-      }
-      if (nativeIndexDescriptor) {
-        nativeDefineProperty(Array.prototype, "0", nativeIndexDescriptor);
-      } else {
-        delete Array.prototype[0];
       }
     };
 
@@ -1110,18 +1105,8 @@ describe("metrics public SDK", () => {
             },
             configurable: true,
           });
-          nativeDefineProperty(Array.prototype, "0", {
-            set(value: unknown) {
-              record([value]);
-              nativeDefineProperty(this, "0", {
-                value,
-                configurable: true,
-                enumerable: true,
-                writable: true,
-              });
-            },
-            configurable: true,
-          });
+          // An Array.prototype index accessor makes the export refuse instead;
+          // see the next test.
 
           try {
             // Two distinct targets so the flush must group by target identity,
@@ -1173,6 +1158,38 @@ describe("metrics public SDK", () => {
       [],
       "target grouping and serialization must not expose credentials or queued telemetry to replaceable intrinsics",
     );
+  });
+
+  it("refuses the credential-bearing exports while an index accessor observes array writes", async () => {
+    let sent = 0;
+    const probe = installArrayWriteProbe("Array.prototype index");
+    try {
+      await withEnv({
+        SERVER_ID: "server-1",
+        ENVIRONMENT_IDS: "env-1,env-2",
+        OTEL_METRICS_ENABLED: "true",
+        VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+        VERYFRONT_API_INTERNAL_USER: "internal-user",
+        VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+      }, async () => {
+        await withMockFetch(
+          (() => {
+            sent++;
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          }) as typeof fetch,
+          async () => {
+            metrics.counter("vf_internal_metric_total", 1, { tenant_marker: "private-telemetry" });
+            await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+          },
+        );
+      });
+    } finally {
+      probe.restore();
+    }
+
+    assertEquals(sent, 0);
+    assertEquals(probe.saw("aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz"), false);
+    assertEquals(probe.saw("internal-pass"), false);
   });
 
   it("bounds distinct direct targets created from mutable project environment values", async () => {

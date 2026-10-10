@@ -8,6 +8,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "../../../scripts/ci/registry-release-integrity.ts";
 import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
@@ -71,6 +72,29 @@ function tokenRepositories(job: YamlRecord): string[] {
   return repositories.trim().split("\n");
 }
 
+async function runCurrentRcGuard(
+  guard: YamlRecord,
+  prelude: string,
+  env: Record<string, string>,
+): Promise<{ output: Deno.CommandOutput; githubOutput: string }> {
+  return await withTempDir(async (stateDir) => {
+    const outputFile = `${stateDir}/github-output`;
+    const output = await new Deno.Command("bash", {
+      args: ["-c", prelude + String(guard.run)],
+      env: { ...env, GITHUB_OUTPUT: outputFile },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    let githubOutput = "";
+    try {
+      githubOutput = await Deno.readTextFile(outputFile);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    return { output, githubOutput };
+  });
+}
+
 async function runReleaseDependencyGate(
   overrides: Record<string, string> = {},
 ): Promise<Deno.CommandOutput> {
@@ -119,7 +143,7 @@ async function readJobs(): Promise<YamlRecord> {
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "CI workflow",
   );
-  return asRecord(workflow.jobs, "CI workflow jobs");
+  return await inlinePublicPoolJobs(workflow);
 }
 
 async function canonicalPublisherBody(): Promise<string> {
@@ -1113,6 +1137,8 @@ printf '%064d  %s\n' 0 "$1"
         GH_TOKEN: "${{ steps.release-app-token.outputs.token }}",
         VERSION: "${{ steps.version.outputs.version }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+        MAINTENANCE_RELEASE:
+          "${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}",
       },
     );
     assert(
@@ -1640,7 +1666,7 @@ fi
     const token = namedStep(dispatch, "Create release GitHub App token");
     assertEquals(
       token.if,
-      "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+      "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}",
     );
     assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(token));
     for (
@@ -1650,7 +1676,7 @@ fi
     ) {
       assertEquals(
         step.if,
-        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}",
+        "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}",
       );
       assert(dispatchSteps.indexOf(guard) < dispatchSteps.indexOf(step));
     }
@@ -1668,19 +1694,17 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: stable,
           VERSION: candidate,
           CURRENT_TAGS: JSON.stringify(current ? { rc: current } : {}),
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
-      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
+      if (expectedOutput) assertStringIncludes(githubOutput, expectedOutput);
     });
   }
 
@@ -1722,20 +1746,18 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: "false",
           VERSION: candidate,
           CURRENT_TAGS: JSON.stringify({ rc: current }),
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
-      if (expectedOutput) assertStringIncludes(decoder.decode(output.stdout), expectedOutput);
-      else assertEquals(decoder.decode(output.stdout), "");
+      if (expectedOutput) assertStringIncludes(githubOutput, expectedOutput);
+      else assertEquals(githubOutput, "");
     });
   }
 
@@ -1744,19 +1766,17 @@ fi
       const jobs = await readJobs();
       const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
       const guard = namedStep(dispatch, "Check current RC tag");
-      const output = await new Deno.Command("bash", {
-        args: ["-c", 'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n' + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
           IS_STABLE: "false",
           VERSION: "0.1.2-rc.200",
           CURRENT_TAGS: tags,
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assert(output.code !== 0);
-      assertEquals(decoder.decode(output.stdout), "");
+      assertEquals(githubOutput, "");
     });
   }
 
@@ -1765,18 +1785,16 @@ fi
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
     const guard = namedStep(dispatch, "Check current RC tag");
     for (const stable of ["false", "true"]) {
-      const output = await new Deno.Command("bash", {
-        args: ["-c", "curl() { echo lookup >&2; return 22; }\n" + String(guard.run)],
-        env: {
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        "curl() { echo lookup >&2; return 22; }\n",
+        {
           IS_STABLE: stable,
           VERSION: stable === "true" ? "0.1.2" : "0.1.2-rc.200",
-          GITHUB_OUTPUT: "/dev/stdout",
         },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      );
       assertEquals(output.code, stable === "true" ? 0 : 22);
-      assertEquals(decoder.decode(output.stdout), stable === "true" ? "dispatch=true\n" : "");
+      assertEquals(githubOutput, stable === "true" ? "dispatch=true\n" : "");
       assertEquals(decoder.decode(output.stderr), stable === "true" ? "" : "lookup\n");
     }
   });
@@ -1970,7 +1988,10 @@ describe("folded registry dispatch", () => {
       assertEquals(
         step.if,
         "${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success'))" +
-          (step.uses ? " && steps.current.outputs.dispatch == 'true'" : "") + " }}",
+          (step.uses
+            ? " && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '')"
+            : "") +
+          " }}",
       );
       assertEquals(step["timeout-minutes"], 5);
       assertEquals(String(step.run).includes("scripts/"), false);
@@ -2214,4 +2235,60 @@ describe("RC publication alongside the reused main Sonar scan", () => {
       assertEquals(output.code, result === "success" ? 0 : 1);
     }
   });
+});
+
+it("diagnoses failed RC publishing without building or executing installed packages", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const diagnostic = namedStep(registry, "Diagnose failed RC publish");
+  assertEquals(diagnostic.if, "${{ needs.prerelease.result != 'success' }}");
+  for (const name of ["Build registry validation image", "Validate exact registry release"]) {
+    assertEquals(namedStep(registry, name).if, "${{ needs.prerelease.result == 'success' }}");
+  }
+  for (
+    const required of [
+      "diagnoseRegistryPackages",
+      "--user 1000:1000",
+      "--read-only",
+      "--cap-drop ALL",
+      "--security-opt no-new-privileges=true",
+      "--network=bridge",
+      "target=/source,readonly",
+      "runtimePackages",
+      "npm?.publish === false",
+    ]
+  ) {
+    assertStringIncludes(String(diagnostic.run), required);
+  }
+  assertEquals(String(diagnostic.run).includes("docker build"), false);
+  assertEquals(String(diagnostic.run).includes("npm install"), false);
+  assertEquals(
+    asRecord(diagnostic.env, "diagnostic env").RC_VERSION,
+    "${{ needs.prerelease.outputs.version }}",
+  );
+});
+
+it("reports failed RC diagnostics as a formatted failure without a stack trace", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const run = String(namedStep(registry, "Diagnose failed RC publish").run);
+  const start = run.indexOf("-e '") + "-e '".length;
+  const script = run.slice(start, run.lastIndexOf("'"));
+  // Without RC_VERSION the inline entrypoint fails before any registry lookup.
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
+      script,
+    ],
+    cwd: fromFileUrl(new URL("../../../", import.meta.url)),
+    env: { RC_VERSION: "" },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = decoder.decode(output.stderr);
+  assertEquals(output.code, 1, stderr);
+  assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration].");
+  assertEquals(/^\s+at /m.test(stderr), false, stderr);
+  assertEquals(stderr.includes("registry-release-integrity.ts"), false, stderr);
 });

@@ -2,6 +2,15 @@ name: CI/CD
 
 on:
   workflow_dispatch:
+    inputs:
+      ubuntu26:
+        description: Canary the unchanged main pipeline on Ubuntu 26.04
+        type: boolean
+        default: false
+      maintenance_release_number:
+        description: Older immutable RC number for a maintenance branch (no deploy dispatch)
+        required: false
+        type: string
   pull_request:
   # Required for merge-queue entries: queued runs report checks via merge_group.
   merge_group:
@@ -36,7 +45,7 @@ jobs:
   # ============================================
   tested-run:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     # On main it waits up to 30 minutes for a queue run that is still finishing
     # and up to 10 more for an earlier main run to choose its release number.
     timeout-minutes: 50
@@ -47,17 +56,47 @@ jobs:
     outputs:
       reuse: ${{ steps.decide.outputs.reuse || 'false' }}
       run_id: ${{ steps.decide.outputs.run_id }}
-      release_number: ${{ steps.decide.outputs.release_number || github.run_number }}
+      release_number: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number || github.run_number }}
     steps:
+      - name: Validate maintenance release number
+        if: github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != ''
+        id: maintenance
+        env:
+          RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::maintenance_release_number must be a positive integer RC build number." >&2
+            exit 1
+          fi
+          if ! [[ "${GITHUB_REF}" =~ ^refs/heads/maintenance/rc\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Maintenance RC publication must be dispatched from a protected maintenance/rc.<number> branch." >&2
+            exit 1
+          fi
+          if [ "${BASH_REMATCH[1]}" != "$RELEASE_NUMBER" ]; then
+            echo "::error::maintenance_release_number must match the maintenance branch suffix." >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_PROTECTED:-false}" != "true" ]; then
+            echo "::error::Maintenance source branch must be protected." >&2
+            exit 1
+          fi
+          branch_name="$(jq -rn --arg branch "${GITHUB_REF#refs/heads/}" '$branch | @uri')"
+          branch_identity="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch_name}" --jq '{sha: .commit.sha, protected: .protected}')"
+          if ! jq -e --arg sha "${GITHUB_SHA}" '.protected == true and .sha == $sha' <<< "$branch_identity" >/dev/null; then
+            echo "::error::Maintenance source branch protection or exact commit differs." >&2
+            exit 1
+          fi
+          echo "release_number=$RELEASE_NUMBER" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         timeout-minutes: 5
       - name: Find the tested merge-queue run
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.maintenance_release_number == ''
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,23 +108,75 @@ jobs:
             "npm-compatibility-${GITHUB_SHA}" \
             coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
             coverage-shard-5 coverage-shard-6 coverage-shard-7 coverage-shard-8 \
+            coverage-shard-9 coverage-shard-10 coverage-shard-11 coverage-shard-12 \
+            coverage-shard-13 coverage-shard-14 coverage-shard-15 coverage-shard-16 \
             coverage-native-executor coverage-integration-client
       - name: Record release number
-        if: github.ref == 'refs/heads/main'
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         env:
-          RELEASE_NUMBER: ${{ steps.decide.outputs.release_number }}
+          RELEASE_NUMBER: ${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
         run: |
           mkdir -p dist/release-number
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
-        if: github.ref == 'refs/heads/main'
+        if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-number-${{ steps.decide.outputs.release_number }}
+          name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
           path: dist/release-number
           retention-days: 7
           if-no-files-found: error
           overwrite: true
+
+  # Phase 1 of #2313 only measures queue reuse. No job needs this one, it needs
+  # none, no cancel-after job watches it, and continue-on-error keeps a broken
+  # observer visible without failing the run that main publishing reuses.
+  queue-tree-observation:
+    if: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    continue-on-error: true
+    name: queue tree observation (dry run)
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record the tested PR tree
+        if: github.event_name == 'pull_request'
+        id: pr-tree
+        run: |
+          tree="$(git rev-parse HEAD^{tree})"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          mkdir -p dist/tested-tree
+          echo "$tree" > dist/tested-tree/tree.txt
+      - name: Upload the tested PR tree
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tested-tree-${{ steps.pr-tree.outputs.tree }}
+          path: dist/tested-tree
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
+      - uses: ./.github/actions/setup-deno
+        if: github.event_name == 'merge_group'
+        timeout-minutes: 5
+      - name: Measure identical queue tree (dry run)
+        if: github.event_name == 'merge_group'
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_HEAD_REF: ${{ github.ref_name }}
+        run: |
+          export QUEUE_TREE="$(git rev-parse HEAD^{tree})"
+          deno run --config=scripts/test.deno.json --frozen --no-check \
+            --allow-env=GH_TOKEN,GITHUB_REPOSITORY,GITHUB_STEP_SUMMARY,QUEUE_HEAD_REF,QUEUE_TREE \
+            --allow-net=api.github.com --allow-write="${GITHUB_STEP_SUMMARY}" \
+            scripts/ci/queue-tree-dry-run.ts
 
   # ============================================
   # CI: Quality Checks
@@ -93,7 +184,7 @@ jobs:
   ci:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
@@ -184,7 +275,7 @@ jobs:
   tests-integration:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 35
     name: "tests (integration shard ${{ matrix.shard }}/3)"
     strategy:
@@ -221,7 +312,7 @@ jobs:
       # how it shipped omitting the request headers `fetch` normally supplies.
       - name: Run Node egress transport tests
         if: ${{ matrix.shard == 2 }}
-        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts'
+        run: node ./tests/node/run-tests.mjs 'src/platform/compat/http/pinned-fetch.test.ts' 'tests/integration/semantic-unit-boundary/src/platform/compat/http/pinned-fetch.test.ts'
       - name: Generate integration inputs
         run: deno task generate
       - name: Run integration shard
@@ -268,7 +359,7 @@ jobs:
     name: tests (integration)
     needs: [tested-run, tests-integration]
     if: ${{ always() }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
       - name: Require all integration shards
@@ -288,30 +379,16 @@ jobs:
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 20
-    name: "tests (node shard ${{ matrix.shard }}/2)"
+    name: "tests (node shard ${{ matrix.shard }}/4)"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - uses: ./.github/actions/restore-npm-workspace
-      - name: Run Node runtime shard
-        env:
-          VF_TEST_SHARD: ${{ matrix.shard }}/2
-        run: node ./tests/node/run-tests.mjs --suite=runtime:node
+        shard: [1, 2, 3, 4]
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-node
+      shard: ${{ matrix.shard }}
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   # Sandbox worker generation and prepared-module encoding on the minimum
   # supported Node. Only Node 22/24 lack the Uint8Array proposal methods
@@ -321,61 +398,25 @@ jobs:
   tests-node-sandbox:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 15
     name: tests (node sandbox, minimum Node)
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - name: Read minimum supported Node version
-        id: node-version
-        run: |
-          deno eval '
-            import { MINIMUM_NODE_VERSION } from "./scripts/build/runtime-support.ts";
-            console.log(`version=${MINIMUM_NODE_VERSION}`);
-          ' >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: ${{ steps.node-version.outputs.version }}
-          package-manager-cache: false
-      - uses: ./.github/actions/restore-npm-workspace
-      - name: Run sandbox worker tests
-        run: node ./tests/node/run-tests.mjs --suite=runtime:node 'src/security/sandbox/'
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-node-sandbox
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 20
     name: tests (bun)
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: "1.3.6"
-      - uses: ./.github/actions/restore-npm-workspace
-      - name: Run Bun runtime suite
-        run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-bun
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   npm-compatibility-artifact:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     name: npm compatibility artifact
     steps:
@@ -393,10 +434,11 @@ jobs:
       - name: Build and pack tested npm output
         env:
           # Merge-queue builds carry their RC number so main can publish them.
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           RELEASE_NUMBER: ${{ needs.tested-run.outputs.release_number || github.run_number }}
         run: |
           BASE_VERSION=$(jq -r '.version' deno.json)
-          if { [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; } && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if { [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ] || [ "${MAINTENANCE_RELEASE}" = "true" ]; } && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             export VERSION="${BASE_VERSION}.${RELEASE_NUMBER}"
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
@@ -424,36 +466,16 @@ jobs:
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         runtime: [deno, node, bun]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        if: ${{ matrix.runtime == 'bun' }}
-        with:
-          bun-version: "1.3.6"
-      - name: Download canonical npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: npm-compatibility-${{ github.sha }}
-          path: dist/npm-compatibility
-      - name: Run runtime critical flow
-        run: deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-runtime-critical-flow
+      runtime: ${{ matrix.runtime }}
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   tests-windows-localhost:
     needs: [tested-run]
@@ -497,120 +519,37 @@ jobs:
   coverage-shards:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 20
-    name: coverage shard ${{ matrix.shard }}/8
+    name: coverage shard ${{ matrix.shard }}/16
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-      - name: Run unit coverage shard
-        id: coverage
-        run: |
-          START=$(date +%s)
-          deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}
-          echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
-      - name: Include CLI, dependency history, and runtime security integration coverage
-        if: matrix.shard == 1
-        run: |
-          rm -rf coverage-history coverage-cli
-          deno task test:file --coverage=coverage-history \
-            tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
-            tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
-            tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts \
-            tests/integration/semantic-unit-boundary/src/config/host-api-base.test.ts \
-            tests/integration/platform/runtime-request-context.test.ts \
-            tests/integration/runtime/compat/esbuild-cleanup.test.ts \
-            tests/integration/server/shared-agent-bootstrap.test.ts \
-            tests/integration/observability/project-otlp-transport-policy.test.ts \
-            tests/integration/observability/project-provider.test.ts \
-            tests/integration/observability/project-http-lifecycle.test.ts
-          # The CLI regression changes cwd, so give it a separate process.
-          deno task test:file --coverage=coverage-cli \
-            tests/integration/cli/merge-preview.integration.test.ts
-          # Kept as separate reports: block ids are normalized only when every
-          # report is merged at once (coverage gate and Sonar), so an early
-          # merge here must not rewrite them.
-          mkdir -p coverage-shard-1/history coverage-shard-1/cli
-          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/history/lcov.info
-          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
-      - name: Upload unit coverage lcov
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: coverage-shard-${{ matrix.shard }}/**/lcov.info
-          retention-days: 1
-      - name: Add coverage shard summary
-        run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: coverage-shards
+      shard: ${{ matrix.shard }}
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   coverage-node-executor:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 10
     name: native executor coverage
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "22"
-          package-manager-cache: false
-      - name: Install Node resolver test dependencies
-        run: |
-          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
-          mkdir -p node_modules npm/node_modules
-          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
-      - name: Collect mapped native executor coverage
-        run: deno task coverage:ci:node-executor
-      - name: Upload native executor coverage lcov
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-native-executor
-          path: coverage/node-executor/lcov.info
-          retention-days: 1
-          if-no-files-found: error
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: coverage-node-executor
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   coverage-integration-client:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 20
     name: integration client coverage
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - name: Collect integration client and CLI coverage
-        run: deno task coverage:ci:integration-client
-      - name: Upload integration client coverage lcov
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-integration-client
-          path: coverage/integration-client/lcov.info
-          retention-days: 1
-          if-no-files-found: error
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: coverage-integration-client
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   coverage:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards, tested-run]
@@ -649,7 +588,7 @@ jobs:
   # repository OIDC token. This job runs no repository code: it downloads the
   # shard artifacts, rewrites paths with sed, and calls the upload action.
   codecov-upload:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: codecov upload
     needs: [coverage-shards]
@@ -688,7 +627,7 @@ jobs:
           use_oidc: true
           # Comma separated, the form the action documents. All files go up in
           # one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info,coverage-profiles/coverage-shard-5/lcov.info,coverage-profiles/coverage-shard-6/lcov.info,coverage-profiles/coverage-shard-7/lcov.info,coverage-profiles/coverage-shard-8/lcov.info,coverage-profiles/coverage-shard-9/lcov.info,coverage-profiles/coverage-shard-10/lcov.info,coverage-profiles/coverage-shard-11/lcov.info,coverage-profiles/coverage-shard-12/lcov.info,coverage-profiles/coverage-shard-13/lcov.info,coverage-profiles/coverage-shard-14/lcov.info,coverage-profiles/coverage-shard-15/lcov.info,coverage-profiles/coverage-shard-16/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
@@ -697,7 +636,7 @@ jobs:
   # runs repository code (`deno task coverage:ci:merge`), so it happens here,
   # in a job with no secrets, and hands the scan job only the finished report.
   sonar-coverage:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Sonar coverage report
     needs: [
@@ -756,7 +695,7 @@ jobs:
           retention-days: 1
 
   sonar-coverage-main:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Reused main Sonar coverage report
     needs: [tested-run, version-check]
@@ -780,7 +719,7 @@ jobs:
   # minutes today). 28 minutes keeps the coverage and Sonar path inside the
   # merge queue response budget now that `sonar-coverage` sits before it.
   sonar:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: SonarQube Cloud scan
     needs: [sonar-coverage, tested-run, version-check]
@@ -871,7 +810,7 @@ jobs:
           fi
 
   sonar-main:
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 28
     name: Reused main SonarQube Cloud scan
     needs: [sonar-coverage-main, tested-run, version-check]
@@ -882,7 +821,7 @@ jobs:
 
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs: [sonar, sonar-main, tested-run, version-check]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
@@ -899,7 +838,7 @@ jobs:
   tests-e2e-rsc-browser:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
@@ -925,7 +864,7 @@ jobs:
   tests-binary-e2e:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
@@ -937,7 +876,41 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # The JS retry action can hold a cancelled run until the runner's forced
+      # termination. Own the process group in a native step for the queue only.
+      - name: Run cancellable binary e2e
+        if: ${{ github.event_name == 'merge_group' }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          exec python3 -u - <<'PY'
+          import os, signal, subprocess, sys
+
+          child = None
+          cancelled = None
+          def cancel(signum, frame):
+              global cancelled
+              cancelled = signum
+              if child is not None:
+                  try:
+                      os.killpg(child.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+
+          signal.signal(signal.SIGINT, cancel)
+          signal.signal(signal.SIGTERM, cancel)
+          child = subprocess.Popen(
+              ["deno", "task", "test:e2e:binary"],
+              env=dict(os.environ, VERYFRONT_BINARY_FRESH="1"),
+              start_new_session=True,
+          )
+          if cancelled is not None:
+              cancel(cancelled, None)
+          code = child.wait()
+          sys.exit(128 + cancelled if cancelled is not None else code if code >= 0 else 128 - code)
+          PY
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        if: ${{ github.event_name != 'merge_group' }}
         with:
           timeout_minutes: 30
           max_attempts: 2
@@ -1091,7 +1064,7 @@ jobs:
 
   quality-gate-merge:
     name: quality gate (merge)
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - ci
@@ -1161,7 +1134,7 @@ jobs:
   npm-smoke-node-versions:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: npm smoke Node version contract
     outputs:
@@ -1183,50 +1156,20 @@ jobs:
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-smoke-node-versions, npm-compatibility-artifact]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         node-version: ${{ fromJSON(needs.npm-smoke-node-versions.outputs.node_versions) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          package-manager-cache: false
-      - name: Download canonical npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: npm-compatibility-${{ github.sha }}
-          path: dist/npm-compatibility
-      - name: Materialize canonical npm output
-        run: |
-          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
-            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
-      - name: Install TypeScript toolchain
-        run: npm --prefix storybook ci --ignore-scripts
-      - name: Check published package types
-        run: deno task typecheck:consumer --skip-build
-      - name: Report npm package size
-        run: |
-          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Clean-room install/import smoke
-        env:
-          VF_NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
-        run: deno run -A scripts/test/npm-install-smoke.ts
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-npm-install-smoke
+      node-version: ${{ matrix.node-version }}
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   quality-gate-artifact:
     name: quality gate (artifact)
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - npm-compatibility-artifact
@@ -1264,14 +1207,14 @@ jobs:
   # run that reuses its merge-queue run inherits them from that run.
   quality-gate-release:
     name: quality gate (release)
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 2
     needs:
       - tested-run
       - npm-compatibility-artifact
       - tests-sentry-runtime-packages
       - tests-windows-localhost
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     steps:
       - name: Require release test results
         env:
@@ -1306,24 +1249,11 @@ jobs:
   tests-sentry-runtime-packages:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
-    # Cold-cache runs take ~12-15min; 15 was cutting it too close.
-    timeout-minutes: 20
     name: tests (sentry runtime packages)
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
-        with:
-          warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - name: Check Sentry runtime package variants
-        run: deno task test:sentry-runtime-packages
+    uses: veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main
+    with:
+      job: tests-sentry-runtime-packages
+      ubuntu26: ${{ inputs.ubuntu26 == true }}
 
   # ============================================
   # CI: Split Mode Test
@@ -1332,7 +1262,7 @@ jobs:
   tests-split-mode:
     needs: [tested-run]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
@@ -1392,8 +1322,8 @@ jobs:
 
   version-check:
     timeout-minutes: 5
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     outputs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
@@ -1405,8 +1335,14 @@ jobs:
           fetch-depth: 0
       - name: Detect release type
         id: check
+        env:
+          MAINTENANCE_RELEASE_NUMBER: ${{ inputs.maintenance_release_number }}
         run: |
           VERSION=$(jq -r '.version' deno.json)
+          if [[ -n "${MAINTENANCE_RELEASE_NUMBER}" && ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc$ ]]; then
+            echo "::error::Maintenance publication requires the existing numeric RC release line." >&2
+            exit 1
+          fi
           if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$ ]]; then
             echo "::error::deno.json version must be a valid npm semver or prerelease"
             exit 1
@@ -1438,7 +1374,7 @@ jobs:
 
   tests-proxy-binary:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1466,7 +1402,7 @@ jobs:
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
@@ -1484,22 +1420,22 @@ jobs:
             name: veryfront-macos-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest-m
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest-m
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest-m
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: x86_64-unknown-linux-gnu
             name: veryfront-proxy-linux-x64
             entrypoint: cli/proxy-main.ts
             profile: proxy
-          - os: ubuntu-latest-m
+          - os: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
             target: aarch64-unknown-linux-gnu
             name: veryfront-proxy-linux-arm64
             entrypoint: cli/proxy-main.ts
@@ -1595,7 +1531,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -1691,6 +1627,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
           NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "180"
+          NPM_MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
@@ -1707,7 +1644,7 @@ jobs:
     name: GitHub prerelease
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}
     needs: [prerelease, build-binaries]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     permissions:
       actions: read
@@ -1779,7 +1716,7 @@ jobs:
       tested-run,
       version-check,
     ]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -1956,7 +1893,7 @@ jobs:
   publish-public-release:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success') || (needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success')) }}
     needs: [prerelease, github-prerelease, release, version-check]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     permissions:
       contents: write
@@ -1997,6 +1934,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Fixed workflow implementation, kept in parity with the tested helper.
@@ -2232,8 +2170,12 @@ jobs:
           ```'
             mode=--latest
           else
+            install_target="veryfront@rc"
+            if [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
+              install_target="veryfront@${VERSION}"
+            fi
             notes='```bash
-          npx veryfront@rc
+          npx '"${install_target}"'
           ```'
             mode=--prerelease
           fi
@@ -2257,7 +2199,7 @@ jobs:
     name: registry validation (RC)
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}
     needs: [prerelease, version-check]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 65
@@ -2280,7 +2222,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Diagnose failed RC publish
+        if: ${{ needs.prerelease.result != 'success' }}
+        env:
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          container_name="veryfront-registry-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT INT TERM
+          docker run --rm --init \
+            --name "$container_name" \
+            --user 1000:1000 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges=true --network=bridge \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/source,readonly" \
+            --workdir /source --env RC_VERSION --env GITHUB_SHA \
+            node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7 \
+            node --experimental-transform-types --input-type=module -e '
+          import { readFileSync } from "node:fs";
+          import { diagnoseRegistryPackages, formatRegistryReleaseFailure, REQUEST_TIMEOUT_MS } from "./scripts/ci/registry-release-integrity.ts";
+          try {
+            const version = process.env.RC_VERSION;
+            if (!version) throw new Error("Exact RC version is required for diagnostics.");
+            const names = ["veryfront"];
+            for (const member of JSON.parse(readFileSync("deno.json", "utf8")).workspace) {
+              if (!member.startsWith("./extensions/")) continue;
+              const manifest = JSON.parse(readFileSync(`${member}/deno.json`, "utf8"));
+              if (manifest.veryfront?.npm?.publish === false) continue;
+              names.push(manifest.name, ...(manifest.veryfront?.npm?.runtimePackages ?? []).map(pkg => pkg.name));
+            }
+            await diagnoseRegistryPackages(names.map(packageName => ({
+              packageName, version, expectedGitHead: process.env.GITHUB_SHA,
+              maxAttempts: 2, retryDelayMs: 120000, requestTimeoutMs: REQUEST_TIMEOUT_MS,
+            })));
+          } catch (error) {
+            console.error(formatRegistryReleaseFailure(error));
+            process.exit(1);
+          }
+          '
       - name: Build registry validation image
+        if: ${{ needs.prerelease.result == 'success' }}
         timeout-minutes: 5
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
@@ -2310,6 +2291,7 @@ jobs:
           DOCKERFILE
           docker build --platform linux/amd64 --tag "$REGISTRY_IMAGE" "$build_context"
       - name: Validate exact registry release
+        if: ${{ needs.prerelease.result == 'success' }}
         env:
           REGISTRY_IMAGE: veryfront-registry-validation:${{ github.run_id }}-${{ github.run_attempt }}
           RC_VERSION: ${{ needs.prerelease.outputs.version }}
@@ -2365,7 +2347,7 @@ jobs:
       publish-public-release,
       version-check,
     ]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 65
     steps:
@@ -2569,7 +2551,7 @@ jobs:
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
 
       - name: Create release GitHub App token
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -2584,7 +2566,7 @@ jobs:
           permission-contents: write
 
       - name: Trigger server deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2594,7 +2576,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2604,7 +2586,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
-        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' }}
+        if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
@@ -2620,7 +2602,7 @@ jobs:
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, publish-public-release, version-check]
-    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'ubuntu-latest-m' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -77,6 +77,8 @@ export type HostedServiceRunEventAppendTokenResult = {
   integrationTools?: readonly string[];
   /** SHA-256 of the exact checkpointed resume call, carried by the signed token. */
   resumeToolCallSha256?: string;
+  /** SHA-256 of the run's latest tool exposure checkpoint, carried by the signed token. */
+  toolExposureCheckpointSha256?: string;
 };
 
 /**
@@ -727,10 +729,24 @@ export function createHostedServiceAuth(
         ) {
           return { verified: false };
         }
+        const toolExposureCheckpointSha256 = readOwnDataProperty(
+          payload,
+          "toolExposureCheckpointSha256",
+          "Writer claims",
+          false,
+        );
+        if (
+          toolExposureCheckpointSha256 !== undefined &&
+          (typeof toolExposureCheckpointSha256 !== "string" ||
+            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [toolExposureCheckpointSha256]) === null)
+        ) {
+          return { verified: false };
+        }
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         return {
           verified: true,
           ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
+          ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         } as HostedServiceRunEventAppendTokenResult;
       } catch (error) {
@@ -795,9 +811,9 @@ export function createHostedServiceAuth(
           return {
             success: false,
             error: {
-              statusCode: 403,
-              errorCode: "FORBIDDEN",
-              message: "No access to project",
+              statusCode: 503,
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
             },
           };
         }
@@ -813,9 +829,9 @@ export function createHostedServiceAuth(
         return {
           success: false,
           error: {
-            statusCode: 403,
-            errorCode: "FORBIDDEN",
-            message: "No access to project",
+            statusCode: 503,
+            errorCode: "SERVER_ERROR",
+            message: "Project access could not be verified",
           },
         };
       }

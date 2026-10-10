@@ -387,6 +387,34 @@ describe("agent/agent-service-auth", () => {
     }
   });
 
+  it("returns only a valid signed tool exposure checkpoint digest for the exact writer run", async () => {
+    for (const digest of ["b".repeat(64), "B".repeat(64), "b".repeat(63), 1]) {
+      const fixture = await createRs256JwtFixture({
+        ...apiRunEventWriterContract.payload,
+        toolExposureCheckpointSha256: digest,
+      });
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      assertEquals(
+        await auth.verifyRunEventAppendToken({
+          token: fixture.token,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "run_1",
+        }),
+        digest === "b".repeat(64)
+          ? { verified: true, toolExposureCheckpointSha256: digest }
+          : { verified: false },
+      );
+    }
+  });
+
   it("returns the integration tool grant carried by the signed payload", async () => {
     const grantFixture = await createRs256JwtFixture({
       ...apiRunEventWriterContract.payload,
@@ -803,13 +831,13 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(
       result.error.errorCode,
-      "FORBIDDEN",
-      "a project-access timeout must map to FORBIDDEN",
+      "SERVER_ERROR",
+      "a project-access timeout must map to SERVER_ERROR",
     );
     assertEquals(
       result.error.statusCode,
-      403,
-      "a project-access timeout must map to 403",
+      503,
+      "a project-access timeout must map to 503",
     );
   });
 
@@ -880,17 +908,50 @@ describe("agent/agent-service-auth", () => {
     if (result.success) throw new Error("Expected project access to fail");
     assertEquals(
       result.error.statusCode,
-      403,
-      "a degraded project API is reported as a 403",
+      503,
+      "a degraded project API is reported as a 503",
     );
     assertEquals(
       result.error.errorCode,
-      "FORBIDDEN",
-      "a degraded project API is reported as FORBIDDEN",
+      "SERVER_ERROR",
+      "a degraded project API is reported as SERVER_ERROR",
     );
   });
 
-  it("maps failed project access fetches to FORBIDDEN", async () => {
+  it("reports an unavailable project API without exposing its response body", async () => {
+    const fetchMock = createFetchMock(
+      new Response("synthetic-private-upstream-body", { status: 503 }),
+    );
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({ NODE_ENV: "production", VERYFRONT_API_URL: "https://api.example.test" }),
+    });
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+    assertEquals(result, {
+      success: false,
+      error: {
+        statusCode: 503,
+        errorCode: "SERVER_ERROR",
+        message: "Project access could not be verified",
+      },
+    });
+    assertEquals(fetchMock.calls.length, 1, "verification must not replay the request");
+  });
+
+  it("keeps an unauthenticated project response as a denial", async () => {
+    const fetchMock = createFetchMock(new Response("Unauthorized", { status: 401 }));
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({ NODE_ENV: "production", VERYFRONT_API_URL: "https://api.example.test" }),
+    });
+    const result = await auth.verifyProjectAccess("project-1", "token-1");
+    assertEquals(result.success, false);
+    if (result.success) throw new Error("Expected project access to fail");
+    assertEquals(result.error.statusCode, 403);
+    assertEquals(result.error.errorCode, "FORBIDDEN");
+  });
+
+  it("maps failed project access fetches to SERVER_ERROR", async () => {
     const fetchMock: HostedServiceAuthFetch = () => Promise.reject(new Error("boom"));
     const auth = createHostedServiceAuth({
       fetch: fetchMock,
@@ -904,7 +965,7 @@ describe("agent/agent-service-auth", () => {
 
     assertEquals(result.success, false);
     if (result.success) throw new Error("Expected project access to fail");
-    assertEquals(result.error.statusCode, 403);
-    assertEquals(result.error.errorCode, "FORBIDDEN");
+    assertEquals(result.error.statusCode, 503);
+    assertEquals(result.error.errorCode, "SERVER_ERROR");
   });
 });

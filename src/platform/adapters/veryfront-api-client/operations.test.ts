@@ -387,6 +387,53 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(result.files[0]?.checksum, "abc123");
     });
 
+    it("passes branch listing abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      await createOps().listBranchFiles("project-slug", "main", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("passes branch file abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          id: "file-id",
+          path: "veryfront.config.ts",
+          content: "export default {};",
+          size: 18,
+          type: "file",
+          updated_at: "2026-10-06T00:00:00.000Z",
+        };
+      });
+
+      await createOps().getBranchFile(
+        "project-slug",
+        "main",
+        "veryfront.config.ts",
+        { signal: controller.signal },
+      );
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
     it("requests branch file content with server functions for preview handlers", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
@@ -667,6 +714,171 @@ describe("VeryfrontAPIOperations", () => {
       );
     });
 
+    it("passes release listing option abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listReleaseFiles("project-slug", "release-id", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("keeps positional release listing abort signals ahead of options signals", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const optionsController = new AbortController();
+      const positionalController = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listReleaseFiles(
+        "project-slug",
+        "release-id",
+        { signal: optionsController.signal },
+        positionalController.signal,
+      );
+
+      optionsController.abort();
+      assertEquals(observedSignal?.aborted, false);
+      positionalController.abort();
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("passes release all-files option abort signals through every page", async () => {
+      const observedSignals: Array<AbortSignal | undefined> = [];
+      const controller = new AbortController();
+      stubJsonFetch((url, init) => {
+        observedSignals.push(init?.signal ?? undefined);
+        const cursor = new URL(url).searchParams.get("cursor");
+        return {
+          data: [],
+          page_info: {
+            self: null,
+            first: null,
+            next: cursor === null ? "next-page" : null,
+            prev: null,
+          },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listAllReleaseFiles("project-slug", "release-id", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignals.length, 2);
+      assertEquals(observedSignals.every((signal) => signal?.aborted === false), true);
+      controller.abort();
+      assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
+    });
+
+    for (const method of ["map", "push"]) {
+      it(`keeps paginated release source bytes outside tenant ${method} replacements`, async () => {
+        const map = Array.prototype.map;
+        const push = Array.prototype.push;
+        const apply = Reflect.apply;
+        let intercepted = 0;
+        let pages = 0;
+        stubJsonFetch((url) => {
+          pages++;
+          const cursor = new URL(url).searchParams.get("cursor");
+          return {
+            data: [{
+              id: cursor === null ? "config" : "style",
+              version_id: cursor === null ? "config-version" : "style-version",
+              path: cursor === null ? "veryfront.config.ts" : "app/globals.css",
+              content: cursor === null ? "export default {}" : "body { color: blue; }",
+              size: 20,
+              type: "file",
+              updated_at: "2026-10-10T00:00:00.000Z",
+            }],
+            page_info: {
+              self: null,
+              first: null,
+              next: cursor === null ? "page-2" : null,
+              prev: null,
+            },
+            release_id: "release-id",
+            release_version: "v1",
+          };
+        });
+        let files;
+        try {
+          if (method === "map") {
+            Array.prototype.map = function <T, U>(
+              this: T[],
+              callback: (value: T, index: number, array: T[]) => U,
+              thisArg?: unknown,
+            ): U[] {
+              const file: unknown = this[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through map");
+              }
+              return apply(map, this, [callback, thisArg]) as U[];
+            };
+          } else {
+            Array.prototype.push = function <T>(this: T[], ...items: T[]): number {
+              const file: unknown = items[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through push");
+              }
+              return apply(push, this, items);
+            };
+          }
+          files = await createOps().listAllReleaseFiles("project-slug", "release-id");
+        } finally {
+          Array.prototype.map = map;
+          Array.prototype.push = push;
+        }
+        assertEquals(intercepted, 0);
+        assertEquals(pages, 2);
+        assertEquals(
+          files.map((file) => ({
+            path: file.path,
+            content: file.content,
+          })),
+          [
+            {
+              path: "veryfront.config.ts",
+              content: "export default {}",
+            },
+            {
+              path: "app/globals.css",
+              content: "body { color: blue; }",
+            },
+          ],
+        );
+      });
+    }
+
     it("requests release file lists with server functions for runtime route discovery", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
@@ -742,6 +954,28 @@ describe("VeryfrontAPIOperations", () => {
         "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
         "the matching environment's active release must be returned",
       );
+    });
+
+    it("passes domain lookup abort signals to the transport request", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const controller = new AbortController();
+      stubJsonFetch((_url, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "P",
+          slug: "p",
+          environments: [],
+        };
+      });
+
+      await createOps().lookupProjectByDomain("app.example.com", {
+        signal: controller.signal,
+      });
+
+      assertEquals(observedSignal?.aborted, false);
+      controller.abort();
+      assertEquals(observedSignal?.aborted, true);
     });
 
     it("resolves to null when the domain has no project", async () => {

@@ -6,7 +6,8 @@ describe("project SDK export transport", () => {
     const output = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
-        "--no-check",
+        "--check",
+        "--frozen",
         "--allow-read",
         "--allow-env",
         "--allow-sys",

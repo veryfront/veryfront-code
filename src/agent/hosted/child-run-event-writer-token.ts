@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import {
@@ -20,6 +21,7 @@ import {
   readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import {
+  type ConversationRunEventQueueController,
   type ConversationRunProjection,
   type createConversationAgentRun,
   instrumentConversationRunFetch,
@@ -142,7 +144,55 @@ export interface HostedRunEventWriterCapability {
   ): Promise<HostedRunEventWriterCapability>;
 }
 
+function createParentToolStartBarrier(timeoutMs: number) {
+  const committed = createPrivateMap<string, true>();
+  const waiting = createPrivateMap<string, {
+    promise: Promise<void>;
+    resolve(): void;
+    reject(error: unknown): void;
+  }>();
+  let failure: unknown;
+  let failed = false;
+  return {
+    async wait(toolCallId: string): Promise<void> {
+      if (failed) throw failure;
+      if (committed.has(toolCallId)) return;
+      const existing = waiting.get(toolCallId);
+      if (existing) return await existing.promise;
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((accept, refuse) => {
+        resolve = accept;
+        reject = refuse;
+      });
+      waiting.set(toolCallId, { promise, resolve, reject });
+      const timer = setTimeout(
+        () => reject(new Error("Parent tool start was not durably persisted")),
+        timeoutMs,
+      );
+      try {
+        await promise;
+      } finally {
+        clearTimeout(timer);
+        waiting.delete(toolCallId);
+      }
+    },
+    commit(toolCallId: string) {
+      if (failed) return;
+      committed.set(toolCallId, true);
+      waiting.get(toolCallId)?.resolve();
+    },
+    fail(error: unknown) {
+      failed = true;
+      failure = error;
+      waiting.forEach((entry) => entry.reject(error));
+      waiting.clear();
+    },
+  };
+}
+
 type CapabilityState = {
+  parentToolStartBarrier?: ReturnType<typeof createParentToolStartBarrier>;
   inheritedExecution?: boolean;
   inheritedAdmitter?: InheritedRunAdmitter;
   apiUrl: string;
@@ -557,7 +607,11 @@ export function createHostedConversationRunChunkMirrorFromCapability(
   const state = getWeakMapValue(capabilityState, capability);
   if (!state || state.runId !== input.expectedRunId) return undefined;
   const { expectedRunId: _expectedRunId, ...mirrorInput } = input;
-  return createHostedConversationRunChunkMirror({
+  const barrier = state.inheritedAdmitter
+    ? state.parentToolStartBarrier ??= createParentToolStartBarrier(state.timeoutMs)
+    : undefined;
+  const pendingStarts = createPrivateMap<string, true>();
+  const mirror = createHostedConversationRunChunkMirror({
     ...mirrorInput,
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
@@ -566,7 +620,62 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     // Capability transports are host-owned, but durable persistence still
     // needs to stay in the active execution trace.
     fetch: instrumentConversationRunFetch(state.fetch),
+    ...(barrier
+      ? {
+        runQueueFlush: async <T>(operation: () => Promise<T>): Promise<T> => {
+          const result = await (input.runQueueFlush ? input.runQueueFlush(operation) : operation());
+          // This scheduler callback receives the queue controller's validated flush result.
+          const flushed = result as Awaited<
+            ReturnType<ConversationRunEventQueueController["flush"]>
+          >;
+          if (flushed.outcome === "stopped") {
+            barrier.fail(new Error("Parent event persistence is closed"));
+          } else if (flushed.outcome === "flushed" && flushed.pendingEventCount === 0) {
+            pendingStarts.forEach((_value, toolCallId) => barrier.commit(toolCallId));
+            pendingStarts.clear();
+          }
+          return result;
+        },
+      }
+      : {}),
   });
+  if (!barrier) return mirror;
+  const confirm = async (toolCallId: string) => {
+    try {
+      const snapshot = await mirror.flush();
+      if (snapshot.disabled) throw new Error("Parent event persistence is closed");
+      if (snapshot.pendingEventCount === 0 && !snapshot.inFlight) {
+        barrier.commit(toolCallId);
+        pendingStarts.delete(toolCallId);
+      }
+    } catch (error) {
+      if (mirror.getSnapshot().disabled) barrier.fail(error);
+      throw error;
+    }
+  };
+  return {
+    ...mirror,
+    async handleChunk(chunk) {
+      await mirror.handleChunk(chunk);
+      if (chunk.type === "tool-input-start") {
+        pendingStarts.set(chunk.toolCallId, true);
+        await confirm(chunk.toolCallId);
+      }
+    },
+    async appendEvents(events) {
+      await mirror.appendEvents(events);
+      for (const event of events) {
+        if (event.type === "TOOL_CALL_START" && typeof event.toolCallId === "string") {
+          pendingStarts.set(event.toolCallId, true);
+          await confirm(event.toolCallId);
+        }
+      }
+    },
+    dispose() {
+      barrier.fail(new Error("Parent event persistence is closed"));
+      mirror.dispose();
+    },
+  };
 }
 
 /** Return a routing identifier only for the exact run bound to this capability. */
@@ -610,6 +719,20 @@ export function runWithHostedRunEventWriterCapability<T>(
   }
 }
 
+/** Wait on the private exact-parent persistence barrier before a child transport runs. */
+export async function waitForHostedParentToolStart(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  toolCallId: string,
+): Promise<void> {
+  const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
+  if (!state || state.runId !== parentRunId) {
+    throw new Error("Parent tool start persistence authority is required");
+  }
+  const barrier = state.parentToolStartBarrier ??= createParentToolStartBarrier(state.timeoutMs);
+  await barrier.wait(toolCallId);
+}
+
 /** Obtain a parent-bound admission closure without disclosing its credential. */
 export function inheritedChildAdmitter(
   capability: HostedRunEventWriterCapability | undefined,
@@ -621,7 +744,11 @@ export function inheritedChildAdmitter(
   if (!state || state.runId !== parentRunId || !state.inheritedAdmitter) {
     throw new Error("Inherited child admission authority is required");
   }
-  return state.inheritedAdmitter(toolCallId, prompt);
+  const admit = state.inheritedAdmitter(toolCallId, prompt);
+  return async (input: Parameters<typeof admit>[0]) => {
+    await state.parentToolStartBarrier?.wait(toolCallId);
+    return await admit(input);
+  };
 }
 
 /** Check the private execution mode of the exact run preparing its tools. */

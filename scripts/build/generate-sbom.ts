@@ -9,7 +9,9 @@
  *          --output dist/sbom-ext-sandbox-shell-tools.json
  *
  * Walks the selected lockfile so the SBOM lists the transitive npm graph that
- * ships in the binary, not just the top-level import map.
+ * ships in the binary, not just the top-level import map. Lock-only mode includes
+ * only the selected lock graph; --manifest and --all-manifests additionally verify
+ * and inventory source distributions in the selected workspace boundaries.
  */
 
 import { parseArgs } from "#std/flags";
@@ -24,6 +26,8 @@ import {
   manifestsFromLock,
 } from "../security/submit-dependency-snapshot.ts";
 
+import { vendorComponentsByWorkspaceManifest } from "./vendor-source-components.ts";
+
 export { SUPPORTED_LOCK_VERSIONS };
 
 export interface CycloneDXComponent {
@@ -32,6 +36,10 @@ export interface CycloneDXComponent {
   version: string;
   purl: string;
   hashes?: Array<{ alg: string; content: string }>;
+  licenses?: Array<{ license: { id: string } }>;
+  pedigree?: { ancestors: CycloneDXComponent[] };
+  externalReferences?: Array<{ type: string; url: string }>;
+  properties?: Array<{ name: string; value: string }>;
 }
 
 export interface SbomOutput {
@@ -58,13 +66,14 @@ export interface DependencyIndex {
 
 export interface DependencyBoundaryInputs {
   manifestImportsByPath?: Record<string, Record<string, string>>;
+  vendorComponentsByManifest?: Record<string, CycloneDXComponent[]>;
 }
 
 export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
   {
     label: "sandbox execution",
     sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
-    expectedComponents: ["ai", "just-bash", "zod"],
+    expectedComponents: ["ai", "zod"],
   },
   {
     label: "native SQLite storage",
@@ -257,6 +266,7 @@ export function componentsForManifestBoundary(
 ): CycloneDXComponent[] {
   return dedupeComponents([
     ...componentsFromLockForManifest(lockText, manifestPath),
+    ...(inputs.vendorComponentsByManifest?.[manifestPath] ?? []),
     ...componentsFromEsmShImports(
       inputs.manifestImportsByPath?.[manifestPath] ?? {},
     ),
@@ -657,14 +667,18 @@ if (import.meta.main) {
     const manifestImportsByPath = await importsByWorkspaceManifest(
       workspaceMembers,
     );
+    const vendorComponentsByManifest =
+      await vendorComponentsByWorkspaceManifest(workspaceMembers);
     const outputs = sbomOutputsForAllManifests(lockText, {
       outputDir: args["output-dir"],
       workspaceMembers,
       manifestImportsByPath,
+      vendorComponentsByManifest,
     });
     const dependencyIndex = dependencyIndexForAllManifests(lockText, {
       workspaceMembers,
       manifestImportsByPath,
+      vendorComponentsByManifest,
     });
     await writeSbom(
       joinOutputPath(args["output-dir"], "dependencies-by-manifest.json"),
@@ -699,16 +713,24 @@ if (import.meta.main) {
     Deno.exit(0);
   }
 
-  const workspaceMembers = workspaceMembersFromDenoConfig(denoConfig);
-  const manifestImportsByPath = args.manifest
-    ? await importsByWorkspaceManifest(workspaceMembers)
-    : {};
-  const boundaryInputs = {
-    manifestImportsByPath,
-  };
   const manifestPath = args.manifest === "react"
     ? "react/deno.json"
     : args.manifest;
+  const selectedMembers = manifestPath
+    ? workspaceMembersFromDenoConfig(denoConfig).filter((member) =>
+      member + "/deno.json" === manifestPath
+    )
+    : [];
+  const boundaryInputs = {
+    vendorComponentsByManifest: manifestPath
+      ? await vendorComponentsByWorkspaceManifest(selectedMembers)
+      : {},
+    manifestImportsByPath: manifestPath
+      ? await importsByWorkspaceManifest(selectedMembers)
+      : {},
+  };
+  // Lock-only mode inventories only the selected artifact lock. Source distributions
+  // belong to explicitly selected workspace boundaries or the all-manifests catalogue.
   const components = manifestPath
     ? componentsForManifestBoundary(lockText, manifestPath, boundaryInputs)
     : componentsFromLock(lockText);

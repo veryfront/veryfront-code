@@ -9,7 +9,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "veryfront/platform/path";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import { env } from "#cli/process-env";
@@ -37,6 +37,7 @@ import {
   VeryfrontError,
 } from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { inspectOkfDocument } from "veryfront/knowledge";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
@@ -451,6 +452,223 @@ function formatOverwrittenPaths(paths: readonly string[]): string {
   return remaining > 0 ? `${shown} and ${remaining} more` : shown;
 }
 
+const OKF_COMPANION_REFERENCE_KEYS = new Set([
+  "attester",
+  "computation",
+  "executor",
+  "resource",
+  "sources",
+]);
+const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
+
+function looksLikeExternalOkfReference(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#");
+}
+
+function isMarkdownPullPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".md");
+}
+
+function hasOkfVersionDeclaration(metadata: Record<string, unknown>): boolean {
+  const version = Object.getOwnPropertyDescriptor(metadata, "okf_version")?.value;
+  return (typeof version === "string" && version.trim().length > 0) ||
+    (typeof version === "number" && Number.isFinite(version));
+}
+
+function hasOkfPullDocumentClassification(metadata: Record<string, unknown>): boolean {
+  const type = Object.getOwnPropertyDescriptor(metadata, "type")?.value;
+  return hasOkfVersionDeclaration(metadata) || (typeof type === "string" && type.trim().length > 0);
+}
+
+function collectOkfPullBundleRoots(
+  files: readonly { file: ProjectFile; op: ValidatedFilePath }[],
+): Set<string> {
+  const roots = new Set<string>();
+  for (const { file, op } of files) {
+    if (!op.relativePath.endsWith("/index.md") && op.relativePath !== "index.md") continue;
+    if (typeof file.content !== "string") continue;
+    const inspected = inspectOkfDocument(op.relativePath, file.content);
+    if (!hasOkfVersionDeclaration(inspected.metadata)) continue;
+    const root = dirname(op.relativePath).replace(/\\/g, "/");
+    roots.add(root === "." ? "" : root);
+  }
+  return roots;
+}
+
+function collectOkfPullBundleRootCandidates(
+  documentPath: string,
+  declaredBundleRoots: ReadonlySet<string>,
+  availablePaths: ReadonlySet<string>,
+): string[] {
+  const segments = documentPath.split("/");
+  for (let length = segments.length - 1; length >= 0; length--) {
+    const prefix = segments.slice(0, length).join("/");
+    if (declaredBundleRoots.has(prefix)) return [prefix];
+  }
+
+  const candidates: string[] = [];
+  for (let length = 1; length < segments.length; length++) {
+    const prefix = segments.slice(0, length).join("/");
+    if (availablePaths.has(`${prefix}/index.md`) && !candidates.includes(prefix)) {
+      candidates.push(prefix);
+    }
+  }
+  const topLevelRoot = segments.length > 1 ? segments[0] ?? "" : "";
+  if (candidates.length === 0) {
+    return topLevelRoot ? [topLevelRoot, ""] : [""];
+  }
+
+  if (
+    availablePaths.has("index.md") && candidates[0] === topLevelRoot && !candidates.includes("")
+  ) {
+    candidates.push("");
+  }
+  if (topLevelRoot && !candidates.includes(topLevelRoot)) candidates.push(topLevelRoot);
+  return candidates;
+}
+
+function isInsideOkfPullRoot(path: string, root: string): boolean {
+  return !root || path === root || path.startsWith(`${root}/`);
+}
+
+function isInsideAnyOkfPullRoot(path: string, roots: readonly string[]): boolean {
+  if (roots.includes("")) return true;
+  const scopedRoots = roots.filter((root) => root.length > 0);
+  if (scopedRoots.length === 0) return true;
+  return scopedRoots.some((root) => isInsideOkfPullRoot(path, root));
+}
+
+function resolveOkfPullCompanionCandidates(
+  documentPath: string,
+  reference: string,
+  bundleRoots: readonly string[],
+): string[] {
+  const trimmed = reference.trim();
+  if (!trimmed || looksLikeExternalOkfReference(trimmed)) return [];
+
+  const [withoutHash] = trimmed.split("#", 1);
+  const [withoutQuery] = (withoutHash ?? "").split("?", 1);
+  const path = withoutQuery?.trim();
+  if (!path) return [];
+
+  const referencePath = path.replace(/^\/+/, "");
+  const rootFallbacks = bundleRoots.map((root) => ({
+    root,
+    rawPath: root ? join(root, referencePath) : referencePath,
+  }));
+  const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  const rawPaths: { rawPath: string; root?: string }[] = path.startsWith("/")
+    ? rootFallbacks
+    : documentDir === "."
+    ? rootFallbacks
+    : [{ rawPath: join(documentDir, path) }, ...rootFallbacks];
+  const candidates: string[] = [];
+  for (const entry of rawPaths) {
+    const normalized = normalize(entry.rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+    if (
+      !normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") ||
+      normalized.split("/").includes("..")
+    ) {
+      continue;
+    }
+    if (
+      entry.root === undefined
+        ? !isInsideAnyOkfPullRoot(normalized, bundleRoots)
+        : !isInsideOkfPullRoot(normalized, entry.root)
+    ) {
+      continue;
+    }
+    if (!candidates.includes(normalized)) candidates.push(normalized);
+  }
+  return candidates;
+}
+
+function collectOkfPullReferencesFromValue(input: {
+  documentPath: string;
+  value: unknown;
+  key?: string;
+  insideCompanionField: boolean;
+  referencedPaths: Set<string>;
+  availablePaths: Set<string>;
+  bundleRoots: readonly string[];
+}): void {
+  const insideCompanionField = input.insideCompanionField ||
+    (input.key !== undefined && OKF_COMPANION_REFERENCE_KEYS.has(input.key));
+  if (typeof input.value === "string") {
+    if (insideCompanionField) {
+      const candidates = resolveOkfPullCompanionCandidates(
+        input.documentPath,
+        input.value,
+        input.bundleRoots,
+      );
+      const existingCandidate = candidates.find((candidate) => input.availablePaths.has(candidate));
+      const referencedPath = existingCandidate ?? candidates[0];
+      if (referencedPath !== undefined) input.referencedPaths.add(referencedPath);
+    }
+    return;
+  }
+  if (Array.isArray(input.value)) {
+    for (const item of input.value) {
+      collectOkfPullReferencesFromValue({
+        documentPath: input.documentPath,
+        value: item,
+        insideCompanionField,
+        referencedPaths: input.referencedPaths,
+        availablePaths: input.availablePaths,
+        bundleRoots: input.bundleRoots,
+      });
+    }
+    return;
+  }
+  if (input.value == null || typeof input.value !== "object") return;
+  for (const [key, value] of Object.entries(input.value)) {
+    collectOkfPullReferencesFromValue({
+      documentPath: input.documentPath,
+      value,
+      key,
+      insideCompanionField: insideCompanionField && OKF_COMPANION_PATH_KEYS.has(key),
+      referencedPaths: input.referencedPaths,
+      availablePaths: input.availablePaths,
+      bundleRoots: input.bundleRoots,
+    });
+  }
+}
+
+function collectReferencedOkfPullCompanions(
+  files: readonly { file: ProjectFile; op: ValidatedFilePath }[],
+  ignoreChecker: IgnoreChecker,
+): Set<string> {
+  const availablePaths = new Set(files.map(({ op }) => op.relativePath));
+  const bundleRoots = collectOkfPullBundleRoots(files);
+  const referencedPaths = new Set<string>();
+  for (const { file, op } of files) {
+    if (
+      ignoreChecker.isIgnored(op.relativePath) ||
+      !isMarkdownPullPath(op.relativePath) ||
+      typeof file.content !== "string"
+    ) continue;
+    const inspected = inspectOkfDocument(op.relativePath, file.content);
+    if (!hasOkfPullDocumentClassification(inspected.metadata)) continue;
+    collectOkfPullReferencesFromValue({
+      documentPath: op.relativePath,
+      value: inspected.metadata,
+      insideCompanionField: false,
+      referencedPaths,
+      availablePaths,
+      bundleRoots: collectOkfPullBundleRootCandidates(op.relativePath, bundleRoots, availablePaths),
+    });
+  }
+  return referencedPaths;
+}
+
+function isPullSupportedFile(
+  path: string,
+  ignoreChecker: IgnoreChecker,
+  referencedOkfCompanions: ReadonlySet<string>,
+): boolean {
+  return ignoreChecker.isSupportedExtension(path) || referencedOkfCompanions.has(path);
+}
+
 async function listManagedLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
@@ -801,11 +1019,12 @@ async function pullSingleProject(
   // ignores, which `.vfignore` rules already prevent.
   const ignoreChecker = await loadIgnoreChecker(projectDir);
   await ignoreChecker.resolveGitIgnoredCandidates(remotePaths);
+  const referencedOkfCompanions = collectReferencedOkfPullCompanions(validatedFiles, ignoreChecker);
   const writeOps: WriteOp[] = [];
   for (const { file, op } of validatedFiles) {
     if (
       ignoreChecker.isIgnored(op.relativePath) ||
-      !ignoreChecker.isSupportedExtension(op.relativePath)
+      !isPullSupportedFile(op.relativePath, ignoreChecker, referencedOkfCompanions)
     ) {
       continue;
     }

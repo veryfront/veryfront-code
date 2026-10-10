@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
@@ -8,7 +8,19 @@ import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import { getHostedRequestPreparationSignal } from "./request-preparation-context.ts";
-import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
+import {
+  getServerResolvedToolExposureCheckpoint,
+  resolveHostedRequestToolExposureCheckpoint,
+} from "../hosted/runtime-request-config.ts";
+import { computeToolExposureCheckpointSha256 } from "../hosted/chat-request-parser.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { tool } from "#veryfront/tool";
+import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
+import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "../hosted/child-run-event-writer-token.ts";
 import type { HostedAgentServiceDetachedExecutionInput } from "./routes.ts";
 
@@ -109,12 +121,14 @@ function createRouteSet(input: {
       verified: boolean;
       integrationTools?: readonly string[];
       resumeToolCallSha256?: string;
+      toolExposureCheckpointSha256?: string;
     }
   >;
   startDetachedExecution?: (
     input: HostedAgentServiceDetachedExecutionInput<{ executionId: string }>,
   ) => Promise<void>;
   resolveRuntimeOwnerInvokeUrl?: (request: Request) => Promise<string | null>;
+  deploymentArtifact?: string | null;
 } = {}) {
   const tracker = createDetachedRunTracker<AgUiResumeValue>();
   const preparedRequests: ParsedHostedChatRequest[] = [];
@@ -122,6 +136,7 @@ function createRouteSet(input: {
 
   const routeSet = createHostedAgentServiceRouteSet<{ executionId: string }>({
     tracker,
+    deploymentArtifact: input.deploymentArtifact,
     runtimeSource: input.runtimeSource === null ? undefined : input.runtimeSource ?? runtimeSource,
     authenticateRequest: input.authenticateRequest ??
       (async (request): Promise<HostedServiceAuthenticatedRequest | Response> => {
@@ -159,6 +174,7 @@ Deno.test("agent service routes expose the default paths", () => {
   const { routeSet } = createRouteSet();
 
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
+    "GET /version",
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
     "POST /api/runs/:runId/resume",
@@ -166,6 +182,104 @@ Deno.test("agent service routes expose the default paths", () => {
     "POST /api/runs",
     "POST /api/control-plane/runs/:runId/stream",
   ]);
+});
+
+Deno.test("agent service route set validates deploymentArtifact at factory boundary", async () => {
+  assertThrows(
+    () => createRouteSet({ deploymentArtifact: "latest" }),
+    TypeError,
+    "deploymentArtifact must be null or an immutable artifact tag",
+  );
+
+  const inheritedOptions = Object.assign(
+    Object.create({
+      deploymentArtifact: "20261007183045-ffffffffffff",
+    }),
+    {
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+      verifyProjectAccess: async () => ({ success: true as const }),
+      verifyRunCancellationToken: () => Promise.resolve(true),
+      verifyRunEventAppendToken: () => Promise.resolve(false),
+      prepareExecution: async () => ({ executionId: "exec-1" }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    },
+  );
+  const inheritedRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    inheritedOptions,
+  );
+  const inheritedVersionRoute = inheritedRouteSet.routes.find((route) => route.path === "/version");
+  const inheritedResponse = await inheritedVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+  assertEquals(await inheritedResponse?.json(), { artifact: null });
+
+  let accessorReads = 0;
+  const accessorOptions = {
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+    verifyProjectAccess: async () => ({ success: true as const }),
+    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunEventAppendToken: () => Promise.resolve(false),
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {},
+  };
+  Object.defineProperty(accessorOptions, "deploymentArtifact", {
+    get() {
+      accessorReads += 1;
+      return "20261007183045-ffffffffffff";
+    },
+    configurable: true,
+  });
+
+  const accessorRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    accessorOptions,
+  );
+  const accessorVersionRoute = accessorRouteSet.routes.find((route) => route.path === "/version");
+  const accessorResponse = await accessorVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+
+  assertEquals(accessorReads, 0);
+  assertEquals(await accessorResponse?.json(), { artifact: null });
+
+  const traceMutatingOptions = {
+    deploymentArtifact: "20261007183045-a1b2c3d4e5f6",
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async () => ({ authToken: "token", userId: "user-1" }),
+    verifyProjectAccess: async () => ({ success: true as const }),
+    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunEventAppendToken: () => Promise.resolve(false),
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {},
+  };
+  Object.defineProperty(traceMutatingOptions, "trace", {
+    get() {
+      traceMutatingOptions.deploymentArtifact = "20261007183100-bbbbbbbbbbbb";
+      return undefined;
+    },
+    configurable: true,
+  });
+
+  const traceMutatingRouteSet = createHostedAgentServiceRouteSet<{ executionId: string }>(
+    traceMutatingOptions,
+  );
+  const traceMutatingVersionRoute = traceMutatingRouteSet.routes.find((route) =>
+    route.path === "/version"
+  );
+  const traceMutatingResponse = await traceMutatingVersionRoute?.handler(
+    new Request("https://agent.example.test/version"),
+    {},
+  );
+
+  assertEquals(await traceMutatingResponse?.json(), {
+    artifact: "20261007183045-a1b2c3d4e5f6",
+  });
 });
 
 it("preserves resume signals when custom authentication consumes the body", async () => {
@@ -1118,6 +1232,157 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
   assertEquals(JSON.stringify(preparedRequests[0]).includes("verified-event-token"), false);
   assertEquals(preparedRequests[0]?.forwardedProps, undefined);
   assertEquals(resolved, [{ checkpoint: undefined }]);
+});
+
+it("durable-chat resume after a form restores tools discovered before the form", async () => {
+  const createdFiles: unknown[] = [];
+  const formSubmissions: unknown[] = [];
+  const tools = {
+    create_file: tool({
+      id: "create_file",
+      description: "Create a project file",
+      inputSchema: defineSchema((v) => v.object({ path: v.string(), content: v.string() }))(),
+      execute: (input) => {
+        createdFiles.push(input);
+        return { created: true };
+      },
+    }),
+    form_input: tool({
+      id: "form_input",
+      description: "Collect structured input from the user",
+      inputSchema: defineSchema((v) => v.object({ title: v.string() }))(),
+      execute: (input) => {
+        formSubmissions.push(input);
+        return { submitted: true, values: { topic: "release notes" } };
+      },
+    }),
+  };
+  const baseConfig = {
+    id: "durable-form-resume",
+    system: "Collect the topic, then write the file.",
+    skills: false,
+    tools,
+    __vfToolLoadingMode: "deferred",
+  } satisfies RuntimeToolFilterConfig;
+
+  // First dispatch: tool_search loads create_file and the runtime persists the checkpoint.
+  let persisted: ToolExposureCheckpoint | undefined;
+  const discoveryModel = scriptedModel([
+    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "create_file" } }] },
+    { text: "Opening the form." },
+  ], { only: "stream" });
+  await (await createEphemeralAgentWithRuntimeOptions({
+    ...baseConfig,
+    resolveModelTransport: () => ({ model: discoveryModel }),
+    __vfToolExposureCheckpointPersistenceRequired: true,
+    __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
+      persisted = checkpoint;
+    },
+  } as RuntimeToolFilterConfig, {}).stream({ input: "Write the release notes file." }))
+    .toDataStreamResponse().text();
+  assertEquals(discoveryModel.toolNames(1).includes("create_file"), true);
+  if (!persisted) throw new Error("Expected a persisted tool exposure checkpoint");
+  const checkpoint = persisted;
+
+  // The form submission resumes the run through an ordinary durable-chat dispatch.
+  const resumeToolCall = { id: "form-1", name: "form_input", input: { title: "Topic" } };
+  const resumedModel = scriptedModel([
+    {
+      toolCalls: [{
+        id: "file-1",
+        name: "create_file",
+        input: { path: "notes.md", content: "release notes" },
+      }],
+    },
+    { text: "Created notes.md." },
+  ], { only: "stream" });
+  const { routeSet } = createRouteSet({
+    verifyRunEventAppendToken: async () => ({
+      verified: true,
+      resumeToolCallSha256: await computeHash(privateJsonStringify(resumeToolCall)),
+      toolExposureCheckpointSha256: await computeToolExposureCheckpointSha256(checkpoint),
+    }),
+    prepareExecution: async (request) => {
+      await (await createEphemeralAgentWithRuntimeOptions({
+        ...baseConfig,
+        resolveModelTransport: () => ({ model: resumedModel }),
+        __vfToolExposureCheckpoint: resolveHostedRequestToolExposureCheckpoint(request),
+      } as RuntimeToolFilterConfig, {
+        ...(request.serverResolvedResumeToolCall
+          ? { resumeToolCall: request.serverResolvedResumeToolCall }
+          : {}),
+      }).stream({ input: "continue" })).toDataStreamResponse().text();
+      return { executionId: "exec-form-resume" };
+    },
+  });
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+        resumeToolCall,
+        forwardedProps: { serverResolvedToolExposureCheckpoint: checkpoint },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(formSubmissions, [{ title: "Topic" }]);
+  assertEquals(resumedModel.toolNames(0).includes("create_file"), true);
+  assertEquals(createdFiles, [{ path: "notes.md", content: "release notes" }]);
+});
+
+it("durable-chat rejects a tool exposure checkpoint that does not match its signed digest", async () => {
+  const checkpoint: ToolExposureCheckpoint = { version: 2, loadedToolNames: ["create_file"] };
+  for (
+    const forwardedProps of [
+      { serverResolvedToolExposureCheckpoint: { version: 2, loadedToolNames: ["delete_project"] } },
+      { serverResolvedToolExposureCheckpoint: { version: 2, loadedToolNames: "create_file" } },
+      undefined,
+    ]
+  ) {
+    const { routeSet, preparedRequests } = createRouteSet({
+      verifyRunEventAppendToken: async () => ({
+        verified: true,
+        toolExposureCheckpointSha256: await computeToolExposureCheckpointSha256(checkpoint),
+      }),
+    });
+    const response = await routeSet.handleDurableChatRunExecuteRequest({
+      request: createAuthenticatedRequest(
+        "/api/runs",
+        {
+          messages: [],
+          context: {
+            conversationId: "00000000-0000-4000-8000-000000000001",
+            projectId: "00000000-0000-4000-8000-000000000005",
+            branchId: null,
+          },
+          durableRootRun: {
+            runId: "run-1",
+            messageId: "00000000-0000-4000-8000-000000000002",
+          },
+          ...(forwardedProps ? { forwardedProps } : {}),
+        },
+        "POST",
+        { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+      ),
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), { errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" });
+    assertEquals(preparedRequests.length, 0);
+  }
 });
 
 it("verified control-plane envelopes accept private state without returning it publicly", async () => {

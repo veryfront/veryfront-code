@@ -59,6 +59,30 @@ async function readPublishedGuide(path: string): Promise<string> {
 }
 
 const GUIDE_CONTRACTS: Record<string, GuideContract> = {
+  "guides/connect-runtime.md": {
+    references: [
+      "./agent-service-runtime.md",
+      "./runs.md",
+      "../api-reference/veryfront/agent.md",
+    ],
+    snippets: [
+      "createExternalAgentWorkerClient",
+      "`/conversations/${conversation.id}/messages`",
+      'parts: [{ type: "text", text: prompt }]',
+      "registerWorker",
+      "claimRun",
+      "ConversationRunEventEncoder",
+      "const messageId = run.message_id;",
+      "x-csrf-token",
+      "project editor access",
+      '}, { "Idempotency-Key": admissionKey });',
+      "VERYFRONT_PROJECT_ID",
+      "veryfront dev",
+      "worker_key",
+      "completeRun",
+      "Runs panel",
+    ],
+  },
   "guides/agent-service-runtime.md": {
     references: [
       "../api-reference/veryfront/agent.md",
@@ -85,7 +109,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "childCanonicalRunId",
       "EVENT_SCHEMA_BY_TYPE",
       "EVENT_TYPES",
-      "deno task generate",
+      "npm install veryfront @veryfront/ext-schema-zod",
+      "deno add npm:veryfront npm:@veryfront/ext-schema-zod",
+      "node verify-events.mjs",
+      "bun verify-events.mjs",
+      "deno run verify-events.mjs",
+      "assert.equal(invalid.success, false)",
+      "Event parsing verified.",
     ],
   },
   "guides/agents.md": {
@@ -995,7 +1025,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/sandbox.md",
       "../api-reference/veryfront/fs.md",
     ],
-    snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
+    snippets: ["Sandbox.create", "runCommand", "sandbox.close"],
   },
   "guides/security-headers.md": {
     references: [],
@@ -1101,4 +1131,19 @@ describe("published guide contracts", () => {
       }
     });
   }
+});
+
+describe("Connect-runtime worker admission", () => {
+  it("persists the prompt as a user message before worker admission", async () => {
+    const guide = await readPublishedGuide("guides/connect-runtime.md");
+    const prompt = guide.indexOf('  const prompt = "');
+    const admission = guide.indexOf('const accepted = await api<{ id: string }>("/runs"');
+    const beforeAdmission = guide.slice(prompt, admission);
+    assertStringIncludes(
+      beforeAdmission,
+      "await api(`/conversations/${conversation.id}/messages`, {",
+    );
+    assertStringIncludes(beforeAdmission, 'role: "user"');
+    assertStringIncludes(beforeAdmission, 'parts: [{ type: "text", text: prompt }]');
+  });
 });

@@ -10,10 +10,24 @@ import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import { captureTaskDefinition } from "./definition-snapshot.ts";
 
-/**
- * Context passed to task run() function
- */
+/** A durable child invocation under the current project Task. */
+export interface TaskChildRequest {
+  /** Project definition to execute under this Task's durable lineage. */
+  target: { type: "agent" | "workflow" | "task"; id: string };
+  input?: unknown;
+  /** Stable invocation identity; retries reuse this key and the same input. */
+  idempotencyKey: string;
+}
+
+/** Context passed to a task run function. */
 export interface TaskContext {
+  /**
+   * Execute a child in the same project/runtime and return its output.
+   * Uses the current Task's durable parent and original credential; callers do not supply authority.
+   * Failed/cancelled children and an aborted invocation throw. Parent failure/cancellation closes descendants.
+   * Project runtimes provide this capability; local CLI contexts omit it.
+   */
+  runChild?: (request: TaskChildRequest) => Promise<unknown>;
   /** Environment variables */
   env: Record<string, string>;
   /** Run config: execution settings (when executed by the platform) */

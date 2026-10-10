@@ -13,6 +13,8 @@ export type AgentServiceVeryfrontApiMcpServerConfig = {
 
 export type AgentServiceVeryfrontStudioMcpServerConfig = {
   kind: "veryfront-studio";
+  /** Require a usable Studio transport; defaults to true. */
+  required?: boolean;
   id?: string;
   toolPolicy?: AgentMcpToolPolicy;
 };

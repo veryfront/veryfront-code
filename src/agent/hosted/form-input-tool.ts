@@ -1,3 +1,5 @@
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   getActiveHostedRunEventWriterCapability,
   hostedRunCanonicalId,
@@ -12,11 +14,21 @@ import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
   type FormInputToolInput,
-  getFormInputToolInputSchema,
+  getDurableFormInputToolInputSchema,
   getInputRequest,
   type InputRequestOutput,
 } from "../input/request-protocol.ts";
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
+import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
+
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+
+const objectHasOwn = Object.hasOwn;
+const apply = Reflect.apply;
+const stringStartsWith = String.prototype.startsWith;
+const stringSlice = String.prototype.slice;
+const TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY =
+  "__veryfrontTrustedPlatformPolicyToolResultIds";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
@@ -51,7 +63,7 @@ export function createHostedFormInputTool(
   return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",
-    inputSchema: getFormInputToolInputSchema(),
+    inputSchema: getDurableFormInputToolInputSchema(),
     execute: async (input, execOptions) => {
       if (inheritedExecution) {
         throw INVALID_ARGUMENT.create({
@@ -216,7 +228,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInputToolPart {
+function isFormInputToolPart(
+  part: ChatUiMessagePart,
+  options: { legacyFormInputReplayAllowed?: boolean } = {},
+): part is PersistedFormInputToolPart {
   if (!isRecord(part)) {
     return false;
   }
@@ -224,34 +239,73 @@ function isFormInputToolPart(part: ChatUiMessagePart): part is PersistedFormInpu
   if (typeof record.toolCallId !== "string" || !("output" in record)) {
     return false;
   }
-  const toolName = typeof record.toolName === "string" ? record.toolName : undefined;
+  return (record.toolName === CANONICAL_FORM_INPUT_TOOL_ID) ||
+    (options.legacyFormInputReplayAllowed === true && record.toolName === FORM_INPUT_TOOL_ID) ||
+    isFormInputToolPartType(part.type, options);
+}
 
-  return toolName === "form_input" || part.type === "tool-form_input";
+function isFormInputToolPartType(
+  type: unknown,
+  options: { legacyFormInputReplayAllowed?: boolean },
+): boolean {
+  return typeof type === "string" && apply(stringStartsWith, type, ["tool-"]) &&
+    (apply(stringSlice, type, ["tool-".length]) === CANONICAL_FORM_INPUT_TOOL_ID ||
+      (options.legacyFormInputReplayAllowed === true &&
+        apply(stringSlice, type, ["tool-".length]) === FORM_INPUT_TOOL_ID));
 }
 
 function extractSubmittedFormInputResult(
   part: ChatUiMessagePart,
+  options: { legacyFormInputReplayAllowed?: boolean } = {},
 ): HostedSubmittedFormInputResult | undefined {
-  if (!isFormInputToolPart(part) || !isRecord(part.output)) {
-    return undefined;
-  }
-  if (part.output.submitted !== true || !isRecord(part.output.values)) {
-    return undefined;
-  }
+  if (!isFormInputToolPart(part, options)) return undefined;
+  const output = readToolResultOwnDataProperty(part, "output");
+  if (!isRecord(output)) return undefined;
+  const submitted = readToolResultOwnDataProperty(output, "submitted");
+  const values = readToolResultOwnDataProperty(output, "values");
+  if (submitted !== true || !isRecord(values)) return undefined;
 
-  const inputRequestId = typeof part.output.inputRequestId === "string" &&
-      part.output.inputRequestId.length > 0
-    ? part.output.inputRequestId
+  const storedInputRequestId = readToolResultOwnDataProperty(output, "inputRequestId");
+  const inputRequestId = typeof storedInputRequestId === "string" && storedInputRequestId.length > 0
+    ? storedInputRequestId
     : part.toolCallId;
 
-  return {
-    values: part.output.values,
-    inputRequestId,
-  };
+  return { values, inputRequestId };
+}
+
+function hasDuplicateToolCallId(message: ChatUiMessage, toolCallId: string): boolean {
+  let seen = false;
+  let duplicate = false;
+  forEachPrivateArray(message.parts, (part) => {
+    if (readToolResultOwnDataProperty(part, "toolCallId") !== toolCallId) return;
+    if (seen) duplicate = true;
+    seen = true;
+  });
+  return duplicate;
+}
+
+function hasTrustedFormInputReplaySidecar(
+  message: ChatUiMessage,
+  part: ChatUiMessagePart,
+): boolean {
+  const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+  if (typeof toolCallId !== "string" || hasDuplicateToolCallId(message, toolCallId)) return false;
+  const metadata = readToolResultOwnDataProperty(message, "metadata");
+  const trustedToolCallIds = isRecord(metadata)
+    ? readToolResultOwnDataProperty(metadata, TRUSTED_PLATFORM_POLICY_TOOL_RESULT_METADATA_KEY)
+    : undefined;
+  if (!Array.isArray(trustedToolCallIds)) return false;
+
+  let trusted = false;
+  forEachPrivateArray(trustedToolCallIds, (id) => {
+    if (id === toolCallId) trusted = true;
+  });
+  return trusted;
 }
 
 function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
+    if (!objectHasOwn(messages, index)) continue;
     if (messages[index]?.role === "user") {
       return index;
     }
@@ -260,18 +314,59 @@ function latestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   return -1;
 }
 
-/** Find the latest submitted form_input result persisted after the latest user message. */
+/** Find the latest submitted form result in trusted server-loaded history after the latest user message. */
 export function findSubmittedFormInputResult(
   messages: readonly ChatUiMessage[],
+  options: {
+    legacyFormInputReplayAllowed?: boolean;
+    trustedHostedHistoryMessageIds?: readonly string[];
+  } = {},
 ): HostedSubmittedFormInputResult | undefined {
+  const trustedIds = createPrivateMap<string, true>();
+  const ids = options.trustedHostedHistoryMessageIds ?? [];
+  forEachPrivateArray(ids, (id) => {
+    if (typeof id === "string") trustedIds.set(id, true);
+  });
+  const sourceCounts = createPrivateMap<string, number>();
+  forEachPrivateArray(messages, (message) => {
+    if (!trustedIds.has(message.id)) return;
+    sourceCounts.set(message.id, (sourceCounts.get(message.id) ?? 0) + 1);
+  });
+  const sources = createPrivateMap<string, ChatUiMessage>();
+  forEachPrivateArray(messages, (message) => {
+    if (
+      message.role !== "assistant" || !trustedIds.has(message.id) ||
+      sourceCounts.get(message.id) !== 1
+    ) return;
+    sources.set(message.id, message);
+  });
   let result: HostedSubmittedFormInputResult | undefined;
   const startIndex = latestUserMessageIndex(messages) + 1;
-
-  for (const message of messages.slice(startIndex)) {
-    for (const part of message.parts) {
-      result = extractSubmittedFormInputResult(part) ?? result;
-    }
-  }
-
+  const admittedResultCounts = createPrivateMap<string, number>();
+  forEachPrivateArray(messages, (message, index) => {
+    if (index < startIndex || sources.get(message.id) !== message) return;
+    forEachPrivateArray(message.parts, (part) => {
+      const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof toolCallId !== "string" || !objectHasOwn(part, "output")) return;
+      // Count admitted results across history; unrelated project reuse cannot invalidate a receipt.
+      if (hasTrustedFormInputReplaySidecar(message, part) || isFormInputToolPart(part, options)) {
+        admittedResultCounts.set(toolCallId, (admittedResultCounts.get(toolCallId) ?? 0) + 1);
+      }
+    });
+  });
+  forEachPrivateArray(messages, (message, index) => {
+    if (index < startIndex || sources.get(message.id) !== message) return;
+    forEachPrivateArray(message.parts, (part) => {
+      const toolCallId = readToolResultOwnDataProperty(part, "toolCallId");
+      if (
+        typeof toolCallId !== "string" || admittedResultCounts.get(toolCallId) !== 1 ||
+        hasDuplicateToolCallId(message, toolCallId)
+      ) return;
+      result = extractSubmittedFormInputResult(part, {
+        legacyFormInputReplayAllowed: options.legacyFormInputReplayAllowed === true ||
+          hasTrustedFormInputReplaySidecar(message, part),
+      }) ?? result;
+    });
+  });
   return result;
 }

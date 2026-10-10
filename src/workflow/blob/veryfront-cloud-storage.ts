@@ -9,8 +9,8 @@ import {
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  createVeryfrontApiOriginBoundOutboundFetch,
   guardedOutboundFetch,
-  OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
@@ -38,14 +38,7 @@ const NativeHeaders = Headers;
 const applyIntrinsic = Reflect.apply;
 const headersHas = NativeHeaders.prototype.has;
 const headersSet = NativeHeaders.prototype.set;
-const NativeURL = URL;
-const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const stringReplace = String.prototype.replace;
-
-function readUrlOrigin(url: URL): string {
-  if (!urlOriginGetter) throw new TypeError("Native URL origin getter is unavailable");
-  return applyIntrinsic(urlOriginGetter, url, []) as string;
-}
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -927,20 +920,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const scope = options.signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
     const signal = options.signal ?? scope?.signal;
     if (!signal) throw new TypeError("Blob request signal is unavailable");
-    const apiOrigin = readUrlOrigin(new NativeURL(resolved.apiBaseUrl));
     try {
-      const response = await guardedOutboundFetch(
+      const response = await createVeryfrontApiOriginBoundOutboundFetch(resolved.apiBaseUrl)(
         joinUrl(resolved.apiBaseUrl, path),
         { method, headers, body: options.body, redirect: "error", signal },
-        {
-          authorizeUrl: (target) => {
-            if (readUrlOrigin(target) !== apiOrigin) {
-              throw new OutboundRequestBlockedError(
-                "Veryfront Cloud Blob request blocked: destination origin is not authorized",
-              );
-            }
-          },
-        },
       );
 
       if (options.allowNotFound && response.status === 404) {

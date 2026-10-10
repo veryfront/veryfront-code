@@ -1,5 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
-import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
+import { throwIfAborted } from "#veryfront/utils/abort.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type {
@@ -308,6 +308,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async #getAdapter(
     onResolved?: (initializedNow: boolean) => void,
+    signal?: AbortSignal,
   ): Promise<VeryfrontFSAdapter> {
     const startTime = performanceNow();
     const context = getCurrentRequestContext();
@@ -347,6 +348,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
       context.branch,
       onResolved,
+      signal,
     ] as const;
     const adapter = await IntrinsicReflectApply(
       this.#managerGetAdapter,
@@ -371,15 +373,15 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, []) as Promise<void>;
   }
 
-  async readFile(path: string): Promise<string> {
-    const adapter = await this.#getAdapter();
-    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readFile(path);
+  async readFile(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
+    const adapter = await this.#getAdapter(undefined, options.signal);
+    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readFile(path, options);
     const readFile = captureEffectiveAdapterMethod(
       adapter,
       "readFile",
       VeryfrontFSAdapterReadFile,
     );
-    return await IntrinsicReflectApply(readFile, adapter, [path]) as string;
+    return await IntrinsicReflectApply(readFile, adapter, [path, options]) as string;
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
@@ -398,20 +400,23 @@ export class MultiProjectFSAdapter implements FSAdapter {
     );
   }
 
-  async readTextFile(path: string): Promise<string> {
-    const adapter = await this.#getAdapter();
-    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readTextFile(path);
+  async readTextFile(path: string, options: { signal?: AbortSignal } = {}): Promise<string> {
+    const adapter = await this.#getAdapter(undefined, options.signal);
+    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readTextFile(path, options);
     const readTextFile = captureEffectiveAdapterMethod(
       adapter,
       "readTextFile",
       VeryfrontFSAdapterReadTextFile,
     );
-    return await IntrinsicReflectApply(readTextFile, adapter, [path]) as string;
+    return await IntrinsicReflectApply(readTextFile, adapter, [path, options]) as string;
   }
 
-  async readOptionalTextFile(path: string): Promise<string> {
-    const adapter = await this.#getAdapter();
-    return adapter.readOptionalTextFile(path);
+  async readOptionalTextFile(
+    path: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<string> {
+    const adapter = await this.#getAdapter(undefined, options.signal);
+    return adapter.readOptionalTextFile(path, options);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -604,7 +609,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async readDependencyMetadataHistory(signal?: AbortSignal): Promise<DependencyMetadataHistory> {
     throwIfAborted(signal);
-    const adapter = await awaitAbortable(this.#getAdapter(), signal);
+    const adapter = await this.#getAdapter(undefined, signal);
     if (!isConcreteVeryfrontFSAdapter(adapter)) {
       const reader = adapter.readDependencyMetadataHistory;
       if (typeof reader !== "function") {

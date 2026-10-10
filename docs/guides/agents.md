@@ -185,7 +185,7 @@ with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up t
 import { agent } from "veryfront";
 
 export default agent({
-  instructions: "Use tools to answer the user's questions.",
+  system: "Use tools to answer the user's questions.",
   toolResultContext: {
     maxInlineBytes: 8192,
     previewBytes: 2048,
@@ -395,6 +395,11 @@ subprocesses.
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
+  Cloud scripts use background sandbox commands above `55000` ms so the
+  synchronous API limit does not shorten your configured timeout. Commands are
+  canceled at the configured deadline, and the executor closes its sandbox.
+  Truncated cloud script output returns output-limit exit code `125`, including
+  partial output and an explanatory error.
 
 ## Connect to a route
 
@@ -560,6 +565,12 @@ replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
 event named `veryfront.runtime_context` for durable replay and diagnostics.
 
+Runtime context does not count as assistant output.
+A detached stream that ends without cancellation, assistant output, or a reported
+stream error fails with `EMPTY_RESPONSE`.
+This check does not replace cancellation or a reported stream error with
+`EMPTY_RESPONSE`.
+
 ## Dynamic system prompts
 
 The `system` property accepts a string, a function, or an async function:
@@ -645,6 +656,19 @@ Its lifecycle is:
   not diagnosed by the chain.
 - Re-entrant `next()` calls made by Promise species or other framework-internal
   result-observation hooks are rejected; they are not middleware-body calls.
+
+Middleware can replace or edit messages, but changing a platform control result
+removes its trusted ownership. Internal clones preserve that ownership only when
+the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
+Caller-supplied result shapes never grant platform control authority.
+
+For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
+matching the replayed platform result contents against immutable canonical run or
+input-response evidence, or an original host-authored content digest retained
+before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
+do not prove origin. Edited replacements lose the grant. Deploy compatible API
+and Studio support and qualify replay against that deployed combination before
+claiming trusted replay acceptance.
 
 ## Verify it worked
 

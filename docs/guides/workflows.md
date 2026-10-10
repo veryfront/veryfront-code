@@ -496,10 +496,9 @@ indefinitely. `delay(id, duration)` uses the same machinery and completes its
 node once the duration elapses. Canceling a run resolves its pending event
 waits, so a canceled run no longer reports itself as parked.
 
-Durable event waits require a backend that implements them. The built-in
-`MemoryBackend` does; `RedisBackend` does not currently implement the durable
-event-wait method group. Use `hasEventWaitSupport(backend)` to check a custom
-backend before relying on `waitForEvent` or `delay`.
+The built-in `MemoryBackend` and `RedisBackend` implement durable event waits.
+Use `hasEventWaitSupport(backend)` to check a custom backend before relying on
+`waitForEvent` or `delay`.
 
 `publishEvent` is run-scoped. There is no broadcast by workflow id.
 
@@ -653,6 +652,13 @@ the publication.
 Resume such a run from a checkpoint that retains the original child context.
 
 A run that pauses on an approval or an event has no output until it completes.
+
+A durable workflow run holds its completed step boundary when the control plane
+cannot confirm whether execution can continue. The runtime retries transient
+pause acknowledgement failures for up to 60 seconds, then answers with a
+resumable manual pause. A 401, 403, or 404 response holds the run immediately.
+Resume the run manually with a valid capability to execute the remaining steps.
+The runtime never treats an unknown decision as permission to continue.
 
 See [Run input and output](./run-input-output.md) for what a workflow run
 stores as input and output, and how `inputSchema` and `outputSchema` apply.

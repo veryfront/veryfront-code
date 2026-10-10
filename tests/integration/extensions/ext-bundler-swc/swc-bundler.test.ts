@@ -1,3 +1,6 @@
+// Materialize the fixture dependency for the delegated native bundler.
+// A type-only import is erased by the no-check integration lane.
+import "npm:class-validator@0.15.1";
 import type { ValidationError } from "npm:class-validator@0.15.1";
 import {
   assertEquals,

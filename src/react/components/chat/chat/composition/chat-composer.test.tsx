@@ -281,6 +281,15 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assert(textarea, "Expected multiline composer input to render");
       assertEquals(textareaRef.current, textarea);
       assertEquals(textarea.getAttribute("aria-label"), "Ask Veryfront");
+      assertStringIncludes(
+        textarea.className,
+        "placeholder:text-[var(--input-placeholder)]",
+        "composer placeholders use the readable input placeholder token",
+      );
+      assert(
+        !textarea.className.includes("placeholder:text-[var(--faint)]"),
+        "composer placeholders must not use the low-contrast faint token",
+      );
       assertEquals(textarea.rows, 4);
       assertEquals(textarea.cols, 40);
       assertEquals(textarea.wrap, "soft");

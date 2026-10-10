@@ -22,6 +22,7 @@ import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.t
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
+  getRuntimeToolBootstrapNames,
   resolveRuntimeToolLoading,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
 } from "./runtime-tool-config.ts";
@@ -72,10 +73,13 @@ export type RuntimeStepToolLoader = (
     forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
+    unavailableOptionalRemoteToolNames?: string[];
+    unavailableOptionalRemoteToolPrefixes?: string[];
     onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     frameworkLocalTools?: Record<string, Tool>;
+    includeProviderSchemaHiddenTools?: boolean;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -105,6 +109,8 @@ export interface PrepareAgentRuntimeStepInput {
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
   getAvailableTools: RuntimeStepToolLoader;
+  unavailableOptionalRemoteToolNames?: string[];
+  unavailableOptionalRemoteToolPrefixes?: string[];
   supportsToolCalling: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
@@ -268,12 +274,15 @@ export async function prepareAgentRuntimeStep(
       forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
       remoteToolSources: input.remoteToolSources,
       remoteToolContext: toolContext,
+      unavailableOptionalRemoteToolNames: input.unavailableOptionalRemoteToolNames,
+      unavailableOptionalRemoteToolPrefixes: input.unavailableOptionalRemoteToolPrefixes,
       onIntegrationToolDiscovery: (result) => {
         integrationToolDiscovery = result;
       },
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
       frameworkLocalTools: input.frameworkLocalTools,
+      includeProviderSchemaHiddenTools: true,
     })
     : [];
 
@@ -340,6 +349,7 @@ export async function prepareAgentRuntimeStep(
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
+    bootstrapToolNames: getRuntimeToolBootstrapNames(input.config),
     maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);

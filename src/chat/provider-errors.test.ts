@@ -13,9 +13,204 @@ import {
 import {
   buildProviderError,
   markVeryfrontGatewayResponse,
+  ProviderRateLimitError,
+  ProviderRequestError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 
 describe("chat/provider-errors", () => {
+  it("classifies a typed streaming rate limit without inspecting provider wording", () => {
+    const error = new ProviderRateLimitError({
+      provider: "openai",
+      status: 200,
+      retryable: true,
+      message: "private upstream text",
+    });
+    assertEquals(parseProviderError(error), {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    });
+  });
+
+  it("does not infer native authentication from untrusted private stream causes", () => {
+    for (const status of [401, 403]) {
+      const error = createRuntimeProviderStreamFailure({ status, retryable: false });
+      assertEquals(parseProviderError(error), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+      assertEquals(Object.keys(error).includes("cause"), false);
+    }
+  });
+
+  it("preserves a gateway spend-check refusal through the stream failure cause", async () => {
+    const response = markVeryfrontGatewayResponse(
+      new Response(
+        JSON.stringify({
+          error: "AI provider spend check is temporarily unavailable",
+          code: "ai_provider_spend_check_unavailable",
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const failure = await buildProviderError("openai", response);
+    const expected = {
+      code: "ai_provider_spend_check_unavailable",
+      message: "Veryfront cannot verify provider spend. Contact your administrator.",
+      status: 503,
+    };
+    assertEquals(failure.retryable, true);
+    assertEquals(parseProviderError(failure), expected);
+    assertEquals(
+      parseProviderError(new Error("Provider stream failed", { cause: failure })),
+      expected,
+    );
+    assertEquals(executorModelFailure(failure), {
+      type: "failure",
+      code: "ai_provider_spend_check_unavailable",
+    });
+    assertEquals(
+      parseProviderError(createExecutorModelFailure("ai_provider_spend_check_unavailable")),
+      expected,
+    );
+  });
+
+  it("keeps unmarked provider spend-check text as a provider overload", async () => {
+    const failure = await buildProviderError(
+      "openai",
+      new Response(
+        JSON.stringify({
+          error: "Private upstream text",
+          code: "ai_provider_spend_check_unavailable",
+        }),
+        { status: 503 },
+      ),
+    );
+    assertEquals(parseProviderError(failure), {
+      code: "OVERLOADED_ERROR",
+      message: "The LLM provider is currently overloaded",
+    });
+  });
+
+  it("classifies wrapped native provider authentication refusals without exposing provider text", () => {
+    for (const status of [401, 403]) {
+      const providerError = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      const wrapped = new Error("Provider stream failed", { cause: providerError });
+      assertEquals(parseProviderError(wrapped), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+        status,
+      });
+    }
+  });
+
+  it("preserves authentication classification through native HTTP and hosted model boundaries", async () => {
+    for (const status of [401, 403]) {
+      const error = await buildProviderError(
+        "anthropic",
+        new Response("Private provider diagnostic <TOKEN>", { status }),
+      );
+      assertEquals(parseProviderError(error), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+        status,
+      });
+      assertEquals(executorModelFailure(error), {
+        type: "failure",
+        code: "agent-provider-auth-error",
+      });
+      assertEquals(parseProviderError(createExecutorModelFailure("agent-provider-auth-error")), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+        status: 401,
+      });
+    }
+  });
+
+  it("does not classify unrecognized gateway 401/403 as native provider authentication", async () => {
+    for (const status of [401, 403]) {
+      const error = await buildProviderError(
+        "anthropic",
+        markVeryfrontGatewayResponse(
+          new Response("Private gateway diagnostic <TOKEN>", { status }),
+        ),
+      );
+      assertEquals(parseProviderError(error), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    }
+  });
+
+  it("gives native 401/403 status precedence over provider api_error bodies", () => {
+    for (const status of [401, 403]) {
+      const error = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      Object.defineProperty(error, "responseBody", {
+        value: JSON.stringify({
+          error: { type: "api_error", message: "Private provider diagnostic <TOKEN>" },
+        }),
+      });
+      assertEquals(parseProviderError(error), {
+        code: "agent-provider-auth-error",
+        message: "Agent provider authentication failed",
+        status,
+      });
+    }
+  });
+
+  it("requires native provider provenance for authentication status mapping", () => {
+    for (const status of [401, 403]) {
+      assertEquals(parseProviderError({ status, retryable: false }).code, "EXTERNAL_SERVICE_ERROR");
+      assertEquals(
+        parseProviderError(new Error("Provider stream failed", { cause: { status } })).code,
+        "EXTERNAL_SERVICE_ERROR",
+      );
+    }
+    for (
+      const [status, retryable] of [[400, false], [429, true], [500, true], [503, true]] as const
+    ) {
+      const cause = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      assertEquals(
+        parseProviderError(new Error("Provider stream failed", { cause })),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+      );
+      assertEquals(cause.status, status);
+      assertEquals(cause.retryable, retryable);
+    }
+  });
+
+  it("bounds cyclic causes without invoking cause accessors", () => {
+    const cyclic = new Error("Provider stream failed");
+    Object.defineProperty(cyclic, "cause", { value: cyclic });
+    assertEquals(parseProviderError(cyclic).code, "EXTERNAL_SERVICE_ERROR");
+    const accessor = new Error("Provider stream failed");
+    let reads = 0;
+    Object.defineProperty(accessor, "cause", {
+      get() {
+        reads++;
+        throw new Error("Unexpected access");
+      },
+    });
+    assertEquals(parseProviderError(accessor).code, "EXTERNAL_SERVICE_ERROR");
+    assertEquals(reads, 0);
+  });
+
   it("maps the gateway project-required body to a curated code with fixed wording", () => {
     assertEquals(
       parseProviderError({ code: "gateway_project_required", error: "echoed secret text" }),
@@ -110,7 +305,7 @@ describe("chat/provider-errors", () => {
     const refusal = await buildProviderError("openai", new Response(body, { status: 403 }));
 
     assertEquals(parseProviderError(overload).code, "OVERLOADED_ERROR");
-    assertEquals(parseProviderError(refusal).code, "EXTERNAL_SERVICE_ERROR");
+    assertEquals(parseProviderError(refusal).code, "agent-provider-auth-error");
   });
 
   it("keeps a real gateway overload as OVERLOADED_ERROR", async () => {

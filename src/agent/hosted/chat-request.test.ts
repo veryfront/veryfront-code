@@ -2,6 +2,9 @@ import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-
 import resumeDigestContract from "../../../tests/fixtures/contracts/api-auth-resume-call-digest.json" with {
   type: "json",
 };
+import toolExposureDigestContract from "../../../tests/fixtures/contracts/api-auth-tool-exposure-checkpoint-digest.json" with {
+  type: "json",
+};
 import "#veryfront/schemas/_test-setup.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
@@ -18,7 +21,10 @@ import {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import {
+  computeToolExposureCheckpointSha256,
+  type ParsedHostedChatRequest,
+} from "./chat-request-parser.ts";
 import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
@@ -26,6 +32,7 @@ import {
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
@@ -2282,6 +2289,7 @@ describe("agent/hosted-chat-request", () => {
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
           resumeToolCall: {
             id: "call-1:resume-1",
             name: "outlook__list_messages",
@@ -2312,6 +2320,9 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.serverResolvedProviderReplayCheckpoints, [
       serverResolvedProviderReplayCheckpoint,
     ]);
+    assertEquals(parsed.serverResolvedTrustedHostedHistoryMessageIds, [
+      "stored-assistant-message",
+    ]);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
       projectId,
@@ -2326,6 +2337,32 @@ describe("agent/hosted-chat-request", () => {
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected missing run-event token response");
+    }
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN",
+    });
+  });
+
+  it("rejects trusted hosted history message ids without a run-event append token", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
         }),
       }),
       {
@@ -2463,6 +2500,43 @@ describe("agent/hosted-chat-request", () => {
     );
     if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
     assertEquals(parsed.serverResolvedResumeToolCall, resumeDigestContract.resumeToolCall);
+    assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.forwardedProps, { harmless: true });
+  });
+
+  it("binds ordinary-chat tool exposure to the signed checkpoint digest contract", async () => {
+    const checkpoint = toolExposureDigestContract.checkpoint as ToolExposureCheckpoint;
+    assertEquals(
+      await computeHash(toolExposureDigestContract.serialized),
+      toolExposureDigestContract.sha256,
+    );
+    assertEquals(
+      await computeToolExposureCheckpointSha256(checkpoint),
+      toolExposureDigestContract.sha256,
+    );
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-writer" },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+          forwardedProps: { serverResolvedToolExposureCheckpoint: checkpoint, harmless: true },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () =>
+          Promise.resolve({
+            verified: true,
+            toolExposureCheckpointSha256: toolExposureDigestContract.sha256,
+          }),
+      },
+    );
+    if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+    assertEquals(parsed.serverResolvedToolExposureCheckpoint, checkpoint);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.forwardedProps, { harmless: true });
   });
@@ -2710,6 +2784,7 @@ describe("agent/hosted-chat-request", () => {
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          serverResolvedTrustedHostedHistoryMessageIds: ["stored-assistant-message"],
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
@@ -2736,6 +2811,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.serverResolvedProviderReplayCheckpoints, undefined);
+    assertEquals(parsed.serverResolvedTrustedHostedHistoryMessageIds, undefined);
     assertEquals(parsed.serverResolvedResumeToolCall, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });
@@ -3072,6 +3148,75 @@ describe("agent/hosted-chat-request", () => {
       errorCode: "PROJECT_ACCESS_DENIED",
       message: "Project access denied",
     });
+  });
+
+  it("preserves service-unavailable project access failures", async () => {
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            projectId,
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () =>
+          Promise.resolve({
+            success: false,
+            error: {
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
+              statusCode: 503,
+            },
+          }),
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      errorCode: "SERVER_ERROR",
+      message: "Project access could not be verified",
+    });
+  });
+
+  it("rejects a durable invocation with the project service failure before execution", async () => {
+    let accessChecks = 0;
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => {
+          accessChecks++;
+          return Promise.resolve({
+            success: false as const,
+            error: {
+              errorCode: "SERVER_ERROR",
+              message: "Project access could not be verified",
+              statusCode: 503,
+            },
+          });
+        },
+        runtimeSource,
+      },
+    );
+    if (!(response instanceof Response)) throw new Error("Expected access failure response");
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      errorCode: "SERVER_ERROR",
+      message: "Project access could not be verified",
+    });
+    assertEquals(accessChecks, 1);
   });
 
   it("parses runtime agent invocations into hosted chat requests", async () => {

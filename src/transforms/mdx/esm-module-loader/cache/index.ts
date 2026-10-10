@@ -963,15 +963,25 @@ export async function clearHttpBundleCache(): Promise<void> {
 
 /**
  * Clear all local ESM caches (MDX-ESM disk cache, HTTP bundles, in-memory caches).
- * Call this on server startup to prevent stale module issues.
+ * Server startup may preserve HTTP bundles materialized before the process starts.
+ * The default also removes those bundles for explicit full cache invalidation.
  */
-export async function clearAllLocalCaches(): Promise<void> {
+export async function clearAllLocalCaches(
+  options: { preserveHttpBundles?: boolean } = {},
+): Promise<void> {
   clearModulePathCache();
-  await Promise.all([clearESMDiskCache(), clearHttpBundleCache()]);
+  await Promise.all([
+    clearESMDiskCache(),
+    ...(options.preserveHttpBundles ? [] : [clearHttpBundleCache()]),
+  ]);
   // The cache root lives inside the user's project outside production, so keep
   // the generated bundles out of their version control before writing more.
   await ensureCacheDirIgnored();
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared all local caches`);
+  logger.debug(
+    `${LOG_PREFIX_MDX_LOADER} Cleared local caches${
+      options.preserveHttpBundles ? "; preserved HTTP bundles" : ""
+    }`,
+  );
 }
 
 function toMdxEsmCacheKey(
