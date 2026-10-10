@@ -480,7 +480,12 @@ describe("upstream WebSocket client", () => {
       try {
         const closed = new Promise<void>((resolve, reject) => {
           socket.onclose = () => resolve();
-          socket.onerror = () => reject(new Error("the upstream socket errored during teardown"));
+          socket.onerror = (event) => {
+            const message = event instanceof ErrorEvent && event.message
+              ? `: ${event.message}`
+              : "";
+            reject(new Error(`the upstream socket errored during teardown${message}`));
+          };
           closeTimer = setTimeout(
             () => reject(new Error("timed out waiting for the upstream socket to close")),
             5_000,
@@ -551,6 +556,74 @@ describe("upstream WebSocket client", () => {
     assertEquals(closeCalls[0], { closeCode: 1011, reason: "Server connection error" });
     assertEquals(closeCalls[1], undefined);
     assertEquals(socket.readyState, WebSocket.CLOSING);
+  });
+
+  it("reports an already-closed local close write as abnormal without an error event", async () => {
+    const closed = Promise.withResolvers<{ closeCode?: number; reason?: string }>();
+    const stream: UpstreamWebSocketStream = {
+      opened: Promise.resolve({
+        readable: new ReadableStream<string | Uint8Array>(),
+        writable: new WritableStream<string | Uint8Array>(),
+      }),
+      closed: closed.promise,
+      close() {
+        closed.reject(new DOMException("Connection is closed", "WebSocketError"));
+      },
+    };
+    const socket = new UpstreamWebSocket("ws://renderer/_ws", new Headers(), () => stream);
+    await new Promise<void>((resolve) => {
+      socket.onopen = () => resolve();
+    });
+    let errorCount = 0;
+    const closeEvent = new Promise<CloseEvent>((resolve) => {
+      socket.onerror = () => {
+        errorCount++;
+      };
+      socket.onclose = (event) => resolve(event);
+    });
+
+    socket.close(1000, "done");
+
+    const event = await closeEvent;
+    assertEquals(errorCount, 0);
+    assertEquals(event.code, 1006);
+    assertEquals(event.reason, "Connection is closed");
+    assertEquals(event.wasClean, false);
+    assertEquals(socket.readyState, WebSocket.CLOSED);
+  });
+
+  it("preserves genuine upstream failures after local close", async () => {
+    const closed = Promise.withResolvers<{ closeCode?: number; reason?: string }>();
+    const stream: UpstreamWebSocketStream = {
+      opened: Promise.resolve({
+        readable: new ReadableStream<string | Uint8Array>(),
+        writable: new WritableStream<string | Uint8Array>(),
+      }),
+      closed: closed.promise,
+      close() {
+        closed.reject(new DOMException("Unexpected EOF", "WebSocketError"));
+      },
+    };
+    const socket = new UpstreamWebSocket("ws://renderer/_ws", new Headers(), () => stream);
+    await new Promise<void>((resolve) => {
+      socket.onopen = () => resolve();
+    });
+    const events: string[] = [];
+    const closeEvent = new Promise<CloseEvent>((resolve) => {
+      socket.onerror = (event) => {
+        events.push(event instanceof ErrorEvent ? `error:${event.message}` : "error");
+      };
+      socket.onclose = (event) => resolve(event);
+    });
+
+    socket.close(1000, "done");
+
+    const event = await closeEvent;
+    assertEquals(events, ["error:Unexpected EOF"]);
+    assertEquals(event.code, 1006);
+    assertEquals(event.reason, "Unexpected EOF");
+    assertEquals(event.wasClean, false);
+    assertEquals(socket.readyState, WebSocket.CLOSED);
   });
 
   it("discards an upstream connection that arrives after close", async () => {

@@ -285,7 +285,7 @@ function stringValue(record: JsonRecord | undefined, key: string): string | unde
 }
 
 function isInvokeAgentTool(tool: ChatToolPart | ChatDynamicToolPart): boolean {
-  return tool.toolName === "invoke_agent";
+  return tool.toolName === "invoke_agent" || tool.toolName === "veryfront__invoke_agent";
 }
 
 function isToolRunning(tool: ChatToolPart | ChatDynamicToolPart): boolean {

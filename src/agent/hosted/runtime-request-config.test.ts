@@ -7,6 +7,7 @@ import {
   getForwardedHostedRuntimeOverrides,
   getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
+  hasExplicitHostedToolName,
   resolveHostedRuntimeAllowedTools,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
@@ -585,27 +586,87 @@ Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides na
   assertEquals(resolve([]), []);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
-  const resolve = (skills: RuntimeAgentMarkdownDefinition["skills"]) =>
+Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested canonical delegation", () => {
+  const resolve = (
+    skills: RuntimeAgentMarkdownDefinition["skills"],
+    deniedTools: string[] = [],
+  ) =>
+    resolveHostedRuntimeRequestConfig({
+      request: {
+        runtimeOverrides: { allowedTools: ["get_file", "veryfront__invoke_agent"] },
+      },
+      agentConfig: createAgentConfig({
+        tools: ["get_file"],
+        deniedTools,
+        skills,
+      }),
+      resolveModelId: (model) => model,
+    }).requestedAllowedTools;
+
+  assertEquals(resolve(["plan"]), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve("plan"), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve({ plan: true }), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(true), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(undefined), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(false), ["get_file"]);
+  assertEquals(resolve([]), ["get_file"]);
+  assertEquals(resolve({ plan: false }), ["get_file"]);
+  assertEquals(resolve(["plan"], ["veryfront__invoke_agent"]), ["get_file"]);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig maps implicit legacy delegation to canonical", () => {
+  const resolve = (
+    skills: RuntimeAgentMarkdownDefinition["skills"],
+    deniedTools: string[] = [],
+  ) =>
     resolveHostedRuntimeRequestConfig({
       request: {
         runtimeOverrides: { allowedTools: ["get_file", "invoke_agent"] },
       },
       agentConfig: createAgentConfig({
         tools: ["get_file"],
+        deniedTools,
         skills,
       }),
       resolveModelId: (model) => model,
     }).requestedAllowedTools;
 
-  assertEquals(resolve(["plan"]), ["get_file", "invoke_agent"]);
-  assertEquals(resolve("plan"), ["get_file", "invoke_agent"]);
-  assertEquals(resolve({ plan: true }), ["get_file", "invoke_agent"]);
-  assertEquals(resolve(true), ["get_file", "invoke_agent"]);
-  assertEquals(resolve(undefined), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(["plan"]), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve("plan"), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve({ plan: true }), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(true), ["get_file", "veryfront__invoke_agent"]);
+  assertEquals(resolve(undefined), ["get_file", "veryfront__invoke_agent"]);
   assertEquals(resolve(false), ["get_file"]);
   assertEquals(resolve([]), ["get_file"]);
   assertEquals(resolve({ plan: false }), ["get_file"]);
+  assertEquals(resolve(["plan"], ["veryfront__invoke_agent"]), ["get_file"]);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig preserves configured project legacy delegation", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: {
+      runtimeOverrides: { allowedTools: ["get_file", "invoke_agent"] },
+    },
+    agentConfig: createAgentConfig({
+      tools: ["get_file", "invoke_agent"],
+      skills: ["plan"],
+    }),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.requestedAllowedTools, ["get_file", "invoke_agent"]);
+});
+
+Deno.test("implicit delegation respects either platform denial and preserves explicit project grants", () => {
+  const resolve = (tools: string[], deniedTools: string[]) =>
+    resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools: ["invoke_agent"] } },
+      agentConfig: createAgentConfig({ tools, deniedTools, skills: ["plan"] }),
+      resolveModelId: (model) => model,
+    }).requestedAllowedTools;
+  assertEquals(resolve([], ["veryfront__invoke_agent"]), []);
+  assertEquals(resolve([], ["invoke_agent"]), []);
+  assertEquals(resolve(["invoke_agent"], ["veryfront__invoke_agent"]), ["invoke_agent"]);
 });
 
 describe("resolveHostedRuntimeRequestConfig", () => {
@@ -662,4 +723,25 @@ it("authored knowledge supplies its loader independently and client overrides on
     }),
     ["search_knowledge"],
   );
+});
+
+it("explicit hosted grants require own data configuration and array entries", () => {
+  const name = "veryfront__load_skill";
+  assertEquals(hasExplicitHostedToolName({ tools: [name] }, name), true);
+  const inherited = {};
+  Object.setPrototypeOf(inherited, { tools: [name] });
+  assertEquals(hasExplicitHostedToolName(inherited, name), false);
+  let reads = 0;
+  const accessor = {
+    get tools(): string[] {
+      reads++;
+      return [name];
+    },
+  };
+  assertEquals(hasExplicitHostedToolName(accessor, name), false);
+  const entries: string[] = [];
+  entries.length = 1;
+  Object.setPrototypeOf(entries, { 0: name });
+  assertEquals(hasExplicitHostedToolName({ tools: entries }, name), false);
+  assertEquals(reads, 0);
 });

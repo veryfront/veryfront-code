@@ -187,6 +187,27 @@ describe("conversation delegation policy", () => {
 });
 
 describe("load_skill continuation policy", () => {
+  it("reinforces completed canonical skill loads and preserves delegated root ownership", () => {
+    const messages = [
+      userMessage(RESEARCH_REQUEST),
+      assistantMessage([toolCall("canonical-load", "veryfront__load_skill", { skillId: "plan" })]),
+      toolMessage([toolResult("canonical-load", "veryfront__load_skill", PLAN_SKILL_RESULT)]),
+    ];
+    assertEquals(shouldReinforceLoadSkillContinuation(messages), true);
+    assertEquals(
+      evaluateStarterIntentTurnPolicy({
+        step: 1,
+        messages: [
+          userMessage(RESEARCH_REQUEST),
+          assistantMessage([
+            toolCall("canonical-child", "veryfront__invoke_agent", { task: "Research" }),
+          ]),
+        ],
+      }).shouldAddRootOwnershipReminder,
+      false,
+    );
+  });
+
   it("reinforces continuation after a trailing load_skill tool result", () => {
     assertEquals(
       shouldReinforceLoadSkillContinuation([

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -3513,6 +3518,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       latestExternalEventSequence: 0,
       maxEventsPerBatch: 100,
       fetch: (_input, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         const bodyText = typeof init?.body === "string" ? init.body : "{}";
         const body = JSON.parse(bodyText);
         appendBodies.push(body);

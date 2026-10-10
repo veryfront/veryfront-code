@@ -1,4 +1,5 @@
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -20,6 +21,10 @@ import {
   parseToolArgs,
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
+import {
+  enforceSkillPolicy,
+  hasTrustedPlatformPolicyToolDefinition,
+} from "./skill-policy-enforcement.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 
 /**
@@ -1127,6 +1132,36 @@ describe("tool-helpers", () => {
         );
       });
     }
+
+    it("carries trusted registry ownership onto tools:true platform policy definitions", async () => {
+      toolRegistryInternal.clearAll();
+
+      try {
+        toolRegistryInternal.register(
+          "form_input",
+          markTrustedHostToolProvenance(tool({
+            id: "form_input",
+            description: "Trusted platform form",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ submitted: true }),
+          })),
+        );
+
+        const defs = await getAvailableTools(true, { includeIntegrationTools: false });
+        const formInput = defs.find((def) => def.name === "form_input");
+
+        assertEquals(hasTrustedPlatformPolicyToolDefinition(formInput), true);
+        assertEquals(
+          enforceSkillPolicy("form_input", {
+            hasSubmittedFormInput: true,
+            toolDefinition: formInput,
+          }).allowed,
+          false,
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
       toolRegistryInternal.clearAll();
