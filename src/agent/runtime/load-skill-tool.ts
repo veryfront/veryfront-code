@@ -584,10 +584,16 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
+  const copied = copyLoadedSkillResponse(response);
+  const references = copied.references;
+  const referenceGuidance = references !== undefined && references.length > 0
+    ? `To read a listed reference file, use this same exposed skill-loader tool with skillId "${skillId}" and file. `
+    : "";
   return {
-    ...copyLoadedSkillResponse(response),
+    ...copied,
     instructions:
-      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
+      `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for the "${skillId}" body again. ` +
+      referenceGuidance +
       "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
   };
@@ -1450,12 +1456,12 @@ function buildRuntimeLoadSkillInputSchema(
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
-          `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+          `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
             loadedEnumValues.join(", ")
           }`,
         ),
-        file: getRuntimeLoadSkillReferenceFileInputSchema().describe(
-          "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+        file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+          "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
         ),
       })
     )();
@@ -1486,12 +1492,12 @@ function buildRuntimeLoadSkillInputSchema(
         }),
         v.object({
           skillId: v.enum(loadedEnumValues).describe(
-            `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
+            `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
               loadedEnumValues.join(", ")
             }`,
           ),
-          file: getRuntimeLoadSkillReferenceFileInputSchema().describe(
-            "Required reference file to load from an already-loaded skill. Do not call load_skill again for the skill body.",
+          file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
+            "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
           ),
         }),
       ])
@@ -2199,7 +2205,7 @@ export function createRuntimeLoadSkillTool(
       // generic schema so the tool definition is byte-identical across projects
       // (shared cache prefix, RFC 0001). The runtime validation schema is
       // still used for `.parse()` validation at execution, so all runtime
-      // enforcement (valid IDs, reload/body rules) is preserved; the model
+      // enforcement (valid IDs, reference authorization, compact repeat loads) is preserved; the model
       // just no longer sees the per-project enum.
       refreshPrivateAuthorityScope();
       return createStaticRuntimeLoadSkillToolInputJsonSchema();

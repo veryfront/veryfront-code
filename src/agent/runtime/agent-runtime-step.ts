@@ -16,7 +16,10 @@ import type { ModelRuntime } from "#veryfront/provider";
 import type { AgentConfig, AgentSystem, Message } from "../types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skill/allowed-tools.ts";
-import { resolveSkillToolDisposition } from "../skill-tool-disposition.ts";
+import {
+  resolveSkillToolDisposition,
+  resolveTrustedSkillLoaderToolName,
+} from "../skill-tool-disposition.ts";
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
@@ -345,11 +348,26 @@ export async function prepareAgentRuntimeStep(
       toolExposureState.loadedToolNames.add(toolName);
     }
   }
+  // A host that already selected the model-visible loader (hosted runs hide
+  // the unselected alias schema) supplies its bootstrap names. Otherwise
+  // bootstrap the loader the skill catalog names, chosen by trusted
+  // provenance; a project tool owning a loader spelling is never bootstrapped.
+  let bootstrapToolNames = getRuntimeToolBootstrapNames(input.config);
+  if (bootstrapToolNames === undefined) {
+    const trustedSkillLoaderToolName = resolveTrustedSkillLoaderToolName(input.config.tools);
+    const provenanceBootstrapToolNames = new IntrinsicSet<string>();
+    if (trustedSkillLoaderToolName !== undefined) {
+      IntrinsicReflectApply(IntrinsicSetAdd, provenanceBootstrapToolNames, [
+        trustedSkillLoaderToolName,
+      ]);
+    }
+    bootstrapToolNames = provenanceBootstrapToolNames;
+  }
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
-    bootstrapToolNames: getRuntimeToolBootstrapNames(input.config),
+    bootstrapToolNames,
     maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);

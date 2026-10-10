@@ -386,6 +386,99 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     );
   });
 
+  it("keeps schema-hidden local tools executable but out of eager steering inventory", async () => {
+    const hiddenLoader = markRuntimeProviderSchemaHiddenTool(
+      runtimeTool("load_skill", "Hidden loader alias"),
+    );
+    const visibleLoader = markTrustedHostToolProvenance(
+      runtimeTool("veryfront__load_skill", "Visible loader"),
+    );
+    const runtimeTools = {
+      load_skill: hiddenLoader,
+      veryfront__load_skill: visibleLoader,
+    };
+    let buildVisibleToolNames: readonly string[] | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) => {
+        buildVisibleToolNames = input.availableToolNames;
+        return `${input.instructions}:${(input.availableToolNames ?? []).join(",")}`;
+      },
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "veryfront__load_skill"],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(input.toolAssembly.runtimeTools.load_skill, hiddenLoader);
+    assertEquals(await input.toolAssembly.runtimeTools.load_skill?.execute?.({}, {}), { ok: true });
+    assertEquals(input.taskContext.availableToolNames, ["veryfront__load_skill"]);
+    assertEquals(buildVisibleToolNames, ["veryfront__load_skill"]);
+    assertEquals(system.includes("- load_skill\n"), false);
+    assertStringIncludes(system, "veryfront__load_skill");
+  });
+
+  it("does not let schema-hidden local tools consume eager provider capacity", async () => {
+    const runtimeTools: Record<string, Tool<unknown, unknown>> = {
+      hidden_alias: markRuntimeProviderSchemaHiddenTool(
+        runtimeTool("hidden_alias", "Hidden alias"),
+      ),
+    };
+    const visibleToolNames = Array.from(
+      { length: 128 },
+      (_, index) => `visible_tool_${index.toString().padStart(3, "0")}`,
+    );
+    for (const toolName of visibleToolNames) {
+      runtimeTools[toolName] = runtimeTool(toolName, "Visible tool");
+    }
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => (input.availableToolNames ?? []).join(","),
+    });
+    const input = createRefreshInput({
+      taskContext: {
+        authToken: "auth-token",
+        projectId: "project-1",
+        branchId: "branch-1",
+        model: "openai/gpt-test",
+      },
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["hidden_alias", ...visibleToolNames],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["hidden_alias", ...visibleToolNames],
+        toolLoadingMode: "eager",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(input.taskContext.availableToolNames?.length, 128);
+    assertEquals(input.taskContext.availableToolNames?.includes("hidden_alias"), false);
+    assertEquals(input.taskContext.availableToolNames?.includes("visible_tool_127"), true);
+    assertEquals(system.includes("hidden_alias"), false);
+    assertStringIncludes(system, "visible_tool_127");
+  });
+
   it("keeps an explicitly empty advertised skill catalog during refresh", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),

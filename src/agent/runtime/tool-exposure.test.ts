@@ -179,6 +179,21 @@ it("keeps hidden provider-schema aliases authorized but out of model exposure", 
   );
 });
 
+it("default bootstrap keeps the visible legacy loader when the canonical schema is hidden", () => {
+  const plan = createToolExposurePlan({
+    authorized: [
+      hiddenDefinition("veryfront__load_skill", "Hidden canonical loader"),
+      definition("load_skill", "Legacy loader"),
+      definition("project_loader", "Project loader"),
+    ],
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+
+  assertEquals(plan.visible.map((entry) => entry.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
+  assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
+});
+
 it("deferred exposure keeps form_input searchable and omits search for load_skill alone", () => {
   const deferred = createToolExposurePlan({
     authorized: [
@@ -219,6 +234,35 @@ it("deferred exposure keeps injected tool_search in visible ASCII order", () => 
     deferred.visible.map((tool) => tool.name),
     [TOOL_SEARCH_TOOL_NAME, "z_bootstrap"],
   );
+});
+
+it("an exact local tool name loads only that tool, retaining aliases and related readers for discovery", () => {
+  const authorized = [
+    definition("list_skills", "List project skills"),
+    definition("veryfront__list_skills", "List project skills"),
+    definition("get_skill", "Read a skill from the list_skills inventory"),
+    definition("get_skill_source", "Read source for list_skills entries"),
+  ];
+  const state = createToolExposureState();
+  const first = searchToolExposure({ query: "  LIST_SKILLS  ", authorized, state });
+  assertEquals(first.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const plan = createToolExposurePlan({ authorized, state, mode: "deferred" });
+  const repeated = searchToolExposure({
+    query: "list_skills",
+    authorized: plan.deferred,
+    available: plan.visible,
+    state,
+  });
+  assertEquals(repeated.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals(repeated.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const broad = searchToolExposure({
+    query: "list skills",
+    authorized,
+    state: createToolExposureState(),
+  });
+  assert(broad.resultCount > 1);
 });
 
 it("tool search ranks exact name, description, and parameter matches", () => {
@@ -266,6 +310,49 @@ it("tool search reports a capability-matched visible tool without loading deferr
   assertEquals([...state.loadedToolNames], []);
 });
 
+it("a broad capability query loads deferred tools despite equally matching visible readers", () => {
+  const names = ["create_agent", "create_agent_avatar", "delete_agent", "get_agent"];
+  const authorized = [
+    ...names.map((name) => definition(name, "Manage project agents")),
+    ...names.map((name) => definition(`veryfront__${name}`, "Manage project agents")),
+    definition("get_agent_run", "Read a project agent run"),
+  ];
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "agent",
+    available: [
+      definition("list_agent_tool_references", "Find attachable agent tools"),
+      definition("veryfront__list_agent_tool_references", "Find attachable agent tools"),
+      definition("load_skill", "Load agent task instructions"),
+    ],
+    authorized,
+    state,
+  });
+
+  for (const name of names) {
+    assert(result.matches.some((match) => match.name === name && match.status === "loaded"));
+    assert(state.loadedToolNames.has(name));
+  }
+  // TOOL_SEARCH_RESULT_LIMIT caps the nine authorized matches at five results.
+  assertEquals(result.loadedCount, 5);
+  assertEquals(result.matches.length, 5);
+});
+
+it("an exact visible reader match does not load weaker deferred capabilities", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "list_agent_tool_references",
+    available: [definition("list_agent_tool_references", "Find attachable agent tools")],
+    authorized: [
+      definition("create_agent", "Use list_agent_tool_references before creating agents"),
+    ],
+    state,
+  });
+  assertEquals(result.matches.map((match) => match.name), ["list_agent_tool_references"]);
+  assertEquals(result.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], []);
+});
+
 it("tool search loads a deferred exact-name match ahead of a visible capability match", () => {
   const state = createToolExposureState();
   const result = searchToolExposure({
@@ -283,21 +370,21 @@ it("tool search loads a deferred exact-name match ahead of a visible capability 
   assertEquals([...state.loadedToolNames], ["release"]);
 });
 
-it("tool search orders all four match ranks before name tie-breaking", () => {
+it("capability phrase search orders all four match ranks before name tie-breaking", () => {
   const rankedCatalog = [
-    definition("a_parameter", "Other capability", "Release value"),
-    definition("z_description", "Release information"),
-    definition("release_notes", "Other capability"),
-    definition("release", "Other capability"),
+    definition("a_parameter", "Other capability", "Release info value"),
+    definition("z_description", "Release info information"),
+    definition("release_info_notes", "Other capability"),
+    definition("release_info", "Other capability"),
   ];
 
   assertEquals(
     searchToolExposure({
-      query: "release",
+      query: "release info",
       authorized: rankedCatalog,
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["release", "release_notes", "z_description", "a_parameter"],
+    ["release_info", "release_info_notes", "z_description", "a_parameter"],
   );
 });
 
@@ -766,6 +853,42 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.length, 128);
   assertEquals(loadedStep.deferred, []);
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+});
+
+it("keeps the hosted framework loader visible when a local skill loader is also authorized", () => {
+  const authorized = [
+    definition("load_skill", "Project-owned loader"),
+    definition("veryfront__load_skill", "Framework skill loader"),
+  ];
+  const state = createToolExposureState();
+  const initial = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(initial.visible.map((tool) => tool.name), [
+    TOOL_SEARCH_TOOL_NAME,
+    "veryfront__load_skill",
+  ]);
+  assertEquals(initial.deferred.map((tool) => tool.name), ["load_skill"]);
+  const searched = searchToolExposure({
+    query: "load_skill",
+    authorized: initial.deferred,
+    available: initial.visible,
+    state,
+  });
+  assertEquals(searched.matches.map((tool) => tool.name), ["load_skill"]);
+  const loaded = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(loaded.visible.map((tool) => tool.name), ["load_skill", "veryfront__load_skill"]);
+  assertEquals(
+    createToolExposurePlan({ authorized, mode: "eager", state: createToolExposureState() }).visible,
+    authorized,
+  );
+  assertEquals(
+    createToolExposurePlan({
+      authorized,
+      mode: "deferred",
+      state: createToolExposureState(),
+      bootstrapToolNames: new Set(["load_skill", "veryfront__load_skill"]),
+    }).visible.map((tool) => tool.name),
+    ["load_skill", "veryfront__load_skill"],
+  );
 });
 
 it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
@@ -1357,4 +1480,15 @@ it("an unavailable exact action preserves the canonical platform catalog reader"
     state: createToolExposureState(),
   });
   assertEquals(result.matches.map((match) => match.name), ["veryfront__get_integration"]);
+});
+
+it("does not load an unrelated local action for a missing canonical query", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [definition("archive_messages", "Archive Gmail messages")],
+    state,
+  });
+  assertEquals(result.matches, []);
+  assertEquals([...state.loadedToolNames], []);
 });

@@ -13,6 +13,12 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig } from "./types.ts";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import type { RuntimeSkillLoaderToolName } from "./runtime/skill-prompt.ts";
+
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicToolRegistryGet = toolRegistry.get;
 
 /**
  * - `disable`: skills were turned off on purpose. Remove the tools even if the
@@ -66,4 +72,28 @@ export function resolveSkillToolDisposition(
   if (config.skills !== undefined) return "inject";
   if (hasConfiguredSkillTool(config.tools)) return "inject";
   return hasVisibleSkill(agentId) ? "inject" : "omit";
+}
+
+/**
+ * The framework skill loader the agent exposes, chosen by provenance rather
+ * than by name: a project tool may own either loader spelling. Catalog prompts
+ * and deferred tool bootstrap both use this, so they always name the same tool.
+ */
+export function resolveTrustedSkillLoaderToolName(
+  tools: AgentConfig["tools"],
+): RuntimeSkillLoaderToolName | undefined {
+  if (tools === true) {
+    return hasTrustedHostToolProvenance(
+        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["load_skill"]),
+      )
+      ? "load_skill"
+      : undefined;
+  }
+  if (!tools) return undefined;
+  const names = ["veryfront__load_skill", "load_skill"] as const;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    if (hasTrustedHostToolProvenance(tools[name])) return name;
+  }
+  return undefined;
 }

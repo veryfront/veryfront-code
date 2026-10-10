@@ -39,5 +39,10 @@
   },
   "tasks": {
     "test": "deno test --frozen --allow-read src/"
+  },
+  "fmt": {
+    "exclude": [
+      "vendor/typography.js"
+    ]
   }
 }

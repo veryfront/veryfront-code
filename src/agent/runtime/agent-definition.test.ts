@@ -268,6 +268,41 @@ describe("createRuntimeAgentSystemMessages", () => {
     );
     assertEquals(result[1]?.providerOptions, undefined);
   });
+
+  it("points skill inventory discovery at the bootstrapped loader alias", () => {
+    const largeCatalog = Array.from(
+      { length: 1_000 },
+      (_, index) => ({
+        id: `skill-${index}-${"x".repeat(240)}`,
+        name: `skill-${index}`,
+        description: `Description ${index}`,
+        instructions: `Instructions ${index}`,
+      }),
+    );
+    const render = (availableToolNames: readonly string[]) =>
+      createRuntimeAgentSystemMessages({
+        agent: {
+          id: "support",
+          name: "Support",
+          description: "Helps users",
+          instructions: "Base instructions",
+        },
+        skills: largeCatalog,
+        availableToolNames,
+      }).map((message) => message.content).join("\n\n");
+
+    const both = render(["load_skill", "veryfront__load_skill"]);
+    assertEquals(both.includes("Call veryfront__load_skill({ inventory:"), true);
+    assertEquals(both.includes("Call load_skill({ inventory:"), false);
+
+    const unavailable = render(["web_search"]);
+    assertEquals(unavailable.includes("load_skill"), false);
+    assertEquals(unavailable.includes("skill-0"), false);
+
+    const legacy = render(["load_skill"]);
+    assertEquals(legacy.includes("Call load_skill({ inventory:"), true);
+    assertEquals(legacy.includes("Call veryfront__load_skill({ inventory:"), false);
+  });
 });
 
 it("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
