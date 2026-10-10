@@ -93,6 +93,46 @@ function createModelCallContextEventWithText(
 }
 
 describe("agent/hosted/durable-run-event-sink", () => {
+  it("persists private model-call context when Array.isArray throws", async () => {
+    const target = mirror();
+    const event = createModelCallContextEventWithText(1);
+    const originalIsArray = Array.isArray;
+    try {
+      Array.isArray = function (): boolean {
+        throw new Error("managed Array.isArray");
+      };
+      await createDurableRunEventSink({ mirror: target.result })(event);
+    } finally {
+      Array.isArray = originalIsArray;
+    }
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.type, event.type);
+    assertEquals(persisted.messages, event.messages);
+    assertEquals(isPrivateConversationRunEvent(persisted), true);
+    assertEquals(target.isDisposed(), false);
+  });
+
+  it("keeps private model-call context out of the public normalizer when Array.isArray lies", async () => {
+    const target = mirror();
+    const event = createModelCallContextEventWithText(1);
+    const originalIsArray = Array.isArray;
+    try {
+      Array.isArray = function (_value: unknown): _value is unknown[] {
+        return true;
+      };
+      await createDurableRunEventSink({ mirror: target.result })(event);
+    } finally {
+      Array.isArray = originalIsArray;
+    }
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.type, event.type);
+    assertEquals(persisted.messages, event.messages);
+    assertEquals(isPrivateConversationRunEvent(persisted), true);
+    assertEquals(target.isDisposed(), false);
+  });
+
   it("keeps the authoritative mirror private when WeakMap methods are replaced", async () => {
     const target = mirror();
     const sink = createDurableRunEventSink({ mirror: target.result });
@@ -126,24 +166,30 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(target.isDisposed(), false);
   });
 
-  it("persists valid model-call contexts when project code replaces Number.isFinite", async () => {
+  it("persists valid model-call contexts when project code replaces numeric predicates", async () => {
     const target = mirror();
     const originalIsFinite = Number.isFinite;
+    const originalIsInteger = Number.isInteger;
     try {
       Number.isFinite = () => false;
+      Number.isInteger = () => false;
       await createDurableRunEventSink({ mirror: target.result })({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [{ role: "system", content: "record this context" }],
+        emittedAt: 42,
       });
     } finally {
       Number.isFinite = originalIsFinite;
+      Number.isInteger = originalIsInteger;
     }
 
     assertEquals(target.isDisposed(), false);
-    assertEquals(firstAppendedEvent(target.appended).messages, [{
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.messages, [{
       role: "system",
       content: "record this context",
     }]);
+    assertEquals(persisted.emittedAt, 42);
   });
 
   it("preserves required context arrays when project code replaces Array.isArray", async () => {

@@ -338,6 +338,138 @@ describe("hosted executor model dispatch", () => {
     }
   });
 
+  it("persists model context when managed Array iteration breaks structuredClone defaults", async () => {
+    const events: AgentRunModelCallContextEvent[] = [];
+    let dispatched = false;
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () =>
+        model(() => {
+          dispatched = true;
+        }),
+      runEventSink(event) {
+        assertModelCallContextEvent(event);
+        events.push(event);
+      },
+    }));
+    const originalIterator = Array.prototype[Symbol.iterator];
+    const apply = Reflect.apply;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function (this: unknown[]) {
+        const stack = new Error().stack ?? "";
+        if (
+          this.length === 0 &&
+          stack.includes("executor-model-dispatch.ts") &&
+          !stack.includes("executor-model-grant.ts") &&
+          !stack.includes("executor-model-dispatch-options.ts")
+        ) {
+          throw new Error("managed Array iterator");
+        }
+        return apply(originalIterator, this, []) as Iterator<unknown>;
+      },
+    });
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalIterator,
+      });
+      await channels.close();
+    }
+
+    assertEquals(events.length, 1);
+    assert(isPrivateConversationRunEvent(events[0]));
+    assertEquals(events[0]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Synthetic prompt" }],
+    }]);
+    assertEquals(dispatched, true);
+  });
+
+  it("keeps persisted model context complete when managed array traversal is replaced", async () => {
+    const events: AgentRunModelCallContextEvent[] = [];
+    const options: ModelRuntimeCallOptions = {
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Synthetic prompt" }],
+      }],
+      tools: [{
+        type: "function",
+        name: "lookup",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      }],
+    };
+    let dispatched: ModelRuntimeCallOptions | undefined;
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () =>
+        model((actual) => {
+          dispatched = actual;
+        }),
+      runEventSink(event) {
+        assertModelCallContextEvent(event);
+        events.push(event);
+      },
+    }));
+    const originalMap = Array.prototype.map;
+    const originalIterator = Array.prototype[Symbol.iterator];
+    const apply = Reflect.apply;
+    const ownDataValue = (value: unknown, key: string): unknown => {
+      if (value === null || typeof value !== "object") return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    };
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function (this: unknown[]) {
+        if (ownDataValue(this[0], "name") === "lookup") {
+          return { next: () => ({ done: true, value: undefined }) };
+        }
+        return apply(originalIterator, this, []) as Iterator<unknown>;
+      },
+    });
+    Object.defineProperty(Array.prototype, "map", {
+      configurable: true,
+      value: function (this: unknown[], callback: unknown, thisArg?: unknown): unknown[] {
+        if (ownDataValue(this[0], "role") === "user" || ownDataValue(this[0], "type") === "text") {
+          return [];
+        }
+        return apply(originalMap, this, [callback, thisArg]) as unknown[];
+      },
+    });
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate(options);
+    } finally {
+      Array.prototype.map = originalMap;
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalIterator,
+      });
+      await channels.close();
+    }
+
+    assertEquals(events.length, 1);
+    assert(isPrivateConversationRunEvent(events[0]));
+    assertEquals(events[0]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Synthetic prompt" }],
+    }]);
+    assertEquals(events[0]?.tools, options.tools);
+    assert(dispatched);
+    assertEquals(dispatched.prompt, options.prompt);
+    assertEquals(dispatched.tools, options.tools);
+  });
+
   it("persists the validated request projection before dispatch and isolates sink mutation", async () => {
     const entered = Promise.withResolvers<void>();
     const persisted = Promise.withResolvers<void>();
