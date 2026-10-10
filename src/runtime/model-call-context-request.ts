@@ -35,6 +35,7 @@ const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const NumberIsInteger = Number.isInteger;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const RegExpPrototypeTest = RegExp.prototype.test;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 
@@ -52,6 +53,10 @@ function objectKeys<TValue extends object>(value: TValue): string[] {
 
 function numberIsInteger(value: number): boolean {
   return ReflectApply(NumberIsInteger, Number, [value]) as boolean;
+}
+
+function numberIsSafeInteger(value: number): boolean {
+  return ReflectApply(NumberIsSafeInteger, Number, [value]) as boolean;
 }
 
 function readOwnEnumerableDataDescriptor(
@@ -461,7 +466,7 @@ function resolveGoogleReasoning(
   if (!native) return options.reasoning;
   const thinking = readOwnEnumerableDataDescriptor(native.value, "thinkingConfig")?.value;
   const budget = readOwnEnumerableDataDescriptor(thinking, "thinkingBudget")?.value;
-  if (typeof budget !== "number" || !Number.isSafeInteger(budget) || budget < -1) return undefined;
+  if (typeof budget !== "number" || !numberIsSafeInteger(budget) || budget < -1) return undefined;
   const neutral = options.reasoning;
   const neutralBudget = neutral?.budgetTokens ??
     (neutral?.effort === "low"

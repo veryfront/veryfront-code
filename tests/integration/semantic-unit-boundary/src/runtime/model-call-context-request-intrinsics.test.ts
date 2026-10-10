@@ -73,6 +73,50 @@ describe("model call request projection intrinsic boundaries", () => {
     }
   });
 
+  it("preserves Google thinking budgets when Number.isSafeInteger is replaced before dispatch", () => {
+    const nativeNumberIsSafeInteger = Number.isSafeInteger;
+    const replacements: Array<typeof Number.isSafeInteger> = [
+      () => {
+        throw new Error("poisoned Number.isSafeInteger");
+      },
+      () => false,
+    ];
+
+    try {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        ...sampling,
+        reasoning: { enabled: true, budgetTokens: 1024 },
+        providerOptions: {
+          google: {
+            generationConfig: {
+              thinkingConfig: { thinkingBudget: 4096, includeThoughts: true },
+            },
+          },
+        },
+      };
+      const body = buildGoogleGenerateContentRequest(
+        "veryfront-cloud",
+        options,
+        createWarningCollector(),
+      );
+      assertEquals(body.generationConfig?.thinkingConfig?.thinkingBudget, 4096);
+
+      for (const replacement of replacements) {
+        Number.isSafeInteger = replacement;
+        const projected = buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "google",
+          modelId: "gemini-synthetic",
+        }, options);
+
+        assertEquals(projected?.reasoning, { enabled: true, budgetTokens: 4096 });
+      }
+    } finally {
+      Number.isSafeInteger = nativeNumberIsSafeInteger;
+    }
+  });
+
   it("preserves Anthropic thinking budgets when Number.isInteger is replaced before dispatch", () => {
     const nativeNumberIsInteger = Number.isInteger;
     const replacements: Array<typeof Number.isInteger> = [
