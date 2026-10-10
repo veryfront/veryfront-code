@@ -1505,28 +1505,6 @@ describe("agent/ag-ui-encoder", () => {
     assertEquals(partial[0], "[unsupported accessor]");
   });
 
-  it("keeps array indexes stable while project code replaces String", () => {
-    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
-    const originalString = globalThis.String;
-    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents>;
-
-    try {
-      globalThis.String = (() => "0") as StringConstructor;
-      events = mapRuntimeStreamEventToAgUiEvents(state, {
-        type: "message-finish",
-        object: ["first", "second"],
-      });
-    } finally {
-      globalThis.String = originalString;
-    }
-
-    const value = events[0]?.payload.value as Record<string, unknown>;
-    const snapshot = value.object as Record<string, unknown>;
-
-    assertEquals(events[0]?.event, "RuntimeEventRecorded");
-    assertEquals(snapshot, ["first", "second"]);
-  });
-
   it("does not treat step lifecycle events as assistant-visible output", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

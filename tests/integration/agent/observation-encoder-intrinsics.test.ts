@@ -163,6 +163,28 @@ describe("observation encoder private intrinsics", () => {
     assertEquals(args?.payload.delta, '{"query":"exact input"}');
   });
 
+  it("keeps array indexes stable when project code replaces String", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const originalString = globalThis.String;
+    let events: ReturnType<typeof mapRuntimeStreamEventToAgUiEvents> = [];
+
+    try {
+      globalThis.String = (() => "0") as StringConstructor;
+      events = mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-finish",
+        object: ["first", "second"],
+      });
+    } finally {
+      globalThis.String = originalString;
+    }
+
+    const value = events[0]?.payload.value as Record<string, unknown>;
+    const snapshot = value.object as Record<string, unknown>;
+
+    assertEquals(events[0]?.event, "RuntimeEventRecorded");
+    assertEquals(snapshot, ["first", "second"]);
+  });
+
   it("preserves direct tool arguments and closure when project code replaces Set operations", () => {
     const NativeSet = Set;
     const methods = Object.getOwnPropertyDescriptors(NativeSet.prototype);
