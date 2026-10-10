@@ -1,7 +1,7 @@
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { slicePrivateArray } from "#veryfront/security/private-array.ts";
+import { pushPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   JSON_VALUE_MAX_SERIALIZED_BYTES,
   JSON_VALUE_MAX_STRING_BYTES,
@@ -376,7 +376,7 @@ function forEachTrustedSkillLoadResult(
 export function getTrustedSkillLoadResultIds(messages: readonly Message[]): string[] {
   const toolCallIds: string[] = [];
   forEachTrustedSkillLoadResult(messages, (_result, part) => {
-    toolCallIds.push(part.toolCallId);
+    pushPrivateArray(toolCallIds, part.toolCallId);
   });
   return toolCallIds;
 }
@@ -414,7 +414,7 @@ export function getProviderObservedSkillBodyIds(messages: readonly Message[]): r
     const skillId = extractSkillId(result);
     if (skillId !== undefined && !seen.has(skillId)) {
       seen.add(skillId);
-      skillIds.push(skillId);
+      pushPrivateArray(skillIds, skillId);
     }
   });
   return skillIds;
