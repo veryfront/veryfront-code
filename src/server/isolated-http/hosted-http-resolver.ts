@@ -395,8 +395,10 @@ export function createHostedHttpResolver(
     try {
       [, , image] = await Promise.all(pending);
     } catch (error) {
+      // Abort and detach the other checks; an operation that ignores its signal
+      // must not keep this resolution, or its ingress permit, pending.
       checks.abort();
-      await Promise.allSettled(pending);
+      for (const check of pending) check.catch(() => {});
       throw error;
     }
     signal.throwIfAborted();
@@ -450,15 +452,30 @@ export function createHostedHttpResolver(
 
   return async (authority, requestSignal) => {
     requestSignal.throwIfAborted();
+    // Race the resolution against its deadline and the request, so the resolver
+    // returns on time even when an operation ignores its abort signal.
     const deadline = new AbortController();
-    const timer = setTimeout(
-      () => deadline.abort(new DOMException("Hosted HTTP resolution timed out", "TimeoutError")),
-      resolutionMs,
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onRequestAbort: (() => void) | undefined;
+    const stopped = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const reason = new DOMException("Hosted HTTP resolution timed out", "TimeoutError");
+        deadline.abort(reason);
+        reject(reason);
+      }, resolutionMs);
+      onRequestAbort = () => {
+        deadline.abort(requestSignal.reason);
+        reject(requestSignal.reason);
+      };
+      requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+    });
+    const work = resolveWithin(authority, deadline.signal);
+    work.catch(() => {});
     try {
-      return await resolveWithin(authority, AbortSignal.any([requestSignal, deadline.signal]));
+      return await Promise.race([work, stopped]);
     } finally {
       clearTimeout(timer);
+      requestSignal.removeEventListener("abort", onRequestAbort!);
     }
   };
 }

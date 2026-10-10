@@ -235,6 +235,45 @@ describe("hosted HTTP resolver", () => {
     assertEquals(dispatches, 1);
   });
 
+  it("returns at the deadline even when an operation ignores its abort signal", async () => {
+    let ignore = true;
+    let lookups = 0;
+    const resolve = createHostedHttpResolver(options({
+      resolutionTimeoutMs: 20,
+      // Never settles, even after abort, while `ignore` is set.
+      lookupSourceImage: () => {
+        lookups++;
+        return ignore ? new Promise(() => {}) : Promise.resolve(record());
+      },
+    }));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+
+    let dispatches = 0;
+    const ingress = createHostedHttpIngress({
+      maxPreparing: 1,
+      broker: {
+        fetch() {
+          dispatches++;
+          return Promise.resolve(new Response("isolated"));
+        },
+      },
+      resolve,
+    });
+    const selection = {
+      ...authority,
+      mode: "production" as const,
+      hostMode: "production" as const,
+      proxyTrusted: true,
+    };
+    const first = await ingress(new Request("https://app.example/page"), selection);
+    assertEquals(first.status, 503);
+    await first.body?.cancel();
+    ignore = false;
+    const second = await ingress(new Request("https://app.example/page"), selection);
+    assertEquals(await second.text(), "isolated");
+    assertEquals([lookups, dispatches], [3, 1]);
+  });
+
   it("refuses a missing or oversized source token without any read", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));
