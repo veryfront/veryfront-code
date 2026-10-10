@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -74,10 +75,11 @@ function asRecord(value: unknown, context: string): YamlRecord {
 }
 
 async function readWorkflow(): Promise<YamlRecord> {
-  return asRecord(
+  const workflow = asRecord(
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "cicd workflow",
   );
+  return { ...workflow, jobs: await inlinePublicPoolJobs(workflow) };
 }
 
 async function readRepoFile(path: string): Promise<string> {

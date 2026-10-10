@@ -48,6 +48,7 @@ const TOOL_ACCESS_PROFILE_TOOL_NAME = "get_tool_access_profile";
 
 const toolAccessRules = new Map<string, VeryfrontApiToolAccessRule>([
   ["create_invite", { family: "collaboration", action: "create_invite" }],
+  ["create_project_invitation", { family: "collaboration", action: "create_invite" }],
   ["delete_member", { family: "collaboration", action: "delete_member" }],
   ["create_server", { family: "runtime", action: "create_server" }],
   ["delete_server", { family: "runtime", action: "delete_server" }],

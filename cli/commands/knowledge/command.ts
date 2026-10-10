@@ -50,6 +50,7 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
     path: v.string().optional(),
     all: v.boolean().default(false),
     recursive: v.boolean().default(false),
+    branch: v.string().min(1).optional(),
     outputDir: v.string().optional(),
     knowledgePath: v.string().default("knowledge"),
     description: v.string().optional(),
@@ -182,6 +183,14 @@ Subcommands:
 `);
 }
 
+function getOptionalExplicitStringArg(args: ParsedArgs, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = args[key];
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 export function parseKnowledgeIngestArgs(
   args: ParsedArgs,
 ): SafeParseResult<KnowledgeIngestOptions> {
@@ -192,6 +201,7 @@ export function parseKnowledgeIngestArgs(
     path: getStringArg(args, "path"),
     all: getBooleanArg(args, "all"),
     recursive: getBooleanArg(args, "recursive"),
+    branch: getOptionalExplicitStringArg(args, "branch", "b"),
     outputDir: getStringArg(args, "output-dir"),
     knowledgePath: getStringArg(args, "knowledge-path") ?? "knowledge",
     description: getStringArg(args, "description", "desc"),
@@ -314,27 +324,39 @@ function looksLikeExternalReference(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#");
 }
 
-function resolveOkfCompanionReference(documentPath: string, reference: string): string | null {
+function resolveOkfCompanionReferenceCandidates(documentPath: string, reference: string): string[] {
   const trimmed = reference.trim();
-  if (!trimmed || looksLikeExternalReference(trimmed)) return null;
+  if (!trimmed || looksLikeExternalReference(trimmed)) return [];
 
   const [withoutHash] = trimmed.split("#", 1);
   const [withoutQuery] = (withoutHash ?? "").split("?", 1);
   const path = withoutQuery?.trim();
-  if (!path) return null;
+  if (!path) return [];
 
   const documentDir = dirname(documentPath).replace(/\\/g, "/");
-  const rawPath = path.startsWith("/")
-    ? path.replace(/^\/+/, "")
+  // Prefer OKF document-relative references, then fall back to bundle-root paths
+  // for legacy fixtures that used root paths without a leading slash.
+  const rawPaths = path.startsWith("/")
+    ? [path.replace(/^\/+/, "")]
     : documentDir === "."
-    ? path
-    : join(documentDir, path);
-  const normalized = normalize(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) {
-    return null;
+    ? [path]
+    : [join(documentDir, path), path];
+  const candidates: string[] = [];
+  for (const rawPath of rawPaths) {
+    const normalized = normalize(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+    if (
+      !normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") ||
+      normalized.split("/").includes("..")
+    ) {
+      continue;
+    }
+    const candidate = commandHelpers.normalizeKnowledgeRelativePath(
+      normalized,
+      "OKF companion relative path",
+    );
+    if (!candidates.includes(candidate)) candidates.push(candidate);
   }
-  if (normalized.split("/").includes("..")) return null;
-  return commandHelpers.normalizeKnowledgeRelativePath(normalized, "OKF companion relative path");
+  return candidates;
 }
 
 function collectCompanionReferencesFromValue(input: {
@@ -343,13 +365,16 @@ function collectCompanionReferencesFromValue(input: {
   key?: string;
   insideCompanionField: boolean;
   referencedPaths: Set<string>;
+  availablePaths: Set<string>;
 }): void {
   const insideCompanionField = input.insideCompanionField ||
     (input.key !== undefined && OKF_COMPANION_REFERENCE_KEYS.has(input.key));
   if (typeof input.value === "string") {
     if (insideCompanionField) {
-      const referencedPath = resolveOkfCompanionReference(input.documentPath, input.value);
-      if (referencedPath !== null) input.referencedPaths.add(referencedPath);
+      const candidates = resolveOkfCompanionReferenceCandidates(input.documentPath, input.value);
+      const existingCandidate = candidates.find((candidate) => input.availablePaths.has(candidate));
+      const referencedPath = existingCandidate ?? candidates[0];
+      if (referencedPath !== undefined) input.referencedPaths.add(referencedPath);
     }
     return;
   }
@@ -360,6 +385,7 @@ function collectCompanionReferencesFromValue(input: {
         value: item,
         insideCompanionField,
         referencedPaths: input.referencedPaths,
+        availablePaths: input.availablePaths,
       });
     }
     return;
@@ -372,6 +398,7 @@ function collectCompanionReferencesFromValue(input: {
       key,
       insideCompanionField: insideCompanionField && OKF_COMPANION_PATH_KEYS.has(key),
       referencedPaths: input.referencedPaths,
+      availablePaths: input.availablePaths,
     });
   }
 }
@@ -379,8 +406,13 @@ function collectCompanionReferencesFromValue(input: {
 async function collectReferencedOkfCompanionPaths(
   sources: KnowledgeSource[],
   bundleRoot: string,
+  availableRelativePaths?: Iterable<string>,
 ): Promise<Set<string>> {
   const referencedPaths = new Set<string>();
+  const availablePaths = new Set(availableRelativePaths ?? []);
+  for (const source of sources) {
+    availablePaths.add(commandHelpers.deriveOkfBundleRelativePath(source, bundleRoot));
+  }
   for (const source of sources) {
     const relativePath = commandHelpers.deriveOkfBundleRelativePath(source, bundleRoot);
     if (!isMarkdownPath(relativePath)) continue;
@@ -397,6 +429,7 @@ async function collectReferencedOkfCompanionPaths(
       value: inspected.metadata,
       insideCompanionField: false,
       referencedPaths,
+      availablePaths,
     });
   }
   return referencedPaths;
@@ -430,6 +463,12 @@ async function downloadOkfBundleUploads(input: {
   const referencedPaths = await collectReferencedOkfCompanionPaths(
     markdownSources,
     input.bundleRoot,
+    input.uploadTargets.map((uploadPath) =>
+      commandHelpers.deriveOkfBundleRelativePath(
+        { kind: "upload", input: input.bundleRoot, uploadPath, localPath: uploadPath },
+        input.bundleRoot,
+      )
+    ),
   );
   const referencedCompanionTargets: string[] = [];
   for (const uploadPath of companionCandidates) {
@@ -730,6 +769,9 @@ export async function ingestResolvedSources(
   }
 
   const okfRelativePaths = buildOkfBundleRelativePaths(sources, options);
+  const okfCompanionPaths = options.okfBundle && options.path
+    ? await collectReferencedOkfCompanionPaths(sources, options.path)
+    : new Set<string>();
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
@@ -771,17 +813,20 @@ export async function ingestResolvedSources(
     try {
       const sourceName = buildKnowledgeSourceName(source);
       const eventLogger = deps.eventLogger;
-      const parserDeps = eventLogger
-        ? {
-          onProgress: (event: DocumentExtractionProgressEvent) => {
-            deps.signal?.throwIfAborted();
-            eventLogger.info(
-              "Knowledge source extraction progress",
-              buildExtractionProgressMetadata(sourceName, event),
-            );
-          },
-        }
-        : undefined;
+      const parserDeps = {
+        signal: deps.signal,
+        ...(eventLogger
+          ? {
+            onProgress: (event: DocumentExtractionProgressEvent) => {
+              deps.signal?.throwIfAborted();
+              eventLogger.info(
+                "Knowledge source extraction progress",
+                buildExtractionProgressMetadata(sourceName, event),
+              );
+            },
+          }
+          : {}),
+      };
       parser = await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
@@ -789,6 +834,9 @@ export async function ingestResolvedSources(
         slug: slugs[index],
         sourceReference,
         okfRelativePath: okfRelativePaths.get(source),
+        ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
+          ? { okfRole: "companion" as const }
+          : {}),
       }, parserDeps);
       deps.signal?.throwIfAborted();
     } catch (error) {
@@ -915,7 +963,9 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             runParser: runKnowledgeParser,
             eventLogger,
             uploadKnowledgeFile: (remotePath, localPath) =>
-              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath),
+              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath, undefined, {
+                branch: options.branch,
+              }),
           });
           const runResult = buildKnowledgeIngestRunResult({
             requestedCount,

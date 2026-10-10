@@ -2,9 +2,10 @@
  * ext-document-kreuzberg: document text extraction for Veryfront.
  *
  * Provides the `DocumentExtractor` contract via kreuzberg. Deno extraction
- * runs the native parser in a separate `deno run` subprocess (a Worker is an
+ * runs the native parser in a separate subprocess (a Worker is an
  * in-process isolate, so it cannot contain native crashes) and falls back to
- * an isolated WASM Worker whose failures stay inside the isolate.
+ * an isolated WASM Worker whose failures stay inside the isolate. Node and Bun
+ * run native extraction in a cancellable OS subprocess.
  *
  * @module extensions/ext-document-kreuzberg
  */
@@ -35,7 +36,9 @@ export type NativeExtractionMode = "whole-file" | "progress";
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
   mimeType: string,
+  options: DocumentExtractionOptions = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   return new Promise<string>((resolve, reject) => {
     // The worker ships as raw TypeScript in the compiled binary and from source
     // (where `compile-binary.ts` force-includes it), but as transpiled JS in the
@@ -47,8 +50,17 @@ function extractInWorkerDeno(
     const workerUrl = new URL(workerFile, import.meta.url);
     const worker = new Worker(workerUrl, { type: "module" });
 
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
       worker.terminate();
+    };
+    const abort = () => {
+      cleanup();
+      reject(options.signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
       reject(
         new Error(
           `Text extraction timed out after ${
@@ -59,8 +71,7 @@ function extractInWorkerDeno(
     }, EXTRACTION_TIMEOUT_MS);
 
     worker.onmessage = (event: MessageEvent) => {
-      clearTimeout(timer);
-      worker.terminate();
+      cleanup();
       const { content, error } = event.data as { content?: string; error?: string };
       if (error) {
         reject(new Error(error));
@@ -70,11 +81,15 @@ function extractInWorkerDeno(
     };
 
     worker.onerror = (event) => {
-      clearTimeout(timer);
-      worker.terminate();
+      cleanup();
       reject(new Error(`Text extraction worker failed: ${event.message ?? "unknown"}`));
     };
 
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) {
+      abort();
+      return;
+    }
     worker.postMessage({ buffer, mimeType }, [buffer]);
   });
 }
@@ -207,6 +222,7 @@ export async function extractWithNativeProcessDeno(
   mode: NativeExtractionMode,
   overrides: NativeExtractionProcessOverrides = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   const scriptUrl = overrides.scriptUrl ?? nativeExtractionProcessScriptUrl();
   if (scriptUrl.protocol !== "file:") {
     throw new Error(
@@ -258,6 +274,12 @@ export async function extractWithNativeProcessDeno(
   const timeoutFired = new Promise<"timeout">((resolve) => {
     notifyTimeout = () => resolve("timeout");
   });
+  const onAbort = () => {
+    killChild();
+    notifyTimeout();
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  if (options.signal?.aborted) onAbort();
   const failWithTimeout = (error: Error) => {
     timeoutError ??= error;
     killChild();
@@ -361,6 +383,7 @@ export async function extractWithNativeProcessDeno(
     const stderrText = (await stderrPromise).trim();
     await stdinPromise;
 
+    options.signal?.throwIfAborted();
     if (timeoutError) throw timeoutError;
     if (callbackError) throw callbackError;
     if (childError !== undefined) {
@@ -379,6 +402,7 @@ export async function extractWithNativeProcessDeno(
   } finally {
     clearIdleTimer();
     clearTimeout(hardTimer);
+    options.signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -428,6 +452,7 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     mimeType: string,
     options: DocumentExtractionOptions = {},
   ): Promise<string> {
+    options.signal?.throwIfAborted();
     const isDenoRuntime = this.deps.isDenoRuntime ?? isDeno;
     const extractWithWorker = this.deps.extractInWorkerDeno ?? extractInWorkerDeno;
 
@@ -437,13 +462,14 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     // to the isolated WASM worker. Without a progress request the subprocess
     // parses the whole file in one native pass instead of page-by-page.
     if (!isDenoRuntime) {
-      const { extractBytes } = await loadKreuzberg();
-      const result = await extractBytes(
-        new Uint8Array(buffer),
+      const { extractWithNativeProcessNode } = await import("./node-native-extraction.ts");
+      options.signal?.throwIfAborted();
+      return await extractWithNativeProcessNode(
+        buffer,
         mimeType,
-        extractionConfigForMimeType(mimeType),
+        options,
+        options.onProgress ? "progress" : "whole-file",
       );
-      return result.content;
     }
 
     if (
@@ -454,6 +480,7 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
       try {
         return await this.extractWithNative(buffer, mimeType, options, mode);
       } catch (error) {
+        options.signal?.throwIfAborted();
         // Keep native extraction opportunistic: when the subprocess cannot run
         // (compiled binary, missing binding, crash), fall back to the isolated
         // WASM worker whose failures stay inside the isolate.
@@ -468,7 +495,8 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
       }
     }
 
-    return extractWithWorker(buffer, mimeType);
+    options.signal?.throwIfAborted();
+    return extractWithWorker(buffer, mimeType, options);
   }
 }
 
@@ -481,7 +509,7 @@ const extDocumentKreuzberg: ExtensionFactory = () => {
     },
     capabilities: [
       { type: "fs:read" },
-      { type: "process:spawn", commands: ["deno"] },
+      { type: "process:spawn", commands: ["deno", "node", "bun", "taskkill"] },
       // The extraction subprocess runs with --allow-env and --allow-ffi: the
       // napi-rs loader in @kreuzberg/node consults the environment to resolve
       // the native binding and loads it over FFI. Declared here so the child

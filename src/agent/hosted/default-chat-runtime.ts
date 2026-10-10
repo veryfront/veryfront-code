@@ -6,7 +6,10 @@ import {
   type ToolExecutionContext,
   type ToolSet,
 } from "#veryfront/tool";
-import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  inheritTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import {
   runWithoutRequestContext as runWithoutProjectRequestContext,
@@ -33,9 +36,13 @@ import {
   revokeRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
-import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  markRuntimeLocalTool,
+} from "../runtime/local-tool.ts";
 import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import {
   applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
@@ -57,7 +64,10 @@ import {
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
-import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  buildInteractiveVeryfrontCloudRuntimeInstructions,
+  resolveHostedRuntimeSkillLoaderToolName,
+} from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -75,6 +85,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
 const stringTrim = String.prototype.trim;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
@@ -261,10 +272,11 @@ async function buildToolAssembly(
           branchId: input.taskContext.branchId,
           environmentContext: liveProjectSteering.environmentContext,
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
-          skills: modelVisibleToolNames.includes("load_skill")
+          skills: apply(arraySome, modelVisibleToolNames, [isLoadSkillToolName])
             ? liveProjectSteering.initialSkills ?? []
             : [],
           availableToolNames: modelVisibleToolNames,
+          skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(modelVisibleToolNames),
         }),
     }),
     localTools,
@@ -375,6 +387,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       : {}),
     ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
+    __vfToolBootstrapNames: input.toolAssembly.modelVisibleToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
@@ -483,19 +496,22 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
     (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return {
-        ...tool,
-        execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
-          try {
-            return snapshotHostedToolResult(
-              await apply(execute, tool, [toolInput, context]),
-            );
-          } catch (error) {
-            if (preserveTrustedError) throw error;
-            throw new TypeErrorConstructor("Hosted project tool execution failed");
-          }
-        },
-      };
+      return inheritRuntimeProviderSchemaHiddenTool(
+        tool,
+        inheritTrustedHostToolProvenance(tool, {
+          ...tool,
+          execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+            try {
+              return snapshotHostedToolResult(
+                await apply(execute, tool, [toolInput, context]),
+              );
+            } catch (error) {
+              if (preserveTrustedError) throw error;
+              throw new TypeErrorConstructor("Hosted project tool execution failed");
+            }
+          },
+        }),
+      );
     },
   );
 }
@@ -509,15 +525,19 @@ export function scopeHostedRuntimeTools(input: {
   const scopedTools = scopeHostedRuntimeToolResults(input.tools);
   return mapOwnRecord(
     scopedTools,
-    (_toolName, tool) => ({
-      ...tool,
-      execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-        withoutHostedCredentials({
-          taskContext: input.taskContext,
-          cloudContext: input.cloudContext,
-          operation: () => apply(tool.execute, tool, [toolInput, context]),
+    (_toolName, tool) =>
+      inheritRuntimeProviderSchemaHiddenTool(
+        tool,
+        inheritTrustedHostToolProvenance(tool, {
+          ...tool,
+          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+            withoutHostedCredentials({
+              taskContext: input.taskContext,
+              cloudContext: input.cloudContext,
+              operation: () => apply(tool.execute, tool, [toolInput, context]),
+            }),
         }),
-    }),
+      ),
   );
 }
 

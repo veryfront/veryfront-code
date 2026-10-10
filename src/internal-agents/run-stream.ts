@@ -7,11 +7,15 @@ import {
 } from "#veryfront/agent/hosted/manual-pause-settlement.ts";
 import type { RunStopSettlement } from "./run-stop-registry.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { withProviderModelMessageSourceId } from "#veryfront/chat/conversation.ts";
+import { markToolResultSources } from "#veryfront/chat/tool-result-source.ts";
+import type { ProviderModelMessage } from "#veryfront/chat/types.ts";
 import {
   appendPrivateArray,
   slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
@@ -20,6 +24,7 @@ import {
 } from "#veryfront/agent/runtime/model-resolution.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
+  hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
@@ -124,6 +129,12 @@ import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkp
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
+import {
+  inheritTrustedHostedHistorySourceIdentity,
+  inheritTrustedPlatformPolicyMessageMetadata,
+  inheritTrustedPlatformPolicyToolResultMetadata,
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
+} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { AgentManualPause } from "#veryfront/agent/runtime/manual-pause.ts";
 
@@ -340,9 +351,11 @@ function isPlatformToolName(toolName: string): boolean {
     IntrinsicReflectApply(IntrinsicSetHas, controlPlaneNameSet, [toolName]);
 }
 
+const CANONICAL_INVOKE_AGENT_TOOL_ID = `veryfront__${INVOKE_AGENT_TOOL_ID}`;
+
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
   INVOKE_AGENT_TOOL_ID,
-  `veryfront__${INVOKE_AGENT_TOOL_ID}`,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
 ]);
 
 /**
@@ -476,14 +489,21 @@ export function buildMergedTools(
   const configuredInvokeAgent = isRecord(agent.config.tools)
     ? agent.config.tools[INVOKE_AGENT_TOOL_ID]
     : undefined;
+  const configuredCanonicalInvokeAgent = isRecord(agent.config.tools)
+    ? agent.config.tools[CANONICAL_INVOKE_AGENT_TOOL_ID]
+    : undefined;
   const controlPlaneOwnsDelegation = configuredInvokeAgent === true ||
     isFrameworkInvokeAgentTool(configuredInvokeAgent);
+  const controlPlaneOwnsCanonicalDelegation = configuredCanonicalInvokeAgent === true ||
+    isFrameworkInvokeAgentTool(configuredCanonicalInvokeAgent);
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
         (!failClosedUnrestrictedSelector || !isPlatformToolName(tool.name)) &&
         (!authoritativeSourceToolNames.has(tool.name) ||
-          (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
+          (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation) ||
+          (tool.name === CANONICAL_INVOKE_AGENT_TOOL_ID &&
+            controlPlaneOwnsCanonicalDelegation)) &&
         !isExplicitlyDeniedToolName(
           agent,
           explicitlyDeniedToolNames,
@@ -870,9 +890,13 @@ function applyRuntimeToolAllowlist(
     return {};
   }
   const hasVisibleSkills = skillRegistry.hasVisibleSkills({ agentId: agent.id });
+  const localToolNames = Object.keys(mergedTools);
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
-    localToolNames: Object.keys(mergedTools),
+    localToolNames,
+    trustedLocalToolNames: localToolNames.filter((name) =>
+      hasTrustedHostToolProvenance(mergedTools[name])
+    ),
     ...(hasVisibleSkills ? { availableSkillIds: ["*"] } : {}),
   });
   if (!allowedToolNames) {
@@ -883,13 +907,17 @@ function applyRuntimeToolAllowlist(
   // declared it; caller-injected entries in mergedTools cannot establish that
   // provenance. An empty allowlist stays deny-all, and explicit delegation
   // denial still strips the tool below.
-  const preservesConfigDelegation = hasVisibleSkills &&
-    allowedToolNames.size > 0 &&
+  const canPreserveConfigDelegation = hasVisibleSkills && allowedToolNames.size > 0;
+  const preservesLegacyDelegation = canPreserveConfigDelegation &&
     hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
+  const preservesCanonicalDelegation = canPreserveConfigDelegation &&
+    hasTrustedAgentToolDeclaration(agent, CANONICAL_INVOKE_AGENT_TOOL_ID);
   return Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) =>
+    Object.entries(mergedTools).filter(([toolName, entry]) =>
       allowedToolNames.has(toolName) ||
-      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID)
+      (preservesLegacyDelegation && toolName === INVOKE_AGENT_TOOL_ID) ||
+      (preservesCanonicalDelegation && toolName === CANONICAL_INVOKE_AGENT_TOOL_ID &&
+        hasTrustedHostToolProvenance(entry))
     ),
   );
 }
@@ -1030,20 +1058,114 @@ async function getDeclaredRemoteSourceToolNames(input: {
   return [...toolNames];
 }
 
+function convertRuntimeMessagesToProviderMessagesWithSource(
+  messages: readonly Message[],
+): ProviderModelMessage[] {
+  const converted: ProviderModelMessage[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    if (!Object.hasOwn(messages, index)) continue;
+    const message = messages[index]!;
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([message]);
+    for (let providerIndex = 0; providerIndex < providerMessages.length; providerIndex++) {
+      if (!Object.hasOwn(providerMessages, providerIndex)) continue;
+      const providerMessage = withProviderModelMessageSourceId(
+        providerMessages[providerIndex]!,
+        message.id,
+      );
+      if (providerMessage.role === "tool") {
+        markToolResultSources(providerMessage.content, message.id);
+      }
+      appendPrivateArray(converted, [providerMessage]);
+    }
+  }
+  return converted;
+}
+
 function compactRuntimeMessagesForStream(
   messages: Message[],
   systemPrompt: AgentSystem,
   toolCount: number,
+  preserveSourceMessageIds: readonly string[] | undefined,
 ): Message[] {
   const systemText = typeof systemPrompt === "string"
     ? systemPrompt
     : flattenSystemInstructions(systemPrompt);
   return convertProviderMessagesToAgentRuntimeMessages(
     compactForStep(
-      convertAgentRuntimeMessagesToProviderMessages(messages),
+      convertRuntimeMessagesToProviderMessagesWithSource(messages),
       estimateOverhead(systemText, toolCount),
+      {
+        historicalToolInputRetention: { preserveSourceMessageIds },
+      },
     ),
   ) as Message[];
+}
+
+function isTrustedHostedPolicyMetadataRole(
+  role: RuntimeRunAgentInput["messages"][number]["role"] | Message["role"],
+): role is "assistant" | "tool" {
+  return role === "assistant" || role === "tool";
+}
+
+function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
+  runtimeMessages: readonly Message[],
+  sourceMessages: RuntimeRunAgentInput["messages"],
+  trustedSourceMessageIds: readonly string[] | undefined,
+): Message[] {
+  if (!trustedSourceMessageIds || trustedSourceMessageIds.length === 0) {
+    return [...runtimeMessages];
+  }
+  const trustedSourceIds = createPrivateMap<string, true>();
+  for (let index = 0; index < trustedSourceMessageIds.length; index++) {
+    if (!Object.hasOwn(trustedSourceMessageIds, index)) continue;
+    const messageId = trustedSourceMessageIds[index];
+    if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
+  }
+  const sourceById = createPrivateMap<string, RuntimeRunAgentInput["messages"][number] | null>();
+  for (let index = 0; index < sourceMessages.length; index++) {
+    if (!Object.hasOwn(sourceMessages, index)) continue;
+    const message = sourceMessages[index]!;
+    if (!message.id || !trustedSourceIds.has(message.id)) continue;
+    if (sourceById.has(message.id) || !isTrustedHostedPolicyMetadataRole(message.role)) {
+      sourceById.set(message.id, null);
+    } else {
+      sourceById.set(message.id, message);
+    }
+  }
+
+  const restoredMessages: Message[] = [];
+  for (let index = 0; index < runtimeMessages.length; index++) {
+    if (!Object.hasOwn(runtimeMessages, index)) continue;
+    const message = runtimeMessages[index]!;
+    const sourceMessage = sourceById.get(message.id);
+    const restoredMessage = message.role === "tool"
+      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
+      : sourceMessage && message.role === sourceMessage.role &&
+          isTrustedHostedPolicyMetadataRole(message.role)
+      ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
+      : message;
+    restoredMessages[restoredMessages.length] = sourceMessage
+      ? inheritTrustedHostedHistorySourceIdentity(sourceMessage, restoredMessage)
+      : restoredMessage;
+  }
+  return restoredMessages;
+}
+
+function restoreTrustedHostedPolicyForInternalRuntimeMessages(
+  runtimeMessages: readonly Message[],
+  sourceMessages: RuntimeRunAgentInput["messages"],
+  trustedSourceMessageIds: readonly string[] | undefined,
+): Message[] {
+  const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromAgUiMessages(
+    runtimeMessages,
+    sourceMessages,
+    trustedSourceMessageIds,
+  );
+  restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
+    trustedMessageIds: trustedSourceMessageIds,
+    sourceMessages,
+  });
+  return trustedRuntimeMessages;
 }
 
 /**
@@ -1484,10 +1606,15 @@ export async function createRuntimeAgentStreamResponse(
             : {}),
         }),
       };
-    const runtimeMessages = compactRuntimeMessagesForStream(
-      normalizeAgUiRuntimeMessages(input.messages),
-      systemPrompt,
-      runtimeToolNames.length,
+    const runtimeMessages = restoreTrustedHostedPolicyForInternalRuntimeMessages(
+      compactRuntimeMessagesForStream(
+        normalizeAgUiRuntimeMessages(input.messages),
+        systemPrompt,
+        runtimeToolNames.length,
+        input.serverResolvedTrustedHostedHistoryMessageIds,
+      ),
+      input.messages,
+      input.serverResolvedTrustedHostedHistoryMessageIds,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
     const candidateRuntimeStream = await runWithMandatoryRunEventSink(

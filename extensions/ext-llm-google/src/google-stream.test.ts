@@ -1,7 +1,7 @@
 import { type Stub, stub } from "#std/testing/mock";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { ProviderRequestError } from "veryfront/provider/shared";
+import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
 import {
   extractGoogleUsage,
   MAX_GOOGLE_RETAINED_STATE_BYTES,
@@ -1207,7 +1207,7 @@ describe("ext-llm-google/google-stream", () => {
   it("bounds raw chunks and decoded SSE buffers without leaking payloads", async () => {
     await assertRejects(
       () => collectParts(streamFromBytes(new Uint8Array([0xff]))),
-      ProviderRequestError,
+      ProviderStreamProtocolError,
       "google request failed: invalid successful stream (stream contained invalid UTF-8)",
     );
 

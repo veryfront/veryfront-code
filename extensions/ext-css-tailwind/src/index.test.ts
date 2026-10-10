@@ -1,3 +1,4 @@
+import vendorSources from "../vendor-sources.json" with { type: "json" };
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { createHash } from "node:crypto";
@@ -33,6 +34,10 @@ describe("ext-css-tailwind", () => {
     );
     assertStringIncludes(identity, `tailwindcss@${tailwindPackage.version}`);
     assertStringIncludes(identity, "base=");
+    assertStringIncludes(
+      identity,
+      `vendor=${createHash("sha256").update(JSON.stringify(vendorSources), "utf8").digest("hex")}`,
+    );
     assertStringIncludes(
       identity,
       `plugins=${

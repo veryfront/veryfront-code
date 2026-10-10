@@ -165,7 +165,7 @@ describe("agent/hosted-ag-ui-chat-request", () => {
       verifyProjectAccess: ({ projectId, authToken }) => {
         verifiedProjectId = projectId;
         verifiedAuthToken = authToken;
-        return Promise.resolve({ success: true });
+        return Promise.resolve({ success: true, projectSlug: " verified-project " });
       },
     });
 
@@ -178,6 +178,8 @@ describe("agent/hosted-ag-ui-chat-request", () => {
     assertEquals(parsed.userId, "user-1");
     assertEquals(parsed.authToken, "auth-token");
     assertEquals(parsed.projectId, "project-1");
+    assertEquals(parsed.projectSlug, "verified-project");
+    assertEquals(parsed.validatedContext.projectSlug, "verified-project");
     assertEquals(parsed.parentRunId, "run-parent-1");
     assertEquals(parsed.model, "openai/gpt-5.4");
     assertEquals(parsed.allowDelegation, true);
@@ -210,6 +212,45 @@ describe("agent/hosted-ag-ui-chat-request", () => {
         ],
       },
     ]);
+  });
+
+  it("does not infer project slugs without verified nonblank project metadata", async () => {
+    for (const projectId of [null, "project-1"]) {
+      for (const projectSlug of [undefined, "", "   "]) {
+        let verifications = 0;
+        const parsed = await buildParsedHostedAgUiRequest({
+          agUiInput: createAgUiInput({
+            context: [
+              { description: "veryfront.projectId", value: JSON.stringify(projectId) },
+              { description: "veryfront.projectSlug", value: '"untrusted-project"' },
+            ],
+          }),
+          authToken: "auth-token",
+          userId: "user-1",
+          verifyProjectAccess: () => {
+            verifications++;
+            return Promise.resolve({ success: true, projectSlug });
+          },
+        });
+        if (parsed instanceof Response) throw new Error("Expected parsed request");
+        assertEquals(verifications, projectId === null ? 0 : 1);
+        assertEquals(parsed.projectSlug, undefined);
+        assertEquals(parsed.validatedContext.projectSlug, undefined);
+      }
+    }
+    const parsed = await buildParsedHostedAgUiRequest({
+      agUiInput: createAgUiInput({
+        context: [
+          { description: "veryfront.projectId", value: '"project-1"' },
+          { description: "veryfront.projectSlug", value: '"untrusted-project"' },
+        ],
+      }),
+      authToken: "auth-token",
+      userId: "user-1",
+    });
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(parsed.projectSlug, undefined);
+    assertEquals(parsed.validatedContext.projectSlug, undefined);
   });
 
   it("returns stable project-access error responses", async () => {

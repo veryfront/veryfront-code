@@ -14,6 +14,15 @@ inputs:
 runs:
   using: composite
   steps:
+    # The public-pool reusable workflow stays pinned to main for runner routing.
+    # Its checked-out composite supplies npm to coverage tests on this revision.
+    - name: Install Node for coverage project creation
+      if: ${{ github.job == 'coverage-shards' }}
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      with:
+        node-version: "24"
+        package-manager-cache: false
+
     - name: Configure Deno dependency cache
       shell: bash
       run: |

@@ -151,9 +151,32 @@ export function parseFilesDeleteArgs(
   }) as SafeParseResult<FilesDeleteOptions>;
 }
 
-export function buildRemoteFileUrl(projectSlug: string, remotePath: string): string {
+type RemoteFileWriteDestination = { branch?: string; branchId?: string };
+function assertValidWriteBranch(branch: string | undefined): void {
+  if (branch === undefined) return;
+  if (!branch || branch.trim() !== branch) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Knowledge output branch must be non-empty and have no surrounding whitespace",
+    });
+  }
+}
+
+export function buildRemoteFileUrl(
+  projectSlug: string,
+  remotePath: string,
+  destination?: RemoteFileWriteDestination,
+): string {
   const normalizedPath = normalizeProjectFilePath(remotePath);
-  return `/projects/${projectSlug}/files/${encodeURIComponent(normalizedPath)}`;
+  const url = `/projects/${projectSlug}/files/${encodeURIComponent(normalizedPath)}`;
+  assertValidWriteBranch(destination?.branch);
+  assertValidWriteBranch(destination?.branchId);
+  if (destination?.branch !== undefined) {
+    return `${url}?${new URLSearchParams({ ref: `branch:${destination.branch}` })}`;
+  }
+  if (destination?.branchId !== undefined) {
+    return `${url}?${new URLSearchParams({ branch_id: destination.branchId })}`;
+  }
+  return url;
 }
 
 export async function listRemoteFiles(
@@ -180,19 +203,9 @@ export async function putRemoteFileFromLocal(
   remotePath: string,
   localPath: string,
   signal?: AbortSignal,
-  destination?: { branchId: string },
+  destination?: RemoteFileWriteDestination,
 ): Promise<{ path: string }> {
-  if (
-    destination && (!destination.branchId || destination.branchId.trim() !== destination.branchId)
-  ) {
-    throw INVALID_ARGUMENT.create({
-      detail: "Knowledge output branch id must be non-empty and have no surrounding whitespace",
-    });
-  }
-  const url = buildRemoteFileUrl(projectSlug, remotePath);
-  const destinationUrl = destination
-    ? `${url}?branch_id=${encodeURIComponent(destination.branchId)}`
-    : url;
+  const destinationUrl = buildRemoteFileUrl(projectSlug, remotePath, destination);
   const fs = createFileSystem();
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
