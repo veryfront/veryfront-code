@@ -1,0 +1,18 @@
+{
+  "components": [
+    {
+      "name": "purgecss-in-memory",
+      "version": "8.0.0-memory.1",
+      "source": "vendor/purgecss-memory.js",
+      "sha256": "deff6de76c050358377851c77e94854eef78444a5a5e63ca3a7031f388699fb6",
+      "license": "MIT",
+      "upstream": {
+        "name": "purgecss",
+        "version": "8.0.0",
+        "source": "lib/purgecss.esm.js",
+        "sha256": "82a0eafbd0434478e6b8d82add0a24f417708d7a8e56b959fa0f060bb4e8f82d",
+        "url": "https://registry.npmjs.org/purgecss/-/purgecss-8.0.0.tgz"
+      }
+    }
+  ]
+}

@@ -6,18 +6,20 @@ versions are listed at
 
 ## Unreleased
 
-### Changed: PurgeCSS uses the patched selector parser line
+### Changed: PurgeCSS uses a verified in-memory distribution and patched parser
 
-The PurgeCSS extension now pins PurgeCSS 8.0.0, with selector-parser 7.1.6 in the
-frozen lock. Its dependency version changes the CSS cache identity, so old purge
-results are not reused. The extension's environment capability drops the obsolete
-minimatch discovery key and retains its four color-discovery keys. PurgeCSS 8's
-new glob dependency also requires the narrowly scoped CPU-information capability
-`system:read` with `apis: ["cpus"]` (`--allow-sys=cpus`) during import. Approve this
-runtime permission in the consuming application before upgrading.
+The CSS purging extension now uses PurgeCSS 8's in-memory algorithm with exact
+selector-parser 7.1.6. Upstream 8's file-glob dependency would reintroduce the
+unpatched braces High advisory, so a verified source distribution removes file
+and glob handling while preserving the existing raw-input contract. Unsupported
+file/config inputs fail explicitly. The MIT license, pinned upstream source and
+reversible edits are retained and verified; SBOMs identify the modified source
+and its upstream origin.
 
-Published consumers must retain selector-parser 7.1.6 or later on the PurgeCSS
-path. The typography parser advisory remains a separate retained finding.
+The extension keeps four color environment keys and removes the obsolete
+minimatch key. CPU-information permission is no longer needed. The distribution
+version and source digest change the CSS cache identity. The separate typography
+parser advisory remains retained.
 
 ### Changed: a malformed provider stream reports `PROVIDER_STREAM_PROTOCOL_ERROR`
 

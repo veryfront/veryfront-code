@@ -1584,7 +1584,8 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "npm:purgecss@8.0.0"
+          "npm:postcss-selector-parser@7.1.6",
+          "npm:postcss@8.5.29"
         ]
       },
       "extensions/ext-css-tailwind": {

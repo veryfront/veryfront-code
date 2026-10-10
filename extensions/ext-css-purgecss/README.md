@@ -25,23 +25,41 @@ network, or workspace fallback.
 ## Configuration and capabilities
 
 The factory accepts no options. It receives only bounded in-memory CSS and
-content snapshots from core. PurgeCSS 8 uses `fast-glob`; its PostCSS dependency
-loads `picocolors`, which reads `NO_COLOR`, `FORCE_COLOR`, `TERM`, and `CI` to
-select terminal colors. The extension scopes `env:read` to those four keys. Its
-standalone test task grants the same keys. Fast-glob reads CPU information at
-module load to choose its default concurrency, including for in-memory callers.
-The extension declares only `system:read` with `apis: ["cpus"]`,
-mapped to `--allow-sys=cpus`. The exact audit rejects unscoped system access,
-other system APIs, additional environment keys and other capabilities.
+content snapshots from core. PostCSS loads picocolors, which reads `NO_COLOR`,
+`FORCE_COLOR`, `TERM`, and `CI` to select terminal colors. The manifest, factory,
+standalone test task and exact capability audit allow only those four environment
+keys.
 
-Consuming applications must approve this CPU-information permission when upgrading.
+## Reproducible in-memory distribution
 
-The extension pins PurgeCSS 8.0.0. The frozen repository lock resolves its
-`postcss-selector-parser` dependency to 7.1.6, the patched minimum for
+Upstream PurgeCSS 8.0.0 uses fast-glob, which introduces braces 3.0.3 and the
+unpatched High advisory
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm).
+The extension therefore ships a reviewed in-memory distribution of PurgeCSS 8,
+with direct exact PostCSS 8.5.29 and selector-parser 7.1.6 dependencies. It retains
+the upstream CSS algorithm and MIT attribution. Config-file, content-file and
+stylesheet-file paths throw explicitly; those inputs are already outside the
+provider-neutral in-memory contract.
+
+Five reversible source edits remove the unused filesystem/glob imports and
+replace file operations with explicit rejection. Verify the bundled algorithm
+against the pinned upstream source, offline, with:
+
+```sh
+deno run --frozen --allow-read scripts/build/prepare-purgecss-memory-source.ts
+```
+
+The verifier reconstructs the original upstream module and checks its pinned
+SHA-256, checks the MIT license digest, and reproduces the exact bundled source.
+`vendor-sources.json` binds the distribution version, source bytes and upstream
+origin. SBOM generation verifies those bytes and includes the modified library,
+its upstream pedigree and MIT license in both aggregate and extension outputs.
+The engine cache identity includes the distribution version and source digest.
+
+The frozen parser pin excludes versions affected by
 [GHSA-rj75-hqrm-r3gf](https://github.com/advisories/GHSA-rj75-hqrm-r3gf).
-Published consumers must also resolve that parser to at least 7.1.6: upstream's
-range permits older versions in an existing consumer lockfile. The separately
-pinned typography parser finding remains retained for its own disposition.
+The separately pinned typography parser finding remains retained for its own
+disposition. This distribution does not require CPU-information access.
 
 PurgeCSS does not expose an operation-level cancellation signal, so this
 contract cannot interrupt an invocation after it enters the provider. Core

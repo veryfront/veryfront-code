@@ -648,7 +648,7 @@ describe("auditExtensionCapabilities", () => {
     );
   });
 
-  it("requires the scoped PurgeCSS color and CPU discovery capability", () => {
+  it("requires the scoped PurgeCSS color discovery capability", () => {
     const manifestPath = "extensions/ext-css-purgecss/deno.json";
     const exactCapabilities = [{
       type: "env:read",
@@ -658,7 +658,7 @@ describe("auditExtensionCapabilities", () => {
         "TERM",
         "CI",
       ],
-    }, { type: "system:read", apis: ["cpus"] }];
+    }];
     assertEquals(
       auditExtensionCapabilities([
         input({
@@ -678,7 +678,7 @@ describe("auditExtensionCapabilities", () => {
     ]);
 
     assertEquals(issues.map((issue) => issue.message), [
-      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color and CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"},{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received []',
+      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received []',
     ]);
   });
 
@@ -729,7 +729,7 @@ describe("auditExtensionCapabilities", () => {
       assertEquals(issues.length, 1);
       assertEquals(
         issues[0]?.message.startsWith(
-          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color and CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"},{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received ',
+          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received ',
         ),
         true,
       );

@@ -1,0 +1,27 @@
+{
+  "version": "8.0.0",
+  "upstreamSHA256": "82a0eafbd0434478e6b8d82add0a24f417708d7a8e56b959fa0f060bb4e8f82d",
+  "licenseSHA256": "43b2b05eb7f591d875095b12f5940d940b77351eb760711f530d1dbc5fb22c0e",
+  "edits": [
+    {
+      "before": "import * as fs from 'fs';\nimport * as glob from 'fast-glob';\nimport * as path from 'path';\nimport * as postcss from 'postcss';\nimport selectorParser from 'postcss-selector-parser';\nimport { promisify } from 'util';\n\nconst IGNORE_ANNOTATION_CURRENT = \"purgecss ignore current\";\n",
+      "after": "import * as postcss from 'postcss';\nimport selectorParser from 'postcss-selector-parser';\n\nconst IGNORE_ANNOTATION_CURRENT = \"purgecss ignore current\";\n"
+    },
+    {
+      "before": " * @packageDocumentation\n */\nconst asyncFs = {\n    access: promisify(fs.access),\n    readFile: promisify(fs.readFile),\n};\n/**\n * Format the user defined safelist into a standardized safelist object\n",
+      "after": " * @packageDocumentation\n */\n/**\n * Format the user defined safelist into a standardized safelist object\n"
+    },
+    {
+      "before": " * @public\n */\nasync function setOptions(configFile = CONFIG_FILENAME) {\n    let options;\n    try {\n        const t = path.resolve(process.cwd(), configFile);\n        const importedConfig = await import(t);\n        // Handle both ES modules (direct export) and CommonJS (default export)\n        options =\n            importedConfig.default && typeof importedConfig.default === \"object\"\n                ? importedConfig.default\n                : importedConfig;\n    }\n    catch (err) {\n        if (err instanceof Error) {\n            throw new Error(`${ERROR_CONFIG_FILE_LOADING} ${err.message}`);\n        }\n        throw new Error();\n    }\n    return {\n        ...defaultOptions,\n        ...options,\n        safelist: standardizeSafelist(options.safelist),\n    };\n}\n/**\n",
+      "after": " * @public\n */\nasync function setOptions() {\n    throw new TypeError(\"File-backed PurgeCSS configuration is unsupported\");\n}\n/**\n"
+    },
+    {
+      "before": "     * @param extractors - Array of extractors\n     */\n    async extractSelectorsFromFiles(files, extractors) {\n        const selectors = new ExtractorResultSets([]);\n        const filesNames = [];\n        for (const globFile of files) {\n            try {\n                await asyncFs.access(globFile, fs.constants.F_OK);\n                filesNames.push(globFile);\n                // eslint-disable-next-line @typescript-eslint/no-unused-vars\n            }\n            catch (err) {\n                filesNames.push(...glob.sync(globFile, {\n                    onlyFiles: true,\n                    ignore: this.options.skippedContentGlobs.map((glob) => glob.replace(/^\\.\\//, \"\")),\n                }));\n            }\n        }\n        if (files.length > 0 && filesNames.length === 0) {\n            console.warn(\"No files found from the passed PurgeCSS option 'content'.\");\n        }\n        for (const file of filesNames) {\n            const content = await asyncFs.readFile(file, \"utf-8\");\n            const extractor = this.getFileExtractor(file, extractors);\n            const extractedSelectors = await extractSelectors(content, extractor);\n            selectors.merge(extractedSelectors);\n        }\n        return selectors;\n    }\n    /**\n",
+      "after": "     * @param extractors - Array of extractors\n     */\n    async extractSelectorsFromFiles(files) {\n        if (files.length) throw new TypeError(\"File-backed PurgeCSS content is unsupported\");\n        return new ExtractorResultSets([]);\n    }\n    /**\n"
+    },
+    {
+      "before": "        var _a;\n        const sources = [];\n        // resolve any globs\n        const processedOptions = [];\n        for (const option of cssOptions) {\n            if (typeof option === \"string\") {\n                processedOptions.push(...glob.sync(option, {\n                    onlyFiles: true,\n                    ignore: this.options.skippedContentGlobs,\n                }));\n            }\n            else {\n                processedOptions.push(option);\n            }\n        }\n        for (const option of processedOptions) {\n            const cssContent = typeof option === \"string\"\n                ? this.options.stdin\n                    ? option\n                    : await asyncFs.readFile(option, \"utf-8\")\n                : option.raw;\n            const isFromFile = typeof option === \"string\" && !this.options.stdin;\n            const root = postcss.parse(cssContent, {\n                from: isFromFile ? option : undefined,\n",
+      "after": "        var _a;\n        const sources = [];\n        if (cssOptions.some(option => typeof option === \"string\")) {\n            throw new TypeError(\"File-backed PurgeCSS stylesheets are unsupported\");\n        }\n        for (const option of cssOptions) {\n            const cssContent = option.raw;\n            const isFromFile = false;\n            const root = postcss.parse(cssContent, {\n                from: isFromFile ? option : undefined,\n"
+    }
+  ]
+}

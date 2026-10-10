@@ -40,7 +40,6 @@ describe("ext-css-purgecss", () => {
         type: "env:read",
         keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
       },
-      { type: "system:read", apis: ["cpus"] },
     ]);
     assertEquals(
       extension.capabilities,
@@ -48,7 +47,7 @@ describe("ext-css-purgecss", () => {
     );
     assertEquals(
       extensionPackage.tasks.test,
-      "deno test --frozen --no-check --allow-env=NO_COLOR,FORCE_COLOR,TERM,CI --allow-sys=cpus src/",
+      "deno test --frozen --no-check --allow-env=NO_COLOR,FORCE_COLOR,TERM,CI src/",
     );
 
     await extension.setup?.({
