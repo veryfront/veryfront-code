@@ -42,7 +42,10 @@ import {
   primordialPromiseResolve,
   primordialPromiseThen,
 } from "#veryfront/platform/compat/primordials/promise.ts";
-import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  primordialArrayFilter,
+  primordialArrayMap,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
@@ -4107,7 +4110,7 @@ async function executeStyleArtifactBuildRun(input: {
     let releaseFiles: StyleArtifactSourceFile[] | undefined;
     if (selector.releaseId) {
       const listedFiles = await apiClient.listAllReleaseFiles(selector.releaseId, {}, input.signal);
-      releaseFiles = listedFiles.map((file) => {
+      releaseFiles = primordialArrayMap(listedFiles, (file) => {
         if (typeof file.content !== "string") {
           throw API_CLIENT_ERROR.create({
             detail: "Release file list omitted file content",
@@ -4120,7 +4123,7 @@ async function executeStyleArtifactBuildRun(input: {
       const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
       let source: Parameters<typeof evaluateHostedConfigSource>[0]["source"] = null;
       for (const fileName of VERYFRONT_CONFIG_FILES) {
-        const file = releaseFiles.find((file) => file.path === fileName);
+        const file = primordialArrayFilter(releaseFiles, (file) => file.path === fileName)[0];
         if (typeof file?.content === "string") {
           source = { fileName, source: file.content };
           break;

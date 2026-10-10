@@ -3304,6 +3304,97 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
+  for (const poisonMode of ["map", "find"]) {
+    it(`keeps release bytes and config selection after tenant ${poisonMode} replacement`, async () => {
+      const map = Array.prototype.map;
+      const find = Array.prototype.find;
+      const apply = Reflect.apply;
+      let baselineHash: unknown;
+      let baselineProfile: unknown;
+      for (const poison of ["none", poisonMode]) {
+        const body = {
+          runId: `run_style_${poison}`,
+          kind: "task",
+          target: "task:style-artifact-build",
+          projectId: "proj-1",
+          config: { release_id: "release-1" },
+        };
+        const { request, publicKeyPem } = await signedRequest(
+          `/api/control-plane/runs/run_style_${poison}/execute`,
+          body,
+          { "x-token": "test-token" },
+        );
+        const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+          files: [],
+          stylesheet: '@import "tw-animate-css";',
+        });
+        const recorder = createStyleArtifactFetchRecorder();
+        let replacements = 0;
+        let result;
+        try {
+          result = await withMockFetch(
+            recorder.fetch,
+            () => {
+              if (poison === "map") {
+                Array.prototype.map = function <T, U>(
+                  this: T[],
+                  callback: (value: T, index: number, array: T[]) => U,
+                  thisArg?: unknown,
+                ): U[] {
+                  const mapped = apply(map, this, [callback, thisArg]) as U[];
+                  const source: unknown = this[0];
+                  const projection: unknown = mapped[0];
+                  if (
+                    typeof source === "object" && source !== null && "version_id" in source &&
+                    source.version_id === "v-config" && typeof projection === "object" &&
+                    projection !== null && !("version_id" in projection) && "path" in projection &&
+                    projection.path === "veryfront.config.ts"
+                  ) {
+                    replacements++;
+                    throw new Error("Tenant replaced release snapshot map");
+                  }
+                  return mapped;
+                };
+              }
+              if (poison === "find") {
+                Array.prototype.find = function (...args: Parameters<typeof find>) {
+                  if (
+                    this[0]?.path === "veryfront.config.ts" && this[0]?.version_id === undefined &&
+                    args[0](this[0], 0, this)
+                  ) {
+                    replacements++;
+                    throw new Error("Tenant replaced release config find");
+                  }
+                  return apply(find, this, args);
+                };
+              }
+              return new ProjectRunExecuteHandler().handle(request, ctx);
+            },
+          );
+        } finally {
+          Array.prototype.map = map;
+          Array.prototype.find = find;
+        }
+        assertExists(result.response);
+        const json = await result.response.json();
+        assertEquals(json.success, true, json.error);
+        assertEquals(replacements, 0);
+        assertEquals(sourceFileCalls.count, 0);
+        assertEquals(readCalls, []);
+        assertEquals(recorder.upserts.length, 1);
+        assertEquals(recorder.upserts[0]?.status, "ready");
+        if (poison === "none") {
+          baselineHash = recorder.upserts[0]?.artifact_hash;
+          baselineProfile = recorder.upserts[0]?.style_profile_hash;
+          assertEquals(typeof baselineHash, "string");
+        } else {
+          assertEquals(recorder.upserts[0]?.artifact_hash, baselineHash);
+          assertEquals(recorder.upserts[0]?.style_profile_hash, baselineProfile);
+        }
+      }
+    });
+  }
+
   it("uses captured intrinsics for explicit style selectors", async () => {
     const body = {
       runId: "run_style_artifact_captured_intrinsics",
