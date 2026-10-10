@@ -13,6 +13,14 @@
  * ```
  */
 
+export {
+  inspectOkfDocument,
+  OKF_SPEC_REVISION,
+  OKF_SPEC_VERSION,
+  type OkfDocumentDiagnostic,
+  type OkfDocumentInspection,
+} from "./okf-document.ts";
+
 import { ragStore } from "#veryfront/embedding/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";
@@ -838,7 +846,7 @@ function createLookupItem(
     path: entry.path,
     matched_fields: matchedFields,
     frontmatter: entry.frontmatter,
-    ...(includeContent && entry.content ? { content: entry.content } : {}),
+    ...(includeContent && typeof entry.content === "string" ? { content: entry.content } : {}),
   };
 }
 
@@ -971,8 +979,9 @@ async function getProjectKnowledgeManifest(
   const manifest: ProjectKnowledgeManifestEntry[] = [];
   for (const file of files) {
     let parsedFrontmatter: Record<string, unknown> = {};
+    let content: string | undefined;
     try {
-      const content = await readTextFile(file);
+      content = await readTextFile(file);
       parsedFrontmatter = extract<Record<string, unknown>>(content).attrs;
       manifest.push({
         path: buildManifestPath(config, file),
@@ -986,6 +995,7 @@ async function getProjectKnowledgeManifest(
 
     manifest.push({
       path: buildManifestPath(config, file),
+      ...(content === undefined ? {} : { content }),
       ...sanitizeFrontmatter(parsedFrontmatter),
     });
   }

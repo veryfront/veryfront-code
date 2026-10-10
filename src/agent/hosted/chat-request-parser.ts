@@ -159,7 +159,7 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
-  /** Server-produced hosted history messages whose replay provenance may be trusted. */
+  /** Grant only after replay contents match immutable run/input-response evidence or a pre-edit host-authored digest. Editable row IDs or parts alone do not prove origin; edited replacements lose the grant. */
   serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
   /** Exact pending invocation bound to a verified envelope or signed replay digest. */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];

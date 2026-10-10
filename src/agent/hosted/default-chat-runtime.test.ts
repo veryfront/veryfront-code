@@ -1,5 +1,8 @@
 import { getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
-import { hasTrustedPlatformPolicyToolDefinition } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
+import {
+  hasTrustedPlatformPolicyToolDefinition,
+  isLoadSkillToolName,
+} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -1665,3 +1668,85 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
     "sandbox tool setup failed",
   );
 });
+
+for (const denySkillLoader of [false, true]) {
+  it(`keeps ${denySkillLoader ? "denied" : "authorized"} live steering catalog after Array.prototype.some is replaced`, async () => {
+    const originalSome = Array.prototype.some;
+    const originalApply = Reflect.apply;
+    Array.prototype.some = function (predicate, thisArg) {
+      return predicate === isLoadSkillToolName
+        ? denySkillLoader
+        : originalApply(originalSome, this, [predicate, thisArg]);
+    };
+    clearModelProviders();
+    let capturedPrompt: unknown;
+    registerModelProvider("test", () => ({
+      provider: "test",
+      modelId: "test/denied-skill-loader",
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options: unknown) {
+        capturedPrompt = (options as { prompt?: unknown }).prompt;
+        return Promise.resolve({ stream: createTextStream() });
+      },
+    }));
+
+    try {
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+        options: {
+          projectId: "project-1",
+          authToken: "token-1",
+          instructions: "Plain hosted instructions",
+          model: "test/denied-skill-loader",
+          ...(denySkillLoader ? { deniedTools: ["load_skill"] } : { allowedTools: ["load_skill"] }),
+          liveProjectSteering: {
+            agent: {
+              id: "agent-1",
+              name: "Agent",
+              description: "Agent description",
+              instructions: "Plain hosted instructions",
+              tools: true,
+            },
+            initialSkills: [{
+              id: "deploy",
+              name: "Deploy",
+              description: "Deploy the project",
+              instructions: "Use the deployment checklist.",
+              allowedTools: [],
+            }],
+          },
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+
+      await withMockFetch(
+        () => Promise.resolve(Response.json({ tools: [] })),
+        async () => {
+          const result = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of result.toUIMessageStream()) {
+            // Consume the stream so provider dispatch completes.
+          }
+        },
+      );
+
+      const systemPrompt = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+        .filter((message) => message.role === "system" && typeof message.content === "string")
+        .map((message) => message.content)
+        .join("\n\n");
+      assertEquals(systemPrompt.includes("<available_skills>"), !denySkillLoader);
+      assertEquals(systemPrompt.includes('"skillId":"deploy"'), !denySkillLoader);
+    } finally {
+      Array.prototype.some = originalSome;
+      clearModelProviders();
+    }
+  });
+}

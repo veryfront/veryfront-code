@@ -482,9 +482,7 @@ function buildLiveEvalRunBody(input: {
     testCaseId: input.testCase.id,
     prompt: input.prepared?.prompt ?? input.testCase.prompt ?? "",
     metadata: input.prepared?.metadata,
-    projectId: input.config.projectId && input.testCase.requireProject
-      ? input.config.projectId
-      : null,
+    projectId: input.config.projectId,
     ...(input.config.branchId ? { branchId: input.config.branchId } : {}),
     ...(input.config.model ? { model: input.config.model } : {}),
     ...(input.conversationId ? { conversationId: input.conversationId } : {}),

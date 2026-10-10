@@ -5521,6 +5521,58 @@ describe("internal-agents/run-stream", () => {
       return model.toolNames(0);
     }
 
+    for (const toolName of ["form_input", "load_skill"] as const) {
+      it(`restores second-source legacy ${toolName} sidecars through internal replay`, async () => {
+        const input = loadedSkillHistoryInput({
+          trustedIds: ["first", "trusted-load"],
+          includePolicySidecar: true,
+          toolName: "load_skill",
+        });
+        const assistant = input.messages.find((message) => message.role === "assistant");
+        const result = input.messages.find((message) => message.role === "tool");
+        if (!assistant || assistant.role !== "assistant" || !result || result.role !== "tool") {
+          throw new Error("Missing history");
+        }
+        assistant.toolCalls = [
+          { id: "first-call", type: "function", function: { name: "other", arguments: "{}" } },
+          {
+            id: "load-skill-call",
+            type: "function",
+            function: { name: toolName, arguments: "{}" },
+          },
+        ];
+        if (toolName === "form_input") {
+          input.messages = input.messages.filter((message) => message.role !== "user");
+          result.content = JSON.stringify({ submitted: true, values: { brief: "Done" } });
+        }
+        input.messages.splice(1, 0, {
+          id: "first",
+          role: "tool",
+          toolCallId: "first-call",
+          content: "{}",
+          metadata: {
+            __veryfrontTrustedPlatformPolicyToolResultIds: ["first-call", "load-skill-call"],
+          },
+        });
+        for (const trustMode of ["both", "first", "second"] as const) {
+          const trustSecond = trustMode !== "first";
+          input.serverResolvedTrustedHostedHistoryMessageIds = trustMode === "both"
+            ? ["first", "trusted-load"]
+            : [trustSecond ? "trusted-load" : "first"];
+          const restored = await capturedRestoredMessages(input);
+          const policy = await import("#veryfront/agent/runtime/skill-policy-enforcement.ts");
+          assertEquals(
+            policy.hasSubmittedFormInputResult(restored),
+            trustSecond && toolName === "form_input",
+          );
+          assertEquals(
+            policy.hydrateActiveSkillStateFromMessages(restored).activeSkillId,
+            trustSecond && toolName === "load_skill" ? "review" : undefined,
+          );
+        }
+      });
+    }
+
     it("preserves trusted tool-role policy sidecars through AG-UI compaction", async () => {
       const messages = await capturedRestoredMessages(
         loadedSkillHistoryInput({

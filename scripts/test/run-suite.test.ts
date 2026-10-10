@@ -15,6 +15,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import {
   buildDenoSuiteCommandArgs,
+  buildDenoSuiteProcessEnv,
   DENO_SUITE_PROFILES,
   handleDenoSuiteStatus,
   LOOPBACK_ALLOW_NET,
@@ -95,7 +96,12 @@ describe("suite planning parity", () => {
         "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
         "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
       ],
-      "e2e:binary": ["tests/integration/compiled-binary-e2e.test.ts"],
+      "e2e:binary": [
+        "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+        "tests/integration/compiled-binary-e2e.shard-3.test.ts",
+      ],
       "runtime:node": await legacyRuntimeFiles("node"),
       "runtime:bun": await legacyRuntimeFiles("bun"),
     };
@@ -503,6 +509,32 @@ describe("migration command surface", () => {
     );
   });
 
+  it("runs the binary e2e files together unless the caller bounds DENO_JOBS", () => {
+    assertEquals(buildDenoSuiteProcessEnv("e2e:binary", {}).DENO_JOBS, "4");
+    assertEquals(
+      buildDenoSuiteProcessEnv("e2e:binary", { DENO_JOBS: "1" }).DENO_JOBS,
+      "1",
+    );
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:cwd-exclusion", { DENO_JOBS: "1" })
+        .DENO_JOBS,
+      "2",
+    );
+  });
+
+  it("gives every binary e2e invocation its own run id", () => {
+    const first = buildDenoSuiteProcessEnv("e2e:binary", {
+      VERYFRONT_BINARY_E2E_RUN_ID: "inherited",
+    }).VERYFRONT_BINARY_E2E_RUN_ID;
+    const second = buildDenoSuiteProcessEnv("e2e:binary", {})
+      .VERYFRONT_BINARY_E2E_RUN_ID;
+    assert(first && second && first !== second && first !== "inherited");
+    assertEquals(
+      buildDenoSuiteProcessEnv("unit:serial", {}).VERYFRONT_BINARY_E2E_RUN_ID,
+      undefined,
+    );
+  });
+
   it("declares every isolation decision explicitly on every Deno suite", () => {
     // A field with a default is a field that can drift silently; the profile
     // type keeps them required and this pins the shape at runtime too.
@@ -863,7 +895,7 @@ async function legacyIntegrationRootFiles(): Promise<string[]> {
       .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !path.startsWith("tests/integration/compiled-binary-e2e.")
       ),
   );
 }

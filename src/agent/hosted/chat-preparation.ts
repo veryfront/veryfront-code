@@ -40,6 +40,7 @@ import {
 import {
   inheritTrustedHostedHistorySourceIdentity,
   inheritTrustedPlatformPolicyMessageMetadata,
+  inheritTrustedPlatformPolicyToolResultMetadata,
   isLoadSkillToolName,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
 } from "../runtime/skill-policy-enforcement.ts";
@@ -76,6 +77,9 @@ import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+
+const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
 
 /** Host-owned opt-in for new provider replay checkpoint emission. */
 export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV =
@@ -540,7 +544,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const promptSkills = initialModelVisibleToolNames.some(isLoadSkillToolName) ? selectedSkills : [];
+  const promptSkills = apply(arraySome, initialModelVisibleToolNames, [isLoadSkillToolName])
+    ? selectedSkills
+    : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
@@ -879,7 +885,10 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
     if (!Object.hasOwn(sourceMessages, index)) continue;
     const message = sourceMessages[index]!;
     if (!message.id || !trustedSourceIds.has(message.id)) continue;
-    if (sourceById.has(message.id) || message.role !== "assistant") {
+    if (
+      sourceById.has(message.id) ||
+      (message.role !== "assistant" && message.role !== "tool")
+    ) {
       sourceById.set(message.id, null);
     } else {
       sourceById.set(message.id, message);
@@ -891,7 +900,9 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
     const sourceMessage = sourceById.get(message.id);
-    const restoredMessage = sourceMessage && message.role === "assistant"
+    const restoredMessage = message.role === "tool"
+      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
+      : sourceMessage && sourceMessage.role === "assistant" && message.role === "assistant"
       ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
       : message;
     restoredMessages[restoredMessages.length] = sourceMessage

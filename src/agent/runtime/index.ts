@@ -398,6 +398,7 @@ import {
   type ToolExposureCheckpoint,
   type ToolExposurePlan,
   type ToolExposureState,
+  type ToolSearchMatch,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -1179,6 +1180,25 @@ function buildGeneratedAssistantMessage(
   }, response.providerMetadata);
 }
 
+const TOOL_SEARCH_NEXT_STEP_NAME_LIMIT = 5;
+
+function toolSearchLoadedNextStep(matches: readonly ToolSearchMatch[]): string {
+  let names = "";
+  let listed = 0;
+  for (let index = 0; index < matches.length; index++) {
+    if (!ObjectHasOwn(matches, index)) continue;
+    const match = matches[index]!;
+    if (match.status !== "loaded") continue;
+    if (listed === TOOL_SEARCH_NEXT_STEP_NAME_LIMIT) {
+      names += ", and more";
+      break;
+    }
+    names += `${listed === 0 ? "" : ", "}"${match.name}"`;
+    listed += 1;
+  }
+  return `Loaded tools: ${names}. Call the loaded tool that fits the request in the next step to complete it.`;
+}
+
 function executeFrameworkToolSearch(input: {
   args: Record<string, unknown>;
   plan: ToolExposurePlan;
@@ -1209,7 +1229,13 @@ function executeFrameworkToolSearch(input: {
       nextStep: alreadyVisible
         ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
         : result.loadedCount > 0
-        ? "Continue to the next model step. Loaded tool schemas will be available then."
+        ? toolSearchLoadedNextStep(result.matches)
+        : somePrivateArray(
+            input.plan.deferred,
+            (tool) =>
+              !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
+          )
+        ? "No authorized tool matched this query, but other authorized tools are not loaded yet. Call tool_search again with one exact tool name or a different short capability phrase before answering without a tool."
         : "Continue with the available tools or answer without a tool.",
     },
     checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),

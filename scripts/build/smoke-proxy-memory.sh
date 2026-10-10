@@ -5,7 +5,11 @@ binary="${1:?usage: smoke-proxy-memory.sh <binary> [base-port]}"
 base_port="${2:-18180}"
 memory_limit="${PROXY_MEMORY_LIMIT:-1536m}"
 attempts="${PROXY_MEMORY_ATTEMPTS:-3}"
-container_image="${PROXY_MEMORY_IMAGE:-debian:trixie-slim}"
+# Default to the mirror: unauthenticated Docker Hub pulls hit toomanyrequests on
+# shared runner IPs. The mirror is a cache, so fall back to Docker Hub if it
+# lacks the image. An explicit PROXY_MEMORY_IMAGE is used as given.
+fallback_image="docker.io/library/debian:trixie-slim"
+container_image="${PROXY_MEMORY_IMAGE:-mirror.gcr.io/library/debian:trixie-slim}"
 container_platform="${PROXY_MEMORY_PLATFORM:-}"
 health_path="/_proxy/health"
 container=""
@@ -34,6 +38,11 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+if [ -z "${PROXY_MEMORY_IMAGE:-}" ] && ! docker pull ${platform_args[@]+"${platform_args[@]}"} "$container_image" >/dev/null; then
+  echo "mirror pull failed for $container_image; falling back to $fallback_image" >&2
+  container_image="$fallback_image"
+fi
 
 for ((attempt = 1; attempt <= attempts; attempt++)); do
   port=$((base_port + attempt - 1))

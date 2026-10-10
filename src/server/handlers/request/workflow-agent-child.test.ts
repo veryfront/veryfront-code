@@ -42,6 +42,13 @@ const json = (value: unknown, status = 200, headers = {}) =>
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
+function requestHeaders(init: Parameters<typeof globalThis.fetch>[1]) {
+  return new Headers(observeFetchRequestInit(init).headers);
+}
+function requestJsonBody(init: Parameters<typeof globalThis.fetch>[1]) {
+  const body = observeFetchRequestInit(init).body;
+  return body ? JSON.parse(String(body)) : {};
+}
 function admission(
   status = "running",
   output: unknown = null,
@@ -111,7 +118,7 @@ describe("workflow agent child protocol", () => {
         projectExecutionAttempt: { ...claims.projectExecutionAttempt, attemptId },
       });
       const send: typeof fetch = (url, init) => {
-        const key = new Headers(observeFetchRequestInit(init).headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         if (String(url).endsWith("/events")) {
           starts.push(key);
           return Promise.resolve(json({}));
@@ -138,8 +145,8 @@ describe("workflow agent child protocol", () => {
     const order: string[] = [];
     const send: typeof fetch = (_url, init) => {
       const url = String(_url);
-      const headers = new Headers(observeFetchRequestInit(init).headers);
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const headers = requestHeaders(init);
+      const body = requestJsonBody(init);
       if (url.endsWith(`/runs/${parentId}/events`)) {
         order.push("start");
         assertEquals(headers.get("Authorization"), `Bearer ${eventToken}`);
@@ -217,14 +224,14 @@ describe("workflow agent child protocol", () => {
     const cursors = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) {
         starts.add(body.events[0].stepId);
         return Promise.resolve(json({}));
       }
       if (path === "/runs") {
         assertEquals(starts.has(body.node_id), true);
-        const key = new Headers(observeFetchRequestInit(init).headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         let record = records.get(key);
         if (!record) {
           const suffix = String(records.size + 1).padStart(12, "0");
@@ -324,14 +331,14 @@ describe("workflow agent child protocol", () => {
     const cursors = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) {
         starts.add(body.events[0].stepId);
         return Promise.resolve(json({}));
       }
       if (path === "/runs") {
         assertEquals(starts.has(body.node_id), true);
-        const key = new Headers(observeFetchRequestInit(init).headers).get("Idempotency-Key")!;
+        const key = requestHeaders(init).get("Idempotency-Key")!;
         let record = records.get(key);
         if (!record) {
           const suffix = String(records.size + 1).padStart(12, "0");
@@ -410,7 +417,7 @@ describe("workflow agent child protocol", () => {
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path === "/runs") return Promise.resolve(admission());
       assertEquals(path, `/runs/${childId}/finalize`);
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       assertEquals(body.status, "failed");
       persisted = body.error;
       return Promise.resolve(json({ id: childId, status: "failed" }));
@@ -449,7 +456,7 @@ describe("workflow agent child protocol", () => {
         if (path === "/runs") return Promise.resolve(admission());
         assertEquals(path, `/runs/${childId}/cancel`);
         assertEquals(stopped, true, "terminal write must follow actual local settlement");
-        const headers = new Headers(observeFetchRequestInit(init).headers);
+        const headers = requestHeaders(init);
         assertEquals(headers.get("Authorization"), "Bearer child-invocation");
         assertEquals(headers.get("X-Veryfront-Run-Terminal-Token"), terminalToken);
         terminals++;
@@ -489,14 +496,14 @@ describe("workflow agent child protocol", () => {
     const keys: string[] = [];
     let started = "";
     const send: typeof fetch = (url, init) => {
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       if (String(url).endsWith("/events")) {
         started = body.events[0].stepId;
         return Promise.resolve(json({}));
       }
       assertEquals(body.node_id, started);
       identities.push(body.node_id);
-      keys.push(new Headers(observeFetchRequestInit(init).headers).get("Idempotency-Key")!);
+      keys.push(requestHeaders(init).get("Idempotency-Key")!);
       return Promise.resolve(admission("completed", "stored"));
     };
     const execute = () => {
@@ -580,7 +587,7 @@ describe("workflow agent child protocol", () => {
     });
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path === "/runs") return Promise.resolve(admission());
       if (path.endsWith("/events")) {
@@ -632,7 +639,7 @@ describe("workflow agent child protocol", () => {
     const counts = new Map<string, number>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      const body = requestJsonBody(init);
       if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
       if (path.endsWith("/events")) {
         const id = path.split("/")[2]!;
@@ -725,9 +732,7 @@ describe("workflow agent child protocol", () => {
       let stopped = false;
       const send: typeof fetch = (url, init) => {
         const path = new URL(String(url)).pathname;
-        const body = observeFetchRequestInit(init).body
-          ? JSON.parse(String(observeFetchRequestInit(init).body))
-          : {};
+        const body = requestJsonBody(init);
         if (path === "/runs") {
           states.set(body.node_id ? childId : grandchildId, "running");
           return Promise.resolve(
@@ -833,9 +838,8 @@ describe("workflow agent child protocol", () => {
       });
       const send: typeof fetch = (url, init) => {
         const path = new URL(String(url)).pathname;
-        const requestInit = observeFetchRequestInit(init);
-        const body = JSON.parse(String(requestInit.body));
-        const headers = new Headers(requestInit.headers);
+        const body = requestJsonBody(init);
+        const headers = requestHeaders(init);
         if (path.endsWith("/events")) {
           const id = path.split("/")[2]!;
           const cursor = (cursors.get(id) ?? 0) + body.events.length;
@@ -938,7 +942,7 @@ describe("workflow agent child protocol", () => {
       let cursor = 0;
       const send: typeof fetch = (url, init) => {
         const path = new URL(String(url)).pathname;
-        const body = JSON.parse(String(observeFetchRequestInit(init).body));
+        const body = requestJsonBody(init);
         if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
         if (path === "/runs") {
           admissions++;
@@ -1070,7 +1074,7 @@ describe("workflow agent child protocol", () => {
           assertEquals(new URL(String(url)).pathname, `/runs/${id}/events`);
           return Promise.resolve(json({}));
         }
-        assertEquals(JSON.parse(String(observeFetchRequestInit(init).body)).parent_run_id, id);
+        assertEquals(requestJsonBody(init).parent_run_id, id);
         return Promise.resolve(admission("completed", "stored", childId, "run_child", id));
       };
       const result = await runner(send, token)({

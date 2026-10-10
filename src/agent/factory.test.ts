@@ -1007,7 +1007,11 @@ description: Excluded skill
       async doGenerate(options) {
         observedToolNames.push(toolNamesFromModelOptions(options));
         observedPrompts.push(
-          flattenSystemInstructions(options.prompt.filter((message) => message.role === "system")),
+          flattenSystemInstructions(
+            options.prompt.filter((
+              message,
+            ): message is Extract<typeof message, { role: "system" }> => message.role === "system"),
+          ),
         );
         return {
           content: [{ type: "text", text: "done" }],

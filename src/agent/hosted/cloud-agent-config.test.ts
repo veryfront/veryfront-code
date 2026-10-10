@@ -201,7 +201,9 @@ describe("cloud agent service runtime options", () => {
     );
 
     assertEquals("veryfront__form_input" in tools, true);
-    assertEquals("form_input" in tools, false);
+    assertEquals("form_input" in tools, true);
+    assertEquals(tools.form_input?.id, "form_input");
+    assertEquals(hasTrustedHostToolProvenance(tools.form_input), true);
     assertEquals(tools.veryfront__form_input?.id, "veryfront__form_input");
     assertEquals("veryfront__load_skill" in tools, true);
     assertEquals("veryfront__sleep" in tools, true);

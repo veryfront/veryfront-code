@@ -132,6 +132,7 @@ import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.t
 import {
   inheritTrustedHostedHistorySourceIdentity,
   inheritTrustedPlatformPolicyMessageMetadata,
+  inheritTrustedPlatformPolicyToolResultMetadata,
   restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
 } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -1137,8 +1138,10 @@ function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
     const sourceMessage = sourceById.get(message.id);
-    const restoredMessage = sourceMessage && message.role === sourceMessage.role &&
-        isTrustedHostedPolicyMetadataRole(message.role)
+    const restoredMessage = message.role === "tool"
+      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
+      : sourceMessage && message.role === sourceMessage.role &&
+          isTrustedHostedPolicyMetadataRole(message.role)
       ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
       : message;
     restoredMessages[restoredMessages.length] = sourceMessage

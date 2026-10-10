@@ -82,6 +82,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
 const stringTrim = String.prototype.trim;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
@@ -268,7 +269,7 @@ async function buildToolAssembly(
           branchId: input.taskContext.branchId,
           environmentContext: liveProjectSteering.environmentContext,
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
-          skills: modelVisibleToolNames.some(isLoadSkillToolName)
+          skills: apply(arraySome, modelVisibleToolNames, [isLoadSkillToolName])
             ? liveProjectSteering.initialSkills ?? []
             : [],
           availableToolNames: modelVisibleToolNames,
