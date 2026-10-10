@@ -7,6 +7,7 @@ import {
 } from "./cloud-runtime-system-messages.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { BuildVeryfrontCloudRuntimeInstructionsOptions } from "veryfront/agent";
 
 function createAgent(
@@ -264,12 +265,35 @@ describe("cloud runtime system messages", () => {
       projectId: "project-123",
       branchId: null,
       instructions: "",
-      skills: [],
+      skills,
       availableToolNames: ["tool_search"],
     }).map((message) => message.content).join("\n");
     assertEquals(disabledText.includes("<available_skills>"), false);
     assertEquals(disabledText.includes("Call load_skill({ inventory:"), false);
     assertEquals(disabledText.includes("Call veryfront__load_skill({ inventory:"), false);
+  });
+
+  it("does not advertise skill discovery when the run explicitly exposes no tools", () => {
+    const loaderHints: (RuntimeSkillLoaderToolName | undefined)[] = [
+      undefined,
+      "load_skill",
+      "veryfront__load_skill",
+    ];
+    for (const skillLoaderToolName of loaderHints) {
+      const text = buildInteractiveVeryfrontCloudRuntimeInstructions({
+        agentConfig: createAgent(),
+        projectId: "project-123",
+        branchId: null,
+        instructions: "",
+        skills: createLargeSkillCatalog(),
+        skillLoaderToolName,
+        availableToolNames: [],
+      }).map((message) => message.content).join("\n");
+
+      assertEquals(text.includes("<available_skills>"), false);
+      assertEquals(text.includes("Call load_skill({ inventory:"), false);
+      assertEquals(text.includes("Call veryfront__load_skill({ inventory:"), false);
+    }
   });
 
   it("preserves an authoritative empty skill set through hosted assembly", () => {

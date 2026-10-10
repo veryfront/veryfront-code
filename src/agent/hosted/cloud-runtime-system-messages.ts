@@ -82,12 +82,17 @@ export function buildVeryfrontCloudRuntimeInstructions(
   input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
   options?: BuildVeryfrontCloudRuntimeInstructionsOptions,
 ): ChatSystemMessage[] {
+  const skillLoaderToolName = input.availableToolNames === undefined
+    ? input.skillLoaderToolName
+    : resolveHostedRuntimeSkillLoaderToolName(input.availableToolNames);
+  const skills = input.availableToolNames !== undefined && skillLoaderToolName === undefined
+    ? []
+    : input.skills;
   return createVeryfrontCloudRuntimeSystemMessages({
     agent: input.agentConfig,
     instructions: input.instructions || undefined,
-    skills: input.skills,
-    skillLoaderToolName: input.skillLoaderToolName ??
-      resolveHostedRuntimeSkillLoaderToolName(input.availableToolNames),
+    skills,
+    skillLoaderToolName,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,

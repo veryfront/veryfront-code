@@ -29,6 +29,7 @@ import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
@@ -46,6 +47,7 @@ import {
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
@@ -235,6 +237,121 @@ for (const trusted of [false, true]) {
     }
   });
 }
+
+Deno.test("default hosted runtime defers a project load_skill collision after full construction", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  const toolNamesByCall: string[][] = [];
+  let projectLoadSkillExecutions = 0;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/default-loader-project-collision",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      modelCallCount += 1;
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "find-project-loader",
+                toolName: "tool_search",
+                input: { query: "custom" },
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else if (modelCallCount === 2) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "call-project-loader",
+                toolName: "load_skill",
+                input: {},
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project",
+        authToken: "token",
+        instructions: "Use the selected loader.",
+        model: "test/default-loader-project-collision",
+        allowedTools: ["load_skill", "veryfront__load_skill", "sleep"],
+        toolLoading: "deferred",
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () =>
+        withPlatformHostToolAliases(
+          markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
+          {
+            load_skill: {
+              description: "Project custom loader",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => {
+                projectLoadSkillExecutions += 1;
+                return { project: true };
+              },
+            },
+            sleep: localTool("Sleep"),
+          },
+        ),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // Consume the single model response.
+      }
+    });
+
+    assertEquals(modelCallCount, 3);
+    assertEquals(toolNamesByCall[0], ["tool_search", "veryfront__load_skill"]);
+    assertEquals(toolNamesByCall[1], ["load_skill", "tool_search", "veryfront__load_skill"]);
+    assertEquals(projectLoadSkillExecutions, 1);
+  } finally {
+    clearModelProviders();
+  }
+});
 
 Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes project errors", async () => {
   const trustedError = INVALID_ARGUMENT.create({ detail: "Correct the trusted tool input" });

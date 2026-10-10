@@ -5,6 +5,7 @@ import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -724,6 +725,9 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
+      if (isRuntimeProviderSchemaHiddenTool(entry)) {
+        continue;
+      }
       if (
         configuredRemoteToolName !== undefined &&
         !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
