@@ -1346,7 +1346,9 @@ function resolvePersistedControls(
       ? undefined
       : options.seed,
     stopSequences: ObjectHasOwn(providerOptions, "stop")
-      ? stopControl(providerOptions.stop)
+      ? transport !== "responses" && typeof providerOptions.stop === "string"
+        ? [providerOptions.stop]
+        : stopControl(providerOptions.stop)
       : transport === "responses"
       ? undefined
       : options.stopSequences?.length

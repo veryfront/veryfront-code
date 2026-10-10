@@ -123,6 +123,82 @@ describe("model call request projection", () => {
     );
   });
 
+  it("normalizes scalar native OpenAI Chat stop controls for persisted capture", () => {
+    for (
+      const { model, providerName, providerOptions } of [
+        {
+          model: { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+          providerName: "openai",
+          providerOptions: { openai: { stop: "END" } },
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "mistral",
+            modelId: "mistral-large",
+          },
+          providerName: "veryfront-cloud",
+          providerOptions: { "veryfront-cloud": { stop: "END" } },
+        },
+      ] as const
+    ) {
+      const options = snapshotModelCallProviderOptions(
+        model,
+        { prompt, stopSequences: ["neutral"], providerOptions },
+      );
+      const body = buildOpenAIChatRequest(
+        model.modelId,
+        providerName,
+        options,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals<unknown>(body.stop, "END");
+      assertEquals(buildModelCallContextRequest(model, options)?.stopSequences, ["END"]);
+    }
+  });
+
+  it("keeps native OpenAI stop null and Responses scalar stop semantics", () => {
+    const chatOptions = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, stopSequences: ["neutral"], providerOptions: { openai: { stop: null } } },
+    );
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      chatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(chatBody.stop, null);
+    assertEquals(
+      buildModelCallContextRequest({ provider: "openai", modelId: "gpt-4o" }, chatOptions)
+        ?.stopSequences,
+      undefined,
+    );
+
+    const responsesOptions = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "responses" },
+      { prompt, stopSequences: ["neutral"], providerOptions: { openai: { stop: "END" } } },
+    );
+    const responsesBody = buildOpenAIResponsesRequest(
+      "gpt-4o",
+      "openai",
+      responsesOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals<unknown>(responsesBody.stop, "END");
+    assertEquals(
+      buildModelCallContextRequest(
+        { provider: "openai", modelId: "gpt-4o", openAITransport: "responses" },
+        responsesOptions,
+      )?.stopSequences,
+      undefined,
+    );
+  });
+
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {
