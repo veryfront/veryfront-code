@@ -19,12 +19,12 @@ const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
 /**
- * A call that decides host execution, or a deny-shaped test of the capability flag:
- * `!allowHostProjectCodeExecution`, `allowHostProjectCodeExecution !== true` or
- * `allowHostProjectCodeExecution === false`.
+ * A call that decides host execution, or any comparison of the capability flag:
+ * `!allowHostProjectCodeExecution`, or `allowHostProjectCodeExecution` compared with
+ * `true` or `false`.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==\s*true|===\s*false)\b/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution)\s*\(|!\s*allowHostProjectCodeExecution\b|\ballowHostProjectCodeExecution\s*(?:!==?\s*true|===?\s*(?:true|false))\b/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
@@ -36,6 +36,15 @@ const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?: RegExp }> = {
   "src/data/server-data-fetcher.ts": { surface: "Remote server-data execution", guards: 1 },
   "src/discovery/discovery-engine.ts": { surface: "Executable primitive discovery", guards: 1 },
+  "src/discovery/project-discovery-config.ts": {
+    surface: "Discovery capability normalization",
+    guards: 1,
+  },
+  "src/rendering/context/render-context.ts": {
+    surface: "Render context capability",
+    guards: 2,
+  },
+  "src/rendering/orchestrator/pipeline.ts": { surface: "Render pipeline capability", guards: 1 },
   "src/discovery/transpiler.ts": {
     surface: "Discovery module transpilation and import",
     guards: 1,
@@ -47,6 +56,10 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   "src/routing/api/module-loader/loader.ts": { surface: "API route module loading", guards: 1 },
   "src/routing/api/openapi/spec-generator.ts": { surface: "OpenAPI route evaluation", guards: 1 },
   "src/routing/api/route-executor.ts": { surface: "API route execution", guards: 3 },
+  "src/server/context/enriched-context.ts": {
+    surface: "Enriched request context capability",
+    guards: 1,
+  },
   "src/server/dev-server/middleware.ts": { surface: "Local development middleware", guards: 1 },
   "src/server/handlers/preview/markdown-preview.handler.ts": {
     surface: "Markdown preview",
@@ -92,10 +105,15 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/runtime-handler/index.ts": {
     surface: "Root middleware and hosted ingress",
-    guards: 2,
+    guards: 3,
+  },
+  "src/server/runtime-handler/project-runtime-context.ts": {
+    surface: "Project runtime context capability",
+    guards: 1,
   },
   "src/server/runtime-handler/project-middleware.ts": { surface: "Project middleware", guards: 1 },
   "src/server/services/rendering/ssr.service.ts": { surface: "SSR service", guards: 2 },
+  "src/server/shared/renderer/adapter.ts": { surface: "Renderer adapter capability", guards: 1 },
   "src/server/services/rsc/endpoints/endpoint-router.ts": {
     surface: "RSC server endpoints",
     guards: 1,
