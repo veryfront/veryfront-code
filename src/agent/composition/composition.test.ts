@@ -577,7 +577,7 @@ describe("agentAsTool", () => {
     assertEquals(finish.object, { title: "Done", count: 2 });
   });
 
-  it("observes raw generated-turn finish metadata before rethrowing outputSchema parse errors", async () => {
+  it("observes raw generated-turn finish metadata and a sanitized error before rethrowing outputSchema parse errors", async () => {
     const outputSchema = defineSchema((v) =>
       v.object({
         title: v.string(),
@@ -632,8 +632,9 @@ describe("agentAsTool", () => {
       "text-delta",
       "text-end",
       "message-finish",
+      "error",
     ]);
-    const finish = observed.at(-1) as Record<string, unknown>;
+    const finish = observed.at(-2) as Record<string, unknown>;
     assertEquals(finish.finishReason, "stop");
     assertEquals(finish.totalUsage, {
       inputTokens: 4,
@@ -642,6 +643,71 @@ describe("agentAsTool", () => {
       usageCaptureStatus: "complete",
     });
     assertEquals(Object.hasOwn(finish, "object"), false);
+    assertEquals(
+      observed.filter((event) => (event as { type?: string }).type === "error").length,
+      1,
+    );
+    const errorEvent = observed.at(-1) as Record<string, unknown>;
+    assertEquals(errorEvent.type, "error");
+    assertStringIncludes(String(errorEvent.error), "failed outputSchema validation");
+    assertEquals(Object.hasOwn(errorEvent, "object"), false);
+    assertEquals(Object.hasOwn(errorEvent, "totalUsage"), false);
+  });
+
+  it("keeps the outputSchema parse error when failure observation rejects", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel(
+      [{ text: '{"title":"Wrong","count":"two"}', finishReason: "stop" }],
+      {
+        only: "generate",
+        provider: "custom",
+        modelId: "custom/generated-turn-observer-rejects-invalid-structured",
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-rejects-invalid-structured", {
+      model: "custom/generated-turn-observer-rejects-invalid-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observerFailure = new Error("observer rejected synthetic schema failure event");
+    const observed: unknown[] = [];
+
+    const error = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      async () => {
+        try {
+          await runtime.generate("Synthetic input");
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected outputSchema parse failure");
+      },
+      (event) => {
+        observed.push(event);
+        if ((event as { type?: string }).type === "error") return Promise.reject(observerFailure);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error === observerFailure, false);
+    assertStrictEquals(error instanceof Error, true);
+    assertStringIncludes((error as Error).message, "failed outputSchema validation");
+    assertEquals(observed.map((event) => (event as { type?: string }).type), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "message-finish",
+      "error",
+    ]);
   });
 
   it("routes the real generic delegation through its request-scoped owner exactly once", async () => {

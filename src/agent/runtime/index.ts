@@ -60,6 +60,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import {
   createPrivateReadableStream,
   enqueuePrivateStream,
+  getPrivateStreamReader,
 } from "#veryfront/security/private-stream.ts";
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
@@ -1179,6 +1180,44 @@ function rewriteRecoveryTextSseChunkId(
     return encodePrivateText(`data: ${privateJsonStringify({ ...event, id })}\n\n`, encoder);
   } catch {
     return chunk;
+  }
+}
+
+const OUTPUT_SCHEMA_REJECTION_ERROR_EVENT = {
+  type: "error",
+  error: "Agent output failed outputSchema validation",
+  code: "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED",
+} as const;
+
+async function observeGeneratedAgentOutputSchemaFailure(): Promise<void> {
+  const encoder = new PrivateTextEncoder();
+  const stream = observeRuntimeStream(createPrivateReadableStream<Uint8Array>({
+    start(controller) {
+      sendSSE(controller, encoder, OUTPUT_SCHEMA_REJECTION_ERROR_EVENT);
+      closeSSEStream(controller);
+    },
+  }));
+  const reader = getPrivateStreamReader(stream);
+  try {
+    while (!(await reader.read()).done) {
+      // Drain the synthetic stream so observeRuntimeStream mirrors the error event.
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function observeGeneratedAgentOutputSchemaRejection(
+  messageId: string,
+  response: RuntimeGenerateTextResult,
+): Promise<void> {
+  try {
+    await observeGeneratedAgentTurn(messageId, response);
+    await observeGeneratedAgentOutputSchemaFailure();
+  } catch (observationError) {
+    logger.debug("Generated outputSchema failure observation rejected", {
+      error: observationError,
+    });
   }
 }
 
@@ -3768,7 +3807,7 @@ export class AgentRuntime {
             try {
               parsedObject = await outputSchema.parseOutput(response.text);
             } catch (error) {
-              await observeGeneratedAgentTurn(assistantMessage.id, response);
+              await observeGeneratedAgentOutputSchemaRejection(assistantMessage.id, response);
               throw error;
             }
           }

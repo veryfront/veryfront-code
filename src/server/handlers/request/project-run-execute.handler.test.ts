@@ -38,6 +38,7 @@ import {
   withLocalChildRuntime,
 } from "#veryfront/agent/composition/local-child-execution.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
@@ -10745,6 +10746,292 @@ describe("project run inference credential header", () => {
       appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
         .join(""),
       "Stream must persist.",
+    );
+  });
+
+  it("records a caught outputSchema rejection as one nonterminal agent error", async () => {
+    const runId = "run_caught_output_schema_rejection";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let caughtMessage = "";
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const usage = {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete" as const,
+    };
+    const model = scriptedModel(
+      [{
+        text: '{"title":"Wrong","count":"two"}',
+        finishReason: "stop",
+        providerMetadata: { privateMarker: "provider-secret-task" },
+      }],
+      {
+        only: "generate",
+        provider: "hosted",
+        modelId: "hosted/output-schema-rejection",
+        usage,
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("caught-output-schema-rejection", {
+            name: "Caught output schema rejection",
+            run: async () => {
+              const assistant = agent({
+                id: "caught-output-schema-rejection",
+                model: "hosted/output-schema-rejection",
+                system: "Return structured output.",
+                skills: false,
+                outputSchema,
+                resolveModelTransport: () => Promise.resolve({ model }),
+              });
+              try {
+                await assistant.generate({ input: "Return structured output." });
+              } catch (error) {
+                caughtMessage = error instanceof Error ? error.message : String(error);
+              }
+              return { text: "handled" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:caught-output-schema-rejection",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertStringIncludes(caughtMessage, "failed outputSchema validation");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      '{"title":"Wrong","count":"two"}',
+    );
+    const finishes = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+    );
+    assertEquals(finishes.length, 1);
+    assertEquals(finishes[0]?.value, {
+      finishReason: "stop",
+      totalUsage: usage,
+    });
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    const errorValue = errors[0]?.value as Record<string, unknown>;
+    assertEquals(errorValue.message, "Agent output failed outputSchema validation");
+    assertEquals(errorValue.code, "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED");
+    assertEquals(typeof errorValue.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("Wrong"), false);
+    assertEquals(JSON.stringify(errors).includes("count"), false);
+    assertEquals(JSON.stringify(appended).includes("provider-secret-task"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+  });
+
+  it("records a caught workflow outputSchema rejection as one nonterminal agent error", async () => {
+    const runId = "run_workflow_caught_output_schema_rejection";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let caughtMessage = "";
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const usage = {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete" as const,
+    };
+    const model = scriptedModel(
+      [{
+        text: '{"title":"Wrong","count":"two"}',
+        finishReason: "stop",
+        providerMetadata: { privateMarker: "provider-secret-workflow" },
+      }],
+      {
+        only: "generate",
+        provider: "hosted",
+        modelId: "hosted/workflow-output-schema-rejection",
+        usage,
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "caught-output-schema-rejection-workflow",
+        filePath: "workflows/caught-output-schema-rejection-workflow.ts",
+        exportName: "default",
+        definition: {
+          id: "caught-output-schema-rejection-workflow",
+          steps: [],
+        } as unknown as WorkflowDefinition,
+      }),
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async () => {
+          const assistant = agent({
+            id: "workflow-caught-output-schema-rejection",
+            model: "hosted/workflow-output-schema-rejection",
+            system: "Return structured output.",
+            skills: false,
+            outputSchema,
+            resolveModelTransport: () => Promise.resolve({ model }),
+          });
+          try {
+            await assistant.generate({ input: "Return structured output." });
+          } catch (error) {
+            caughtMessage = error instanceof Error ? error.message : String(error);
+          }
+          return { runId };
+        },
+        getRun: async () => ({ status: "completed", output: { text: "handled" } }),
+        waitForExecutionStopped: async () => true,
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "workflow",
+      target: "workflow:caught-output-schema-rejection-workflow",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertStringIncludes(caughtMessage, "failed outputSchema validation");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      '{"title":"Wrong","count":"two"}',
+    );
+    const finishes = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+    );
+    assertEquals(finishes.length, 1);
+    assertEquals(finishes[0]?.value, {
+      finishReason: "stop",
+      totalUsage: usage,
+    });
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    const errorValue = errors[0]?.value as Record<string, unknown>;
+    assertEquals(errorValue.message, "Agent output failed outputSchema validation");
+    assertEquals(errorValue.code, "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED");
+    assertEquals(typeof errorValue.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("Wrong"), false);
+    assertEquals(JSON.stringify(errors).includes("count"), false);
+    assertEquals(JSON.stringify(appended).includes("provider-secret-workflow"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
     );
   });
 
