@@ -1014,6 +1014,83 @@ describe("mcp/server", () => {
     assertEquals(completed.result, expected);
   });
 
+  it("accepts native pipelines that transform primitive results into object outputs", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    // The native pipeline accepts a string; its pre-converted contract
+    // describes the object produced by validation, not that input string.
+    registerTool("test:transformed-output", {
+      ...tool<unknown, unknown>({
+        id: "test:transformed-output",
+        description: "Converts a string to an object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.string().transform((value) => ({ ok: value === "yes" })).pipe(
+            v.object({ ok: v.boolean() }),
+          )
+        )(),
+        execute: async () => "yes",
+      }),
+      outputSchemaJson: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+    });
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(
+      (definitions.find((entry) => entry.name === "test:transformed-output")!
+        .outputSchema as JsonSchema).type,
+      "object",
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:transformed-output", arguments: {} },
+    });
+    assertEquals(response.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
+  it("snapshots native transform results before their retained object changes", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const retained: Record<string, unknown> = { ok: true };
+    registerTool(
+      "test:native-retained-output",
+      tool<unknown, unknown>({
+        id: "test:native-retained-output",
+        description: "Returns a retained native transform result",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.object({ ok: v.boolean() }).transform(() => retained)
+        )(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:native-retained-output", arguments: {} },
+    });
+    retained.ok = "changed";
+    assertEquals(response.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
   it("hides agent-owned tools from tools/list", async () => {
     const server = createMCPServer({
       enabled: true,

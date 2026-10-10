@@ -34,9 +34,6 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
   if (outputSchema === undefined) {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
   }
-  if (result === null || typeof result !== "object" || Array.isArray(result)) {
-    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
-  }
   if (typeof tool.outputSchema?.safeParse === "function") {
     const validation = tool.outputSchema.safeParse(result);
     if (!validation.success) {
@@ -48,11 +45,19 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
     ) {
       throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
     }
+    const text = JSON.stringify(validation.data, null, 2);
+    const snapshot: unknown = JSON.parse(text);
+    if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      throw new Error(`Tool "${tool.id}" must serialize an object for its MCP output contract`);
+    }
     return {
-      content: [{ type: "text", text: JSON.stringify(validation.data, null, 2) }],
-      structuredContent: validation.data,
+      content: [{ type: "text", text }],
+      structuredContent: snapshot,
       isError: false,
     };
+  }
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
   }
   const validator = resolve<SchemaValidator>("SchemaValidator");
   if (!validator.compileJsonSchema) {
