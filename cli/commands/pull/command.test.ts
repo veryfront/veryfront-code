@@ -1733,6 +1733,72 @@ describe("pullCommand", () => {
     }
   });
 
+  it("writes pulled Python files without pruning unmanaged local Python files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.mkdir(join(tempDir, "scripts"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "remove.ts"), "remove\n");
+      await Deno.writeTextFile(join(tempDir, "scripts", "local_helper.py"), "print('local')\n");
+      await initializeCleanTestGit(tempDir);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (
+          url.pathname === "/projects/alpha/files" &&
+          url.searchParams.get("branch") === "studio-change"
+        ) {
+          return Promise.resolve(
+            Response.json({
+              data: [
+                {
+                  path: "attesters/sql_equality.py",
+                  content: "def attest():\n    return True\n",
+                  size: 29,
+                  type: "file",
+                },
+              ],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Python pull fetched unexpected content: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        branch: "studio-change",
+        prune: true,
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "attesters", "sql_equality.py")),
+        "def attest():\n    return True\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "scripts", "local_helper.py")),
+        "print('local')\n",
+      );
+      assertEquals(await exists(join(tempDir, "app", "remove.ts")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("rejects supported local symlinks before pruning", async () => {
     if (Deno.build.os === "windows") return;
 

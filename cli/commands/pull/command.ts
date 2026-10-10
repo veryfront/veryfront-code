@@ -9,7 +9,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import { env } from "#cli/process-env";
@@ -451,6 +451,13 @@ function formatOverwrittenPaths(paths: readonly string[]): string {
   return remaining > 0 ? `${shown} and ${remaining} more` : shown;
 }
 
+const PULL_ONLY_SUPPORTED_EXTENSIONS = new Set([".py"]);
+
+function isPullSupportedFile(path: string, ignoreChecker: IgnoreChecker): boolean {
+  return ignoreChecker.isSupportedExtension(path) ||
+    PULL_ONLY_SUPPORTED_EXTENSIONS.has(extname(path).toLowerCase());
+}
+
 async function listManagedLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
@@ -805,7 +812,7 @@ async function pullSingleProject(
   for (const { file, op } of validatedFiles) {
     if (
       ignoreChecker.isIgnored(op.relativePath) ||
-      !ignoreChecker.isSupportedExtension(op.relativePath)
+      !isPullSupportedFile(op.relativePath, ignoreChecker)
     ) {
       continue;
     }

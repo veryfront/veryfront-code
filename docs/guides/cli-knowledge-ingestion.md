@@ -82,8 +82,8 @@ For legacy bundles whose nested documents use root bundle paths without a leadin
 mode preserves the existing root file when no document-relative file exists. This compatibility
 behavior preserves bytes during ingestion and does not rewrite OKF graph semantics.
 
-Project pull supports the text file extensions in source sync, including referenced `.py` attesters.
-Other referenced companion extensions can still require branch file retrieval until source sync supports
+Project pull can write `.py` attesters returned for a branch proof without adding Python files to ordinary push or prune source sync.
+Other referenced companion extensions can still require branch file retrieval until pull supports
 that extension. Referenced Markdown companions preserve their bytes even when their contents resemble
 malformed YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log
 files retain document validation and classification. Unreferenced Markdown remains subject to document

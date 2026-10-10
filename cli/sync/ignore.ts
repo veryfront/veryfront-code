@@ -82,7 +82,6 @@ const SUPPORTED_EXTENSIONS = new Set([
   ".htm",
   ".md",
   ".mdx",
-  ".py",
   ".txt",
   ".svg",
   ".yaml",
