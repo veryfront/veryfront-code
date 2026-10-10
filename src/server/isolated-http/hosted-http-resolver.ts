@@ -89,6 +89,12 @@ export interface HostedHttpResolverOptions {
   prepareTimeoutMs?: number;
   /** Default 5 minutes, maximum 1 hour, and not shorter than preparation. */
   hardTimeoutMs?: number;
+  /**
+   * Deployment-wide HMAC key, at least 32 bytes, for configuration identities. With the
+   * same key, every replica derives the same identity for the same configuration, as
+   * render generation bindings require. Without it, identities are process-local.
+   */
+  configurationKey?: Uint8Array;
   /** @internal Replaces the Veryfront API reads in hermetic tests. */
   api?: HostedHttpResolverApi;
 }
@@ -347,7 +353,13 @@ export function createHostedHttpResolver(
   if (hardMs < prepareMs) throw new TypeError("Hosted HTTP resolver requires a bounded lifetime");
   const lookup = options.lookupSourceImage.bind(options);
   const api = options.api ?? createVeryfrontApi(apiBaseUrl);
-  // Process-local key: configuration identities never reveal variable values.
+  // A keyed hash: configuration identities never reveal variable values.
+  const suppliedKey = options.configurationKey;
+  if (
+    suppliedKey !== undefined &&
+    (!(suppliedKey instanceof Uint8Array) || suppliedKey.byteLength < 32)
+  ) throw new TypeError("Hosted HTTP resolver requires a configuration key of at least 32 bytes");
+  const keyBytes = suppliedKey === undefined ? undefined : new Uint8Array(suppliedKey);
   let configurationKey: Promise<CryptoKey> | undefined;
 
   async function authorizeProject(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
@@ -431,11 +443,15 @@ export function createHostedHttpResolver(
       environment,
     );
     const variables = filterSharedRuntimeProjectEnv({ ...environment });
-    configurationKey ??= crypto.subtle.generateKey(
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    ) as Promise<CryptoKey>;
+    configurationKey ??= keyBytes === undefined
+      ? crypto.subtle.generateKey(
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      ) as Promise<CryptoKey>
+      : crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, [
+        "sign",
+      ]);
     const configurationId = await deriveConfigurationId(configurationKey, identity, variables);
     signal.throwIfAborted();
 
