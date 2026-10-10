@@ -455,6 +455,23 @@ describe("hosted HTTP resolver", () => {
     );
     assertThrows(() => createHostedHttpSourceRecordLookup([{ project_id: PROJECT_ID }]), TypeError);
     assertThrows(() => createHostedHttpSourceRecordLookup({} as never), TypeError);
+    // One record over its own budget, and a list over the shared budget.
+    assertThrows(
+      () => createHostedHttpSourceRecordLookup([record({ note: "x".repeat(20 * 1024) })]),
+      TypeError,
+    );
+    assertThrows(
+      () =>
+        createHostedHttpSourceRecordLookup(
+          Array.from({ length: 400 }, (_, index) =>
+            record({
+              release_id: `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`,
+              note: "x".repeat(12 * 1024),
+            })),
+        ),
+      TypeError,
+      "bounded list",
+    );
     assertThrows(
       () =>
         createHostedHttpSourceRecordLookup([
