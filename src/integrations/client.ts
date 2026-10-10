@@ -212,9 +212,10 @@ function parseToolResult(value: unknown): IntegrationToolResult {
 function requireShape<T extends IntegrationJsonObject>(
   value: unknown,
   valid: (item: IntegrationJsonObject) => boolean,
+  outcomeUnknown = false,
 ): T {
   if (!record(value) || !valid(value)) {
-    throw new IntegrationApiError("invalid_response", 200, false);
+    throw new IntegrationApiError("invalid_response", 200, outcomeUnknown);
   }
   return value as T;
 }
@@ -254,6 +255,8 @@ export async function createIntegrationClient(
     method?: "GET" | "POST" | "DELETE";
     signal?: AbortSignal | undefined;
     execution?: boolean;
+    /** A write whose effect is uncertain once dispatched, without tool-call response bounds. */
+    mutation?: boolean;
     requireProjectBinding?: boolean;
     capturePreconditions?: boolean;
     requireGenerationPrecondition?: boolean;
@@ -263,8 +266,10 @@ export async function createIntegrationClient(
       body,
       signal: operationSignal,
       execution: call = false,
+      mutation = false,
       requireProjectBinding = false,
     } = options;
+    const outcomeUnknown = call || mutation;
     const signal = context.abortSignal && operationSignal
       ? AbortSignal.any([context.abortSignal, operationSignal])
       : context.abortSignal ?? operationSignal;
@@ -302,7 +307,7 @@ export async function createIntegrationClient(
         throw new IntegrationApiError(
           "http",
           response.status,
-          call && (response.status >= 500 || response.status === 408 ||
+          outcomeUnknown && (response.status >= 500 || response.status === 408 ||
             readIntegrationHttpProblem(problem)?.slug === "integration-execution-outcome-unknown"),
           condition,
           problem,
@@ -315,14 +320,14 @@ export async function createIntegrationClient(
             (!uuid(effectiveProject) || effectiveProject.toLowerCase() !== project.id)))
       ) {
         discardResponseBody(response);
-        throw new IntegrationApiError("project_binding", response.status, call);
+        throw new IntegrationApiError("project_binding", response.status, outcomeUnknown);
       }
       const advertised = response.headers.get("x-veryfront-tool-preconditions")?.split(",")
         .map((value) => value.trim()).includes("connection_generation_id") ?? false;
       if (options.capturePreconditions) generationPreconditionSupported = advertised;
       if (options.requireGenerationPrecondition && !advertised) {
         discardResponseBody(response);
-        throw new IntegrationApiError("unsupported_precondition", response.status, call);
+        throw new IntegrationApiError("unsupported_precondition", response.status, outcomeUnknown);
       }
       const value = await readBoundedResponseJson(
         response,
@@ -337,13 +342,13 @@ export async function createIntegrationClient(
     } catch (error) {
       if (error instanceof IntegrationApiError) throw error;
       if (scope.signal.aborted) {
-        if (!call) throw scope.signal.reason;
+        if (!outcomeUnknown) throw scope.signal.reason;
         throw new IntegrationApiError("transport", response?.status, true);
       }
       throw new IntegrationApiError(
         response ? "invalid_response" : "transport",
         response?.status,
-        call,
+        outcomeUnknown,
       );
     } finally {
       scope.dispose();
@@ -699,10 +704,12 @@ export async function createIntegrationClient(
         await request(`${path}/${encodeURIComponent(connectionId)}?${params}`, {
           method: "DELETE",
           signal: options.abortSignal,
+          mutation: true,
         }),
         (item) =>
           typeof item.id === "string" && item.id.toLowerCase() === connectionId.toLowerCase() &&
           item.status === "deleted" && typeof item.provider_revoked === "boolean",
+        true,
       );
       return Object.freeze({
         id: deletion.id as string,

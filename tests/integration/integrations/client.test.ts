@@ -1122,8 +1122,54 @@ describe("canonical connection methods", () => {
           IntegrationApiError,
         ) as IntegrationApiError;
         assertEquals(error.httpStatus, 404);
+        assertEquals(error.outcomeUnknown, false);
       },
     );
+  });
+
+  const lostDeletes: Array<[string, () => Response | Promise<Response>]> = [
+    ["a lost response", () => Promise.reject(new TypeError("connection reset"))],
+    [
+      "a malformed body",
+      () => new Response("{", { headers: { "content-type": "application/json" } }),
+    ],
+    ["an unexpected success body", () => Response.json({ id: connectionId, status: "pending" })],
+    ["a 502 response", () => Response.json({ code: "bad_gateway" }, { status: 502 })],
+    ["a 408 response", () => Response.json({ code: "timeout" }, { status: 408 })],
+  ];
+  for (const [label, respond] of lostDeletes) {
+    it(`reports an unknown outcome when a dispatched delete ends with ${label}`, async () => {
+      await withConnectionFetch(() => respond(), async () => {
+        const client = await createIntegrationClient(context);
+        const error = await assertRejects(
+          () => client.deleteConnection("github", connectionId, "user"),
+          IntegrationApiError,
+        ) as IntegrationApiError;
+        assertEquals(error.outcomeUnknown, true);
+      });
+    });
+  }
+
+  it("reports an unknown outcome when a delete is aborted after dispatch", async () => {
+    const controller = new AbortController();
+    await withConnectionFetch((_url, init) => {
+      controller.abort(new Error("synthetic abort"));
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      const error = await assertRejects(
+        () =>
+          client.deleteConnection("github", connectionId, "user", {
+            abortSignal: controller.signal,
+          }),
+        IntegrationApiError,
+      ) as IntegrationApiError;
+      assertEquals(error.outcomeUnknown, true);
+    });
   });
 
   it("forwards each method's abort signal before any request is sent", async () => {
