@@ -1,6 +1,11 @@
 import { getJsonValueSchema, getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 
 const isArray = Array.isArray;
+const ReflectApply = Reflect.apply;
+const SetPrototypeHas = Set.prototype.has;
 
 /**
  * Native run event vocabulary shared by every emission path.
@@ -90,12 +95,23 @@ export const nativeRunEventTypes = {
   runtimeEventRecorded: "RUNTIME_EVENT_RECORDED",
 } as const;
 
+function createNativeRunEventStoredTypesByWireName(): ReadonlyMap<
+  string,
+  NativeRunEventStoredType
+> {
+  const result = createPrivateMap<string, NativeRunEventStoredType>();
+  forEachPrivateArray(NATIVE_RUN_EVENTS, (entry) => {
+    result.set(entry.wireName, entry.storedType);
+  });
+  return result;
+}
+
 /** Stored type for each native wire name, for SSE readers. */
 export const nativeRunEventStoredTypesByWireName: ReadonlyMap<string, NativeRunEventStoredType> =
-  new Map(NATIVE_RUN_EVENTS.map((entry) => [entry.wireName, entry.storedType]));
+  createNativeRunEventStoredTypesByWireName();
 
-const NATIVE_LEGACY_NAMES: ReadonlySet<string> = new Set(
-  NATIVE_RUN_EVENTS.map((entry) => entry.legacyCustomName),
+const NATIVE_LEGACY_NAMES: ReadonlySet<string> = createPrivateSet(
+  mapPrivateArray(NATIVE_RUN_EVENTS, (entry) => entry.legacyCustomName),
 );
 
 /**
@@ -105,11 +121,11 @@ const NATIVE_LEGACY_NAMES: ReadonlySet<string> = new Set(
  * consumers of this module that need the same check without building a frame.
  */
 export function isNativeRunEventName(name: string): name is NativeRunEventLegacyName {
-  return NATIVE_LEGACY_NAMES.has(name);
+  return setHas(NATIVE_LEGACY_NAMES, name);
 }
 
-const NATIVE_STORED_TYPES: ReadonlySet<string> = new Set(
-  NATIVE_RUN_EVENTS.map((entry) => entry.storedType),
+const NATIVE_STORED_TYPES: ReadonlySet<string> = createPrivateSet(
+  mapPrivateArray(NATIVE_RUN_EVENTS, (entry) => entry.storedType),
 );
 
 /**
@@ -119,7 +135,11 @@ const NATIVE_STORED_TYPES: ReadonlySet<string> = new Set(
  * `{ type, note, summary }` shape without failing that validation.
  */
 export function isNativeRunEventStoredType(type: string): type is NativeRunEventStoredType {
-  return NATIVE_STORED_TYPES.has(type);
+  return setHas(NATIVE_STORED_TYPES, type);
+}
+
+function setHas(set: ReadonlySet<string>, value: string): boolean {
+  return ReflectApply(SetPrototypeHas, set, [value]);
 }
 
 /** Live SSE frame: the AG-UI wire name and its payload. */
@@ -210,11 +230,11 @@ function omitInvalidOptionalStrings(
   keys: readonly string[],
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...rest };
-  for (const key of keys) {
+  forEachPrivateArray(keys, (key) => {
     if (typeof result[key] !== "string" || result[key] === "") {
       delete result[key];
     }
-  }
+  });
   return result;
 }
 

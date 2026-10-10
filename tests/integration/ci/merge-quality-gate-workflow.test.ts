@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
+import { normalizeLcovSourcePaths } from "../../../scripts/test/coverage-ci.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -553,9 +554,30 @@ describe("merge quality gate workflow", () => {
       coverageScript,
       "function githubWorkspaceRoots",
     );
-    assertStringIncludes(
-      coverageScript,
-      'const GENERATED_MDX_CACHE_PREFIX = "/home/runner/.cache/veryfront/veryfront-mdx-esm/";',
+    assertEquals(
+      normalizeLcovSourcePaths(
+        [
+          "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+          "DA:1,99",
+          "end_of_record",
+          "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+          "DA:2,7",
+          "end_of_record",
+          "SF:/home/runner/_work/veryfront-code/veryfront-code/src/eval/runner.ts",
+          "DA:3,5",
+          "end_of_record",
+        ].join("\n"),
+        ["/local/checkout"],
+        (path) => path === "src/eval/runner.ts",
+      ),
+      [
+        "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+        "DA:2,7",
+        "end_of_record",
+        "SF:src/eval/runner.ts",
+        "DA:3,5",
+        "end_of_record",
+      ].join("\n"),
     );
     assertStringIncludes(
       coverageScript,
