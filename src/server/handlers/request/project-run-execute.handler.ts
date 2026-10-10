@@ -4122,7 +4122,8 @@ async function executeStyleArtifactBuildRun(input: {
       const { VERYFRONT_CONFIG_FILES } = await import("#veryfront/config/config-files.ts");
       const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
       let source: Parameters<typeof evaluateHostedConfigSource>[0]["source"] = null;
-      for (const fileName of VERYFRONT_CONFIG_FILES) {
+      for (let index = 0; index < VERYFRONT_CONFIG_FILES.length; index++) {
+        const fileName = VERYFRONT_CONFIG_FILES[index]!;
         const file = primordialArrayFilter(releaseFiles, (file) => file.path === fileName)[0];
         if (typeof file?.content === "string") {
           source = { fileName, source: file.content };

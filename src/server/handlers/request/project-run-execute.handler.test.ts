@@ -1,3 +1,4 @@
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
@@ -3304,11 +3305,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
-  for (const poisonMode of ["map", "find", "push"]) {
+  for (const poisonMode of ["map", "find", "push", "iterator"]) {
     it(`keeps release bytes and config selection after tenant ${poisonMode} replacement`, async () => {
       const map = Array.prototype.map;
       const find = Array.prototype.find;
       const push = Array.prototype.push;
+      const iterator = Array.prototype[Symbol.iterator];
       const apply = Reflect.apply;
       let baselineHash: unknown;
       let baselineProfile: unknown;
@@ -3368,6 +3370,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                   return apply(push, this, items);
                 };
               }
+              if (poison === "iterator") {
+                Array.prototype[Symbol.iterator] = function (this: readonly unknown[]) {
+                  if (this === VERYFRONT_CONFIG_FILES) {
+                    replacements++;
+                    return apply(iterator, [], []);
+                  }
+                  return apply(iterator, this, []);
+                };
+              }
               if (poison === "find") {
                 Array.prototype.find = function (...args: Parameters<typeof find>) {
                   if (
@@ -3387,6 +3398,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           Array.prototype.map = map;
           Array.prototype.find = find;
           Array.prototype.push = push;
+          Array.prototype[Symbol.iterator] = iterator;
         }
         assertExists(result.response);
         const json = await result.response.json();
