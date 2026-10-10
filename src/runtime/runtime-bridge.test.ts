@@ -798,6 +798,42 @@ describe("runtime-bridge", () => {
     }
   });
 
+  it("preserves generation cancellation without recording a provider failure", async () => {
+    for (const stream of [false, true]) {
+      const controller = new AbortController();
+      const cancellation = new DOMException("Generation cancelled", "AbortError");
+      const events: AgentRunEvent[] = [];
+      const cancel = async () => {
+        controller.abort(cancellation);
+        throw cancellation;
+      };
+      const model: ModelRuntime = stream
+        ? {
+          ...createStreamModel("test", "test/cancelled-stream-generation", cancel),
+          _generateViaStream: true,
+        }
+        : createGenerateModel("test", "test/cancelled-generation", cancel);
+      let rejection: unknown;
+      try {
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            generateText({
+              model,
+              abortSignal: controller.signal,
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+        );
+      } catch (error) {
+        rejection = error;
+      }
+      assertEquals(rejection, cancellation);
+      assertEquals(events.map((event) => event.type), ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"]);
+    }
+  });
+
   it("records a sanitized nonterminal generate failure after mandatory context persistence", async () => {
     const events: AgentRunEvent[] = [];
     const privateDetail = "private upstream generate detail";
@@ -1127,7 +1163,9 @@ describe("runtime-bridge", () => {
       },
       strict: true,
     };
-    const expectedResponseFormat = {
+    const expectedResponseFormat: NonNullable<
+      AgentRunModelCallContextEvent["request"]
+    >["responseFormat"] = {
       type: "json_schema",
       name: "result",
       schema: {
@@ -1167,6 +1205,7 @@ describe("runtime-bridge", () => {
       runtimeCapabilities: { structuredOutput: ["json_schema"] },
       async doGenerate(options) {
         dispatches += 1;
+        assert(options !== null && typeof options === "object" && "responseFormat" in options);
         assertEquals(options.responseFormat, expectedResponseFormat);
         return {
           content: [{ type: "text", text: '{"answer":"ok"}' }],

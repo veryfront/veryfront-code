@@ -11,7 +11,10 @@ import {
 } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
-import { throwIfAbortSignalAborted } from "#veryfront/platform/compat/abort-signal.ts";
+import {
+  isAbortSignalAborted,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 /**
  * Runtime Bridge
  *
@@ -1086,10 +1089,15 @@ async function emitGenerateFailureObservation(error: unknown): Promise<void> {
   }
 }
 
-function observeGenerateFailure<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+function observeGenerateFailure<T>(
+  operation: () => T | PromiseLike<T>,
+  abortSignal?: AbortSignal,
+): Promise<T> {
   const observed = chainPrivatePromise(resolvePrivatePromise(), operation);
   return chainPrivatePromise(observed, (value) => value, async (error) => {
-    await emitGenerateFailureObservation(error);
+    if (!abortSignal || !isAbortSignalAborted(abortSignal)) {
+      await emitGenerateFailureObservation(error);
+    }
     throw error;
   });
 }
@@ -1578,16 +1586,14 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
         runWithModelCallCapture(
           capture,
           () => options.model.doStream(directOptions),
-        ).then(({ stream }) => buildGenerateResultFromStream(stream))
-      );
+        ).then(({ stream }) => buildGenerateResultFromStream(stream)), options.abortSignal);
     }
 
     return observeGenerateFailure(() =>
       runWithModelCallCapture(
         capture,
         () => options.model.doGenerate(directOptions),
-      ).then(buildDirectGenerateResult)
-    );
+      ).then(buildDirectGenerateResult), options.abortSignal);
   });
 }
 
