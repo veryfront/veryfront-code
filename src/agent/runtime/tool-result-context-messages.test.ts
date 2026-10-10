@@ -77,6 +77,29 @@ function resultRetrievalUnavailable(value: unknown): unknown {
 }
 
 describe("agent runtime tool result context message adapter", () => {
+  it("bounds skill reference files while preserving root instructions and raw results", () => {
+    for (const toolName of ["load_skill", "veryfront__load_skill"]) {
+      const context = createToolResultContext({
+        limits: { maxInlineBytes: 128, previewBytes: 32, maxSectionBytes: 64 },
+      });
+      const root = toolMessage({ skillId: "platform", instructions: "root".repeat(100) }, toolName);
+      const referenceResult = {
+        skillId: "platform",
+        file: "references/guide.md",
+        content: "guide".repeat(100),
+      };
+      const reference = toolMessage(referenceResult, toolName);
+      const transformed = createModelToolResultContextMessages([root, reference], context);
+      assertStrictEquals(transformed[0], root);
+      const result = requireToolResultPart(transformed[1]!.parts[0]!).result;
+      assertEquals(resultType(result), "tool_result_reference");
+      assertStrictEquals(requireToolResultPart(reference.parts[0]!).result, referenceResult);
+      const ref = resultRef(result)!;
+      assertStrictEquals(context.getOriginalResult(ref), referenceResult);
+      assertLessOrEqual(context.read({ ref }).byteLength, 64);
+    }
+  });
+
   it("clones only the model-visible oversized tool result part", () => {
     const context = createToolResultContext({ limits: { maxInlineBytes: 8 } });
     const originalResult = { rows: ["alpha", "bravo", "charlie"] };

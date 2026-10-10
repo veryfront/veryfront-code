@@ -19,9 +19,20 @@ function isToolResultPart(part: MessagePart): part is ToolResultPart {
 }
 
 function shouldSkipToolResult(
-  part: Pick<ToolResultPart, "toolName">,
+  part: Pick<ToolResultPart, "toolName" | "result">,
   skippedToolNames: ReadonlySet<string>,
 ): boolean {
+  if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
+    const result = part.result;
+    if (
+      typeof result === "object" && result !== null &&
+      "skillId" in result && typeof result.skillId === "string" &&
+      "file" in result && typeof result.file === "string" &&
+      "content" in result && typeof result.content === "string"
+    ) {
+      return false;
+    }
+  }
   return skippedToolNames.has(part.toolName);
 }
 

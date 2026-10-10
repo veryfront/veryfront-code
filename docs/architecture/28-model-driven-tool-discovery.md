@@ -93,6 +93,18 @@ name to load a deferred tool. A search miss directs the model to browse instead
 of repeatedly guessing resource display names. If the catalog changes and a
 cursor is outside the current inventory, restart without a cursor.
 
+### Bounded reference results
+
+Agents can enable `toolResultContext` to replace oversized tool results with a
+preview and a run-local retrieval reference. The runtime exposes `get_tool_result`
+only after a stored reference exists. Reads use bounded sections; events and
+persisted history retain the original result.
+
+Root skill instructions remain inline. Advertised reference-file results from
+`load_skill` and `veryfront__load_skill` follow the configured limits instead of
+bypassing them. Loading a reference still requires the parent skill and its
+authorized reference path. Result retrieval does not widen file access.
+
 - Schema-free results: `{ name, description, status: "available" | "loaded" }`.
   Input schemas are never returned by a search.
 - Searches the run's authorized catalog only, under the same project and
