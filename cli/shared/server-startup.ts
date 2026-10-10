@@ -1,9 +1,10 @@
-import { getHostSecret } from "#cli/process-env";
+import { getHostEnvExcludingEnvFile, getHostSecret } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import {
   type DevServerOptions,
   type DiscoveryOptions,
+  isHostedHttpIsolationEnabled,
   startDevServer,
   startProductionServer,
   type StartProductionServerOptions,
@@ -20,12 +21,7 @@ import {
   registerManifestFetcherForRelease,
 } from "veryfront/release-assets";
 import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
-import {
-  createHostedHttpComposition,
-  type HostedHttpComposition,
-  type HostedHttpCompositionConfig,
-  readHostedHttpCompositionConfig,
-} from "veryfront/server/http-host";
+import type { HostedHttpComposition } from "veryfront/server/http-host";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -143,10 +139,34 @@ export interface StartCliProductionServerOptions {
   onMemoryRecycle?: StartProductionServerOptions["onMemoryRecycle"];
 }
 
+type HostedHttpHostModule = Pick<
+  typeof import("veryfront/server/http-host"),
+  "createHostedHttpComposition" | "readHostedHttpCompositionConfig"
+>;
+
 interface StartCliProductionServerDependencies {
   startServer?: typeof startProductionServer;
-  readHostedHttpConfig?: () => HostedHttpCompositionConfig | undefined;
-  createHostedHttp?: (config: HostedHttpCompositionConfig) => Promise<HostedHttpComposition>;
+  isHostedHttpEnabled?: () => boolean;
+  readProxyMode?: () => string | undefined;
+  loadHostedHttp?: () => Promise<HostedHttpHostModule>;
+  ensureContentProcessor?: () => Promise<void>;
+}
+
+/** Compose hosted HTTP only when the host flag is on; the Node-only module loads only then. */
+async function composeHostedHttp(
+  dependencies: StartCliProductionServerDependencies,
+): Promise<HostedHttpComposition | undefined> {
+  if (!(dependencies.isHostedHttpEnabled ?? isHostedHttpIsolationEnabled)()) return undefined;
+  const proxyMode =
+    (dependencies.readProxyMode ?? (() => getHostEnvExcludingEnvFile("PROXY_MODE")))();
+  if (proxyMode?.trim() !== "1") {
+    throw new TypeError("VERYFRONT_HOSTED_HTTP_ISOLATION requires PROXY_MODE=1");
+  }
+  const host =
+    await (dependencies.loadHostedHttp ?? (() => import("veryfront/server/http-host")))();
+  const config = host.readHostedHttpCompositionConfig();
+  if (!config) throw new TypeError("VERYFRONT_HOSTED_HTTP_ISOLATION changed during startup");
+  return await host.createHostedHttpComposition(config);
 }
 
 export async function startCliProductionServer(
@@ -154,15 +174,13 @@ export async function startCliProductionServer(
   dependencies: StartCliProductionServerDependencies = {},
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   // Host-only and default off. Read before bootstrap loads any project code.
-  const hostedHttpConfig = (dependencies.readHostedHttpConfig ?? readHostedHttpCompositionConfig)();
-  const hostedHttp = hostedHttpConfig
-    ? await (dependencies.createHostedHttp ?? createHostedHttpComposition)(hostedHttpConfig)
-    : undefined;
+  const hostedHttp = await composeHostedHttp(dependencies);
   try {
     return await startCliProductionServerWithHostedHttp(
       options,
       hostedHttp,
       dependencies.startServer ?? startProductionServer,
+      dependencies.ensureContentProcessor ?? ensureBuiltinContentProcessor,
     );
   } catch (error) {
     await hostedHttp?.shutdown();
@@ -174,6 +192,7 @@ async function startCliProductionServerWithHostedHttp(
   options: StartCliProductionServerOptions,
   hostedHttp: HostedHttpComposition | undefined,
   startServer: typeof startProductionServer,
+  ensureContentProcessor: () => Promise<void>,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
   const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
@@ -224,7 +243,17 @@ async function startCliProductionServerWithHostedHttp(
   };
   prefetchBuiltinContentProcessor();
   const result = await startServer(serverOptions);
-  await ensureBuiltinContentProcessor();
+  try {
+    await ensureContentProcessor();
+  } catch (error) {
+    // Do not leave a listener running after a failed startup.
+    try {
+      await result.stop();
+    } catch (stopError) {
+      throw new AggregateError([error, stopError], "Server startup failed and did not stop");
+    }
+    throw error;
+  }
   return {
     ...result,
     stop: async () => {

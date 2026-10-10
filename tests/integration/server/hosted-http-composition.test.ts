@@ -3,11 +3,16 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv, withTempDir } from "#veryfront/testing";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
 import type { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
 import {
   createHostedHttpComposition,
   type HostedHttpCompositionConfig,
+  isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
 } from "#veryfront/server/isolated-http/hosted-http-composition.ts";
 
@@ -145,6 +150,20 @@ describe("hosted HTTP host composition", () => {
           ),
       );
       await composition.shutdown();
+    });
+  });
+
+  it("ignores the isolation flag when it comes from a project env file", async () => {
+    await withEnv({ VERYFRONT_HOSTED_HTTP_ISOLATION: "1" }, () => {
+      assertEquals(isHostedHttpIsolationEnabled(), true);
+      markEnvFileValue("VERYFRONT_HOSTED_HTTP_ISOLATION");
+      try {
+        assertEquals(isHostedHttpIsolationEnabled(), false);
+        assertEquals(readHostedHttpCompositionConfig(), undefined);
+      } finally {
+        clearEnvFileValueSource("VERYFRONT_HOSTED_HTTP_ISOLATION");
+      }
+      return Promise.resolve();
     });
   });
 });
