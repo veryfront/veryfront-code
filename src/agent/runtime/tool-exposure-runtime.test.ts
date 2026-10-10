@@ -61,11 +61,12 @@ it("deferred generate searches, exposes on the next step, and executes once", as
   const response = await assistant.generate({ input: "Read the release marker" });
 
   const observedSystems = model.systemPrompts();
-  assertEquals(model.toolNames(0), ["load_skill", "tool_search"]);
+  assertEquals(model.toolNames(0), ["load_skill", "tool_search", "veryfront__load_skill"]);
   assertEquals(model.toolNames(1), [
     "load_skill",
     "read_release_marker",
     "tool_search",
+    "veryfront__load_skill",
   ]);
   assertEquals((observedSystems[0] ?? "").includes("form_input"), false);
   assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
@@ -238,11 +239,11 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- create_agent: Create a project agent"),
@@ -330,11 +331,11 @@ it("deferred stream can reload another agent write tool after a successful write
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search"],
-    ["create_agent", "load_skill", "tool_search"],
-    ["load_skill", "tool_search"],
-    ["load_skill", "tool_search", "update_agent"],
-    ["load_skill", "tool_search"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "update_agent", "veryfront__load_skill"],
+    ["load_skill", "tool_search", "veryfront__load_skill"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- update_agent: Update a project agent"),
@@ -438,4 +439,75 @@ it("deferred generate rejects a guessed tool that was not exposed", async () => 
     response.toolCalls[0]?.error,
     'Tool "get_release" is not available in the current model step',
   );
+});
+
+function noopTool(id: string, description: string) {
+  return tool({
+    id,
+    description,
+    inputSchema: defineSchema((v) => v.object({}))(),
+    execute: () => ({}),
+  });
+}
+
+async function toolSearchNextSteps(
+  searchTurns: readonly (readonly string[])[],
+  tools: Record<string, ReturnType<typeof noopTool>>,
+): Promise<unknown[]> {
+  const model = scriptedModel([
+    ...searchTurns.map((queries, turn) => ({
+      toolCalls: queries.map((query, index) => ({
+        id: `search-${turn}-${index}`,
+        name: "tool_search",
+        input: { query },
+      })),
+    })),
+    { text: "done" },
+  ], { modelId: "hosted/tool-search-next-step", only: "generate" });
+  const assistant = agent(
+    {
+      id: "tool-search-next-step-test",
+      model: "hosted/tool-search-next-step",
+      system: "Use tools when needed.",
+      skills: false,
+      tools,
+      maxSteps: searchTurns.length + 1,
+      resolveModelTransport: () => ({ model }),
+      toolLoading: "deferred",
+    } as AgentConfig,
+  );
+  const response = await assistant.generate({ input: "List the project files" });
+  return response.toolCalls.map((call) => {
+    assertEquals(call.status, "completed");
+    return (call.result as { nextStep?: unknown }).nextStep;
+  });
+}
+
+it("tool_search hit names the loaded tools and asks the model to call one next", async () => {
+  assertEquals(
+    await toolSearchNextSteps([["list_files"]], {
+      list_files: noopTool("list_files", "List project files"),
+      read_release_marker: noopTool("read_release_marker", "Read the release marker"),
+    }),
+    [
+      'Loaded tools: "list_files". Call the loaded tool that fits the request in the next step to complete it.',
+    ],
+  );
+});
+
+it("tool_search miss asks for a refined search while authorized tools stay deferred", async () => {
+  const tools = {
+    list_files: noopTool("list_files", "List project files"),
+    read_release_marker: noopTool("read_release_marker", "Read the release marker"),
+  };
+  assertEquals(await toolSearchNextSteps([["zzz unrelated capability"]], tools), [
+    "No authorized tool matched this query, but other authorized tools are not loaded yet. Call tool_search again with one exact tool name or a different short capability phrase before answering without a tool.",
+  ]);
+
+  // A search in the same step that loaded the last deferred tool leaves nothing to discover.
+  const steps = await toolSearchNextSteps(
+    [["list_files", "zzz unrelated capability"]],
+    { list_files: tools.list_files },
+  );
+  assertEquals(steps[1], "Continue with the available tools or answer without a tool.");
 });

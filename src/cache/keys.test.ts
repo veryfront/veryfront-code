@@ -680,6 +680,16 @@ describe("cache/keys", () => {
       assertEquals(await sanitizeCacheKey(key), key);
     });
 
+    it("hashes complete dot segments while preserving prefix-bearing keys", async () => {
+      const dot = await sanitizeCacheKey(".");
+      const parent = await sanitizeCacheKey("..");
+      assertEquals(dot.startsWith("vf-sanitized:"), true);
+      assertEquals(parent.startsWith("vf-sanitized:"), true);
+      assertNotEquals(dot, parent);
+      assertEquals(await sanitizeCacheKey("prefix:."), "prefix:.");
+      assertEquals(await sanitizeCacheKey("prefix:.."), "prefix:..");
+    });
+
     it("truncates an overlong trusted backend prefix so the fallback stays API-valid", async () => {
       const sanitized = await sanitizeCacheKey("a b", "x".repeat(600));
       assertEquals(

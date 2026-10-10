@@ -13,7 +13,7 @@ import { dirname, extname } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, REQUEST_ERROR, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type {
   SkillScriptExecutor,
@@ -34,7 +34,11 @@ import {
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
+// Canonical synchronous sandbox commands have a shorter limit than local scripts.
+const MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS = 55;
 const TIMEOUT_EXIT_CODE = 124;
+// Matches the local subprocess output-limit termination code.
+const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -222,6 +226,19 @@ function resolveTimeoutMs(timeoutMs?: number): number {
   return Math.min(Math.floor(timeoutMs), MAX_SCRIPT_TIMEOUT_MS);
 }
 
+function waitForBackgroundCommandPoll(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 250);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -235,6 +252,21 @@ async function withTimeout<T>(
     return await Promise.race([promise, timeoutPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+const SANDBOX_CLEANUP_TIMEOUT_MS = 1000;
+
+async function boundedSandboxCleanup<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  try {
+    const result = await withTimeout(action(controller.signal), SANDBOX_CLEANUP_TIMEOUT_MS);
+    if (result === TIMEOUT_SENTINEL) {
+      throw new Error(`Sandbox cleanup timed out after ${SANDBOX_CLEANUP_TIMEOUT_MS}ms`);
+    }
+    return result;
+  } finally {
+    controller.abort();
   }
 }
 
@@ -416,7 +448,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       }
 
       await sandbox.writeFiles(sandboxFiles);
-      await sandbox.executeCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
+      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
 
       const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
@@ -431,8 +463,48 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       const cmdString = sandboxRoot === undefined
         ? invocation
         : `cd ${shellEscapeArg(sandboxRoot)} && ${invocation}`;
-      const commandPromise = sandbox.executeCommand(cmdString);
-      const result = await withTimeout(commandPromise, timeoutMs);
+      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+      const polling = new AbortController();
+      let backgroundCommandId: string | undefined;
+      let outputLimitCleanupRequired = false;
+      const commandDeadline = performance.now() + timeoutMs;
+      const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
+        ? sandbox.runCommand(cmdString, { timeoutSeconds })
+        : (async () => {
+          const command = await sandbox.startBackgroundCommand(cmdString, { timeoutSeconds });
+          backgroundCommandId = command.id;
+          while (!polling.signal.aborted) {
+            const output = await sandbox.getBackgroundCommandOutput(command.id);
+            if (output.stdoutTruncated || output.stderrTruncated) {
+              outputLimitCleanupRequired = output.status === "pending" ||
+                output.status === "running";
+              return {
+                stdout: output.stdout,
+                stderr: `${output.stderr}\nScript output was truncated by the sandbox capture limit`
+                  .trim(),
+                exitCode: OUTPUT_LIMIT_EXIT_CODE,
+              };
+            }
+            if (
+              output.status === "completed" || output.status === "failed" ||
+              output.status === "canceled"
+            ) {
+              if (output.exitCode === null) {
+                // A server deadline can cancel the command before our timer callback runs.
+                if (output.status === "canceled" && performance.now() >= commandDeadline) {
+                  return timeoutResult(timeoutMs);
+                }
+                throw REQUEST_ERROR.create({
+                  detail: "Sandbox background command did not report an exit code",
+                });
+              }
+              return { stdout: output.stdout, stderr: output.stderr, exitCode: output.exitCode };
+            }
+            await waitForBackgroundCommandPoll(polling.signal);
+          }
+          return timeoutResult(timeoutMs);
+        })();
+      const result = await withTimeout(commandPromise, timeoutMs).finally(() => polling.abort());
 
       if (result === TIMEOUT_SENTINEL) {
         commandPromise.catch(() => {
@@ -441,11 +513,30 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         // Kill any running processes before returning — withTimeout only
         // races the timer, it doesn't terminate the sandbox command.
         try {
-          await sandbox.executeCommand("kill -9 -1 2>/dev/null || true");
-        } catch {
-          // expected: best-effort kill; sandbox.close() in finally will clean up
+          if (backgroundCommandId !== undefined) {
+            await boundedSandboxCleanup((signal) =>
+              sandbox.cancelBackgroundCommand(backgroundCommandId!, { signal })
+            );
+          } else {
+            await boundedSandboxCleanup(() => sandbox.runCommand("kill -9 -1 2>/dev/null || true"));
+          }
+        } catch (error) {
+          logger.warn("[skill/executor] Failed to cancel sandbox command after timeout", error);
         }
         return timeoutResult(timeoutMs);
+      }
+
+      if (outputLimitCleanupRequired && backgroundCommandId !== undefined) {
+        try {
+          await boundedSandboxCleanup((signal) =>
+            sandbox.cancelBackgroundCommand(backgroundCommandId!, { signal })
+          );
+        } catch (error) {
+          logger.warn(
+            "[skill/executor] Failed to cancel sandbox command after output truncation",
+            error,
+          );
+        }
       }
 
       return {
@@ -455,11 +546,12 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       };
     } finally {
       try {
-        await sandbox.close();
+        // Each execution owns a disposable workspace, including when storage is persistent.
+        await boundedSandboxCleanup((signal) => sandbox.delete({ signal }));
       } catch (error) {
         // Best-effort cleanup; log at warn so persistent failures (e.g. auth
         // revoked) leave a trace rather than silently leaking sandbox pods.
-        logger.warn("[skill/executor] Failed to close sandbox", error);
+        logger.warn("[skill/executor] Failed to delete disposable sandbox", error);
       }
     }
   }

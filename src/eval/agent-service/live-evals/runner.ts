@@ -482,9 +482,7 @@ function buildLiveEvalRunBody(input: {
     testCaseId: input.testCase.id,
     prompt: input.prepared?.prompt ?? input.testCase.prompt ?? "",
     metadata: input.prepared?.metadata,
-    projectId: input.config.projectId && input.testCase.requireProject
-      ? input.config.projectId
-      : null,
+    projectId: input.config.projectId,
     ...(input.config.branchId ? { branchId: input.config.branchId } : {}),
     ...(input.config.model ? { model: input.config.model } : {}),
     ...(input.conversationId ? { conversationId: input.conversationId } : {}),
@@ -566,8 +564,41 @@ export function hasFinished(run: ParsedRun): boolean {
 }
 
 /** Contains skill load helper. */
+function readOwnDataField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return descriptor.value;
+}
+
+function readLoadedSkillId(input: unknown): string | null {
+  const skillId = readOwnDataField(input, "skillId");
+  if (typeof skillId === "string") return skillId;
+  const nestedSkillId = readOwnDataField(readOwnDataField(input, "load"), "skillId");
+  return typeof nestedSkillId === "string" ? nestedSkillId : null;
+}
+
 export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
-  return run.toolStarts.includes("load_skill") && run.toolArgs.join("").includes(skillId);
+  const names = new Map<string, string>();
+  const args = new Map<string, string>();
+  for (const event of run.events) {
+    const id = getStringField(event, "toolCallId");
+    if (!id) continue;
+    const type = getStringField(event, "type");
+    if (type === agUiSseEventTypes.toolCallStart) {
+      const name = getStringField(event, "toolCallName");
+      if (name) names.set(id, name);
+    } else if (type === agUiSseEventTypes.toolCallArgs) {
+      args.set(id, `${args.get(id) ?? ""}${getStringField(event, "delta") ?? ""}`);
+    }
+  }
+  for (const [id, name] of names) {
+    if (name !== "load_skill" && name !== "veryfront__load_skill") continue;
+    try {
+      if (readLoadedSkillId(JSON.parse(args.get(id) ?? "")) === skillId) return true;
+    } catch { /* An incomplete argument stream is not a completed skill load. */ }
+  }
+  return false;
 }
 
 /** Count step started events helper. */

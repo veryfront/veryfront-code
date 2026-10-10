@@ -1624,7 +1624,7 @@ const API_DOCS: Record<string, APIDocs> = {
   },
   "veryfront/sandbox": {
     methods: { Sandbox: "Sandbox session client" },
-    expandTypes: ["SandboxOptions", "ExecResult", "ExecStreamEvent"],
+    expandTypes: ["SandboxOptions", "CommandResult", "CommandStreamEvent"],
   },
 };
 
@@ -1680,7 +1680,7 @@ const METHOD_DESCRIPTIONS: Record<
   Sandbox: {
     create: {
       desc:
-        "Create a new sandbox session. Claims a warm pod or creates a new one.",
+        "Create an isolated sandbox workspace.",
       params: {
         options: "Sandbox creation options (auth token + optional API URL).",
       },
@@ -1688,16 +1688,16 @@ const METHOD_DESCRIPTIONS: Record<
     get: {
       desc: "Reconnect to an existing sandbox session.",
       params: {
-        id: "Existing sandbox session ID.",
+        id: "Existing sandbox ID.",
         options: "Sandbox connection options (auth token + optional API URL).",
       },
     },
-    executeCommand: {
+    runCommand: {
       desc:
         "Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
-    executeStream: {
+    streamCommand: {
       desc:
         "Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.",
       params: { command: "Bash command string to execute in the sandbox." },
@@ -1711,10 +1711,10 @@ const METHOD_DESCRIPTIONS: Record<
       params: { files: "Array of file descriptors (`{ path, content }`)." },
     },
     heartbeat: {
-      desc: "Send a heartbeat to keep the sandbox session alive.",
+      desc: "Record activity for idle cleanup. Fixed expiry does not change.",
     },
     close: {
-      desc: "Close the sandbox session and mark it for deletion.",
+      desc: "Close the client. Existing and persistent sandboxes remain; temporary sandboxes created by this client are deleted.",
     },
   },
   MiddlewarePipeline: {
@@ -1776,12 +1776,12 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
       "Veryfront API base URL. Defaults to VERYFRONT_API_URL environment variable.",
     authToken: "JWT used for sandbox API authentication.",
   },
-  ExecResult: {
+  CommandResult: {
     stdout: "Buffered standard output from command execution.",
     stderr: "Buffered standard error from command execution.",
     exitCode: "Process exit code.",
   },
-  ExecStreamEvent: {
+  CommandStreamEvent: {
     type: "Event type (`stdout`, `stderr`, `exit`, `error`).",
     data: "Chunk payload for stdout/stderr/error events.",
     exitCode: "Exit code for `exit` events.",
@@ -2217,6 +2217,20 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 // 5d. Generate Type Reference section
 // ---------------------------------------------------------------------------
 
+function interfaceReferenceProperties(node: DocNode, nodes: DocNode[], visited = new Set<string>()): InterfaceProperty[] {
+  if (!node.interfaceDef || visited.has(node.name)) return [];
+  visited.add(node.name);
+  const inherited: InterfaceProperty[] = [];
+  for (const parent of node.interfaceDef.extends) {
+    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) continue;
+    const reference = parent.typeRef;
+    if (!reference || typeof reference !== "object" || !("typeName" in reference) || typeof reference.typeName !== "string") continue;
+    const parentNode = findNode(nodes, reference.typeName);
+    if (parentNode) inherited.push(...interfaceReferenceProperties(parentNode, nodes, visited));
+  }
+  return [...new Map([...inherited, ...node.interfaceDef.properties].map(property => [property.name, property])).values()];
+}
+
 function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
   const spec = API_DOCS[importPath];
   if (!spec?.expandTypes) return [];
@@ -2240,7 +2254,7 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
     let properties: InterfaceProperty[] | undefined;
 
     if (node?.interfaceDef?.properties) {
-      properties = node.interfaceDef.properties;
+      properties = interfaceReferenceProperties(node, nodes);
     } else if (node?.typeAliasDef?.tsType?.kind === "typeLiteral") {
       properties = node.typeAliasDef.tsType.typeLiteral?.properties?.map((
         p,

@@ -8,6 +8,7 @@ import {
   createSSECollector,
 } from "#veryfront/agent/runtime/chat-stream-handler.test-helpers.ts";
 import { tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -42,7 +43,7 @@ for (const hooks of [false, true]) {
             ...(form
               ? {
                 tools: {
-                  form_input: tool({
+                  form_input: markTrustedHostToolProvenance(tool({
                     id: "form_input",
                     description: "Collect a synthetic response",
                     inputSchema: defineSchema((v) => v.object({}))(),
@@ -52,7 +53,7 @@ for (const hooks of [false, true]) {
                         envelope: { submitted: true, values: { text: marker } },
                       });
                     },
-                  }),
+                  })),
                 },
               }
               : {}),

@@ -2,7 +2,7 @@ import {
   mergeUsage,
   parseFinalSseChunk,
   parseSseChunk,
-  ProviderRequestError,
+  ProviderStreamProtocolError,
   readRecord,
   type RuntimeUsage,
   StreamFragmentBuffer,
@@ -124,8 +124,8 @@ type GoogleStreamContext = {
 function invalidGoogleStream(
   context: GoogleStreamContext,
   issue: string,
-): ProviderRequestError {
-  return new ProviderRequestError({
+): ProviderStreamProtocolError {
+  return new ProviderStreamProtocolError({
     provider: "google",
     status: 200,
     message: `${

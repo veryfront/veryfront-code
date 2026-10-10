@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -18,7 +23,10 @@ import {
   createRuntimeProviderStreamFailure,
   readRuntimeProviderStreamFailureCause,
 } from "#veryfront/runtime/provider-stream-error-provenance.ts";
-import { ProviderOutputTruncatedError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  ProviderOutputTruncatedError,
+  ProviderStreamProtocolError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   announceStreamedToolCallInput,
   createRuntimeStreamSource,
@@ -3510,6 +3518,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       latestExternalEventSequence: 0,
       maxEventsPerBatch: 100,
       fetch: (_input, init) => {
+        assert(init && "body" in init, "fetch must receive request options");
         const bodyText = typeof init?.body === "string" ? init.body : "{}";
         const body = JSON.parse(bodyText);
         appendBodies.push(body);
@@ -4316,6 +4325,43 @@ describe("resolveRelayableExecutionFailure", () => {
 
     // The whole point of #1467: the real classified cause reaches the run error.
     assertEquals(relayed?.code, "PROVIDER_OUTPUT_TRUNCATED");
+  });
+
+  it("reports a rejected successful provider stream as a stream protocol error", () => {
+    for (const provider of ["openai", "anthropic", "google", "mistral"] as const) {
+      const rejected = new ProviderStreamProtocolError({
+        provider,
+        status: 200,
+        message: `${provider} request failed: invalid successful stream (private-provider-event)`,
+        retryable: false,
+      });
+      const failure = createRuntimeProviderStreamFailure(rejected);
+
+      assertEquals(resolveRuntimeExecutionErrorEvent(failure), {
+        type: "error",
+        error:
+          "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
+        code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+      });
+      assertEquals(
+        resolveRelayableExecutionFailure(failure)?.code,
+        "PROVIDER_STREAM_PROTOCOL_ERROR",
+      );
+    }
+  });
+
+  it("keeps an unclassified successful-status provider failure generic", () => {
+    const unclassified = new ProviderRequestError({
+      provider: "openai",
+      status: 200,
+      message: "openai request failed: private detail",
+      retryable: false,
+    });
+
+    assertEquals(
+      resolveRuntimeExecutionErrorEvent(createRuntimeProviderStreamFailure(unclassified)),
+      { type: "error", error: "Provider stream failed" },
+    );
   });
 });
 

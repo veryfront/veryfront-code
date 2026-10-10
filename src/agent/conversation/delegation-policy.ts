@@ -2,6 +2,10 @@ import { extractLatestUserText } from "../artifacts/default-research-artifact-su
 import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts";
 import { isRecord } from "../../chat/conversation.ts";
 import type { ChatSystemMessage } from "../../chat/types.ts";
+import {
+  isLoadSkillToolName,
+  normalizeConversationPlatformToolName,
+} from "../platform-tool-names.ts";
 
 // Defined in src/skill so both load_skill tools can share them; src/agent may
 // import from src/skill but not the reverse.
@@ -180,7 +184,7 @@ function hasToolCallOrResult(messages: readonly unknown[], toolName: string): bo
       }
 
       return (part.type === "tool-call" || part.type === "tool-result") &&
-        part.toolName === toolName;
+        normalizeConversationPlatformToolName(part.toolName) === toolName;
     });
   });
 }
@@ -286,7 +290,7 @@ export function shouldReinforceLoadSkillContinuation(messages: readonly unknown[
     }
   }
 
-  const loadSkillCalls = toolCalls.filter((part) => part.toolName === "load_skill");
+  const loadSkillCalls = toolCalls.filter((part) => isLoadSkillToolName(part.toolName));
 
   if (loadSkillCalls.length === 0) {
     return false;
@@ -296,7 +300,7 @@ export function shouldReinforceLoadSkillContinuation(messages: readonly unknown[
     return false;
   }
 
-  if (toolCalls.some((part) => part.toolName !== "load_skill")) {
+  if (toolCalls.some((part) => !isLoadSkillToolName(part.toolName))) {
     return false;
   }
 
