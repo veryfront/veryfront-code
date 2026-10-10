@@ -41,6 +41,14 @@ import {
 } from "../../runtime/runtime-observation-carrier.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import {
+  createRunBoundAgentManualPause,
+  inheritHostedAgentPauseCapability,
+} from "./manual-pause-credential.ts";
+import {
+  canSettleHostedAgentPause,
+  recordHostedAgentPauseCleanup,
+} from "./manual-pause-settlement.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
 import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
@@ -516,7 +524,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{
       status: "failed",
       terminalErrorCode: "STREAM_ERROR",
-      terminalErrorMessage: "Runtime watchdog stopped the stream",
+      terminalErrorMessage: "Hosted chat stream stopped before producing a response",
     }]);
   });
 
@@ -2397,11 +2405,10 @@ describe("agent/hosted-chat-execution-runtime", () => {
     ]);
   });
 
-  it("records internal abort reasons before detached finalization fallback", async () => {
+  it("sanitizes internal abort reasons before detached finalization fallback", async () => {
     const terminalStates: HostedLifecycleTerminalState[] = [];
-    const internalAbort = new DOMException("Runtime watchdog stopped the stream", "AbortError");
     const internalController = new AbortController();
-    internalController.abort(internalAbort);
+    internalController.abort(new Error("internal watchdog token=secret"));
     const runtime = createHostedChatExecutionRuntime({
       agentId: "agent-1",
       modelId: "openai/gpt-5.4",
@@ -2428,8 +2435,72 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{
       status: "failed",
       terminalErrorCode: "STREAM_ERROR",
-      terminalErrorMessage: "Runtime watchdog stopped the stream",
+      terminalErrorMessage: "Hosted chat stream stopped before producing a response",
     }]);
+  });
+
+  it("keeps confirmed manual pause nonterminal when the internal watchdog aborts", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const flushes: string[] = [];
+    const lifecycleAdapter = createLifecycleAdapter({
+      terminalStates,
+      durableRunMirror: createDurableRunMirror({ chunks, flushes }),
+    });
+    const pauseLifetime = new AbortController();
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.com",
+      runId: "run_pause_test",
+      token: "pause-test-token",
+      signal: pauseLifetime.signal,
+      fetch: () => Promise.resolve(Response.json({ stop: true })),
+    });
+    await capability.acknowledge({
+      version: 1,
+      nextStep: 0,
+      messages: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      latestAssistantText: "",
+      completed: false,
+      recoveredEmptyResponse: false,
+      recoveredInterruptedLocalToolBatch: false,
+    });
+    capability.persisted?.(true);
+    inheritHostedAgentPauseCapability(lifecycleAdapter, capability);
+
+    const internalController = new AbortController();
+    internalController.abort(new Error("internal watchdog token=secret"));
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {
+          recordHostedAgentPauseCleanup(lifecycleAdapter, true);
+        },
+        lifecycleAdapter,
+        rootStreamWatchdog: createRootStreamWatchdog({ signal: internalController.signal }),
+        streamResult: {
+          get steps(): Promise<readonly unknown[]> {
+            throw new Error("paused runs must not read detached final steps");
+          },
+          toUIMessageStream: () => emptyStream(),
+        },
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, []);
+    assertEquals(flushes, ["flush"]);
+    assertEquals(canSettleHostedAgentPause(lifecycleAdapter), true);
   });
 
   it("preserves coded canonical errors through the production stream callback", async () => {

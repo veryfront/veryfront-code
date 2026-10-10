@@ -72,6 +72,7 @@ import {
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { isStreamTimeoutError } from "../streaming/stream-outcome.ts";
 import { finalizeHostedChatRun, isDurableRunKnownTerminal } from "./hosted-chat-finalization.ts";
 import {
   runWithMandatoryRunEventSink,
@@ -830,14 +831,16 @@ export function createHostedChatExecutionRuntime(
     if (lastStreamError != null) {
       return lastStreamError;
     }
+    if (hasHostedAgentPauseStopped(input.bootstrap.lifecycleAdapter)) {
+      return null;
+    }
     const rootStreamAbortSignal = input.bootstrap.rootStreamWatchdog.signal;
     if (!input.abortSignal.aborted && rootStreamAbortSignal.aborted) {
-      return rootStreamAbortSignal.reason instanceof Error
-        ? rootStreamAbortSignal.reason
-        : new DOMException(
-          "Hosted chat stream stopped before producing a response",
-          "AbortError",
-        );
+      const reason = rootStreamAbortSignal.reason;
+      return isStreamTimeoutError(reason) ? reason : new DOMException(
+        "Hosted chat stream stopped before producing a response",
+        "AbortError",
+      );
     }
     return null;
   };
