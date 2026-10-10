@@ -9820,6 +9820,79 @@ describe("project run inference credential header", () => {
     );
   });
 
+  it("withholds nested exception diagnostics and reconstructs public provider errors", async () => {
+    const privateDetail =
+      "finalize failed: postgres://synthetic:private@db.internal/test /internal/runtime.ts";
+    for (const code of [undefined, privateDetail, "OVERLOADED_ERROR"]) {
+      const runId = "run_nested_private_failure";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const appended: Record<string, unknown>[] = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          await executeLocalChild({
+            agentId: "nested-finalization-failure",
+            input: "test",
+            toolName: "invoke_agent",
+            toolInput: {},
+            execute: async (control) => {
+              assertExists(control?.onEvent);
+              await control.onEvent({
+                type: "error",
+                error: privateDetail,
+                ...(code ? { code } : {}),
+              });
+              return { text: "done", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            const payload = requestJsonBody(init);
+            assert(Array.isArray(payload?.events));
+            appended.push(...payload.events);
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: appended.length,
+              appended_count: payload.events.length,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const errors = appended.filter((event) =>
+        event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+      );
+      assertEquals(errors.length, 1);
+      assertEquals(
+        errors[0]?.value,
+        code === "OVERLOADED_ERROR"
+          ? { code, message: "The LLM provider is currently overloaded" }
+          : { message: "Provider stream failed" },
+      );
+      assertEquals(JSON.stringify(appended).includes(privateDetail), false);
+    }
+  });
+
   it("applies backpressure when streamed runtime observation appends stall", async () => {
     const runId = "run_stream_observation_backpressure";
     const canonicalRunId = "11111111-1111-4111-8111-111111111111";

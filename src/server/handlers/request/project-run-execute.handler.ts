@@ -54,6 +54,10 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { normalizeConversationRunEvents } from "#veryfront/agent/conversation/run-event-normalization.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import {
+  CURATED_PROVIDER_FAILURE_CODES,
+  curatedProviderFailure,
+} from "#veryfront/chat/provider-error-registry.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   buildConversationRunEventBatches,
@@ -215,6 +219,36 @@ const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
 const PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT = 100;
 const PROJECT_RUN_OBSERVATION_FLUSH_DELAY_MS = 50;
 const PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT = 300;
+const PROJECT_RUN_PUBLIC_PROVIDER_FAILURES = createPrivateMap<
+  string,
+  { code: string; message: string }
+>();
+for (const code of primordialArrayValues(CURATED_PROVIDER_FAILURE_CODES)) {
+  const failure = curatedProviderFailure(code);
+  PROJECT_RUN_PUBLIC_PROVIDER_FAILURES.set(code, { code: failure.code, message: failure.message });
+}
+
+function resolveProjectRunObservationError(
+  payload: Record<string, unknown>,
+): { code?: string; message: string } {
+  if (typeof payload.code === "string") {
+    const providerFailure = PROJECT_RUN_PUBLIC_PROVIDER_FAILURES.get(payload.code);
+    if (providerFailure) return providerFailure;
+    if (payload.code === "EMPTY_ASSISTANT_OUTPUT") {
+      return {
+        code: "EMPTY_ASSISTANT_OUTPUT",
+        message: "Agent run produced no assistant-visible output",
+      };
+    }
+    if (payload.code === "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED") {
+      return {
+        code: "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED",
+        message: "Agent output failed outputSchema validation",
+      };
+    }
+  }
+  return { message: "Provider stream failed" };
+}
 /**
  * How often a manual resume retries, 100ms apart, while the paused execution still holds the
  * run: about 35s, past the 30s workflow lock lease a parking execution that died may leave.
@@ -2898,7 +2932,7 @@ async function withProjectRunRuntimeObservations<T>(
               runtime: "veryfront",
               kind: "agent_error",
               value: {
-                ...payload,
+                ...resolveProjectRunObservationError(payload),
                 ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
               },
             }).durable
