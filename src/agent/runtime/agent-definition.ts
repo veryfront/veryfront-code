@@ -5,6 +5,8 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { buildAgentCallContext } from "./call-context.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import type { RuntimeSkillLoaderToolName } from "./skill-prompt.ts";
+import { CANONICAL_LOAD_SKILL_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 
@@ -331,6 +333,23 @@ export function parseRuntimeAgentMarkdownDefinition(
   return getRuntimeAgentMarkdownDefinitionSchema().parse(definition);
 }
 
+const reflectApply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+
+/** Name the loader that tool exposure bootstraps: canonical when authorized, else local. */
+function resolveSkillLoaderToolName(
+  availableToolNames: readonly string[] | undefined,
+): RuntimeSkillLoaderToolName | undefined {
+  if (availableToolNames === undefined) return undefined;
+  if (reflectApply(arrayIncludes, availableToolNames, [CANONICAL_LOAD_SKILL_TOOL_ID]) === true) {
+    return CANONICAL_LOAD_SKILL_TOOL_ID;
+  }
+  if (reflectApply(arrayIncludes, availableToolNames, [LOAD_SKILL_TOOL_ID]) === true) {
+    return LOAD_SKILL_TOOL_ID;
+  }
+  return undefined;
+}
+
 /**
  * Create runtime agent system messages.
  *
@@ -345,6 +364,7 @@ export function createRuntimeAgentSystemMessages(
   const instructions = Array.isArray(input.agent.system) && input.agent.system.length === 0
     ? input.agent.instructions
     : input.agent.system ?? input.agent.instructions;
+  const skillLoaderToolName = resolveSkillLoaderToolName(input.availableToolNames);
   return buildAgentCallContext({
     instructions,
     ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
@@ -353,9 +373,7 @@ export function createRuntimeAgentSystemMessages(
       : { runtimeContextMarker: input.runtimeContextMarker }),
     ...(input.runtimeBlocks === undefined ? {} : { extraBlocks: input.runtimeBlocks }),
     ...(input.skills === undefined ? {} : { skills: input.skills }),
-    ...(input.availableToolNames === undefined
-      ? {}
-      : { availableToolNames: input.availableToolNames }),
+    ...(skillLoaderToolName === undefined ? {} : { skillLoaderToolName }),
     ...(input.environmentContext === undefined
       ? {}
       : { environmentContext: input.environmentContext }),
