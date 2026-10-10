@@ -819,18 +819,14 @@ describe("agent/conversation-run-chunk-mirror", () => {
     const firstRequest = appendedRequests[0] as { events?: Array<Record<string, unknown>> };
     const firstEvent = firstRequest.events?.[0];
     assertEquals(firstEvent?.modelCallId, undefined);
-    assertEquals(firstEvent?.request, {
-      temperature: 0.2,
-      responseFormat: {
-        type: "json_schema",
-        name: "large_result",
-        strict: true,
-        schema: {
-          description: "[veryfront] JSON response schema omitted from oversized audit record.",
-        },
-      },
-    });
-    assertEquals((firstEvent?.messages as unknown[] | undefined)?.length, 2);
+    assertEquals(firstEvent?.request, { temperature: 0.2 });
+    const messages = firstEvent?.messages as Array<{ content?: unknown }> | undefined;
+    assertEquals(messages?.length, 2);
+    assertEquals(
+      typeof messages?.[0]?.content === "string" &&
+        messages[0].content.includes("response schema omitted"),
+      true,
+    );
     assertEquals(event.request.responseFormat.schema.properties.answer.enum[0], schemaEnumValue);
     assertEquals(event.modelCallId, "33333333-3333-4333-8333-333333333333");
     const secondRequest = appendedRequests[1] as { events?: Array<Record<string, unknown>> };

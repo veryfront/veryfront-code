@@ -119,9 +119,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
 const OMITTED_MESSAGE_NOTICE = "[veryfront] Model call context truncated for audit.";
-const OMITTED_RESPONSE_SCHEMA_NOTICE =
-  "[veryfront] JSON response schema omitted from oversized audit record.";
-const MAX_OVERSIZED_RESPONSE_FORMAT_NAME_BYTES = 1024;
 
 function getUtf8ByteLength(value: string): number {
   return privateByteLength(encodePrivateText(value));
@@ -186,31 +183,10 @@ function truncateMessageTextParts(message: unknown, maxTextBytes: number): unkno
   };
 }
 
-function summarizeOversizedResponseFormat(responseFormat: unknown): unknown {
-  if (!isRecord(responseFormat) || responseFormat.type !== "json_schema") return responseFormat;
-  return {
-    type: "json_schema",
-    ...(typeof responseFormat.name === "string"
-      ? {
-        name: truncateTextToBytes(responseFormat.name, MAX_OVERSIZED_RESPONSE_FORMAT_NAME_BYTES),
-      }
-      : {}),
-    ...(typeof responseFormat.strict === "boolean" ? { strict: responseFormat.strict } : {}),
-    schema: {
-      description: OMITTED_RESPONSE_SCHEMA_NOTICE,
-    },
-  };
-}
-
-function summarizeOversizedModelCallRequest(request: unknown): unknown {
-  if (!isRecord(request) || !isRecord(request.responseFormat)) return request;
-  const responseFormat = summarizeOversizedResponseFormat(request.responseFormat);
-  return responseFormat === request.responseFormat ? request : { ...request, responseFormat };
-}
-
 function buildTruncationNotice(input: {
   originalByteLength: number;
   omittedMessageCount: number;
+  omittedResponseSchema: boolean;
 }): unknown {
   return {
     role: "system",
@@ -219,7 +195,8 @@ function buildTruncationNotice(input: {
         formatMebibytes(input.originalByteLength)
       } exceeded the ${
         formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
-      } append limit; ${input.omittedMessageCount} message(s) omitted. The model call was not ` +
+      } append limit; ${input.omittedMessageCount} message(s) omitted` +
+      `${input.omittedResponseSchema ? "; response schema omitted" : ""}. The model call was not ` +
       `dispatched — this record is an excerpt, not the context that was sent.`,
   };
 }
@@ -246,22 +223,24 @@ function truncatePrivateRunEventToLimit(
 ): { event: Record<string, unknown>; omittedMessageCount: number } {
   const messages = ArrayIsArray(event.messages) ? event.messages : [];
   const tools = ArrayIsArray(event.tools) ? event.tools : undefined;
+  let request = event.request;
+  let omittedResponseSchema = false;
 
   const build = (
     kept: unknown[],
     omittedMessageCount: number,
     keepTools: boolean,
   ): Record<string, unknown> => {
-    const builtMessages = [buildTruncationNotice({ originalByteLength, omittedMessageCount })];
+    const builtMessages = [
+      buildTruncationNotice({ originalByteLength, omittedMessageCount, omittedResponseSchema }),
+    ];
     appendPrivateArray(builtMessages, kept);
     return {
       type: event.type,
       // Clamped legacy audit records cannot acknowledge complete prepared input.
       // Deliberately exclude modelCallId so they cannot issue a capture receipt.
       ...(event.model === undefined ? {} : { model: event.model }),
-      ...(event.request === undefined
-        ? {}
-        : { request: summarizeOversizedModelCallRequest(event.request) }),
+      ...(request === undefined ? {} : { request }),
       messages: builtMessages,
       ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
       ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
@@ -272,6 +251,14 @@ function truncatePrivateRunEventToLimit(
   const fits = (candidate: Record<string, unknown>): boolean =>
     getPrivateRunEventAppendRequestByteLength(candidate) <=
       MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES;
+
+  // A response schema is kept unchanged when it fits. When it alone keeps even a
+  // message-free record over the limit, omit it so the audit record can be written.
+  if (isRecord(request) && request.responseFormat !== undefined && !fits(build([], 0, false))) {
+    const { responseFormat: _omitted, ...requestWithoutResponseFormat } = request;
+    request = requestWithoutResponseFormat;
+    omittedResponseSchema = true;
+  }
 
   // Clamp message text progressively; each pass quarters the per-part budget.
   for (
