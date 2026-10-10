@@ -193,16 +193,49 @@ function ambiguousToolOwnership(calls: unknown[], results: unknown[]): Set<strin
   return ambiguous;
 }
 
+function serializeToolResultValue(record: Record<string, unknown>): string | null {
+  const value = "output" in record ? record.output : "result" in record ? record.result : null;
+  try {
+    return JSON.stringify(value) ?? "undefined";
+  } catch {
+    return null;
+  }
+}
+
+// Results are collapsed by toolCallId before ownership is read, so conflicting
+// duplicates must be recorded from the raw records.
+function conflictingToolResults(results: unknown[]): Set<string> {
+  const firstValues = createPrivateMap<string, string | null>();
+  const conflicting = createPrivateSet<string>();
+  for (const record of results) {
+    if (!isRecord(record) || typeof record.toolCallId !== "string") continue;
+    const value = serializeToolResultValue(record);
+    if (!firstValues.has(record.toolCallId)) {
+      firstValues.set(record.toolCallId, value);
+    } else if (value === null || firstValues.get(record.toolCallId) !== value) {
+      conflicting.add(record.toolCallId);
+    }
+  }
+  return conflicting;
+}
+
 function omitAmbiguousProviderOwnership<T extends FallbackParsedPart | FallbackToolChunkDescriptor>(
   parts: T[],
   ambiguous: Set<string>,
+  conflictingResults: Set<string>,
 ): T[] {
   return parts.map((part) => {
-    if (
-      !("toolCallId" in part) || !ambiguous.has(part.toolCallId) || part.providerExecuted !== true
-    ) return part;
-    const { providerExecuted: _ownership, ...unowned } = part;
-    return unowned as T;
+    if (!("toolCallId" in part)) return part;
+    let result: FallbackToolChunkDescriptor & { kind?: "tool" } = part;
+    if (conflictingResults.has(part.toolCallId) && result.outputState === "output-available") {
+      const { output: _output, ...withoutOutput } = result;
+      result = { ...withoutOutput, outputState: "input-available" };
+    }
+    if (ambiguous.has(part.toolCallId) && result.providerExecuted === true) {
+      const { providerExecuted: _ownership, ...unowned } = result;
+      result = unowned;
+    }
+    return result as T;
   });
 }
 
@@ -210,18 +243,20 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
   messages: unknown[],
 ): FallbackParsedPart[] {
   const orderedParts: FallbackParsedPart[] = [];
+  const contentToolResults = messages.flatMap((message) =>
+    isRecord(message) && Array.isArray(message.content)
+      ? message.content.filter(isToolResultPart)
+      : []
+  );
   const ambiguous = ambiguousToolOwnership(
     messages.flatMap((message) =>
       isRecord(message) && Array.isArray(message.content)
         ? message.content.filter(isToolCallPart)
         : []
     ),
-    messages.flatMap((message) =>
-      isRecord(message) && Array.isArray(message.content)
-        ? message.content.filter(isToolResultPart)
-        : []
-    ),
+    contentToolResults,
   );
+  const conflictingResults = conflictingToolResults(contentToolResults);
   const toolCallsById = new Map<string, FinalStepToolCall>();
   const toolResultsById = new Map<string, FinalStepToolResult>();
 
@@ -330,11 +365,16 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
     }
   }
 
-  return omitAmbiguousProviderOwnership(orderedParts, ambiguous);
+  return omitAmbiguousProviderOwnership(orderedParts, ambiguous, conflictingResults);
 }
 
 function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): FallbackParsedPart[] {
   const orderedParts: FallbackParsedPart[] = [];
+  const uiToolResults = messages.flatMap((message) =>
+    isRecord(message) && message.role === "tool" && Array.isArray(message.parts)
+      ? message.parts.filter((part) => isRecord(part) && part.type === "tool-result")
+      : []
+  );
   const ambiguous = ambiguousToolOwnership(
     messages.flatMap((message) =>
       isRecord(message) && message.role === "assistant" && Array.isArray(message.parts)
@@ -347,6 +387,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
         : []
     ),
   );
+  const conflictingResults = conflictingToolResults(uiToolResults);
 
   for (const message of messages) {
     if (!isRecord(message) || !Array.isArray(message.parts)) {
@@ -431,7 +472,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
     }
   }
 
-  return omitAmbiguousProviderOwnership(orderedParts, ambiguous);
+  return omitAmbiguousProviderOwnership(orderedParts, ambiguous, conflictingResults);
 }
 
 function buildFallbackParsedPartsFromResponseMessages(step: unknown): FallbackParsedPart[] {
@@ -688,10 +729,14 @@ function buildToolChunkDescriptorsFromStep(input: {
   extractFinalStepToolResults: (step: unknown) => FinalStepToolResult[];
 }): FallbackToolChunkDescriptor[] {
   const descriptors: FallbackToolChunkDescriptor[] = [];
+  const stepToolResults = isRecord(input.step) && Array.isArray(input.step.toolResults)
+    ? input.step.toolResults
+    : [];
   const ambiguous = ambiguousToolOwnership(
     isRecord(input.step) && Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [],
-    isRecord(input.step) && Array.isArray(input.step.toolResults) ? input.step.toolResults : [],
+    stepToolResults,
   );
+  const conflictingResults = conflictingToolResults(stepToolResults);
   const toolCalls = input.extractFinalStepToolCalls(input.step);
   const toolResults = new Map(
     input.extractFinalStepToolResults(input.step).map((
@@ -730,7 +775,7 @@ function buildToolChunkDescriptorsFromStep(input: {
     });
   }
 
-  return omitAmbiguousProviderOwnership(descriptors, ambiguous);
+  return omitAmbiguousProviderOwnership(descriptors, ambiguous, conflictingResults);
 }
 
 function buildToolChunkDescriptorsFromParts(

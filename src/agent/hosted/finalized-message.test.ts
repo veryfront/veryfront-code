@@ -2084,3 +2084,97 @@ Deno.test("open reasoning with trailing whitespace completes with end metadata o
     [{ type: "reasoning-end", id: "r", signature: "sig-1" }],
   );
 });
+
+for (
+  const [label, finalStep] of [
+    ["response tool messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c", toolName: "bash", input: {} }],
+          },
+          {
+            role: "tool",
+            content: [
+              { type: "tool-result", toolCallId: "c", toolName: "bash", output: "first" },
+              { type: "tool-result", toolCallId: "c", toolName: "bash", output: "second" },
+            ],
+          },
+        ],
+      },
+    }],
+    ["UI response messages", {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            parts: [{ type: "tool-call", toolCallId: "c", toolName: "bash", args: {} }],
+          },
+          {
+            role: "tool",
+            parts: [
+              { type: "tool-result", toolCallId: "c", result: "first" },
+              { type: "tool-result", toolCallId: "c", result: "second" },
+            ],
+          },
+        ],
+      },
+    }],
+    ["step tool results", {
+      toolCalls: [{ toolCallId: "c", toolName: "bash", input: {} }],
+      toolResults: [
+        { toolCallId: "c", toolName: "bash", output: "first" },
+        { toolCallId: "c", toolName: "bash", output: "second" },
+      ],
+    }],
+  ] as const
+) {
+  Deno.test(`pending tool does not complete from conflicting final-step results (${label})`, () => {
+    const part = {
+      type: "tool-bash" as const,
+      toolCallId: "c",
+      state: "input-available" as const,
+      input: {},
+    };
+    const state = buildFinalizedMessageState({
+      responseMessage: { id: "m", role: "assistant", parts: [part] },
+      isAborted: false,
+      finalStep,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(state.hasIncompleteFinalizedToolParts, true);
+    assertEquals(state.sanitizedFinalizedMessage.parts, [{
+      ...part,
+      state: "output-error",
+      errorText: "tool error",
+    }]);
+  });
+}
+
+Deno.test("pending tool completes from agreeing duplicate final-step results", () => {
+  const state = buildFinalizedMessageState({
+    responseMessage: {
+      id: "m",
+      role: "assistant",
+      parts: [{ type: "tool-bash", toolCallId: "c", input: {}, state: "input-available" }],
+    },
+    isAborted: false,
+    finalStep: {
+      toolCalls: [{ toolCallId: "c", toolName: "bash", input: {} }],
+      toolResults: [
+        { toolCallId: "c", toolName: "bash", output: { ok: true } },
+        { toolCallId: "c", toolName: "bash", output: { ok: true } },
+      ],
+    },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.hasIncompleteFinalizedToolParts, false);
+  assertEquals(state.sanitizedFinalizedMessage.parts, [{
+    type: "tool-bash",
+    toolCallId: "c",
+    input: {},
+    state: "output-available",
+    output: { ok: true },
+  }]);
+});
