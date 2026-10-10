@@ -234,15 +234,49 @@ const PREDICATE_DEFINITIONS = new Set([
   "src/security/sandbox/worker-pool.ts",
 ]);
 
-/** Drop imports and comments so only real code counts. */
+/** Remove line and block comments, keeping string and template literals intact. */
+function stripComments(source: string): string {
+  let result = "";
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index]!;
+    const next = source[index + 1];
+    if (char === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") index++;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      const comment = source.slice(index, end < 0 ? source.length : end + 2);
+      // Keep line breaks so line-based filtering still sees the same lines.
+      result += comment.replace(/[^\n]/g, "");
+      index += comment.length;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      let end = index + 1;
+      // Quoted strings end at a line break, so a quote inside a regular
+      // expression literal can hide at most the rest of its line.
+      while (
+        end < source.length && source[end] !== char && (char === "`" || source[end] !== "\n")
+      ) {
+        end += source[end] === "\\" ? 2 : 1;
+      }
+      result += source.slice(index, end + 1);
+      index = end + 1;
+      continue;
+    }
+    result += char;
+    index++;
+  }
+  return result;
+}
+
+/** Drop comments and imports so only real code counts. */
 function codeOf(source: string): string {
-  return source
+  return stripComments(source)
     .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      return !trimmed.startsWith("import ") && !trimmed.startsWith("//") &&
-        !trimmed.startsWith("*") && !trimmed.startsWith("/*");
-    })
+    .filter((line) => !line.trim().startsWith("import "))
     .join("\n");
 }
 
@@ -376,5 +410,16 @@ describe("execution surface inventory", () => {
       "These files hold a different number of literal grants than the register lists. " +
         "Register each new grant deliberately.",
     );
+  });
+
+  it("does not count guards inside comments, and keeps comment markers inside strings", () => {
+    const source = [
+      "/*",
+      "if (requiresIsolatedProjectRuntime(ctx)) return;",
+      "*/",
+      'const text = "/* not a comment */"; isSharedProjectRuntime(ctx);',
+      "run(); // requiresIsolatedProjectRuntime(ctx)",
+    ].join("\n");
+    assertEquals(countGuards(codeOf(source)), 1);
   });
 });
