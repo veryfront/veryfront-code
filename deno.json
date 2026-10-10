@@ -193,7 +193,8 @@
     "./server": "./src/server/index.ts",
     "./server/http-broker": "./src/server/isolated-http/hosted-http-broker.ts",
     "./server/http-runtime": "./src/server/isolated-http/application-runtime.ts",
-    "./server/http-resolver": "./src/server/isolated-http/hosted-http-resolver.ts"
+    "./server/http-resolver": "./src/server/isolated-http/hosted-http-resolver.ts",
+    "./server/http-host": "./src/server/isolated-http/hosted-http-composition.ts"
   },
   "imports": {
     "veryfront/integrations/diagnostics": "./src/integrations/error-context.ts",
