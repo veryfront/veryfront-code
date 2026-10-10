@@ -20,6 +20,12 @@ import {
   registerManifestFetcherForRelease,
 } from "veryfront/release-assets";
 import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
+import {
+  createHostedHttpComposition,
+  type HostedHttpComposition,
+  type HostedHttpCompositionConfig,
+  readHostedHttpCompositionConfig,
+} from "veryfront/server/http-host";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -137,8 +143,37 @@ export interface StartCliProductionServerOptions {
   onMemoryRecycle?: StartProductionServerOptions["onMemoryRecycle"];
 }
 
+interface StartCliProductionServerDependencies {
+  startServer?: typeof startProductionServer;
+  readHostedHttpConfig?: () => HostedHttpCompositionConfig | undefined;
+  createHostedHttp?: (config: HostedHttpCompositionConfig) => Promise<HostedHttpComposition>;
+}
+
 export async function startCliProductionServer(
   options: StartCliProductionServerOptions,
+  dependencies: StartCliProductionServerDependencies = {},
+): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
+  // Host-only and default off. Read before bootstrap loads any project code.
+  const hostedHttpConfig = (dependencies.readHostedHttpConfig ?? readHostedHttpCompositionConfig)();
+  const hostedHttp = hostedHttpConfig
+    ? await (dependencies.createHostedHttp ?? createHostedHttpComposition)(hostedHttpConfig)
+    : undefined;
+  try {
+    return await startCliProductionServerWithHostedHttp(
+      options,
+      hostedHttp,
+      dependencies.startServer ?? startProductionServer,
+    );
+  } catch (error) {
+    await hostedHttp?.shutdown();
+    throw error;
+  }
+}
+
+async function startCliProductionServerWithHostedHttp(
+  options: StartCliProductionServerOptions,
+  hostedHttp: HostedHttpComposition | undefined,
+  startServer: typeof startProductionServer,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
   const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
@@ -177,6 +212,7 @@ export async function startCliProductionServer(
     defaultReleaseId: localReleaseId,
     defaultEnvironment: "production",
     onMemoryRecycle: options.onMemoryRecycle,
+    ...(hostedHttp ? { hostedHttp: hostedHttp.ingress } : {}),
     // Do NOT register a `localProjects` mapping here. `vf serve` and the
     // compiled binary are production deployments, and `isLocalProject: true`
     // flips `isDev` on in security headers (suppressing CSP) and in the SSR
@@ -187,16 +223,21 @@ export async function startCliProductionServer(
     // `localProjects` entry is required for the compiled binary to work.
   };
   prefetchBuiltinContentProcessor();
-  const result = await startProductionServer(serverOptions);
+  const result = await startServer(serverOptions);
   await ensureBuiltinContentProcessor();
   return {
     ...result,
     stop: async () => {
-      if (unregisterLocalManifest) {
-        unregisterLocalManifest();
-        clearReleaseAssetManifestCache();
+      try {
+        if (unregisterLocalManifest) {
+          unregisterLocalManifest();
+          clearReleaseAssetManifestCache();
+        }
+        await result.stop();
+      } finally {
+        // After the listener stops: release executor allocations it no longer needs.
+        await hostedHttp?.shutdown();
       }
-      await result.stop();
     },
   };
 }

@@ -145,6 +145,36 @@ import {
 | `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. `projectTracing` binds collector settings to the installed project/environment and imports executor spans under the broker's request parent. Collector credentials stay on the broker.                                                                                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts)  |
 | `HostedHttpRequestAuthority`      | Trusted edge selection. The resolver must authorize these values against the source API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-ingress.ts) |
 
+### `veryfront/server/http-host`
+
+```ts
+import {
+  createHostedHttpComposition,
+  HOSTED_HTTP_ISOLATION_ENV,
+  readHostedHttpCompositionConfig,
+} from "veryfront/server/http-host";
+```
+
+#### Components
+
+| Name                        | Description                                                         | Source                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `HOSTED_HTTP_ISOLATION_ENV` | Host flag that enables isolated hosted HTTP execution. Default off. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-composition.ts) |
+
+#### Functions
+
+| Name                              | Description                                                                                                                                                                                                                                                      | Source                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `createHostedHttpComposition`     | Compose the hosted HTTP allocator client, TLS transport, broker, resolver and ingress from host configuration only. Refuses to start while the shared host-execution override is set. The broker token file is read on every allocator call so rotation applies. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-composition.ts) |
+| `readHostedHttpCompositionConfig` | Read hosted HTTP settings from the host environment, excluding project env files. Returns undefined when the flag is unset or off. An unrecognized flag value or an incomplete configuration is a startup error, never a silent fallback.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-composition.ts) |
+
+#### Types
+
+| Name                          | Description                                                         | Source                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `HostedHttpComposition`       | Hosted HTTP ingress options and the owner of their executor broker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-composition.ts) |
+| `HostedHttpCompositionConfig` | Host-owned settings, read once from the host process environment.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-composition.ts) |
+
 ### `veryfront/server/http-resolver`
 
 ```ts
