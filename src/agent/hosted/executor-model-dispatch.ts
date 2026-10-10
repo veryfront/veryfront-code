@@ -27,6 +27,7 @@ import { executorModelJson, parseExecutorModelData } from "./executor-model-sche
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
 import { executorModelFailure } from "./executor-model-errors.ts";
+import type { ExecutorSkillObservation } from "./executor-skill-observation.ts";
 
 /** Ingress-owned invocation authority. The sink already owns its exact run identity. */
 export interface HostedExecutorModelScope {
@@ -41,6 +42,8 @@ interface HostedModelBrokerInput {
   allowedModelIds: ReadonlySet<string>;
   scope: HostedExecutorModelScope;
   grant: ExecutorModelGrant;
+  /** Host-owned record updated with each prompt dispatched to the provider. */
+  skillObservation?: ExecutorSkillObservation;
 }
 
 /**
@@ -166,6 +169,9 @@ function createScopedHostedModelBroker(
         assertActive,
         run<T>(operation: () => T): T {
           return runWithVeryfrontCloudModelCallCapture({ receipt, assertActive }, operation);
+        },
+        dispatchSucceeded() {
+          input.skillObservation?.observePrompt(request.options.prompt);
         },
       };
     },

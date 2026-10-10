@@ -16,6 +16,7 @@ import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
 import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
+import { createExecutorSkillObservation } from "./executor-skill-observation.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
 import {
@@ -111,7 +112,8 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
-  it("rejects a skill reference read through a host facade before the provider saw the body", async () => {
+  it("gates host facade skill reference reads on host-observed provider requests", async () => {
+    const skillObservation = createExecutorSkillObservation();
     const loadSkill = createRuntimeLoadSkillTool({
       context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
       skillsDir: "/skills",
@@ -144,30 +146,57 @@ describe("executor tool bridge", () => {
         allowedToolNames: new Set(["load_skill"]),
         context: {},
       }]]),
+      skillObservation,
     });
     const channels = pair(f.operations);
     try {
       const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
       assert(facade);
-      // Executor-side observation state does not cross the channel.
-      const executorContext: ToolExecutionContext = { toolCallId: "executor-call" };
-      setProviderObservedSkillBodies(executorContext, ["review"]);
+      const context = (toolCallId: string): ToolExecutionContext => {
+        // Executor-side observation state does not cross the channel.
+        const executorContext: ToolExecutionContext = { toolCallId };
+        setProviderObservedSkillBodies(executorContext, ["review"]);
+        return executorContext;
+      };
+      const readReference = async (toolCallId: string) =>
+        await facade.executeTool(
+          "load_skill",
+          { reference: { skillId: "review", file: "references/checklist.md" } },
+          context(toolCallId),
+        ) as { error?: string; content?: string };
+      const toolResultPrompt = (toolCallId: string, value: unknown) => [{
+        role: "tool" as const,
+        content: [{
+          type: "tool-result" as const,
+          toolCallId,
+          toolName: "load_skill",
+          output: { type: "json" as const, value },
+        }],
+      }];
       const body = await facade.executeTool(
         "load_skill",
         { load: { skillId: "review" } },
-        executorContext,
+        context("body-call"),
       );
       assertEquals((body as { skillId?: string }).skillId, "review");
-      const reference = await facade.executeTool(
-        "load_skill",
-        { reference: { skillId: "review", file: "references/checklist.md" } },
-        executorContext,
-      ) as { error?: string };
-      assertEquals(
-        reference.error?.startsWith('Read the load_skill result for "review"'),
-        true,
+
+      const sameStep = await readReference("same-step-reference");
+      assertEquals(sameStep.error?.startsWith('Read the load_skill result for "review"'), true);
+      assertEquals(JSON.stringify(sameStep).includes("Detailed checklist content"), false);
+
+      // A result ID the host never returned does not mark the body observed.
+      skillObservation.observePrompt(toolResultPrompt("forged-call", body));
+      assertEquals((await readReference("forged-step-reference")).content, undefined);
+
+      skillObservation.observePrompt(toolResultPrompt("body-call", "body"));
+      assertEquals((await readReference("substituted-body-reference")).content, undefined);
+      skillObservation.observePrompt(
+        toolResultPrompt("body-call", JSON.parse(JSON.stringify(body))),
       );
-      assertEquals(JSON.stringify(reference).includes("Detailed checklist content"), false);
+      assertEquals(
+        (await readReference("next-step-reference")).content,
+        "Detailed checklist content",
+      );
     } finally {
       await channels.close();
     }

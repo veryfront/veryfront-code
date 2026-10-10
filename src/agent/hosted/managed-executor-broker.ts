@@ -19,6 +19,7 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
+import { createExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
 import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 import type {
   TrustedManagedRuntime,
@@ -675,8 +676,10 @@ function buildBrokerOperations(
   selectedModelId: string,
 ): ReadonlyMap<string, ExecutorOperation> {
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
+  const skillObservation = createExecutorSkillObservation();
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
+      skillObservation,
       projectId: installation.grant.execution.projectId,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
@@ -686,13 +689,14 @@ function buildBrokerOperations(
       ...(input.model.modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     })
     : createEphemeralHostedExecutorModelBroker({
+      skillObservation,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
       scope,
       grant: input.model.grant,
       prepared: { conversationId: null, canonicalRootRun: null },
     });
-  const tools = createExecutorToolBroker({ scope, ...input.tools });
+  const tools = createExecutorToolBroker({ scope, ...input.tools, skillObservation });
   const persistence = createExecutorPersistenceBroker({
     expectedBinding: binding,
     capabilityIds: installation.capabilities.persistence,
