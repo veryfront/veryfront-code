@@ -2619,12 +2619,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   }
 
   for (
-    const { branch, path } of [undefined, "33333333-3333-4333-8333-333333333333"].flatMap(
-      (branch) =>
-        ["knowledge/existing.md", "knowledge/Concept.MD"].map((path) => ({ branch, path })),
-    )
+    const { branch, path, legacyChecksum } of [undefined, "33333333-3333-4333-8333-333333333333"]
+      .flatMap(
+        (branch) =>
+          ["knowledge/existing.md", "knowledge/Concept.MD"].flatMap((path) =>
+            [false, true].map((legacyChecksum) => ({ branch, path, legacyChecksum }))
+          ),
+      )
   ) {
-    it(`indexes an existing canonical version without publication (${branch ?? "main"}, ${path})`, async () => {
+    it(`indexes an existing canonical version without publication (${branch ?? "main"}, ${path}, legacy=${legacyChecksum})`, async () => {
       const content =
         "---\r\ntype: knowledge\r\ntitle: Existing\r\nrelated: [other.md]\r\n---\r\n\r\nUnicode 🌱 searchable body.";
       const checksum = await computeHash(content);
@@ -2646,7 +2649,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               file_path: path,
               file_id: receipt.file_id,
               expected_version_id: receipt.version_id,
-              checksum,
+              checksum: legacyChecksum ? null : checksum,
             },
           },
           {
@@ -2693,6 +2696,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               posts.push(body);
               return Response.json({
                 ...receipt,
+                checksum: legacyChecksum ? null : checksum,
                 indexed_chunk_count: chunks.length,
                 model: body.model,
               });
@@ -2709,7 +2713,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               id: receipt.file_id,
               version_id: receipt.version_id,
               path,
-              checksum,
+              checksum: legacyChecksum ? null : checksum,
               content,
             });
           },
@@ -2719,6 +2723,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const payload = await result.response.json();
         assertEquals(payload.success, true, JSON.stringify(payload));
         assertEquals(payload.result.version_id, receipt.version_id);
+        assertEquals(payload.result.checksum, checksum);
       }
       assertEquals(reads, 2);
       assertEquals(posts.length, 2);

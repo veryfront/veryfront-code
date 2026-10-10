@@ -3284,11 +3284,12 @@ async function executeKnowledgeIngestRun(input: {
         typeof path !== "string" || path.length === 0 ||
         typeof fileId !== "string" || !uuid.test(fileId) ||
         typeof versionId !== "string" || !uuid.test(versionId) ||
-        typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)
+        (checksum !== null &&
+          (typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)))
       ) {
         throw INVALID_ARGUMENT.create({
           detail:
-            "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum.",
+            "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum (or explicit null for a legacy version).",
         });
       }
       const selected = await client.get<unknown>(
@@ -3305,8 +3306,17 @@ async function executeKnowledgeIngestRun(input: {
         getOwnDataProperty(selected, "id") !== fileId ||
         getOwnDataProperty(selected, "version_id") !== versionId ||
         getOwnDataProperty(selected, "path") !== path ||
-        getOwnDataProperty(selected, "checksum") !== checksum ||
-        typeof content !== "string" || await computeHash(content) !== checksum
+        typeof content !== "string"
+      ) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      const selectedChecksum = getOwnDataProperty(selected, "checksum");
+      const computedChecksum = await computeHash(content);
+      const legacyChecksum = checksum === null &&
+        (selectedChecksum === null || selectedChecksum === undefined);
+      if (
+        !legacyChecksum &&
+        (selectedChecksum !== checksum || computedChecksum !== checksum)
       ) {
         throw new Error("File read does not match the admitted canonical version.");
       }
@@ -3318,7 +3328,8 @@ async function executeKnowledgeIngestRun(input: {
         client,
         projectSlug: projectReference,
         branch: outputDestination?.branchId ?? "main",
-        published: { path, file_id: fileId, version_id: versionId, checksum },
+        published: { path, file_id: fileId, version_id: versionId, checksum: computedChecksum },
+        ...(legacyChecksum ? { checksumAcknowledgement: "legacy-null" as const } : {}),
         localPath,
         signal: input.signal,
       });

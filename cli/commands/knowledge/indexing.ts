@@ -1,5 +1,6 @@
 import { createFileSystem } from "veryfront/platform";
 import { inspectOkfDocument } from "veryfront/knowledge";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { chunkWithOffsets } from "#veryfront/embedding/chunk.ts";
 import { embedding } from "#veryfront/embedding/embedding.ts";
 import type { Embedding } from "#veryfront/embedding/types.ts";
@@ -23,6 +24,8 @@ export interface IndexKnowledgeDocumentInput {
   localPath: string;
   signal?: AbortSignal;
   embedder?: Embedding;
+  /** Only the immutable existing-version path may accept a legacy null API checksum. */
+  checksumAcknowledgement?: "legacy-null";
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,6 +51,12 @@ export async function indexKnowledgeDocument(
   }
   const source = await createFileSystem().readTextFile(input.localPath);
   signal?.throwIfAborted();
+  if (
+    input.checksumAcknowledgement === "legacy-null" &&
+    (!published.checksum || await computeHash(source) !== published.checksum)
+  ) {
+    throw new Error("Legacy canonical indexing requires the verified complete source checksum.");
+  }
   const inspected = inspectOkfDocument(published.path, source);
   const body = inspected.body;
   const parts = (await chunkWithOffsets(body)).filter((part) => part.content.trim().length > 0);
@@ -114,7 +123,9 @@ export async function indexKnowledgeDocument(
     );
   }
   signal?.throwIfAborted();
-  const result = await input.client.post<CanonicalKnowledgeIndexReceipt>(
+  const result = await input.client.post<
+    Omit<CanonicalKnowledgeIndexReceipt, "checksum"> & { checksum: string | null }
+  >(
     `/projects/${encodeURIComponent(input.projectSlug)}/branches/${
       encodeURIComponent(input.branch)
     }/files/${encodeURIComponent(published.path)}/index`,
@@ -122,10 +133,16 @@ export async function indexKnowledgeDocument(
     signal ? { signal, retryPolicy: "none" } : undefined,
   );
   signal?.throwIfAborted();
+  const acknowledgedChecksum = typeof result.checksum === "string" && result.checksum
+    ? result.checksum
+    : input.checksumAcknowledgement === "legacy-null" && result.checksum === null
+    ? published.checksum
+    : undefined;
   if (
     result.file_id !== published.file_id || result.version_id !== published.version_id ||
-    result.path !== published.path || typeof result.checksum !== "string" || !result.checksum ||
-    (published.checksum !== undefined && result.checksum !== published.checksum) ||
+    result.path !== published.path || typeof acknowledgedChecksum !== "string" ||
+    !acknowledgedChecksum ||
+    (published.checksum !== undefined && acknowledgedChecksum !== published.checksum) ||
     result.indexed_chunk_count !== texts.length ||
     result.model?.name !== model.name || result.model?.provider !== model.provider ||
     result.model?.dimension !== dimension
@@ -134,5 +151,5 @@ export async function indexKnowledgeDocument(
       "Canonical index acknowledgement does not match the published document version and model.",
     );
   }
-  return result;
+  return { ...result, checksum: acknowledgedChecksum };
 }

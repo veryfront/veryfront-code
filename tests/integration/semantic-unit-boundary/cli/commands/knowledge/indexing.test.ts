@@ -1,3 +1,4 @@
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -388,6 +389,59 @@ it("indexes accepted uppercase Markdown without changing its authored path", asy
     );
     assertEquals(receipt.path, uppercasePublished.path);
     assertEquals(await Deno.readTextFile(localPath), source);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("legacy null index acknowledgements require verified existing-version eligibility", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/topic.md`;
+    const source = "\uFEFF---\r\ntype: Topic\r\nunknown: false\r\n---\r\nFull canonical body 🌱";
+    await Deno.writeTextFile(localPath, source);
+    const checksum = await computeHash(source);
+    let replyChecksum: string | null = null;
+    let providerCalls = 0;
+    const client = createMockClient({
+      post: async () => ({
+        ...published,
+        checksum: replyChecksum,
+        indexed_chunk_count: 1,
+        model: { name: "text-embedding-3-small", provider: "openai", dimension: 1536 },
+      }),
+    });
+    const input = {
+      client,
+      projectSlug: "project",
+      branch: "preview",
+      localPath,
+      published: { ...published, checksum },
+      embedder: embedder(() => {
+        providerCalls++;
+      }),
+    };
+    await assertRejects(() => indexKnowledgeDocument(input), Error, "acknowledgement");
+    const receipt = await indexKnowledgeDocument({
+      ...input,
+      checksumAcknowledgement: "legacy-null",
+    });
+    assertEquals(receipt.checksum, checksum);
+    assertEquals(receipt.version_id, versionId);
+    replyChecksum = "f".repeat(64);
+    await assertRejects(
+      () => indexKnowledgeDocument({ ...input, checksumAcknowledgement: "legacy-null" }),
+      Error,
+      "acknowledgement",
+    );
+    const before = providerCalls;
+    await Deno.writeTextFile(localPath, source + " changed");
+    await assertRejects(
+      () => indexKnowledgeDocument({ ...input, checksumAcknowledgement: "legacy-null" }),
+      Error,
+      "verified complete source checksum",
+    );
+    assertEquals(providerCalls, before);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
