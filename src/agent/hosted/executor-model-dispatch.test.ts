@@ -138,6 +138,31 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("records each dispatched prompt in the host skill observation", async () => {
+    const observed: unknown[] = [];
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => model(() => {}),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillIds: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      assertEquals(observed, [prompt]);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("dispatches project calls against the current cursor-only API before capture activation", async () => {
     let dispatches = 0;
     let appends = 0;

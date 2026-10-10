@@ -10,6 +10,7 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { setProviderObservedSkillBodies } from "#veryfront/agent/runtime/provider-observed-skill-bodies.ts";
+import type { ExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
 import {
   type AdmitExecutorToolCall,
   runWithToolCallAdmissionReceipt,
@@ -78,8 +79,11 @@ export function createExecutorToolBroker(options: {
   limits?: Partial<ExecutorToolLimits>;
   /** Trusted private writer hook; absent preserves the released tool path. */
   admitToolCall?: AdmitExecutorToolCall;
+  /** Host-owned record of skill bodies the brokered model requests delivered. */
+  skillObservation?: ExecutorSkillObservation;
 }): ReadonlyMap<string, ExecutorOperation> {
   const limits = executorToolLimits(options.limits);
+  const skillObservation = options.skillObservation;
   const admitToolCall = options.admitToolCall;
   if (admitToolCall !== undefined && typeof admitToolCall !== "function") {
     throw new TypeError("Invalid tool-call admission hook");
@@ -247,6 +251,7 @@ export function createExecutorToolBroker(options: {
                 : execute(),
             );
             remoteRetirement = undefined;
+            if (call) skillObservation?.recordToolResult(call.toolName, call.toolCallId, result);
             return result;
           } catch (error) {
             // A live caller signal says nothing about remote work after a
@@ -264,6 +269,7 @@ export function createExecutorToolBroker(options: {
             ...call?.projectContext,
           }
           : capability.context,
+        observedSkillIds: skillObservation?.observedSkillIds() ?? [],
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
         correlation: request,
@@ -348,6 +354,7 @@ export function createExecutorToolBroker(options: {
 async function* callWithProgress(options: {
   invoke(context: ToolExecutionContext): Promise<unknown>;
   context: ToolExecutionContext;
+  observedSkillIds: readonly string[];
   publisher: ToolExecutionContext["publishDataEvent"];
   publisherReceiver: ToolExecutionContext;
   correlation: Pick<ExecutorToolCall, "toolCallId" | "progressToken">;
@@ -467,9 +474,8 @@ async function* callWithProgress(options: {
       }
     },
   };
-  // The host never sees the remote runtime's provider history, so it attaches an
-  // empty snapshot: reference reads fail closed instead of skipping the check.
-  setProviderObservedSkillBodies(context, []);
+  // Only host-verified observations count; executor-side state never crosses the channel.
+  setProviderObservedSkillBodies(context, options.observedSkillIds);
   const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
