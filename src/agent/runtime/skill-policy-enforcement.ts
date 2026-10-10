@@ -352,6 +352,40 @@ export type ActiveSkillState = {
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
 
+function forEachTrustedSkillLoadResult(
+  messages: readonly Message[],
+  visit: (result: unknown) => void,
+): void {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
+      if (
+        !isToolResultPart(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName)
+      ) continue;
+      visit(part.result);
+    }
+  }
+}
+
+/** Snapshot successful skill bodies from trusted results already in provider history. */
+export function getProviderObservedSkillBodyIds(messages: readonly Message[]): readonly string[] {
+  const skillIds: string[] = [];
+  const seen = createPrivateSet<string>();
+  forEachTrustedSkillLoadResult(messages, (result) => {
+    const skillId = extractSkillId(result);
+    if (skillId !== undefined && !seen.has(skillId)) {
+      seen.add(skillId);
+      skillIds.push(skillId);
+    }
+  });
+  return skillIds;
+}
+
 /**
  * Rebuild the active skill from replayed load_skill results.
  *
@@ -371,20 +405,9 @@ export function hydrateActiveSkillStateFromMessages(
     activeSkillDelegationOverrides: undefined,
   };
 
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    if (!objectHasOwn(messages, messageIndex)) continue;
-    const message = messages[messageIndex]!;
-    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-      if (!objectHasOwn(message.parts, partIndex)) continue;
-      const part = message.parts[partIndex]!;
-      if (
-        !isToolResultPart(part) ||
-        !hasTrustedPlatformPolicyToolResultPart(part) ||
-        !isLoadSkillToolName(part.toolName)
-      ) continue;
-      state = applySkillActivationResult(state, part.result);
-    }
-  }
+  forEachTrustedSkillLoadResult(messages, (result) => {
+    state = applySkillActivationResult(state, result);
+  });
 
   return state;
 }

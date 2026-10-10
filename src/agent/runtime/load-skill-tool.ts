@@ -45,6 +45,7 @@ import {
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { hasProviderObservedSkillBody } from "./provider-observed-skill-bodies.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectDefineProperty = Object.defineProperty;
@@ -1556,6 +1557,12 @@ async function loadRuntimeSkillReferenceFile(
   const normalizedFile = normalizeStrictRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
+  }
+  if (hasProviderObservedSkillBody(executionContext, skillId) === false) {
+    return {
+      error:
+        `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,
+    };
   }
 
   authorityAttempts:

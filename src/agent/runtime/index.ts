@@ -31,6 +31,7 @@ import {
   forEachPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
+  slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
@@ -181,6 +182,7 @@ import {
 
 import {
   enforceSkillPolicy,
+  getProviderObservedSkillBodyIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
@@ -191,6 +193,7 @@ import {
   restoreTrustedPlatformPolicyResultsFromPersistedHistory,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { setProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
 import {
   isRuntimeGeneratedUserMessage,
@@ -1950,8 +1953,12 @@ const readContextProperty = Reflect.get;
 
 function applicationExecutionContext(
   context: ToolExecutionContext | undefined,
+  providerObservedSkillBodyIds?: readonly string[],
 ): ToolExecutionContext {
   const projected: ToolExecutionContext = {};
+  if (providerObservedSkillBodyIds !== undefined) {
+    setProviderObservedSkillBodies(projected, providerObservedSkillBodyIds);
+  }
   if (!context) return projected;
   forEachPrivateArray(ownContextKeys(context), (key) => {
     if (key === "toolCallId" || key === "agentId") return;
@@ -3572,6 +3579,8 @@ export class AgentRuntime {
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
+        // Keep this snapshot fixed while calls from the same provider response execute.
+        const providerObservedSkillBodyIds = getProviderObservedSkillBodyIds(currentMessages);
         const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
           ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan, {
             reloadable: runtimeStepToolLoading.mode === "deferred",
@@ -4133,7 +4142,10 @@ export class AgentRuntime {
                   : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
                     undefined,
               );
-              const executionContext = applicationExecutionContext(toolContext);
+              const executionContext = applicationExecutionContext(
+                toolContext,
+                providerObservedSkillBodyIds,
+              );
               executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
               throwIfAborted(abortSignal);
               const result = await traceConfiguredToolExecution({
@@ -4612,7 +4624,13 @@ export class AgentRuntime {
           args: resumeToolCall.input,
           status: "executing",
         };
-        const executionContext = applicationExecutionContext(toolContext);
+        const executionContext = applicationExecutionContext(
+          toolContext,
+          // Partial results from the parked assistant turn were not yet provider-observed.
+          getProviderObservedSkillBodyIds(
+            slicePrivateArray(currentMessages, 0, admittedTurn.start),
+          ),
+        );
         try {
           // The trusted parked call was already exposed in the prior segment.
           // Recheck current authorization without requiring its lost step visibility.
@@ -4726,6 +4744,8 @@ export class AgentRuntime {
         }
       }
 
+      // Include the parked result delivered to this request, but exclude new same-step results.
+      const providerObservedSkillBodyIds = getProviderObservedSkillBodyIds(currentMessages);
       const modelMessages = toolResultContext
         ? createModelToolResultContextMessages(currentMessages, toolResultContext)
         : currentMessages;
@@ -5747,7 +5767,10 @@ export class AgentRuntime {
 
           callbacks?.onToolCall?.(toolCall);
 
-          const executionContext = applicationExecutionContext(toolContext);
+          const executionContext = applicationExecutionContext(
+            toolContext,
+            providerObservedSkillBodyIds,
+          );
           const result = await runWithToolCallOccurrenceDispatch(
             tc,
             () =>

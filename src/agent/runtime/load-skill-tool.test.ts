@@ -41,6 +41,7 @@ import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { setProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
@@ -2552,6 +2553,48 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files 
     file: "references/empty.md",
     content: "",
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool waits until provider observes body before reference reads", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+      ]),
+      references: new Map([["plan/references/project.md", "project reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ skillId: "plan" });
+
+  const sameProviderStepContext = {};
+  setProviderObservedSkillBodies(sameProviderStepContext, []);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      sameProviderStepContext,
+    ),
+    {
+      error:
+        'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+    },
+  );
+
+  const nextProviderStepContext = {};
+  setProviderObservedSkillBodies(nextProviderStepContext, ["plan"]);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      nextProviderStepContext,
+    ),
+    {
+      skillId: "plan",
+      file: "references/project.md",
+      content: "project reference",
+    },
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool rejects unadvertised references after body load", async () => {
