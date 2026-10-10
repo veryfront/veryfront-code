@@ -11846,11 +11846,23 @@ describe("project run inference credential header", () => {
         .join(""),
       "Partial output.",
     );
+    const wireError = delivered.split("\n\n").map((frame) => {
+      const data = frame.startsWith("data: ") ? frame.slice(6) : "null";
+      try {
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }).find((event) => event?.type === "error");
+    assertExists(wireError);
+    assertEquals(wireError.error, "Provider stream failed");
     const failures = appended.filter((event) =>
       event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
     );
     assertEquals(failures.length, 1);
     assertEquals(failures[0]?.runtime, "veryfront");
+    assertEquals(typeof failures[0]?.elapsedMs, "number");
+    assertEquals(typeof failures[0]?.emittedAt, "number");
     const failure = failures[0]?.value;
     assert(typeof failure === "object" && failure !== null && "message" in failure);
     assertEquals(failure.message, "Provider stream failed");

@@ -2928,14 +2928,18 @@ async function withProjectRunRuntimeObservations<T>(
           // The enclosing Task/Workflow owns terminal lifecycle. Retain a nested
           // agent's streamed failure as a native, nonterminal runtime observation.
           const candidate = type === "RunError"
-            ? buildRuntimeEventRecordedEvent({
-              runtime: "veryfront",
-              kind: "agent_error",
-              value: {
-                ...resolveProjectRunObservationError(payload),
-                ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
-              },
-            }).durable
+            ? {
+              ...buildRuntimeEventRecordedEvent({
+                runtime: "veryfront",
+                kind: "agent_error",
+                value: {
+                  ...resolveProjectRunObservationError(payload),
+                  ...(encoder.messageId ? { messageId: encoder.messageId } : {}),
+                },
+              }).durable,
+              ...(ObjectHasOwn(payload, "elapsedMs") ? { elapsedMs: payload.elapsedMs } : {}),
+              ...(ObjectHasOwn(payload, "emittedAt") ? { emittedAt: payload.emittedAt } : {}),
+            }
             : type === "ToolCallResult"
             ? { type: "TOOL_CALL_RESULT", ...payload }
             : coerceWireEvent(type, payload);
