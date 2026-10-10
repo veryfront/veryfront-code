@@ -1647,6 +1647,45 @@ describe("model call request projection", () => {
     }
   });
 
+  it("captures the closed neutral JSON schema the Anthropic builder dispatches", () => {
+    for (const provider of ["anthropic", "veryfront-cloud"]) {
+      const schema = {
+        type: "object",
+        properties: {
+          city: { type: "string" },
+          location: {
+            type: "object",
+            properties: { lat: { type: "number" } },
+            required: ["lat"],
+          },
+        },
+        required: ["city", "location"],
+      };
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json_schema", name: "weather", schema },
+      };
+      const projected = buildModelCallContextRequest({
+        provider,
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, options);
+      const body = buildAnthropicMessagesRequest(
+        "claude-haiku-4-5",
+        provider,
+        options,
+        false,
+        createWarningCollector(),
+      );
+      const dispatched = (body.output_config as { format: { schema: unknown } }).format.schema;
+
+      assertEquals((dispatched as { additionalProperties?: unknown }).additionalProperties, false);
+      assert(projected?.responseFormat?.type === "json_schema");
+      assertEquals(projected.responseFormat.schema, dispatched);
+      assertEquals("additionalProperties" in schema, false);
+    }
+  });
+
   it("matches Anthropic undefined native max_tokens suppression", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,

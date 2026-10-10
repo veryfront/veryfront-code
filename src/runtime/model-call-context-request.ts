@@ -3,7 +3,10 @@ import type {
   RuntimeMetadata,
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
-import { unwrapToolInputSchema } from "#veryfront/provider/shared/index.ts";
+import {
+  closeSchemaForOutputConfig,
+  unwrapToolInputSchema,
+} from "#veryfront/provider/shared/index.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import {
   isOpenAIReasoningModel,
@@ -1506,7 +1509,22 @@ function resolveAnthropicResponseFormat(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource["responseFormat"] | undefined {
-  if (options.responseFormat?.type === "json_schema") return options.responseFormat;
+  if (options.responseFormat?.type === "json_schema") {
+    // The Messages builder closes every object schema before dispatch, so the
+    // durable capture records that closed schema rather than the caller's.
+    const schema = options.responseFormat.schema;
+    return {
+      ...options.responseFormat,
+      schema: markPreservedResponseFormatSchema(closeSchemaForOutputConfig(
+        snapshotProviderOptionValue(
+          "responseFormat",
+          shouldUnwrapResponseFormatSchema(schema) ? unwrapToolInputSchema(schema) : schema,
+          { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+          0,
+        ),
+      )),
+    };
+  }
   return readNativeAnthropicResponseFormat(model, options) ??
     (options.responseFormat?.type === "json" ? undefined : options.responseFormat);
 }
