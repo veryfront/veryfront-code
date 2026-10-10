@@ -78,6 +78,9 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 
+const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
+
 /** Host-owned opt-in for new provider replay checkpoint emission. */
 export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV =
   "VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION";
@@ -541,7 +544,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
-  const promptSkills = initialModelVisibleToolNames.some(isLoadSkillToolName) ? selectedSkills : [];
+  const promptSkills = apply(arraySome, initialModelVisibleToolNames, [isLoadSkillToolName])
+    ? selectedSkills
+    : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
