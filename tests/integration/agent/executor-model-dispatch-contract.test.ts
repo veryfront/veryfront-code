@@ -25,8 +25,13 @@ const options: ModelRuntimeCallOptions = {
 
 type Builder = (options: ModelRuntimeCallOptions, stream?: boolean) => Record<string, unknown>;
 
-async function connected(provider: string, build: Builder, maxOutputTokens = 4096) {
-  const modelId = `veryfront-cloud/${provider}/synthetic`;
+async function connected(
+  provider: string,
+  build: Builder,
+  maxOutputTokens = 4096,
+  nativeModelId = "synthetic",
+) {
+  const modelId = `veryfront-cloud/${provider}/${nativeModelId}`;
   const allowedModelIds = new Set([modelId]);
   const binding = {
     allocationId: "allocation-test",
@@ -51,7 +56,7 @@ async function connected(provider: string, build: Builder, maxOutputTokens = 409
     resolveModelRuntime: () => ({
       provider: "veryfront-cloud",
       modelProvider: provider,
-      modelId: "synthetic",
+      modelId: nativeModelId,
       doGenerate(call: ModelRuntimeCallOptions) {
         calls.push(call);
         bodies.push(build(call, false));
@@ -313,7 +318,7 @@ describe("hosted executor model request contracts", () => {
     ];
     for (const testCase of cases) {
       const cap = testCase.cap ?? 4096;
-      const channels = await connected("anthropic", build, cap);
+      const channels = await connected("anthropic", build, cap, "claude-haiku-4-5");
       try {
         for (const mode of ["generate", "stream"] as const) {
           const invoke = async (input: ModelRuntimeCallOptions) => {
@@ -328,7 +333,10 @@ describe("hosted executor model request contracts", () => {
           const call = { prompt: options.prompt, ...testCase.controls };
           await invoke(call);
           assertEquals(channels.calls.at(-1)?.maxOutputTokens, cap - testCase.budget);
-          assertEquals(channels.events.at(-1)?.request?.maxOutputTokens, cap - testCase.budget);
+          assertEquals(
+            channels.events.at(-1)?.request?.maxOutputTokens,
+            channels.bodies.at(-1)?.max_tokens,
+          );
           assertEquals(channels.bodies.at(-1)?.max_tokens, cap);
           if (testCase.budget) {
             assertEquals(channels.events.at(-1)?.request?.reasoning?.budgetTokens, testCase.budget);

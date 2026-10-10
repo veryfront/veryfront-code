@@ -476,6 +476,7 @@ describe("model call request projection intrinsic boundaries", () => {
         });
 
         assertEquals(projected, {
+          maxOutputTokens: 4096,
           reasoning: { enabled: true, budgetTokens: 2048 },
         });
       }
