@@ -31,6 +31,8 @@ const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
+/** Bound on one broker token read, below the allocator client's 5 s request deadline. */
+const TOKEN_READ_TIMEOUT_MS = 2_000;
 /** Bound on one read of the source records file, below the resolver's 10 s deadline. */
 const SOURCE_RECORDS_READ_TIMEOUT_MS = 5_000;
 /** Broker shutdown and per-session cleanup bounds, inside the default 4 s process cleanup budget. */
@@ -171,6 +173,33 @@ export function readHostedHttpCompositionConfig(
     apiBaseUrl,
     maxActive,
   });
+}
+
+/**
+ * Settle with `work`, or reject when `signal` aborts or `timeoutMs` passes. On rejection
+ * `work` is detached, so a read that never settles cannot hold its caller.
+ * @internal
+ */
+export async function settleWithin<T>(
+  work: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  work.catch(() => {});
+  signal.throwIfAborted();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("Host file read timed out")), timeoutMs);
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, stopped]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort!);
+  }
 }
 
 /**
@@ -344,12 +373,18 @@ export async function createHostedHttpComposition(
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
-      const token = (await readBoundedText(
-        read,
-        "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
-        tokenFile,
-        MAX_TOKEN_BYTES,
+      // A file read cannot be interrupted once in flight, so race it against the
+      // allocator's signal and a fixed bound and detach it if either wins.
+      const token = (await settleWithin(
+        readBoundedText(
+          read,
+          "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
+          tokenFile,
+          MAX_TOKEN_BYTES,
+          signal,
+        ),
         signal,
+        TOKEN_READ_TIMEOUT_MS,
       )).trim();
       if (!token) throw new Error("Executor broker token is unavailable");
       return token;

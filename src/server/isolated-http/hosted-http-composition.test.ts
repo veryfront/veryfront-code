@@ -8,6 +8,7 @@ import {
   createRefreshingSourceRecordLookup,
   isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
+  settleWithin,
 } from "./hosted-http-composition.ts";
 
 const hostEnv: Record<string, string | undefined> = {
@@ -392,5 +393,32 @@ describe("hosted HTTP host composition", () => {
     );
     assertEquals(error.message.includes("/host/"), false);
     assertEquals(String((error as { cause?: unknown }).cause ?? "").includes("/host/"), false);
+  });
+
+  it("detaches a broker token read that never settles", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let stall = false;
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      readFile: (path) =>
+        stall && path === "/host/token" ? new Promise(() => {}) : host.readFile(path),
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    stall = true;
+    const controller = new AbortController();
+    const pending = allocatorOptions!.readBrokerToken(controller.signal);
+    controller.abort(new Error("allocator deadline"));
+    await assertRejects(() => pending, Error, "allocator deadline");
+    await assertRejects(
+      () => settleWithin(new Promise(() => {}), new AbortController().signal, 10),
+      Error,
+      "timed out",
+    );
   });
 });
