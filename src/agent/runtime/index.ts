@@ -3677,7 +3677,6 @@ export class AgentRuntime {
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
         pushPrivateArray(currentMessages, assistantMessage);
         await persistMessage(assistantMessage);
-        await observeGeneratedAgentTurn(assistantMessage.id, response);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -3764,9 +3763,16 @@ export class AgentRuntime {
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
+          const parsedObject = outputSchema
+            ? await outputSchema.parseOutput(response.text)
+            : undefined;
+          await observeGeneratedAgentTurn(assistantMessage.id, {
+            ...response,
+            ...(outputSchema ? { object: parsedObject } : {}),
+          });
           return attachOutputSchemaParser({
             text: response.text,
-            ...(outputSchema ? { object: await outputSchema.parseOutput(response.text) } : {}),
+            ...(outputSchema ? { object: parsedObject } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
@@ -3778,6 +3784,7 @@ export class AgentRuntime {
           }, outputSchema);
         }
 
+        await observeGeneratedAgentTurn(assistantMessage.id, response);
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 

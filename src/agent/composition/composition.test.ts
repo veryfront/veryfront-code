@@ -30,6 +30,7 @@ import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -536,6 +537,43 @@ describe("agentAsTool", () => {
       reasoningTokens: 1,
       usageCaptureStatus: "complete",
     });
+  });
+
+  it("observes parsed outputSchema objects in generated-turn finish metadata", async () => {
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const model = scriptedModel([{ text: '{"title":"Done","count":2}', finishReason: "stop" }], {
+      only: "generate",
+      provider: "custom",
+      modelId: "custom/generated-turn-observer-structured",
+    });
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const runtime = new AgentRuntime("generated-turn-observer-structured", {
+      model: "custom/generated-turn-observer-structured",
+      system: "Synthetic instructions",
+      maxSteps: 1,
+      outputSchema,
+      resolveModelTransport: () => ({ model }),
+    });
+    const observed: unknown[] = [];
+
+    const response = await withLocalChildExecution(
+      () => Promise.reject(new Error("local child dispatch should not run")),
+      () => runtime.generate("Synthetic input"),
+      (event) => {
+        observed.push(event);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, { title: "Done", count: 2 });
+    const finish = observed.at(-1) as Record<string, unknown>;
+    assertEquals(finish.type, "message-finish");
+    assertEquals(finish.object, { title: "Done", count: 2 });
   });
 
   it("routes the real generic delegation through its request-scoped owner exactly once", async () => {

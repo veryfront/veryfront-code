@@ -173,7 +173,7 @@ export function observeRuntimeStream(
 /** Observe accepted nonstreaming provider turns through the same private host mirror. */
 export async function observeGeneratedAgentTurn(
   messageId: string,
-  turn: RuntimeGenerateTextResult,
+  turn: RuntimeGenerateTextResult & { object?: unknown },
 ): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe) return;
@@ -205,11 +205,12 @@ export async function observeGeneratedAgentTurn(
       input: call.input,
     });
   }
-  if (turn.finishReason !== undefined || turn.usage !== undefined) {
+  if (turn.finishReason !== undefined || turn.usage !== undefined || turn.object !== undefined) {
     await observe({
       type: "message-finish",
       ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
       ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
+      ...(turn.object !== undefined ? { object: turn.object } : {}),
     });
   }
 }
