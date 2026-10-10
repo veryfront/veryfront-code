@@ -204,7 +204,9 @@ function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
 }
 
 function compareToolSearchMatches(left: ToolSearchMatch, right: ToolSearchMatch): number {
-  return (left.status === right.status ? 0 : left.status === "available" ? -1 : 1) ||
+  // Equally relevant visible tools must not hide deferred capabilities. Stronger
+  // matches still win before this tie-break, including an exact visible name.
+  return (left.status === right.status ? 0 : left.status === "loaded" ? -1 : 1) ||
     compareAscii(left.name, right.name);
 }
 
