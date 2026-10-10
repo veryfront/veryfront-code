@@ -264,6 +264,8 @@ type BodyMutation = {
   readonly rejects: "always" | "node" | "never";
   /** Body whitespace that fills at least one complete body block. */
   readonly padding?: number;
+  /** Builds the request when the body must arrive as streamed chunks. */
+  readonly request?: (canary: string) => Request;
   install(observe: (value: unknown) => void, pending: Promise<unknown>[]): () => void;
 };
 
@@ -419,7 +421,7 @@ const bodyMutations: readonly BodyMutation[] = [
     name: "typed array byteLength getter during the body read",
     nodeOnly: false,
     phase: "authentication",
-    rejects: "node",
+    rejects: "always",
     install: (observe) => {
       const prototype = Object.getPrototypeOf(Uint8Array.prototype);
       const descriptor = Object.getOwnPropertyDescriptor(prototype, "byteLength")!;
@@ -478,7 +480,7 @@ const bodyMutations: readonly BodyMutation[] = [
     name: "typed array constructor during the body read",
     nodeOnly: false,
     phase: "authentication",
-    rejects: "node",
+    rejects: "always",
     install: (observe) => {
       const descriptor = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "constructor")!;
       Object.defineProperty(Uint8Array.prototype, "constructor", {
@@ -592,6 +594,102 @@ const bodyMutations: readonly BodyMutation[] = [
     },
   },
   {
+    name: "typed array buffer getter during the body read",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "always",
+    install: (observe) => {
+      const prototype = Object.getPrototypeOf(Uint8Array.prototype);
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, "buffer")!;
+      Object.defineProperty(prototype, "buffer", {
+        ...descriptor,
+        get(this: Uint8Array) {
+          observe(this);
+          return BodyApply(descriptor.get!, this, []);
+        },
+      });
+      return () => Object.defineProperty(prototype, "buffer", descriptor);
+    },
+  },
+  {
+    name: "ArrayBuffer.prototype constructor getter during the body read",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "always",
+    install: (observe) => {
+      const descriptor = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "constructor")!;
+      Object.defineProperty(ArrayBuffer.prototype, "constructor", {
+        configurable: true,
+        get(this: ArrayBuffer) {
+          observe(this);
+          return descriptor.value;
+        },
+      });
+      return () => Object.defineProperty(ArrayBuffer.prototype, "constructor", descriptor);
+    },
+  },
+  {
+    name: "Buffer.prototype binding during a streamed body read",
+    nodeOnly: true,
+    phase: "authentication",
+    rejects: "always",
+    request: (canary) => {
+      const NodeBuffer = Reflect.get(globalThis, "Buffer") as {
+        allocUnsafeSlow(size: number): Uint8Array;
+      };
+      let sent = false;
+      return new Request(
+        "https://agent.example.test/api/control-plane/runs/run-1/stream",
+        {
+          method: "POST",
+          headers: {
+            authorization: "Bearer authenticated-user-token",
+            "content-type": "application/json",
+            "X-Veryfront-Run-Event-Token": "verified-event-token",
+          },
+          body: new ReadableStream({
+            type: "bytes",
+            pull(controller) {
+              if (sent) {
+                controller.close();
+                return;
+              }
+              sent = true;
+              // An unpooled Buffer: enqueue transfers the chunk's whole ArrayBuffer.
+              const bytes = new TextEncoder().encode(createRuntimeInvocationBody(canary));
+              const chunk = NodeBuffer.allocUnsafeSlow(bytes.byteLength);
+              chunk.set(bytes);
+              controller.enqueue(chunk);
+            },
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+    },
+    install: (observe) => {
+      const NodeBuffer = Reflect.get(globalThis, "Buffer") as { prototype: Uint8Array };
+      const original = NodeBuffer.prototype;
+      const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+      const replacement = Object.create(original, {
+        buffer: {
+          configurable: true,
+          get(this: Uint8Array) {
+            observe(this);
+            return BodyApply(
+              Object.getOwnPropertyDescriptor(typedArrayPrototype, "buffer")!.get!,
+              this,
+              [],
+            );
+          },
+        },
+      });
+      NodeBuffer.prototype = replacement;
+      return () => {
+        NodeBuffer.prototype = original;
+      };
+    },
+  },
+  {
     name: "Buffer concat after verification",
     nodeOnly: true,
     phase: "verification",
@@ -683,7 +781,8 @@ for (const mutation of bodyMutations) {
       },
     });
 
-    const request = createRuntimeInvocationRequest(canary, mutation.padding);
+    const request = mutation.request?.(canary) ??
+      createRuntimeInvocationRequest(canary, mutation.padding);
     if (mutation.phase === "before") installOnce();
     try {
       response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({

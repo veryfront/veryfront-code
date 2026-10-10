@@ -7,6 +7,13 @@ const ObjectPrototype = Object.prototype;
 const GetOwnPropertyNames = Object.getOwnPropertyNames;
 const GetPrototypeOf = Object.getPrototypeOf;
 
+/** The Node `Buffer` function, read through its `prototype` binding. */
+interface NodeBufferBinding {
+  prototype: Uint8Array;
+}
+
+const NodeBuffer = isNode ? Reflect.get(globalThis, "Buffer") as NodeBufferBinding : undefined;
+
 /** Intrinsic prototypes that body values and native body steps inherit from. */
 type BodyPrototype =
   | typeof ObjectPrototype
@@ -41,9 +48,7 @@ const BodyPrototypeLinks: readonly BodyPrototypeLink[] = [
   ...(typeof globalThis.ReadableByteStreamController === "function"
     ? [linkOf(ReadableByteStreamController.prototype)]
     : []),
-  ...(isNode
-    ? [linkOf((Reflect.get(globalThis, "Buffer") as { prototype: Uint8Array }).prototype)]
-    : []),
+  ...(NodeBuffer ? [linkOf(NodeBuffer.prototype)] : []),
 ];
 
 /** True when `owner` has an own property whose name is made only of decimal digits. */
@@ -71,27 +76,67 @@ type BodyDependencyOwner =
   | TextDecoder
   | TextEncoder
   | JSON
-  | Uint8Array;
+  | Uint8Array
+  | ArrayBuffer
+  | ArrayBufferConstructor
+  | Uint8ArrayConstructor
+  | NodeBufferBinding;
+
+/** `absent` members must stay undefined; the others must keep the captured value or getter. */
+type BodyDependencyKind = "value" | "get" | "absent";
 
 type BodyDependency = readonly [
   target: BodyDependencyOwner,
   key: PropertyKey,
-  kind: "value" | "get",
+  kind: BodyDependencyKind,
   captured: unknown,
 ];
 
 function captureMembers(
   target: BodyDependencyOwner,
   keys: readonly PropertyKey[],
-  kind: "value" | "get" = "value",
+  kind: BodyDependencyKind = "value",
 ): BodyDependency[] {
   const captured: BodyDependency[] = [];
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
-    captured[index] = [target, key, kind, GetOwnPropertyDescriptor(target, key)?.[kind]];
+    const descriptor = GetOwnPropertyDescriptor(target, key);
+    captured[index] = [target, key, kind, kind === "absent" ? undefined : descriptor?.[kind]];
   }
   return captured;
 }
+
+function dependencyHolds(dependency: BodyDependency): boolean {
+  const descriptor = GetOwnPropertyDescriptor(dependency[0], dependency[1]);
+  if (dependency[2] === "absent") return descriptor === undefined;
+  return !!descriptor && HasOwn(descriptor, dependency[2]) &&
+    descriptor[dependency[2]] === dependency[3];
+}
+
+const TypedArrayPrototype = GetPrototypeOf(Uint8Array.prototype) as Uint8Array;
+const TypedArrayConstructor = GetPrototypeOf(Uint8Array) as Uint8ArrayConstructor;
+const ViewAccessors = ["buffer", "byteOffset", "byteLength", "length"] as const;
+
+/**
+ * Members that typed array views and array buffers resolve while body bytes are
+ * cloned, copied or wrapped, on every runtime.
+ */
+const BodyDependencies: readonly BodyDependency[] = [
+  ...captureMembers(ArrayBuffer.prototype, ["constructor", "slice"]),
+  ...captureMembers(ArrayBuffer, [Symbol.species], "get"),
+  ...captureMembers(TypedArrayConstructor, [Symbol.species], "get"),
+  ...captureMembers(TypedArrayPrototype, ["constructor"]),
+  ...captureMembers(TypedArrayPrototype, ViewAccessors, "get"),
+  ...captureMembers(Uint8Array.prototype, ["constructor"]),
+  ...captureMembers(Uint8Array.prototype, ViewAccessors, "absent"),
+  ...(NodeBuffer
+    ? [
+      ...captureMembers(NodeBuffer, ["prototype"]),
+      ...captureMembers(NodeBuffer.prototype, ["constructor"]),
+      ...captureMembers(NodeBuffer.prototype, ViewAccessors, "absent"),
+    ]
+    : []),
+];
 
 /**
  * Members used by Node's native Request body clone, read and construction steps.
@@ -115,15 +160,6 @@ const NodeBodyDependencies: readonly BodyDependency[] = isNode
     ...captureMembers(TextDecoder.prototype, ["decode"]),
     ...captureMembers(TextEncoder.prototype, ["encode"]),
     ...captureMembers(JSON, ["parse"]),
-    ...captureMembers(Uint8Array.prototype, ["constructor"]),
-    ...captureMembers(
-      (Reflect.get(globalThis, "Buffer") as { prototype: Uint8Array }).prototype,
-      ["constructor"],
-    ),
-    ...captureMembers(Object.getPrototypeOf(Uint8Array.prototype) as Uint8Array, [
-      "byteLength",
-      "length",
-    ], "get"),
   ]
   : [];
 
@@ -151,13 +187,13 @@ export function assertNativeBodyProcessing(): void {
   if (GetOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {
     throw new NativeTypeError("Cannot process a request body with an inherited then");
   }
+  for (let index = 0; index < BodyDependencies.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
+    if (!dependencyHolds(BodyDependencies[index]!)) {
+      throw new NativeTypeError("Cannot process a request body with modified typed arrays");
+    }
+  }
   for (let index = 0; index < NodeBodyDependencies.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
-    const dependency = NodeBodyDependencies[index]!;
-    const descriptor = GetOwnPropertyDescriptor(dependency[0], dependency[1]);
-    if (
-      !descriptor || !HasOwn(descriptor, dependency[2]) ||
-      descriptor[dependency[2]] !== dependency[3]
-    ) {
+    if (!dependencyHolds(NodeBodyDependencies[index]!)) {
       throw new NativeTypeError("Cannot process a request body with modified native streams");
     }
   }
