@@ -91,13 +91,15 @@ describe("cold preview source recovery over HTTP", () => {
         return originalHandle.call(renderer, request, ctx);
       };
       let server: Deno.HttpServer<Deno.NetAddr> | undefined;
+      let projectDir: string | undefined;
       try {
+        projectDir = await Deno.makeTempDir({ prefix: "cold-preview-source-recovery-" });
         const middleware: MiddlewareFunction = async (_context, next) => {
           middlewareCalls++;
           return await next();
         };
-        const handler = createVeryfrontHandler("/tmp/post-render-replay", adapter, {
-          projectDir: "/tmp/post-render-replay",
+        const handler = createVeryfrontHandler(projectDir, adapter, {
+          projectDir,
           defaultProjectSlug: "post-render-replay",
           config: { ...(scenario.middleware ? { middleware: { custom: [middleware] } } : {}) },
           allowHostProjectCodeExecution: true,
@@ -117,6 +119,7 @@ describe("cold preview source recovery over HTTP", () => {
         if (server) await server.shutdown();
         SSRHandler.prototype.handle = originalHandle;
         sourceAdapter.dispose();
+        if (projectDir) await Deno.remove(projectDir, { recursive: true });
       }
     });
   }
