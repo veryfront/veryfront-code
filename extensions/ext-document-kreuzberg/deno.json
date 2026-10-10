@@ -9,7 +9,7 @@
     },
     "capabilities": [
       { "type": "fs:read" },
-      { "type": "process:spawn", "commands": ["deno"] },
+      { "type": "process:spawn", "commands": ["deno", "node", "bun", "taskkill"] },
       { "type": "env:read" },
       { "type": "native:ffi" }
     ]

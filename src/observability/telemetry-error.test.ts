@@ -957,6 +957,98 @@ describe("observability/telemetry-error", () => {
       ]);
     });
 
+    it("records a fixed successful-stream parser issue without exposing provider text", () => {
+      const failure = new ProviderRequestError({
+        provider: "openai",
+        status: 200,
+        retryable: false,
+        message: "OpenAI request failed: invalid successful stream (tool call was incomplete)",
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 200,
+        retryable: false,
+        streamIssue: "tool call was incomplete",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("records fixed Responses argument and terminal validation issues while retaining redaction", () => {
+      for (
+        const issue of [
+          "function call arguments were not valid JSON object text",
+          "completed function-call arguments name changed",
+          "terminal response status did not match its event type",
+        ]
+      ) {
+        const failure = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message: `openai request failed: invalid successful stream (${issue})`,
+        });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          streamIssue: issue,
+          messageRedacted: true,
+        }]);
+      }
+    });
+
+    it("retains exact compile-time parser limits but rejects altered values", () => {
+      const issues = [
+        "choice delta content exceeded 4096 parts",
+        "stream exceeded 1024 tool calls",
+        "tool call arguments exceeded 1048576 UTF-8 bytes",
+        "tool call arguments exceeded 4096 fragments",
+        "function call arguments exceeded 1048576 UTF-8 bytes",
+        "function call arguments exceeded 4096 fragments",
+        "message snapshot exceeded 8388608 UTF-8 bytes",
+        "raw response metadata exceeded 8388608 UTF-8 bytes",
+        "stream exceeded 4096 content parts",
+        "stream exceeded 4096 output items",
+      ];
+      for (const issue of [...issues, "stream exceeded 4097 output items"]) {
+        const error = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message: `openai request failed: invalid successful stream (${issue})`,
+        });
+        const cause = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error))?.[0];
+        assertEquals(cause?.streamIssue, issues.includes(issue) ? issue : undefined);
+        assertEquals(cause?.messageRedacted, true);
+      }
+    });
+
+    it("withholds unknown, altered and credential-bearing stream issue text", () => {
+      for (
+        const message of [
+          "OpenAI request failed: invalid successful stream (synthetic-secret)",
+          "OpenAI request failed: invalid successful stream (tool call was incomplete synthetic-secret)",
+          "synthetic-secret request failed: invalid successful stream (tool call was incomplete)",
+        ]
+      ) {
+        const failure = new ProviderRequestError({
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          message,
+        });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 200,
+          retryable: false,
+          messageRedacted: true,
+        }]);
+      }
+    });
+
     it("logs only allowlisted error names and transient codes", () => {
       const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
       const customCode = Object.assign(new Error("x"), { code: "account-123456" });

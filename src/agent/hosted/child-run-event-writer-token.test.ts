@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -234,6 +234,7 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
   const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
     [];
   const trustedFetch: typeof fetch = (input, init) => {
+    assert(init && "headers" in init, "fetch must receive request options");
     const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
     trusted.push({
       url: String(input),
@@ -648,39 +649,37 @@ Deno.test("mintChildRunEventWriterCapability applies a bounded timeout", async (
 
 Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classification", async () => {
   const controller = new AbortController();
-  const callerAbort = setTimeout(
-    () => controller.abort("parent-writer-token-must-not-leak"),
-    20,
+  const error = await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "11111111-1111-4111-8111-111111111111",
+        runEventAppendToken: "parent-writer-token",
+        timeoutMs: 1,
+        fetch: (input, init) => {
+          const signal = new Request(input, init).signal;
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              // Observe the exchange timeout before triggering caller cancellation.
+              // Both cancellations occur before the transport rejects.
+              controller.abort("parent-writer-token-must-not-leak");
+              reject(signal.reason);
+            }, { once: true });
+          });
+        },
+      }).mintChildRunEventWriterCapability(
+        "22222222-2222-4222-8222-222222222222",
+        controller.signal,
+      ),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
   );
-  try {
-    const error = await assertRejects(
-      () =>
-        createHostedRunEventWriterCapability({
-          apiUrl: "https://api.example.com",
-          runId: "11111111-1111-4111-8111-111111111111",
-          runEventAppendToken: "parent-writer-token",
-          timeoutMs: 1,
-          fetch: (input, init) => {
-            const signal = new Request(input, init).signal;
-            return new Promise<Response>((_resolve, reject) => {
-              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-            });
-          },
-        }).mintChildRunEventWriterCapability(
-          "22222222-2222-4222-8222-222222222222",
-          controller.signal,
-        ),
-      HostedChildRunEventWriterTokenExchangeError,
-      "Unable to initialize durable child event persistence",
-    );
 
-    assertEquals(
-      error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
-      "timeout",
-    );
-  } finally {
-    clearTimeout(callerAbort);
-  }
+  assertEquals(controller.signal.aborted, true);
+  assertEquals(
+    error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
+    "timeout",
+  );
 });
 
 Deno.test("writer capabilities keep credentials private after shared-realm poisoning", async () => {
@@ -1027,6 +1026,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       return {} as never;
     },
     fetch: (async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       await acknowledgement;
       if (timeoutOnce && attempts++ === 0) {
         throw TIMEOUT_ERROR.create({ detail: "Synthetic retryable append timeout" });

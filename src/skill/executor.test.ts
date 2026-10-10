@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -5,11 +6,11 @@ import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
+  commandResponse,
   type FetchCall,
   installMockFetch as createSandboxFetchMock,
   jsonResponse,
   type MockResponseEntry,
-  ndjsonResponse,
   textResponse,
 } from "../sandbox/sandbox.test-helpers.ts";
 import {
@@ -43,7 +44,31 @@ function mockFetch(responses: MockResponseEntry[]): void {
   installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
-function pendingErrorNdjsonResponse(error: Error): {
+function backgroundCommandResponse(
+  status = "completed",
+  stdout = "cloud-snapshot\n",
+  exitCode: number | null = 0,
+): Response {
+  return jsonResponse({
+    command_id: "script-command",
+    command: "script",
+    status,
+    exit_code: exitCode,
+    signal: null,
+    started_at: null,
+    finished_at: null,
+    heartbeat_status: "disabled",
+    last_heartbeat_at: null,
+    last_heartbeat_error: null,
+    heartbeat_failure_count: 0,
+    stdout,
+    stderr: "",
+    stdout_truncated: false,
+    stderr_truncated: false,
+  });
+}
+
+function pendingErrorCommandResponse(error: Error): {
   response: Response;
   reject: () => void;
 } {
@@ -57,7 +82,7 @@ function pendingErrorNdjsonResponse(error: Error): {
   return {
     response: new Response(body, {
       status: 200,
-      headers: { "Content-Type": "application/x-ndjson" },
+      headers: { "Content-Type": "application/json" },
     }),
     reject: () => rejectBody(error),
   };
@@ -367,60 +392,476 @@ describe("src/skill/executor", () => {
       }
     });
 
-    it("uploads a bounded script tree and executes from its private root", async () => {
+    for (const storage of ["ephemeral", "persistent"] as const) {
+      it(`uploads and deletes its disposable ${storage} script workspace`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          jsonResponse({
+            id: "session-snapshot",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: storage,
+          }),
+          (_input, init) => {
+            const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+            return jsonResponse({
+              results: body.files.map((file) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            });
+          },
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          backgroundCommandResponse(),
+          textResponse(""),
+        ]);
+
+        const result = await getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.ts",
+          scriptContent: 'import "./helper.ts";',
+          scriptSnapshot: {
+            entryPath: "scripts/jobs/run.ts",
+            files: [
+              { path: "scripts/jobs/helper.ts", content: "export {};" },
+              { path: "scripts/jobs/run.ts", content: 'import "./helper.ts";' },
+            ],
+          },
+        });
+
+        assertEquals(fetchCalls.filter((call) => call.init?.method === "DELETE").length, 1);
+        assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
+        assertEquals(fetchCalls[3]!.url.endsWith("/commands"), true);
+        assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 60);
+        const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
+          files: Array<{ path: string; content: string }>;
+        };
+        assertEquals(body.files.length, 2);
+        assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
+        assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
+        assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+      });
+    }
+
+    it("deletes its disposable persistent workspace after script upload fails", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       mockFetch([
         jsonResponse({
-          id: "session-snapshot",
+          id: "failed-upload",
           endpoint: "https://sandbox.example.com",
           status: "running",
+          workspace_storage: "persistent",
         }),
-        textResponse(""),
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
-        ndjsonResponse([
-          { type: "stdout", data: "cloud-snapshot\n" },
-          { type: "exit", exitCode: 0 },
-        ]),
+        textResponse("upload failed", 503),
         textResponse(""),
       ]);
-
-      const result = await getSkillScriptExecutor().execute({
-        scriptPath: "scripts/run.ts",
-        scriptContent: 'import "./helper.ts";',
-        scriptSnapshot: {
-          entryPath: "scripts/jobs/run.ts",
-          files: [
-            { path: "scripts/jobs/helper.ts", content: "export {};" },
-            { path: "scripts/jobs/run.ts", content: 'import "./helper.ts";' },
-          ],
-        },
-      });
-
-      assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
-      const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
-        files: Array<{ path: string; content: string }>;
-      };
-      assertEquals(body.files.length, 2);
-      assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
-      assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
-      assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
+      await assertRejects(
+        () =>
+          getSkillScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo disposable",
+          }),
+        Error,
+        "Write files failed: 503",
+      );
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "DELETE").map((call) =>
+          new URL(call.url).pathname
+        ),
+        [
+          "/sandboxes/failed-upload",
+        ],
+      );
     });
+
+    for (const timeoutSeconds of [50, 60, 300]) {
+      it(`preserves the cloud script timeout of ${timeoutSeconds} seconds`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        mockFetch([
+          jsonResponse({
+            id: "timeout-parity",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map(
+                (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
+              ),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          ...(timeoutSeconds <= 55
+            ? [commandResponse([{ type: "stdout", data: "done" }, { type: "exit", exitCode: 0 }])]
+            : [
+              backgroundCommandResponse("running", "", null),
+              ...(timeoutSeconds === 300
+                ? [backgroundCommandResponse("running", "partial", null)]
+                : []),
+              backgroundCommandResponse("completed", "done"),
+            ]),
+          textResponse(""),
+        ]);
+        const result = await getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "echo done",
+          timeoutMs: timeoutSeconds * 1000,
+        });
+        assertEquals(result, { stdout: "done", stderr: "", exitCode: 0 });
+        assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, timeoutSeconds);
+        assertEquals(
+          fetchCalls[3]!.url.endsWith(timeoutSeconds <= 55 ? "/commands/run" : "/commands"),
+          true,
+        );
+      });
+    }
+
+    for (const flag of ["stdout_truncated", "stderr_truncated"]) {
+      for (const status of ["completed", "pending", "running"]) {
+        for (const cancellationFails of status === "completed" ? [false] : [false, true]) {
+          it(`reports ${status} background ${flag} as an output-limit failure, cancellationFails=${cancellationFails}`, async () => {
+            setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+            setEnv("VERYFRONT_API_URL", "https://api.test.com");
+            const truncated = await backgroundCommandResponse(
+              status,
+              "partial",
+              status === "completed" ? 0 : null,
+            ).json();
+            truncated[flag] = true;
+            truncated.stderr = "partial error";
+            mockFetch([
+              jsonResponse({
+                id: "truncated-script",
+                endpoint: "https://sb.test",
+                status: "running",
+                workspace_storage: "ephemeral",
+              }),
+              (_input, init) =>
+                jsonResponse({
+                  results: JSON.parse(String(init?.body)).files.map(
+                    (file: { path: string }) => ({
+                      path: file.path,
+                      status: "written",
+                      error: null,
+                    }),
+                  ),
+                }),
+              commandResponse([{ type: "exit", exitCode: 0 }]),
+              backgroundCommandResponse("running", "", null),
+              jsonResponse(truncated),
+              ...(status !== "completed"
+                ? [
+                  cancellationFails
+                    ? textResponse("cancel failed", 503)
+                    : backgroundCommandResponse("canceled", "", null),
+                ]
+                : []),
+              textResponse(""),
+            ]);
+            const result = await getSkillScriptExecutor().execute({
+              scriptPath: "run.sh",
+              scriptContent: "echo partial",
+              timeoutMs: 60_000,
+            });
+            assertEquals(result.stdout, "partial");
+            assertEquals(result.exitCode, 125);
+            assertStringIncludes(result.stderr, "truncated");
+            assertStringIncludes(result.stderr, "partial error");
+            if (status !== "completed") {
+              assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+            }
+            assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
+          });
+        }
+      }
+    }
+
+    it("preserves output-limit classification while cancellation stalls past the script deadline", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      using time = new FakeTime();
+      const output = await backgroundCommandResponse("running", "partial", null).json();
+      output.stdout_truncated = true;
+      let reportCleanup!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => reportCleanup = resolve);
+      let cancellationSignal: AbortSignal | null | undefined;
+      mockFetch([
+        jsonResponse({
+          id: "truncation-deadline",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        (_input, init) =>
+          jsonResponse({
+            results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          }),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
+        backgroundCommandResponse("running", "", null),
+        jsonResponse(output),
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            cancellationSignal = init?.signal;
+            cancellationSignal?.addEventListener("abort", () =>
+              reject(new Error("cancellation aborted")), { once: true });
+            reportCleanup();
+          }),
+        textResponse(""),
+      ]);
+      const execution = getSkillScriptExecutor().execute({
+        scriptPath: "run.sh",
+        scriptContent: "echo partial",
+        timeoutMs: 60_000,
+      });
+      await cleanupStarted;
+      time.tick(60_000);
+      const result = await execution;
+      assertEquals(result.exitCode, 125);
+      assertEquals(result.stdout, "partial");
+      assertEquals(cancellationSignal?.aborted, true);
+      assertEquals(fetchCalls.at(-1)?.init?.method, "DELETE");
+    });
+
+    for (
+      const [status, elapsedMs, timedOut] of [
+        ["canceled", 60_000, true],
+        ["canceled", 1_000, false],
+        ["completed", 60_000, false],
+        ["failed", 60_000, false],
+      ] as const
+    ) {
+      it(`classifies ${status} without an exit code at ${elapsedMs}ms`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        let elapsed = 0;
+        const originalClock = Object.getOwnPropertyDescriptor(Performance.prototype, "now");
+        Object.defineProperty(Performance.prototype, "now", {
+          configurable: true,
+          value: () => elapsed,
+        });
+        try {
+          mockFetch([
+            jsonResponse({
+              id: "deadline-race",
+              endpoint: "https://sandbox.example.com",
+              status: "running",
+              workspace_storage: "ephemeral",
+            }),
+            (_input, init) =>
+              jsonResponse({
+                results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+                  path: file.path,
+                  status: "written",
+                  error: null,
+                })),
+              }),
+            commandResponse([{ type: "exit", exitCode: 0 }]),
+            backgroundCommandResponse("running", "", null),
+            () => {
+              // The response arrives at the deadline before the timer callback runs.
+              elapsed = elapsedMs;
+              return backgroundCommandResponse(status, "partial", null);
+            },
+            textResponse(""),
+          ]);
+          const execute = () =>
+            getSkillScriptExecutor().execute({
+              scriptPath: "scripts/run.sh",
+              scriptContent: "sleep 60",
+              timeoutMs: 60_000,
+            });
+          if (timedOut) {
+            const result = await execute();
+            assertEquals(result.exitCode, 124);
+            assertStringIncludes(result.stderr, "60000ms");
+          } else {
+            await assertRejects(execute, Error, "did not report an exit code");
+          }
+          assertEquals(fetchCalls.at(-1)!.init?.method, "DELETE");
+        } finally {
+          if (originalClock) Object.defineProperty(Performance.prototype, "now", originalClock);
+          else Reflect.deleteProperty(Performance.prototype, "now");
+        }
+      });
+    }
+
+    for (const timeoutSeconds of [60, 300]) {
+      it(`waits for the configured ${timeoutSeconds}-second background deadline and cancels`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        using time = new FakeTime();
+        let reportOutputRead!: () => void;
+        const outputRead = new Promise<void>((resolve) => reportOutputRead = resolve);
+        const pending = pendingErrorCommandResponse(new Error("background command canceled"));
+        mockFetch([
+          jsonResponse({
+            id: "background-timeout",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map(
+                (file: { path: string }) => ({ path: file.path, status: "written", error: null }),
+              ),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          () => {
+            reportOutputRead();
+            return pending.response;
+          },
+          backgroundCommandResponse("canceled", "", null),
+          textResponse(""),
+        ]);
+        let settled = false;
+        const execution = getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "sleep 300",
+          timeoutMs: timeoutSeconds * 1000,
+        }).then((result) => {
+          settled = true;
+          return result;
+        });
+        await outputRead;
+        time.tick(55_000);
+        await Promise.resolve();
+        assertEquals(
+          settled,
+          false,
+          "the synchronous command limit must not end background execution",
+        );
+        time.tick(timeoutSeconds * 1000 - 55_000);
+        const result = await execution;
+        assertEquals(result.exitCode, 124);
+        assertStringIncludes(result.stderr, `${timeoutSeconds * 1000}ms`);
+        assertEquals(fetchCalls[5]!.url.endsWith("/commands/script-command/cancel"), true);
+        assertEquals(fetchCalls[6]!.init?.method, "DELETE");
+        pending.reject();
+        await Promise.resolve();
+      });
+    }
+
+    for (const stalled of ["cancel", "delete"] as const) {
+      it(`bounds stalled ${stalled} cleanup after the background script deadline`, async () => {
+        setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+        setEnv("VERYFRONT_API_URL", "https://api.test.com");
+        const nativeSetTimeout = globalThis.setTimeout;
+        const nativeClearTimeout = globalThis.clearTimeout;
+        let guardTimer: ReturnType<typeof setTimeout> | undefined;
+        using time = new FakeTime();
+        const pending = pendingErrorCommandResponse(new Error("output request canceled"));
+        let reportRead!: () => void;
+        const read = new Promise<void>((resolve) => reportRead = resolve);
+        let reportCleanup!: () => void;
+        const cleanupStarted = new Promise<void>((resolve) => reportCleanup = resolve);
+        let release!: (response: Response) => void;
+        const delayed = new Promise<Response>((resolve) => release = resolve);
+        let cleanupSignal: AbortSignal | null | undefined;
+        mockFetch([
+          jsonResponse({
+            id: "bounded-cleanup",
+            endpoint: "https://sandbox.example.com",
+            status: "running",
+            workspace_storage: "ephemeral",
+          }),
+          (_input, init) =>
+            jsonResponse({
+              results: JSON.parse(String(init?.body)).files.map((file: { path: string }) => ({
+                path: file.path,
+                status: "written",
+                error: null,
+              })),
+            }),
+          commandResponse([{ type: "exit", exitCode: 0 }]),
+          backgroundCommandResponse("running", "", null),
+          () => {
+            reportRead();
+            return pending.response;
+          },
+          (_input, init) => {
+            if (stalled !== "cancel") return backgroundCommandResponse("canceled", "", null);
+            cleanupSignal = init?.signal;
+            reportCleanup();
+            return delayed;
+          },
+          (_input, init) => {
+            if (stalled !== "delete") return textResponse("");
+            cleanupSignal = init?.signal;
+            reportCleanup();
+            return delayed;
+          },
+        ]);
+        let settled = false;
+        const execution = getSkillScriptExecutor().execute({
+          scriptPath: "scripts/run.sh",
+          scriptContent: "sleep 60",
+          timeoutMs: 60_000,
+        }).then((result) => {
+          settled = true;
+          return result;
+        });
+        try {
+          await read;
+          time.tick(60_000);
+          await cleanupStarted;
+          await time.tickAsync(2_000);
+          const result = await Promise.race([
+            execution,
+            new Promise<null>((resolve) => {
+              guardTimer = nativeSetTimeout(() => resolve(null), 1000);
+            }),
+          ]);
+          assertEquals(settled, true, "cleanup must not extend the timeout indefinitely");
+          assertEquals(result?.exitCode, 124);
+          assertEquals(cleanupSignal?.aborted, true);
+        } finally {
+          if (guardTimer !== undefined) nativeClearTimeout(guardTimer);
+          release(
+            stalled === "cancel"
+              ? backgroundCommandResponse("canceled", "", null)
+              : textResponse(""),
+          );
+          pending.reject();
+          await execution;
+        }
+      });
+    }
 
     it("handles a late sandbox command rejection after timeout", async () => {
       setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
-      const pendingCommand = pendingErrorNdjsonResponse(new Error("sandbox process killed"));
+      const pendingCommand = pendingErrorCommandResponse(new Error("sandbox process killed"));
       mockFetch([
         jsonResponse({
           id: "session-timeout",
           endpoint: "https://sandbox.example.com",
           status: "running",
+          workspace_storage: "ephemeral",
         }),
-        textResponse(""),
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as { files: Array<{ path: string }> };
+          return jsonResponse({
+            results: body.files.map((file) => ({
+              path: file.path,
+              status: "written",
+              error: null,
+            })),
+          });
+        },
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         pendingCommand.response,
-        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        commandResponse([{ type: "exit", exitCode: 0 }]),
         textResponse(""),
       ]);
 
@@ -438,6 +879,7 @@ describe("src/skill/executor", () => {
       assertStringIncludes(result.stderr, "timed out");
       assertEquals(fetchCalls.length, 6);
       assertStringIncludes(fetchCalls[4]!.init?.body?.toString() ?? "", "kill -9 -1");
+      assertEquals(JSON.parse(String(fetchCalls[3]!.init?.body)).timeout_seconds, 1);
     });
 
     it("falls back to local execution without cloud credentials", () => {

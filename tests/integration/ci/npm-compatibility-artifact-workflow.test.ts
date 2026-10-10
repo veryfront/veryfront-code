@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -34,7 +35,7 @@ async function readJobs(): Promise<YamlRecord> {
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "CI workflow",
   );
-  return asRecord(workflow.jobs, "CI workflow jobs");
+  return await inlinePublicPoolJobs(workflow);
 }
 
 function namedStep(job: YamlRecord, name: string): YamlRecord {
@@ -213,9 +214,14 @@ describe("canonical npm artifact workflow", () => {
       namedStep(smoke, "Check published package types").run,
       "deno task typecheck:consumer --skip-build",
     );
+    const runtimeFlow = namedStep(runtime, "Run runtime critical flow");
+    assertEquals(
+      asRecord(runtimeFlow.env, "runtime flow environment").RUNTIME,
+      "${{ matrix.runtime }}",
+    );
     assertStringIncludes(
-      String(namedStep(runtime, "Run runtime critical flow").run),
-      "scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility",
+      String(runtimeFlow.run),
+      'scripts/test/runtime-inference-critical-flow.ts --runtime="${RUNTIME}" --packed-dir=dist/npm-compatibility',
     );
     for (
       const [job, label] of [
@@ -312,7 +318,7 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
-  it("runs two required Node shards without duplicating test files", async () => {
+  it("runs four required Node shards without duplicating test files", async () => {
     const jobs = await readJobs();
     const node = asRecord(jobs["tests-node"], "Node sharding job");
     const strategy = asRecord(node.strategy, "Node sharding strategy");
@@ -321,9 +327,9 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(jobs["tests-node-sharded-shadow"], undefined);
     assertEquals(node["continue-on-error"], undefined);
     assertEquals(node.needs, ["npm-compatibility-artifact"]);
-    assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/2)");
+    assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/4)");
     assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
-    assertEquals(matrix.shard, [1, 2]);
+    assertEquals(matrix.shard, [1, 2, 3, 4]);
     assert(
       jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),
       "Node shards must restore the runtime workspace via the shared action",
@@ -331,7 +337,7 @@ describe("canonical npm artifact workflow", () => {
     const run = namedStep(node, "Run Node runtime shard");
     assertEquals(
       asRecord(run.env, "Node sharding environment").VF_TEST_SHARD,
-      "${{ matrix.shard }}/2",
+      "${{ matrix.shard }}/4",
     );
     assertEquals(
       run.run,

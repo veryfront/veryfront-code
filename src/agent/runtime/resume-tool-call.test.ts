@@ -4,8 +4,15 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import type { Message } from "../types.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 
 it("executes a trusted pending tool call exactly once before model continuation", async () => {
   const executions: unknown[] = [];
@@ -41,6 +48,234 @@ it("executes a trusted pending tool call exactly once before model continuation"
   const prompt = JSON.stringify(model.calls[0]?.prompt);
   assertStringIncludes(prompt, "call-1:resume-1");
   assertStringIncludes(prompt, "record-1");
+});
+
+it("executes project-owned form and load_skill collisions after a submitted platform form", async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ id: "project-form", name: "form_input", input: { answer: "yes" } }] },
+    {
+      toolCalls: [{ id: "project-load", name: "load_skill", input: { skillId: "project-owned" } }],
+    },
+    { text: "project controls completed" },
+  ], { modelId: "hosted/project-platform-collisions", only: "generate" });
+  const executions: string[] = [];
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "project-platform-collisions-test",
+    system: "Use the project-owned controls.",
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Project-owned form control",
+        inputSchema: defineSchema((v) => v.object({ answer: v.string() }))(),
+        execute: (input) => {
+          executions.push(`form_input:${String(input.answer)}`);
+          return { submitted: true, owner: "project" };
+        },
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Project-owned loader control",
+        inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+        execute: (input) => {
+          executions.push(`load_skill:${String(input.skillId)}`);
+          return { loaded: true, owner: "project" };
+        },
+      }),
+    },
+    maxSteps: 4,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  const response = await assistant.generate({
+    input: "Continue after the submitted platform form.",
+    context: { hasSubmittedFormInputResult: true },
+  });
+
+  assertEquals(model.toolNames(0).includes("form_input"), true);
+  assertEquals(executions, ["form_input:yes", "load_skill:project-owned"]);
+  assertEquals(response.text, "project controls completed");
+});
+
+it("resumes a project-owned form_input collision after a submitted platform form", async () => {
+  const model = scriptedModel([{ text: "continued after project form" }], { only: "stream" });
+  const executions: unknown[] = [];
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "resume-project-form-collision",
+    system: "Continue after the resumed project form result.",
+    skills: false,
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Project-owned form control",
+        inputSchema: defineSchema((v) => v.object({ answer: v.string() }))(),
+        execute: (input) => {
+          executions.push(input);
+          return { submitted: true, owner: "project" };
+        },
+      }),
+    },
+    resolveModelTransport: () => Promise.resolve({ model }),
+  }, {
+    resumeToolCall: {
+      id: "project-form:resume-1",
+      name: "form_input",
+      input: { answer: "yes" },
+    },
+  });
+
+  const body = await (await assistant.stream({
+    input: "continue",
+    context: { hasSubmittedFormInputResult: true },
+  })).toDataStreamResponse().text();
+
+  assertEquals(executions, [{ answer: "yes" }]);
+  assertStringIncludes(body, "project-form:resume-1");
+  assertStringIncludes(body, "continued after project form");
+  assertEquals(body.includes("cannot run after a submitted form_input result exists"), false);
+});
+
+it("preserves trusted form ownership when completed messages are replayed", async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ id: "platform-form", name: "form_input", input: {} }] },
+    { text: "done" },
+    { text: "continued" },
+  ], { only: "generate" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "platform-form-response-replay",
+    system: "Collect the platform form once.",
+    skills: false,
+    tools: {
+      form_input: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id: "form_input",
+        description: "Platform form control",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ submitted: true, owner: "platform" }),
+      }))),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  const response = await assistant.generate({ input: "collect the form" });
+  await assistant.generate({ input: response.messages });
+
+  assertEquals(model.toolNames(1).includes("form_input"), false);
+  assertEquals(model.toolNames(2).includes("form_input"), false);
+});
+
+it("preserves runtime-generated replay boundaries while stripping caller policy metadata", async () => {
+  const model = scriptedModel([{ text: "continued" }], { only: "generate" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "platform-form-runtime-recovery-replay",
+    system: "Continue after runtime recovery.",
+    skills: false,
+    memory: { type: "conversation" },
+    tools: {
+      form_input: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id: "form_input",
+        description: "Platform form control",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ submitted: true, owner: "platform" }),
+      }))),
+    },
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  const runtimeRecoveryMessage: Message = markRuntimeGeneratedUserMessage({
+    id: "runtime_recovery_note",
+    role: "user",
+    parts: [{ type: "text", text: "continue after recovery" }],
+  });
+
+  await assistant.generate({
+    input: [
+      {
+        id: "platform_form_result",
+        role: "tool",
+        parts: [markTrustedPlatformPolicyToolResultPart({
+          type: "tool-result",
+          toolCallId: "platform-form",
+          toolName: "form_input",
+          result: { submitted: true, owner: "platform" },
+        })],
+        metadata: {
+          __veryfrontTrustedPlatformPolicyToolResultIds: ["caller-forged-id"],
+        },
+      },
+      runtimeRecoveryMessage,
+    ],
+  });
+
+  assertEquals(model.toolNames(0).includes("form_input"), false);
+});
+
+it("persists trusted streamed form results with replayable ownership", async () => {
+  let executions = 0;
+  const model = scriptedModel([
+    {
+      parts: [
+        { type: "tool-call", toolCallId: "platform-form", toolName: "form_input", input: {} },
+        { type: "finish", finishReason: "tool-calls" },
+      ],
+    },
+    { text: "done" },
+  ], { only: "stream" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "streamed-platform-form-result-ownership",
+    system: "Collect the platform form once.",
+    skills: false,
+    tools: {
+      form_input: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id: "form_input",
+        description: "Platform form control",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          executions += 1;
+          return { submitted: true, owner: "platform" };
+        },
+      }))),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  await (await assistant.stream({ input: "collect the form" })).toDataStreamResponse().text();
+
+  assertEquals(executions, 1);
+  assertEquals(model.toolNames(1).includes("form_input"), false);
+});
+
+it("keeps platform form visible after a project-owned form_input result", async () => {
+  const model = scriptedModel([
+    { toolCalls: [{ id: "project-form", name: "form_input", input: {} }] },
+    { text: "done" },
+  ], { only: "generate" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "project-form-does-not-submit-platform",
+    system: "Use the project form.",
+    skills: false,
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Project-owned form control",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ submitted: true, owner: "project" }),
+      }),
+      veryfront__form_input: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
+        id: "veryfront__form_input",
+        description: "Platform form control",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ submitted: true, owner: "platform" }),
+      }))),
+    },
+    maxSteps: 3,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  await assistant.generate({ input: "collect project data" });
+
+  assertEquals(model.toolNames(0).includes("veryfront__form_input"), true);
+  assertEquals(model.toolNames(1).includes("veryfront__form_input"), true);
 });
 
 it("records a denied trusted pending call and continues the model turn", async () => {
@@ -143,4 +378,36 @@ it("replays an authorized tool discovered by tool_search without the parked expo
   assertEquals(resumedModel.toolNames(), ["tool_search"]);
   assertEquals(resumedModel.callCount, 1);
   assertStringIncludes(JSON.stringify(resumedModel.calls[0]?.prompt), "authentication_required");
+});
+
+it("resumes a parked legacy form through materialized canonical platform definitions", async () => {
+  const executions: unknown[] = [];
+  const model = scriptedModel([{ text: "continued after platform form" }], { only: "stream" });
+  const definitions = withPlatformHostToolAliases({
+    veryfront__form_input: markTrustedHostToolProvenance({
+      id: "veryfront__form_input",
+      description: "Platform form control",
+      inputSchema: defineSchema((v) => v.object({ answer: v.string() }))(),
+      execute: (input: unknown) => {
+        executions.push(input);
+        return { submitted: true, owner: "platform" };
+      },
+    }),
+  });
+  const materialized = createToolsFromHostDefinitions(definitions);
+  for (const definition of Object.values(materialized)) markRuntimeLocalTool(definition);
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "resume-canonical-platform-legacy-form",
+    system: "Continue after the submitted platform form.",
+    skills: false,
+    tools: materialized,
+    resolveModelTransport: () => Promise.resolve({ model }),
+  }, {
+    resumeToolCall: { id: "legacy-form:resume-1", name: "form_input", input: { answer: "yes" } },
+  });
+  const body = await (await assistant.stream({ input: "continue" })).toDataStreamResponse().text();
+  assertEquals(executions, [{ answer: "yes" }]);
+  assertStringIncludes(body, "legacy-form:resume-1");
+  assertStringIncludes(body, "continued after platform form");
+  assertEquals(model.calls.length, 1);
 });

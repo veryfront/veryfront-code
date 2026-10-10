@@ -1,6 +1,10 @@
 import {
   mergeUsage,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
@@ -101,9 +105,9 @@ const MAX_OPENAI_STREAM_MESSAGE_DELTA_BATCH_FRAGMENTS = 256;
 function invalidOpenAIResponsesStream(
   context: OpenAIResponsesStreamContext,
   issue: string,
-): ProviderRequestError {
+): ProviderStreamProtocolError {
   const providerKind = context.providerKind ?? "openai";
-  return new ProviderRequestError({
+  return new ProviderStreamProtocolError({
     provider: providerKind,
     status: 200,
     message: `${
@@ -773,7 +777,32 @@ export async function* streamOpenAIResponsesParts(
     }
 
     if (type === "error") {
-      throw invalidOpenAIResponsesStream(context, "provider emitted an error event");
+      // The service also emits a nested error object after accepting HTTP 200.
+      // An explicitly malformed nested envelope must not fall back to flat fields.
+      const error = Object.hasOwn(record, "error") ? readRecord(record.error) : record;
+      if (
+        !error ||
+        (error.code !== null && typeof error.code !== "string") ||
+        typeof error.message !== "string"
+      ) {
+        throw invalidOpenAIResponsesStream(context, "provider error event was malformed");
+      }
+      const options = {
+        provider: context.providerKind ?? "openai",
+        // The stream was accepted with HTTP 200; the event does not supply a
+        // replacement HTTP status. Only known error codes grant retryability.
+        status: 200,
+        message: "Provider declared a response stream failure",
+        retryable: false,
+      };
+      if (error.code === "server_error") {
+        throw new ProviderOverloadedError({ ...options, retryable: true });
+      }
+      if (error.code === "rate_limit_exceeded") {
+        throw new ProviderRateLimitError({ ...options, retryable: true });
+      }
+      if (error.code === "insufficient_quota") throw new ProviderQuotaError(options);
+      throw new ProviderRequestError(options);
     }
 
     if (type === "response.output_item.added") {

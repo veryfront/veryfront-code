@@ -43,6 +43,8 @@ const readRepoFile = (path: string): Promise<string> =>
   readTextFile(fromFileUrl(new URL(path, repoRoot)));
 
 const readWorkflow = () => readRepoFile(".github/workflows/cicd.yml");
+// Coverage shards run through the main-pinned runner pool workflow.
+const readPoolWorkflow = () => readRepoFile(".github/workflows/ci-public-pool.yml");
 
 /**
  * Asserts the task exists rather than casting the lookup. A renamed or deleted
@@ -109,25 +111,31 @@ const assertSetupDenoStepTimeout = (workflow: string, jobId: string): void => {
 describe("cicd coverage workflow", () => {
   it("shards unit coverage as portable lcov artifacts", async () => {
     const workflow = await readWorkflow();
+    const pool = await readPoolWorkflow();
 
     assertStringIncludes(workflow, "coverage-shards:");
-    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/8");
+    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/16");
+    const caller = jobBlock(workflow, "coverage-shards");
+    assertStringIncludes(caller, "      job: coverage-shards\n      shard: ${{ matrix.shard }}\n");
     assertEquals(
-      jobTimeoutMinutes(workflow, "coverage-shards"),
+      jobTimeoutMinutes(pool, "coverage-shards"),
       20,
       "coverage shard job-level timeout must stay at 20 minutes",
     );
-    assertSetupDenoStepTimeout(workflow, "coverage-shards");
-    assertStringIncludes(workflow, "shard: [1, 2, 3, 4, 5, 6, 7, 8]");
+    assertSetupDenoStepTimeout(pool, "coverage-shards");
     assertStringIncludes(
       workflow,
-      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]",
     );
-    assertStringIncludes(workflow, "actions/upload-artifact");
-    assertStringIncludes(workflow, "name: coverage-shard-${{ matrix.shard }}");
     assertStringIncludes(
-      workflow,
-      "path: coverage-shard-${{ matrix.shard }}/**/lcov.info",
+      pool,
+      "deno task coverage:ci:shard -- --shard=${{ inputs.shard }}/16 --coverage-dir=coverage-shard-${{ inputs.shard }}",
+    );
+    assertStringIncludes(pool, "actions/upload-artifact");
+    assertStringIncludes(pool, "name: coverage-shard-${{ inputs.shard }}");
+    assertStringIncludes(
+      pool,
+      "path: coverage-shard-${{ inputs.shard }}/**/lcov.info",
     );
   });
 

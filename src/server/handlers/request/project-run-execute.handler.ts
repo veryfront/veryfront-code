@@ -1,3 +1,4 @@
+import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
@@ -208,6 +209,9 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
@@ -2263,6 +2267,7 @@ async function destroyWorkflowClient(
 }
 
 interface RuntimeApiClient {
+  getStream(path: string, options?: { signal?: AbortSignal }): Promise<ReadableStream<Uint8Array>>;
   get<T>(
     path: string,
     params?: Record<string, string>,
@@ -2944,6 +2949,7 @@ function createRuntimeApiClient(
   }
   // Not the global fetch, which project code loaded for the run can replace.
   const send = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  const download = createVeryfrontApiDownloadOutboundFetch(apiUrl);
 
   async function requestJson<T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
@@ -2983,6 +2989,37 @@ function createRuntimeApiClient(
   }
 
   return {
+    async getStream(
+      path: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<ReadableStream<Uint8Array>> {
+      const response = await download(
+        `${apiUrl}${path}`,
+        createNativeRequestInit(undefined, {
+          method: "GET",
+          redirect: "error",
+          signal: options?.signal ?? defaultSignal,
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/octet-stream" },
+        }),
+      );
+      const contentType = response.headers.get("content-type");
+      let mimeType: string | undefined;
+      if (contentType !== null) {
+        const separator = ReflectApply(StringPrototypeIndexOf, contentType, [";"]) as number;
+        const bareType = separator < 0
+          ? contentType
+          : ReflectApply(StringPrototypeSlice, contentType, [0, separator]) as string;
+        const trimmedType = ReflectApply(StringPrototypeTrim, bareType, []) as string;
+        mimeType = ReflectApply(StringPrototypeToLowerCase, trimmedType, []) as string;
+      }
+      if (!response.ok || !response.body || mimeType !== "application/octet-stream") {
+        await response.body?.cancel();
+        throw API_CLIENT_ERROR.create({
+          detail: `Veryfront API upload download failed: ${response.status}`,
+        });
+      }
+      return response.body;
+    },
     get<T>(
       path: string,
       params?: Record<string, string>,
@@ -3139,6 +3176,25 @@ export function createKnowledgeEventLogger(
   return logger;
 }
 
+function resolveKnowledgeOutputDestination(
+  request: ProjectRunExecuteRequest,
+): { branchId: string } | undefined {
+  if (request.runtimeTargetKind === "preview_branch") {
+    if (!request.runtimeTargetBranchId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Knowledge ingest preview targets require runtimeTargetBranchId",
+      });
+    }
+    return { branchId: request.runtimeTargetBranchId };
+  }
+  if (request.runtimeTargetKind === undefined || request.runtimeTargetKind === "main_branch") {
+    return undefined;
+  }
+  throw INVALID_ARGUMENT.create({
+    detail: "Knowledge ingest requires an explicit writable main_branch or preview_branch target",
+  });
+}
+
 async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
@@ -3183,6 +3239,9 @@ async function executeKnowledgeIngestRun(input: {
       "knowledge";
     const description = getStringConfig(config, ["description"]);
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
+    const okfBundle = getOwnDataProperty(config, "okf_bundle") === true ||
+      getOwnDataProperty(config, "okfBundle") === true;
+    const outputDestination = resolveKnowledgeOutputDestination(input.request);
 
     if (uploadPaths.length > 0 && pathPrefix) {
       throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
@@ -3201,6 +3260,7 @@ async function executeKnowledgeIngestRun(input: {
       slug: getStringConfig(config, ["slug"]),
       json: true,
       quiet: true,
+      okfBundle,
     };
     const downloadOutputDir = resolveKnowledgeDownloadOutputDir(outputDir);
     const sourceMode = pathPrefix ? "path_prefix" : "explicit_sources";
@@ -3247,6 +3307,7 @@ async function executeKnowledgeIngestRun(input: {
           remotePath,
           localPath,
           input.signal,
+          outputDestination,
         ),
       signal: input.signal,
     });
@@ -3258,6 +3319,7 @@ async function executeKnowledgeIngestRun(input: {
       ingested: results.ingested,
       skipped: collection.skipped,
       failed: results.failed,
+      okfBundle: options.okfBundle,
     });
     const failedCount = result.summary.failed_count;
     const ingestedCount = result.summary.ingested_count;

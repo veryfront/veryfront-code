@@ -689,19 +689,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/up/up.integration.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/uploads/command.test.ts", [
-      "filesystem-read",
-      "filesystem-write",
-      "network",
-    ], {
-      "disposition": "integration-relocation",
-      "owner": "cli",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/cli/commands/uploads/command.test.ts",
-      "removalPr": "PR 4a",
-    }),
     entry("cli/commands/webhook/handler.test.ts", [
       "filesystem-write",
       "process",

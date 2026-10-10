@@ -1019,7 +1019,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/sandbox.md",
       "../api-reference/veryfront/fs.md",
     ],
-    snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
+    snippets: ["Sandbox.create", "runCommand", "sandbox.close"],
   },
   "guides/security-headers.md": {
     references: [],

@@ -11,7 +11,7 @@ describe("ext-sandbox-shell-tools", () => {
   it("exposes the real bash command schema to the runtime", async () => {
     const { tools } = await createBashSandboxShellToolsProvider({
       sandbox: {
-        executeCommand: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        runCommand: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
       },
       destination: "/workspace",
       promptOptions: { toolPrompt: "tools" },
@@ -61,7 +61,7 @@ describe("ext-sandbox-shell-tools", () => {
       return Promise.resolve({ tools: { bash: { description: "Run commands" } } });
     });
     const sandbox = {
-      executeCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+      runCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
     };
 
     const result = await provider({
@@ -84,7 +84,7 @@ describe("sandbox shell execution parity", () => {
     let received = "";
     const { tools } = await createBashSandboxShellToolsProvider({
       sandbox: {
-        executeCommand: async (command) => {
+        runCommand: async (command) => {
           received = command;
           return { stdout: "x".repeat(30_001), stderr: "warning", exitCode: 7 };
         },
@@ -113,7 +113,7 @@ describe("sandbox shell execution parity", () => {
     let written: unknown[] = [];
     const { tools } = await createBashSandboxShellToolsProvider({
       sandbox: {
-        executeCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+        runCommand: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
         readFile: (path) => {
           readPath = path;
           return "file contents";

@@ -277,29 +277,28 @@ describe("suite planning parity", () => {
     }
   });
 
-  it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
-    const paths = Array.from(
-      { length: 27 },
-      (_, index) =>
-        `src/example-${String(26 - index).padStart(2, "0")}.test.ts`,
-    );
-    const shards = await Promise.all(
-      Array.from(
-        { length: 8 },
+  for (
+    const [suite, total] of [["coverage:unit", 16], [
+      "runtime:node",
+      4,
+    ]] as const
+  ) {
+    it(`keeps all ${suite} files exactly once across ${total} nonempty shards`, async () => {
+      const original = await planSuiteFiles({ suite });
+      const shards = Array.from(
+        { length: total },
         (_, index) =>
-          planSuiteFiles({
-            suite: "coverage:unit",
-            paths,
-            shard: { index: index + 1, total: 8 },
-          }),
-      ),
-    );
-    const flattened = shards.flatMap((plan) => plan.files);
-
-    assertEquals(new Set(flattened).size, paths.length);
-    assertEquals(sorted(flattened), sorted(paths));
-    for (const plan of shards) assertEquals(plan.files, sorted(plan.files));
-  });
+          selectOrdinalShard(original.files, { index: index + 1, total }),
+      );
+      const flattened = shards.flat();
+      assertEquals(sorted(flattened), original.files);
+      assertEquals(new Set(flattened).size, flattened.length);
+      for (const shard of shards) {
+        assert(shard.length > 0);
+        assertEquals(shard, sorted(shard));
+      }
+    });
+  }
 
   it("balances recorded durations deterministically without dropping files", () => {
     const files = ["a", "b", "c", "d", "e", "new"];
@@ -470,9 +469,10 @@ describe("migration command surface", () => {
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
   });
 
-  it("gives cwd-mutating fixtures their own process without serializing peers", () => {
+  it("gives process-sensitive fixtures their own process without serializing peers", () => {
     const mutators = [
       ...UNIT_CWD_FILES,
+      "cli/commands/dev/dev-output.integration.test.ts",
       "tests/integration/adapters/shell-adapter.test.ts",
       "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
       "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
