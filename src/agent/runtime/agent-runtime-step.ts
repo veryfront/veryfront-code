@@ -25,6 +25,7 @@ import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.t
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
+  getRuntimeToolBootstrapNames,
   resolveRuntimeToolLoading,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
 } from "./runtime-tool-config.ts";
@@ -81,6 +82,7 @@ export type RuntimeStepToolLoader = (
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     frameworkLocalTools?: Record<string, Tool>;
+    includeProviderSchemaHiddenTools?: boolean;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -283,6 +285,7 @@ export async function prepareAgentRuntimeStep(
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
       frameworkLocalTools: input.frameworkLocalTools,
+      includeProviderSchemaHiddenTools: true,
     })
     : [];
 
@@ -345,12 +348,20 @@ export async function prepareAgentRuntimeStep(
       toolExposureState.loadedToolNames.add(toolName);
     }
   }
-  // Bootstrap the loader the skill catalog names, chosen by trusted
+  // A host that already selected the model-visible loader (hosted runs hide
+  // the unselected alias schema) supplies its bootstrap names. Otherwise
+  // bootstrap the loader the skill catalog names, chosen by trusted
   // provenance; a project tool owning a loader spelling is never bootstrapped.
-  const trustedSkillLoaderToolName = resolveTrustedSkillLoaderToolName(input.config.tools);
-  const bootstrapToolNames = new IntrinsicSet<string>();
-  if (trustedSkillLoaderToolName !== undefined) {
-    IntrinsicReflectApply(IntrinsicSetAdd, bootstrapToolNames, [trustedSkillLoaderToolName]);
+  let bootstrapToolNames = getRuntimeToolBootstrapNames(input.config);
+  if (bootstrapToolNames === undefined) {
+    const trustedSkillLoaderToolName = resolveTrustedSkillLoaderToolName(input.config.tools);
+    const provenanceBootstrapToolNames = new IntrinsicSet<string>();
+    if (trustedSkillLoaderToolName !== undefined) {
+      IntrinsicReflectApply(IntrinsicSetAdd, provenanceBootstrapToolNames, [
+        trustedSkillLoaderToolName,
+      ]);
+    }
+    bootstrapToolNames = provenanceBootstrapToolNames;
   }
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,

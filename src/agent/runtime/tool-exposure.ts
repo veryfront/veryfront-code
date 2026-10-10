@@ -22,6 +22,7 @@ import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 const ArraySort = Array.prototype.sort;
@@ -37,6 +38,10 @@ const SetHas = Set.prototype.has;
 
 function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
   return ReflectApply(SetHas, set, [value]);
+}
+
+function isProviderSchemaVisibleToolDefinition(tool: ToolDefinition): boolean {
+  return !isRuntimeProviderSchemaHiddenTool(tool);
 }
 
 /** Framework-owned model-facing tool used to load authorized schemas. */
@@ -389,6 +394,7 @@ function collectSearchCandidates(input: {
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
       if (!hasOwn(tools, toolIndex)) continue;
       const tool = tools[toolIndex]!;
+      if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
       const snapshot = snapshotSearchableTool(tool, status, budget);
@@ -673,7 +679,7 @@ export function createToolExposurePlan(input: {
   if (input.mode === "eager") {
     return {
       authorized,
-      visible: authorized,
+      visible: filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
       deferred: [],
       loadedToolNames: input.state.loadedToolNames,
     };
@@ -686,7 +692,7 @@ export function createToolExposurePlan(input: {
 
   const hasCanonicalSkillLoader = somePrivateArray(
     authorized,
-    (tool) => tool.name === "veryfront__load_skill",
+    (tool) => tool.name === "veryfront__load_skill" && isProviderSchemaVisibleToolDefinition(tool),
   );
   // Match hosted inventory instructions and preserve the framework loader when
   // a project owns the local name. Defer the local alias when both are authorized.
@@ -697,6 +703,7 @@ export function createToolExposurePlan(input: {
   const loadableNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
     else {
       loadable[loadable.length] = tool;
@@ -715,6 +722,7 @@ export function createToolExposurePlan(input: {
   const visibleNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
       visible[visible.length] = tool;
       ReflectApply(SetAdd, visibleNames, [tool.name]);
@@ -804,7 +812,12 @@ export function createToolExposureCheckpoint(
   authorized: readonly ToolDefinition[],
   state: ToolExposureState,
 ): ToolExposureCheckpoint {
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   return {
     version: 2,
     loadedToolNames: filterPrivateArray(
@@ -843,7 +856,12 @@ export function restoreToolExposureState(
     return createToolExposureState();
   }
 
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   const loadedToolNames = filterPrivateArray(
     checkpoint.loadedToolNames,
     (name) => authorizedNames.has(name),

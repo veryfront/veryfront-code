@@ -1,6 +1,6 @@
-import { assert, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createTrackedRequests } from "../../../_helpers/server.ts";
+import { createTrackedRequests, waitForPromiseWithTimeout } from "../../../_helpers/server.ts";
 
 describe("dev response cleanup", () => {
   it("keeps the deadline and cancels a response whose headers arrive late", async () => {
@@ -39,6 +39,91 @@ describe("dev response cleanup", () => {
       release.resolve();
       await server.shutdown();
       await requests.settle();
+    }
+  });
+
+  it("closes a late transport even when body cancellation waits for that transport", async () => {
+    const headers = Promise.withResolvers<Response>();
+    const transportClosed = Promise.withResolvers<void>();
+    let aborted = false;
+    const requests = createTrackedRequests((_url, init) => {
+      if (init && "signal" in init && init.signal instanceof AbortSignal) {
+        init.signal.addEventListener("abort", () => {
+          aborted = true;
+          transportClosed.resolve();
+        }, { once: true });
+      }
+      return headers.promise;
+    });
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => transportClosed.promise,
+      }),
+    );
+    try {
+      await assertRejects(
+        () => requests.fetch("http://late-response.test/", 1),
+        DOMException,
+        "The request timed out",
+      );
+      assert(!aborted, "Do not abort before ownership of the late response is established");
+      headers.resolve(response);
+      await waitForPromiseWithTimeout(
+        transportClosed.promise,
+        1_000,
+        "Late transport remained open during body cancellation",
+      );
+      await requests.settle();
+    } finally {
+      headers.resolve(response);
+      transportClosed.resolve();
+      await requests.settle();
+    }
+  });
+
+  it("closes the late transport and reports a body-cancellation failure", async () => {
+    const headers = Promise.withResolvers<Response>();
+    const transportClosed = Promise.withResolvers<void>();
+    const failure = new Error("body cancellation failed");
+    const requests = createTrackedRequests((_url, init) => {
+      if (init && "signal" in init && init.signal instanceof AbortSignal) {
+        init.signal.addEventListener("abort", () => transportClosed.resolve(), { once: true });
+      }
+      return headers.promise;
+    });
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          throw failure;
+        },
+      }),
+    );
+    try {
+      await assertRejects(
+        () => requests.fetch("http://late-response.test/", 1),
+        DOMException,
+        "The request timed out",
+      );
+      headers.resolve(response);
+      await waitForPromiseWithTimeout(
+        transportClosed.promise,
+        1_000,
+        "Failed cleanup left the transport open",
+      );
+      const error = await assertRejects(
+        () => requests.settle(),
+        AggregateError,
+        "Failed to cancel late response bodies",
+      );
+      assert(error instanceof AggregateError);
+      assertEquals(error.errors, [failure]);
+    } finally {
+      headers.resolve(response);
+      transportClosed.resolve();
+      await requests.settle().catch((error) => {
+        assert(error instanceof AggregateError);
+        assertEquals(error.errors, [failure]);
+      });
     }
   });
 

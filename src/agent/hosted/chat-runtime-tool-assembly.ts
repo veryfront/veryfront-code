@@ -1,3 +1,4 @@
+import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
@@ -41,6 +42,10 @@ import {
 } from "#veryfront/agent/hosted/project-remote-tool-source.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
+import {
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "../runtime/local-tool.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
@@ -64,7 +69,12 @@ import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import type { AgentConfig } from "../types.ts";
-import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
+import {
+  CANONICAL_FORM_INPUT_TOOL_ID,
+  CANONICAL_LOAD_SKILL_TOOL_ID,
+  FORM_INPUT_TOOL_ID,
+  LOAD_SKILL_TOOL_ID,
+} from "../platform-tool-names.ts";
 
 const apply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
@@ -440,12 +450,13 @@ function withoutDeniedRemoteTools(
 function applyHostedHostToolPolicy(
   tools: HostToolSet,
   policy: HostedHostToolPolicy | undefined,
+  deniedToolNames: readonly string[] | undefined,
 ): HostToolSet {
   if (policy === undefined) {
     return tools;
   }
   const allowed = createPrivateSet(policy.allow);
-  return recordFromEntries(
+  const selectedTools = recordFromEntries(
     filterValues(ownEntries(tools), (entry) => {
       const shortName = ownDataValue(entry[1], "shortName");
       if (allowed.has(entry[0]) || (typeof shortName === "string" && allowed.has(shortName))) {
@@ -457,6 +468,11 @@ function applyHostedHostToolPolicy(
         !isProjectOwnedLocalToolName(tools, FORM_INPUT_TOOL_ID);
     }),
   );
+  return retainTrustedSkillLoaderAliases({
+    tools: selectedTools,
+    originalTools: tools,
+    deniedToolNames,
+  });
 }
 
 function activeProjectId(
@@ -585,6 +601,15 @@ function isHostedLocalToolSelected(input: {
 }): boolean {
   if (input.allowedToolNames === null) return true;
   if (input.allowedToolNames.has(input.toolName)) return true;
+  const siblingToolName = siblingHostedRuntimeSkillLoaderToolName(input.toolName);
+  if (
+    siblingToolName !== undefined &&
+    input.allowedToolNames.has(siblingToolName) &&
+    hasTrustedHostToolProvenance(input.tool) &&
+    !isProjectOwnedLocalToolName(input.tools, siblingToolName)
+  ) {
+    return true;
+  }
   return input.toolName === CANONICAL_FORM_INPUT_TOOL_ID &&
     input.allowedToolNames.has(FORM_INPUT_TOOL_ID) &&
     hasTrustedHostToolProvenance(input.tool) &&
@@ -607,6 +632,106 @@ function shouldIncludeHostedWebFetchFallback(input: {
     return input.allowedToolNames.has("web_fetch");
   }
   return input.sourceProviderToolNames.has("web_fetch");
+}
+
+function isTrustedHostedRuntimeTool(tools: ToolSet, toolName: string): boolean {
+  const tool = tools[toolName];
+  return tool !== undefined && hasTrustedHostToolProvenance(tool);
+}
+
+function selectHostedRuntimeBootstrapToolNames(input: {
+  toolNames: readonly string[];
+  runtimeTools: ToolSet;
+  explicitAllowedToolNames: ReadonlySet<string> | null;
+}): string[] {
+  const available = createPrivateSet(input.toolNames);
+  const explicitAllowedToolNames = input.explicitAllowedToolNames;
+  if (explicitAllowedToolNames !== null) {
+    const allowsLegacyLoader = explicitAllowedToolNames.has(LOAD_SKILL_TOOL_ID);
+    const allowsCanonicalLoader = explicitAllowedToolNames.has(CANONICAL_LOAD_SKILL_TOOL_ID);
+    if (allowsLegacyLoader && !allowsCanonicalLoader) {
+      if (
+        available.has(LOAD_SKILL_TOOL_ID) &&
+        isTrustedHostedRuntimeTool(input.runtimeTools, LOAD_SKILL_TOOL_ID)
+      ) {
+        return [LOAD_SKILL_TOOL_ID];
+      }
+      if (
+        available.has(CANONICAL_LOAD_SKILL_TOOL_ID) &&
+        isTrustedHostedRuntimeTool(input.runtimeTools, CANONICAL_LOAD_SKILL_TOOL_ID)
+      ) {
+        return [CANONICAL_LOAD_SKILL_TOOL_ID];
+      }
+    }
+    if (
+      allowsCanonicalLoader && !allowsLegacyLoader &&
+      available.has(CANONICAL_LOAD_SKILL_TOOL_ID)
+    ) {
+      return [CANONICAL_LOAD_SKILL_TOOL_ID];
+    }
+  }
+  if (available.has(CANONICAL_LOAD_SKILL_TOOL_ID)) return [CANONICAL_LOAD_SKILL_TOOL_ID];
+  if (available.has(LOAD_SKILL_TOOL_ID)) return [LOAD_SKILL_TOOL_ID];
+  return [];
+}
+
+function isHostedRuntimeSkillLoaderToolName(toolName: string): boolean {
+  return toolName === LOAD_SKILL_TOOL_ID || toolName === CANONICAL_LOAD_SKILL_TOOL_ID;
+}
+
+function siblingHostedRuntimeSkillLoaderToolName(toolName: string): string | undefined {
+  switch (toolName) {
+    case LOAD_SKILL_TOOL_ID:
+      return CANONICAL_LOAD_SKILL_TOOL_ID;
+    case CANONICAL_LOAD_SKILL_TOOL_ID:
+      return LOAD_SKILL_TOOL_ID;
+    default:
+      return undefined;
+  }
+}
+
+function hideUnselectedHostedRuntimeSkillLoaderSchema(
+  tools: ToolSet,
+  bootstrapToolNames: readonly string[],
+): ToolSet {
+  const selectedLoaders = createPrivateSet(bootstrapToolNames);
+  const selectedLoaderCount = filterValues(
+    bootstrapToolNames,
+    isHostedRuntimeSkillLoaderToolName,
+  ).length;
+  if (selectedLoaderCount !== 1) return tools;
+
+  for (const toolName of [LOAD_SKILL_TOOL_ID, CANONICAL_LOAD_SKILL_TOOL_ID]) {
+    if (selectedLoaders.has(toolName)) continue;
+    const tool = tools[toolName];
+    if (tool === undefined) continue;
+    if (!hasTrustedHostToolProvenance(tool)) continue;
+    markRuntimeProviderSchemaHiddenTool(tool);
+  }
+
+  return tools;
+}
+
+function hasHostedRuntimeDeferredTool(input: {
+  toolNames: readonly string[];
+  runtimeTools: ToolSet;
+  bootstrapToolNames: readonly string[];
+}): boolean {
+  const selectedBootstrapNames = createPrivateSet(input.bootstrapToolNames);
+  for (let index = 0; index < input.toolNames.length; index++) {
+    const toolName = input.toolNames[index];
+    if (toolName === undefined || selectedBootstrapNames.has(toolName)) continue;
+    const localTool = input.runtimeTools[toolName];
+    if (
+      isHostedRuntimeSkillLoaderToolName(toolName) &&
+      localTool !== undefined &&
+      hasTrustedHostToolProvenance(localTool)
+    ) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 export type HostedKnowledgeExecutionContext = Pick<
@@ -745,7 +870,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   }
   const explicitAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
   const authorizedLocalTools = withoutDeniedHostTools(
-    applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
+    applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy, input.deniedToolNames),
     input.deniedToolNames,
     projectToolNames,
     explicitAllowedToolNames,
@@ -758,6 +883,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const normalizedAllowedToolNames = normalizeHostedRuntimeAllowedToolNames(
     ownerScopedAllowedToolNames,
   );
+  const bootstrapAllowedToolNames = normalizedAllowedToolNames ??
+    (input.hostToolPolicy === undefined ? null : createPrivateSet(input.hostToolPolicy.allow));
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: ownKeys(authorizedLocalTools),
@@ -987,20 +1114,56 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ...createPrivateSet([...localToolNames, ...providerToolNames, ...remoteToolNames]),
   ];
   sortValues(authorizedToolNames, compareStrings);
+  const eagerBootstrapToolNames = toolLoadingMode === "eager"
+    ? selectHostedRuntimeBootstrapToolNames({
+      toolNames: authorizedToolNames,
+      runtimeTools: localRuntimeTools,
+      explicitAllowedToolNames: bootstrapAllowedToolNames,
+    })
+    : [];
+  if (toolLoadingMode === "eager") {
+    hideUnselectedHostedRuntimeSkillLoaderSchema(localRuntimeTools, eagerBootstrapToolNames);
+  }
+  const providerVisibleLocalToolNames = filterValues(
+    localToolNames,
+    (toolName) => !isRuntimeProviderSchemaHiddenTool(localRuntimeTools[toolName]),
+  );
+  const providerVisibleAuthorizedToolNames = toolLoadingMode === "deferred"
+    ? authorizedToolNames
+    : sortValues(
+      [
+        ...createPrivateSet([
+          ...providerVisibleLocalToolNames,
+          ...providerToolNames,
+          ...remoteToolNames,
+        ]),
+      ],
+      compareStrings,
+    );
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
-    : selectProviderCompatibleToolNames(authorizedToolNames, {
+    : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
       model: input.taskContext.model,
-      requiredToolNames: localToolNames,
+      requiredToolNames: [...eagerBootstrapToolNames, ...providerVisibleLocalToolNames],
     });
+  const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
+    toolNames: availableToolNames,
+    runtimeTools: localRuntimeTools,
+    explicitAllowedToolNames: bootstrapAllowedToolNames,
+  });
   const compatibleToolNames = createPrivateSet(availableToolNames);
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"
-    ? localRuntimeTools
+    ? hideUnselectedHostedRuntimeSkillLoaderSchema(localRuntimeTools, bootstrapToolNames)
     : recordFromEntries(
-      filterValues(ownEntries(localRuntimeTools), (entry) => compatibleToolNames.has(entry[0])),
+      filterValues(
+        ownEntries(localRuntimeTools),
+        (entry) =>
+          compatibleToolNames.has(entry[0]) ||
+          (isRuntimeProviderSchemaHiddenTool(entry[1]) && hasTrustedHostToolProvenance(entry[1])),
+      ),
     );
   const compatibleLocalToolNames = ownKeys(compatibleLocalRuntimeTools);
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
@@ -1009,11 +1172,11 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const compatibleProviderToolNames = toolLoadingMode === "deferred"
     ? providerToolNames
     : filterValues(providerToolNames, (toolName) => compatibleToolNames.has(toolName));
-  const bootstrapToolNames = filterValues(
-    availableToolNames,
-    (toolName) => toolName === "load_skill" || toolName === "veryfront__load_skill",
-  );
-  const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
+  const hasDeferredTools = hasHostedRuntimeDeferredTool({
+    toolNames: availableToolNames,
+    runtimeTools: localRuntimeTools,
+    bootstrapToolNames,
+  });
   const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? sortValues(
       [
