@@ -33,5 +33,10 @@
   },
   "tasks": {
     "test": "deno test --frozen --no-check --allow-env=NO_COLOR,FORCE_COLOR,TERM,CI src/"
+  },
+  "fmt": {
+    "exclude": [
+      "vendor/"
+    ]
   }
 }
