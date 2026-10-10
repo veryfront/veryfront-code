@@ -849,7 +849,7 @@ describe("workflow capability transport boundary", () => {
   }
 
   for (const hasAgentNode of [false, true]) {
-    it(`settles workflow lifecycle with plaintext host transport and agent node ${hasAgentNode}`, async () => {
+    it(`settles workflow lifecycle with unsupported host transport and agent node ${hasAgentNode}`, async () => {
       let localExecutions = 0;
       let created = false;
       const runId = `run_https_boundary_${hasAgentNode}`;
@@ -893,10 +893,13 @@ describe("workflow capability transport boundary", () => {
         projectId: "proj-1",
       });
       await withEnv(
-        { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
+        {
+          VERYFRONT_API_BASE_URL: "ftp://api.example.test",
+          VERYFRONT_API_URL: "https://api.example.test",
+        },
         () =>
           withMockFetch(() => {
-            throw new Error("Plaintext transport must never send credentials");
+            throw new Error("Unapproved transport must never send credentials");
           }, async () => {
             const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
             assertExists(result.response);
@@ -905,7 +908,11 @@ describe("workflow capability transport boundary", () => {
             assertEquals(created, true, "workflow lifecycle must own transport failure cleanup");
             assertEquals(response.success, !hasAgentNode);
             if (hasAgentNode) assertStringIncludes(response.error, "HTTPS");
-            assertEquals(localExecutions, 0, "reject plaintext before executing an agent");
+            assertEquals(
+              localExecutions,
+              0,
+              "reject unapproved transport before executing an agent",
+            );
           }),
       );
     });
@@ -11128,8 +11135,8 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       projectId: "proj-1",
     }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
     await withEnv({
-      VERYFRONT_API_BASE_URL: "http://localhost:4000",
-      VERYFRONT_API_URL: "http://localhost:4000",
+      VERYFRONT_API_BASE_URL: "ftp://localhost:4000",
+      VERYFRONT_API_URL: "https://localhost:4000",
     }, () =>
       withMockFetch(async () => {
         callbacks += 1;

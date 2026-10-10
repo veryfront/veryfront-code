@@ -2922,13 +2922,13 @@ it(
   },
 );
 
-it("ApiCacheBackend requires HTTPS only for host-private credential requests", async () => {
+it("ApiCacheBackend allows host-configured HTTP and explicit HTTPS endpoints", async () => {
   const { ApiCacheBackend } = await importBackend();
   const originalUrl = getEnv("VERYFRONT_API_URL");
   const originalEgress = getEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
   try {
-    setEnv("VERYFRONT_API_URL", "http://93.184.216.36/api");
-    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "1");
+    setEnv("VERYFRONT_API_URL", "http://127.0.0.1:4000/api");
+    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     for (const explicit of [false, true]) {
       const urls: string[] = [];
       installMockFetch((input) => {
@@ -2944,9 +2944,12 @@ it("ApiCacheBackend requires HTTPS only for host-private credential requests", a
         projectRef: "test-project",
         tokenSource: explicit ? "explicit-endpoint" : "host-private",
       });
-      if (explicit) assertEquals(await cache.delByPattern("agent:*"), 1);
-      else await assertRejects(() => cache.delByPattern("agent:*"), TypeError, "HTTPS");
-      assertEquals(urls.length, explicit ? 1 : 0);
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(urls, [
+        `${
+          explicit ? "https://93.184.216.35" : "http://127.0.0.1:4000"
+        }/api/projects/test-project/cache/entries?pattern=agent%3A*`,
+      ]);
       restoreMockFetch();
     }
   } finally {

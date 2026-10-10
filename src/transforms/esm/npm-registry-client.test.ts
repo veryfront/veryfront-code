@@ -151,7 +151,11 @@ describe("npm-registry-client dependency contracts", () => {
     // write-back must still authenticate instead of silently skipping.
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    const originalUrl = getHostEnv("VERYFRONT_API_URL");
+    const originalEgress = getHostEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
+    setEnv("VERYFRONT_API_BASE_URL", "http://127.0.0.1:4000/api");
+    setEnv("VERYFRONT_API_URL", "http://127.0.0.1:4000/api");
+    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     setEnv("VERYFRONT_API_TOKEN", "");
     refreshEnvironmentConfig();
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
@@ -178,6 +182,8 @@ describe("npm-registry-client dependency contracts", () => {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      setEnv("VERYFRONT_API_URL", originalUrl ?? "");
+      setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", originalEgress ?? "");
       refreshEnvironmentConfig();
     }
   });
