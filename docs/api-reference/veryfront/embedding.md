@@ -47,26 +47,27 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 
 ### Types
 
-| Name                        | Description                                                | Source                                                                                          |
-| --------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `ChunkOptions`              | Options accepted by chunk.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `Embedding`                 | Public API contract for embedding.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `EmbeddingCallOptions`      | Options for an embedding call.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `EmbeddingConfig`           | Configuration used by embedding.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagChunk`                  | Public API contract for rag chunk.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagDocumentMeta`           | Public API contract for rag document meta.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagRefreshOptions`         | Options accepted when refreshing an existing rag document. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagSearchOptions`          | Options accepted by rag search.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagSearchResult`           | Result returned from rag search.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagStore`                  | Public API contract for rag store.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagStoreBackend`           | Public API contract for rag store backend.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagStoreConfig`            | Configuration used by rag store.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `RagStoreData`              | Public API contract for rag store data.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `SearchOptions`             | Options accepted by search.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `SearchResult`              | Result returned from search.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `UploadAuthorizationResult` |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
-| `UploadAuthorize`           |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
-| `UploadHandlerAuthConfig`   |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
-| `UploadHandlerConfig`       |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
-| `VectorStore`               | Public API contract for vector store.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
-| `VectorStoreConfig`         | Configuration used by vector store.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| Name                        | Description                                                                      | Source                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `ChunkOptions`              | Options accepted by chunk.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `Embedding`                 | Public API contract for embedding.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `EmbeddingCallOptions`      | Options for an embedding call.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `EmbeddingConfig`           | Configuration used by embedding.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagChunk`                  | Public API contract for rag chunk.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagDocumentMeta`           | Public API contract for rag document meta.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagDocumentScope`          | Serializable V1 document scope applied by hosted semantic search before ranking. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagRefreshOptions`         | Options accepted when refreshing an existing rag document.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagSearchOptions`          | Options accepted by rag search.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagSearchResult`           | Result returned from rag search.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagStore`                  | Public API contract for rag store.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagStoreBackend`           | Public API contract for rag store backend.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagStoreConfig`            | Configuration used by rag store.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `RagStoreData`              | Public API contract for rag store data.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `SearchOptions`             | Options accepted by search.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `SearchResult`              | Result returned from search.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `UploadAuthorizationResult` |                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
+| `UploadAuthorize`           |                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
+| `UploadHandlerAuthConfig`   |                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
+| `UploadHandlerConfig`       |                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts) |
+| `VectorStore`               | Public API contract for vector store.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `VectorStoreConfig`         | Configuration used by vector store.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
