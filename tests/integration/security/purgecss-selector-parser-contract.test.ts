@@ -83,3 +83,74 @@ Deno.test("the CSS algorithm reconstructs the pinned upstream source and rejects
   }
   assert(rejected, "Changing the CSS algorithm must fail pinned upstream custody");
 });
+
+Deno.test("all shipped selector parsers meet the security floor, including Typography", async () => {
+  const manifest = JSON.parse(
+    await Deno.readTextFile(new URL("extensions/ext-css-tailwind/deno.json", root)),
+  );
+  assertEquals(manifest.imports["postcss-selector-parser"], "npm:postcss-selector-parser@7.1.6");
+  assertEquals(manifest.imports["@tailwindcss/typography"], "./vendor/typography.js");
+  const lock = JSON.parse(await Deno.readTextFile(new URL("deno.lock", root)));
+  for (const key of Object.keys(lock.npm)) {
+    if (!key.startsWith("postcss-selector-parser@")) continue;
+    const version = key.slice("postcss-selector-parser@".length);
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+    assertExists(match);
+    const major = Number(match[1]);
+    const minor = Number(match[2]);
+    const patch = Number(match[3]);
+    assert(major > 7 || (major === 7 && (minor > 1 || (minor === 1 && patch >= 6))), key);
+  }
+});
+
+Deno.test("Typography retains all original module digests, license and patched parser binding", async () => {
+  const base = new URL("extensions/ext-css-tailwind/", root);
+  const inventory = JSON.parse(await Deno.readTextFile(new URL("vendor-sources.json", base)));
+  const component = inventory.components[0];
+  const source = await Deno.readTextFile(new URL(component.source, base));
+  const actualSHA = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source))),
+  )
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  assertEquals(actualSHA, component.sha256);
+  assertEquals(component.upstream.name, "@tailwindcss/typography");
+  assertEquals(component.upstream.version, "0.5.19");
+  assertEquals(Array.from(source.matchAll(/^import .* from "([^"]+)";$/gm), (match) => match[1]), [
+    "npm:tailwindcss@4.2.2/plugin",
+    "npm:tailwindcss@4.2.2/colors",
+    "npm:postcss-selector-parser@7.1.6",
+  ]);
+  const license = await Deno.readTextFile(new URL("vendor/LICENSE", base));
+  const { reconstructTypographyUpstream, prepareTypographySource } = await import(
+    "../../../scripts/build/prepare-typography-source.ts"
+  );
+  const original = await reconstructTypographyUpstream(source, license);
+  assertEquals(Object.keys(original), ["utils.js", "styles.js", "index.js"]);
+  const upstreamSHA = Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(original["index.js"])),
+    ),
+  )
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  assertEquals(component.upstream.sha256, upstreamSHA);
+  assertEquals(component.upstream.source, "src/index.js");
+  assertEquals(
+    component.upstream.url,
+    "https://registry.npmjs.org/@tailwindcss/typography/-/typography-0.5.19.tgz",
+  );
+  assertEquals(await prepareTypographySource(original, license), source);
+  for (
+    const corrupt of [
+      source.replace("const defaultModifiers", "let defaultModifiers"),
+      source + "\n",
+    ]
+  ) {
+    let failed = false;
+    try {
+      await reconstructTypographyUpstream(corrupt, license);
+    } catch {
+      failed = true;
+    }
+    assert(failed, "Unreviewed Typography source must fail custody checks");
+  }
+});

@@ -40,7 +40,7 @@ receives a plugin value.
 The audited local inventory is:
 
 - `@tailwindcss/forms@0.5.11`
-- `@tailwindcss/typography@0.5.19`
+- `@tailwindcss/typography@0.5.19` source distribution with selector-parser 7.1.6
 - `daisyui@5.5.14`
 - `tailwind-scrollbar-hide@2.0.0`
 - `tailwindcss-animate@1.0.7`
@@ -63,3 +63,30 @@ The extension requests no network or filesystem-write capability.
 No factory options. Inherited configuration, accessors, and unknown keys are
 rejected. The base stylesheet is local and mandatory; there is no CDN or empty
 stylesheet fallback.
+
+
+## Typography parser security
+
+The static Typography plugin uses a reviewed distribution of upstream 0.5.19's
+three source modules, bound directly to selector-parser 7.1.6. Upstream 0.5.20
+still pins affected parser 6.0.10. Root dependency overrides are insufficient for
+published npm library consumers, so the extension no longer installs the upstream
+Typography npm package. Styles and selector algorithms are retained; reversible
+edits convert the CommonJS module bindings to a single ESM module, remove one
+unused imported name, and make unchanged local bindings constant for existing
+lint rules. No plugin, config, filesystem or network admission is broadened.
+
+Verify all three original source hashes, the MIT license, and the exact bundled
+source offline:
+
+```sh
+deno run --frozen --allow-read scripts/build/prepare-typography-source.ts
+```
+
+`vendor-sources.json` binds the modified distribution and upstream npm pedigree
+for SBOMs. The engine cache identity binds this inventory and its source digest;
+`npmSpecifier` in plugin policy identifies the upstream package, while
+`sourceSpecifier` identifies the actual extension-owned source. Compatibility
+fixtures retain exact CSS hashes produced by the original pinned plugin for eight
+supported stylesheet/theme inputs. Other native and deployed release findings
+remain separately qualified.

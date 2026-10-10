@@ -18,8 +18,17 @@ and its upstream origin.
 
 The extension keeps four color environment keys and removes the obsolete
 minimatch key. CPU-information permission is no longer needed. The distribution
-version and source digest change the CSS cache identity. The separate typography
-parser advisory remains retained.
+version and source digest change the CSS cache identity.
+
+### Changed: Typography uses the patched selector parser
+
+The Tailwind extension retains Typography 0.5.19's styles and selector algorithm
+in a verified source distribution bound to selector-parser 7.1.6. The upstream npm
+package still requires affected 6.0.10, so it is removed from the runtime graph.
+All three original module hashes, reversible module-binding edits and MIT license
+are retained; SBOMs and cache identity bind the modified source. Eight captured
+upstream CSS output hashes remain unchanged. Plugin/config admission and runtime
+capabilities are unchanged.
 
 ### Changed: a malformed provider stream reports `PROVIDER_STREAM_PROTOCOL_ERROR`
 

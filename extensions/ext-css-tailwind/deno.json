@@ -6,16 +6,22 @@
     "extension": true,
     "activation": "auto",
     "contracts": {
-      "provides": ["CSSProcessor"]
+      "provides": [
+        "CSSProcessor"
+      ]
     },
     "npm": {
       "runtimeVersionFromManifest": true
     },
-    "capabilities": [{ "type": "fs:read" }]
+    "capabilities": [
+      {
+        "type": "fs:read"
+      }
+    ]
   },
   "imports": {
     "@tailwindcss/forms": "npm:@tailwindcss/forms@0.5.11",
-    "@tailwindcss/typography": "npm:@tailwindcss/typography@0.5.19",
+    "@tailwindcss/typography": "./vendor/typography.js",
     "daisyui": "npm:daisyui@5.5.14",
     "tailwind-scrollbar-hide": "npm:tailwind-scrollbar-hide@2.0.0",
     "tailwindcss": "npm:tailwindcss@4.2.2",
@@ -26,7 +32,8 @@
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/css": "../../src/extensions/css/index.ts",
-    "veryfront/errors": "../../src/errors/index.ts"
+    "veryfront/errors": "../../src/errors/index.ts",
+    "postcss-selector-parser": "npm:postcss-selector-parser@7.1.6"
   },
   "tasks": {
     "test": "deno test --frozen --allow-read src/"

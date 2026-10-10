@@ -49,7 +49,6 @@
     "npm:@sentry/node@10.68.0": "10.68.0_@opentelemetry+core@2.10.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.221.0__@opentelemetry+api@1.9.1",
     "npm:@swc/wasm@1.16.1": "1.16.1",
     "npm:@tailwindcss/forms@0.5.11": "0.5.11_tailwindcss@4.2.2",
-    "npm:@tailwindcss/typography@0.5.19": "0.5.19_tailwindcss@4.2.2",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
     "npm:@types/hast@3.0.3": "3.0.3",
     "npm:@types/mdast@4.0.3": "4.0.3",
@@ -2411,13 +2410,6 @@
         "tailwindcss"
       ]
     },
-    "@tailwindcss/typography@0.5.19_tailwindcss@4.2.2": {
-      "integrity": "sha512-w31dd8HOx3k9vPtcQh5QHP9GwKcgbMp87j58qi6xgiBnFFtKEAgCWnDw4qUT8aHwkCp8bKvb/KGKWWHedP0AAg==",
-      "dependencies": [
-        "postcss-selector-parser@6.0.10",
-        "tailwindcss"
-      ]
-    },
     "@types/aws-lambda@8.10.164": {
       "integrity": "sha512-XOnrazWcOd6yWPnR7DxqCBPPYciDjHq+NN8LPwwqBCJNXLyPJgKo47fZpJ113+oyAn9Zti0Cf6H4k6yPcE3WFg=="
     },
@@ -4045,13 +4037,6 @@
       ],
       "bin": true
     },
-    "postcss-selector-parser@6.0.10": {
-      "integrity": "sha512-IQ7TZdoaqbT+LCpShg46jnZVlhWD2w6iQYAcYXfHARZ7X1t/UGhhceQDs5X0cGqKvYlHNOuv7Oa1xmb0oQuA3w==",
-      "dependencies": [
-        "cssesc",
-        "util-deprecate"
-      ]
-    },
     "postcss-selector-parser@7.1.6": {
       "integrity": "sha512-7qASPzhKF2l2KLboRZux8CCTRMdGiV08vWmyKzPz22qZ7ZjQBOeY7rNzNoCLSUiftJ7HUq0GERHmxw/t0dCdMw==",
       "dependencies": [
@@ -4937,8 +4922,8 @@
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
           "npm:@tailwindcss/forms@0.5.11",
-          "npm:@tailwindcss/typography@0.5.19",
           "npm:daisyui@5.5.14",
+          "npm:postcss-selector-parser@7.1.6",
           "npm:tailwind-scrollbar-hide@2.0.0",
           "npm:tailwindcss-animate@1.0.7",
           "npm:tailwindcss@4.2.2"
