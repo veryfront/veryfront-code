@@ -252,11 +252,11 @@ function buildStartRunBody(
         },
       ],
       context: {
-        conversation_id: conversationId,
-        project_id: config.projectId,
-        branch_id: config.branchId ?? null,
+        conversationId,
+        projectId: config.projectId,
+        branchId: config.branchId ?? null,
       },
-      forwarded_props: {
+      forwardedProps: {
         ...(config.model ? { model: config.model } : {}),
         veryfront: {
           client: {
