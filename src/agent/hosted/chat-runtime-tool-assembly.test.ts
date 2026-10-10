@@ -1439,6 +1439,7 @@ it("prepareHostedChatRuntimeToolAssembly does not spend eager provider capacity 
   });
 
   assertEquals(toolAssembly.localToolNames.includes("load_skill"), true);
+  assertExists(toolAssembly.modelVisibleToolNames);
   assertEquals(toolAssembly.modelVisibleToolNames.includes("load_skill"), false);
   assertEquals(toolAssembly.modelVisibleToolNames.includes("veryfront__load_skill"), true);
   assertEquals(toolAssembly.modelVisibleToolNames.length, 128);
