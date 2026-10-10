@@ -25,6 +25,23 @@ Main-branch runs keep writing to main. The destination comes from the signed run
 target, not ingestion task configuration. Select main or a preview branch for
 knowledge ingestion. Environment-target runs fail before ingestion starts.
 
+## Select the destination branch
+
+CLI ingestion writes to main when `--branch` is omitted. Select an existing
+preview branch with `--branch` or `-b`:
+
+```bash
+veryfront knowledge ingest ./contracts/q1.pdf --project my-project --branch review-contracts --json
+```
+
+The branch must already exist. An unknown branch fails instead of falling back
+to main. The selector applies to every generated file, including documents and
+companions imported with `--okf-bundle`:
+
+```bash
+veryfront knowledge ingest --path ./bundle --all --okf-bundle --project my-project -b review-contracts --json
+```
+
 ## Prerequisites
 
 Authenticate with the CLI and set the target project:
