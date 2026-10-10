@@ -109,7 +109,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "childCanonicalRunId",
       "EVENT_SCHEMA_BY_TYPE",
       "EVENT_TYPES",
-      "deno task generate",
+      "node verify-events.mjs",
+      "assert.equal(invalid.success, false)",
+      "Event parsing verified.",
     ],
   },
   "guides/agents.md": {
