@@ -354,7 +354,7 @@ export type ActiveSkillState = {
 
 function forEachTrustedSkillLoadResult(
   messages: readonly Message[],
-  visit: (result: unknown) => void,
+  visit: (result: unknown, part: ToolResultPart) => void,
 ): void {
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     if (!objectHasOwn(messages, messageIndex)) continue;
@@ -367,7 +367,41 @@ function forEachTrustedSkillLoadResult(
         !hasTrustedPlatformPolicyToolResultPart(part) ||
         !isLoadSkillToolName(part.toolName)
       ) continue;
-      visit(part.result);
+      visit(part.result, part);
+    }
+  }
+}
+
+/** List trusted skill load results so a pause checkpoint can restore their provenance. */
+export function getTrustedSkillLoadResultIds(messages: readonly Message[]): string[] {
+  const toolCallIds: string[] = [];
+  forEachTrustedSkillLoadResult(messages, (_result, part) => {
+    toolCallIds.push(part.toolCallId);
+  });
+  return toolCallIds;
+}
+
+/** Re-mark unique successful skill load results recorded by a runtime-written pause checkpoint. */
+export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+  messages: readonly Message[],
+  toolCallIds: readonly string[] | undefined,
+): void {
+  if (toolCallIds === undefined || toolCallIds.length === 0) return;
+  const trustedToolCallIds = createPrivateSet(toolCallIds);
+  const resultCounts = countHistoryToolResultIds(messages, messages.length, () => true);
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const parts = messages[messageIndex]!.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) && trustedToolCallIds.has(part.toolCallId) &&
+        resultCounts.get(part.toolCallId) === 1 && isLoadSkillToolName(part.toolName) &&
+        isSkillActivationResult(part.result)
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part);
+      }
     }
   }
 }

@@ -183,6 +183,7 @@ import {
 import {
   enforceSkillPolicy,
   getProviderObservedSkillBodyIds,
+  getTrustedSkillLoadResultIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
@@ -191,6 +192,7 @@ import {
   markTrustedPlatformPolicyToolResultPart,
   prepareTrustedPlatformPolicyMessageForPersistence,
   restoreTrustedPlatformPolicyResultsFromPersistedHistory,
+  restoreTrustedSkillLoadResultsFromPauseCheckpoint,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import { setProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
@@ -4349,6 +4351,11 @@ export class AgentRuntime {
       if (runtimeGeneratedMessageIds.has(message.id)) markRuntimeGeneratedUserMessage(message);
       return message;
     });
+    // JSON checkpoints drop in-memory trust markers; restore only the runtime-recorded results.
+    restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+      currentMessages,
+      checkpoint?.trustedSkillLoadResultIds,
+    );
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
@@ -4431,6 +4438,7 @@ export class AgentRuntime {
           recoveredInterruptedLocalToolBatch,
           hasSubmittedFormInput: skillState.hasSubmittedFormInput,
           activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+          trustedSkillLoadResultIds: getTrustedSkillLoadResultIds(currentMessages),
           resumeToolCallExecuted,
           agentWriteFinalResponseToolGuardEnabled,
           interruptedLocalToolBatchRecoveryStep,
