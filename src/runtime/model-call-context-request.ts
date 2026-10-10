@@ -57,7 +57,7 @@ function objectKeys<TValue extends object>(value: TValue): string[] {
   return ObjectKeys(value);
 }
 
-function defineOwnDataProperty(target: object, key: string, value: unknown): void {
+function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
   ReflectApply(ObjectDefineProperty, Object, [target, key, {
     value,
     writable: true,
@@ -131,9 +131,15 @@ function isNativeOpenAIChatModel(modelId: string | undefined): boolean {
   return typeof modelId === "string" && regexpTest(NativeOpenAIChatModelPattern, modelId);
 }
 
+function hasOpenAITransportMetadata(model: ModelCallRuntimeMetadata): boolean {
+  return model.openAITransport === "auto" ||
+    model.openAITransport === "chat-completions" ||
+    model.openAITransport === "responses";
+}
+
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   const provider = resolveModelCallProvider(model);
-  if (provider === "openai") return true;
+  if (provider === "openai" || hasOpenAITransportMetadata(model)) return true;
   if (model.provider !== "veryfront-cloud" || provider === undefined) return false;
   // A model built by this package records the facts it was built with.
   const built = readVeryfrontCloudModelFacts(model);
@@ -172,11 +178,11 @@ function directOpenAITransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): "chat-completions" | "responses" | undefined {
-  if (model.provider !== "openai" || typeof model.modelId !== "string") return undefined;
+  if (typeof model.modelId !== "string") return undefined;
   if (model.openAITransport === "chat-completions" || model.openAITransport === "responses") {
     return model.openAITransport;
   }
-  if (model.openAITransport !== "auto") return undefined;
+  if (model.openAITransport !== "auto" || !usesOpenAIBuilder(model)) return undefined;
   return isOpenAIReasoningModel(model.modelId, openAIProviderName(model)) ||
       requestUsesOpenAIHostedTool(options)
     ? "responses"
@@ -191,7 +197,8 @@ function resolveOpenAIContextTransport(
 }
 
 function openAIProviderName(model: ModelCallRuntimeMetadata): string {
-  return model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
+  if (model.provider === "veryfront-cloud") return "veryfront-cloud";
+  return resolveModelCallProvider(model) ?? "openai";
 }
 
 function normalizeOpenAIProviderOptionsForChat(
@@ -548,7 +555,7 @@ function resolveOpenAINeutralReasoning(
   if (!model.modelId) return options.reasoning;
   const reasoning = resolveOpenAIReasoningConfig(
     model.modelId,
-    model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai",
+    openAIProviderName(model),
     options.reasoning,
   );
   return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;

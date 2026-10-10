@@ -14,6 +14,10 @@ import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/open
 import { buildOpenAIResponsesRequest } from "../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import { buildGoogleGenerateContentRequest } from "../../extensions/ext-llm-google/src/google-request-builder.ts";
+import {
+  createOpenAIModelRuntime,
+  createOpenAIResponsesRuntime,
+} from "../../extensions/ext-llm-openai/src/openai-provider.ts";
 
 const prompt: ModelRuntimeCallOptions["prompt"] = [{
   role: "user",
@@ -804,6 +808,91 @@ describe("model call request projection", () => {
     assertEquals(
       pinnedResponsesProjected?.maxOutputTokens,
       directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const customChatRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-openai-label",
+      providerName: "openai",
+    }, "gpt-4o");
+    const customChatProjected = buildModelCallContextRequest(
+      customChatRuntime,
+      directAmbiguousOptions,
+    );
+    assertEquals(customChatRuntime.provider, "custom-openai-label");
+    assertEquals(customChatRuntime.modelProvider, "openai");
+    assertEquals(
+      customChatProjected?.maxOutputTokens,
+      directAmbiguousChatBody.max_completion_tokens,
+    );
+
+    const customResponsesRuntime = createOpenAIResponsesRuntime({
+      apiKey: "test-api-key",
+      name: "custom-openai-label",
+      providerName: "openai",
+    }, "gpt-4o");
+    const customResponsesProjected = buildModelCallContextRequest(
+      customResponsesRuntime,
+      directAmbiguousOptions,
+    );
+    assertEquals(customResponsesRuntime.provider, "custom-openai-label");
+    assertEquals(customResponsesRuntime.modelProvider, "openai");
+    assertEquals(
+      customResponsesProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const customProviderOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        openai: { max_tokens: 333 },
+        moonshotai: { max_tokens: 555 },
+      },
+    };
+    const customProviderRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-moonshot-label",
+      providerName: "moonshotai",
+    }, "kimi-k2.5");
+    const customProviderProjected = buildModelCallContextRequest(
+      customProviderRuntime,
+      customProviderOptions,
+    );
+    const customProviderBody = buildOpenAIChatRequest(
+      "kimi-k2.5",
+      "moonshotai",
+      customProviderOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(customProviderRuntime.provider, "custom-moonshot-label");
+    assertEquals(customProviderRuntime.modelProvider, "moonshotai");
+    assertEquals(customProviderBody.max_tokens, 555);
+    assertEquals(customProviderProjected?.maxOutputTokens, customProviderBody.max_tokens);
+
+    const customProviderReasoningRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-moonshot-label",
+      providerName: "moonshotai",
+    }, "o3");
+    const customProviderReasoningProjected = buildModelCallContextRequest(
+      customProviderReasoningRuntime,
+      { prompt, temperature: 0.4 },
+    );
+    const customProviderReasoningBody = buildOpenAIChatRequest(
+      "o3",
+      "moonshotai",
+      { prompt, temperature: 0.4 },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(customProviderReasoningBody.reasoning_effort, undefined);
+    assertEquals(customProviderReasoningBody.temperature, undefined);
+    assertEquals(customProviderReasoningProjected?.reasoning, undefined);
+    assertEquals(
+      customProviderReasoningProjected?.temperature,
+      customProviderReasoningBody.temperature,
     );
 
     const explicitUndefinedResponseOptions: ModelRuntimeCallOptions = {
