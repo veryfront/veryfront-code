@@ -674,7 +674,16 @@ async function listOpenLiveEvalInputRequestsWithSignal(
 
     const payload = getInputRequestListResponseSchema().parse(await response.json());
     return (payload.data ?? []).flatMap((item) => {
-      const parsed = getInputRequestRecordSchema().safeParse(item);
+      if (!isEvalRecord(item)) return [];
+      // The API uses input_request_id; older eval transports used id.
+      // Reject conflicting representations rather than approving the wrong request.
+      if (
+        item.input_request_id !== undefined && item.id !== undefined &&
+        item.input_request_id !== item.id
+      ) return [];
+      const id = item.input_request_id ?? item.id;
+      if (typeof id !== "string" || id.length === 0 || id.trim() !== id) return [];
+      const parsed = getInputRequestRecordSchema().safeParse({ id, status: item.status });
       return parsed.success && parsed.data.status === "open" ? [parsed.data] : [];
     });
   } finally {
