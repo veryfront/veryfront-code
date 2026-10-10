@@ -5,6 +5,8 @@ import { isLoadSkillToolName } from "#veryfront/agent/platform-tool-names.ts";
 import {
   extractSkillId,
   extractSkillToolAvailability,
+  snapshotTrustedSkillLoadResults,
+  type TrustedSkillLoadHistoryMessage,
 } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 
 /**
@@ -12,6 +14,8 @@ import {
  * from load_skill results the host returned and model requests the host brokered.
  */
 export interface ExecutorSkillObservation {
+  /** Record trusted historical load_skill bodies for later exact prompt matching. */
+  recordTrustedHistory(messages: readonly TrustedSkillLoadHistoryMessage[]): void;
   /** Record a host-executed tool result; only successful load_skill bodies count. */
   recordToolResult(toolName: string, toolCallId: string | undefined, result: unknown): void;
   /** Mark bodies observed when a brokered model request carries their results. */
@@ -55,21 +59,32 @@ export function createExecutorSkillObservation(): ExecutorSkillObservation {
     { body: ProviderObservedSkillBody; value: BoundedJsonValue } | null
   >();
   const observed = createPrivateMap<string, ProviderObservedSkillBody>();
+  const recordBody = (toolName: string, toolCallId: string | undefined, result: unknown): void => {
+    if (!toolCallId || !isLoadSkillToolName(toolName)) return;
+    const skillId = extractSkillId(result);
+    const snapshot = snapshotBoundedJsonValue(result);
+    const references = snapshot.success
+      ? extractSkillToolAvailability(snapshot.value)?.references
+      : undefined;
+    // A repeated call ID is ambiguous provenance and never becomes observable.
+    bodies.set(
+      toolCallId,
+      bodies.has(toolCallId) || !skillId || !snapshot.success || references === undefined
+        ? null
+        : { body: freeze({ skillId, references: freeze(references) }), value: snapshot.value },
+    );
+  };
   return {
+    recordTrustedHistory(messages) {
+      const results = snapshotTrustedSkillLoadResults(messages);
+      for (let index = 0; index < results.length; index++) {
+        if (!hasOwn(results, index)) continue;
+        const result = results[index]!;
+        recordBody(result.toolName, result.toolCallId, result.result);
+      }
+    },
     recordToolResult(toolName, toolCallId, result) {
-      if (!toolCallId || !isLoadSkillToolName(toolName)) return;
-      const skillId = extractSkillId(result);
-      const snapshot = snapshotBoundedJsonValue(result);
-      const references = snapshot.success
-        ? extractSkillToolAvailability(snapshot.value)?.references
-        : undefined;
-      // A repeated call ID is ambiguous provenance and never becomes observable.
-      bodies.set(
-        toolCallId,
-        bodies.has(toolCallId) || !skillId || !snapshot.success || references === undefined
-          ? null
-          : { body: freeze({ skillId, references: freeze(references) }), value: snapshot.value },
-      );
+      recordBody(toolName, toolCallId, result);
     },
     observePrompt(prompt) {
       for (let index = 0; index < prompt.length; index++) {

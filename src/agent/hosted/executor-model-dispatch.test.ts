@@ -148,6 +148,7 @@ describe("hosted executor model dispatch", () => {
       runEventSink: async () => {},
       skillObservation: {
         recordToolResult() {},
+        recordTrustedHistory() {},
         observePrompt(prompt) {
           observed.push(structuredClone(prompt));
         },
@@ -178,6 +179,7 @@ describe("hosted executor model dispatch", () => {
         },
         skillObservation: {
           recordToolResult() {},
+          recordTrustedHistory() {},
           observePrompt(prompt) {
             observed.push(structuredClone(prompt));
           },
@@ -224,6 +226,7 @@ describe("hosted executor model dispatch", () => {
         runEventSink: async () => {},
         skillObservation: {
           recordToolResult() {},
+          recordTrustedHistory() {},
           observePrompt(prompt) {
             observed.push(structuredClone(prompt));
           },
@@ -266,6 +269,7 @@ describe("hosted executor model dispatch", () => {
         runEventSink: async () => {},
         skillObservation: {
           recordToolResult() {},
+          recordTrustedHistory() {},
           observePrompt(prompt) {
             observed.push(structuredClone(prompt));
           },
@@ -303,6 +307,7 @@ describe("hosted executor model dispatch", () => {
       runEventSink: async () => {},
       skillObservation: {
         recordToolResult() {},
+        recordTrustedHistory() {},
         observePrompt(prompt) {
           observed.push(structuredClone(prompt));
         },

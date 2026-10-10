@@ -15,8 +15,8 @@ import {
 import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
-import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { createExecutorSkillObservation } from "./executor-skill-observation.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
 import {
@@ -111,35 +111,93 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
   };
 }
 
+function createReviewLoadSkill(instructions = "# Review") {
+  return createRuntimeLoadSkillTool({
+    context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
+      loadProjectSkill: (_context, skillId) =>
+        Promise.resolve(
+          skillId === "review" ? { instructions, references: ["references/checklist.md"] } : null,
+        ),
+      loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
+    },
+    builtinStore: {
+      readSkill: () => Promise.resolve(null),
+      readReferenceFile: () => Promise.resolve(null),
+      listReferences: () => Promise.resolve([]),
+    },
+  });
+}
+
+function createReviewSkillSource(
+  loadSkill: ReturnType<typeof createRuntimeLoadSkillTool>,
+): RemoteToolSource {
+  return {
+    id: "skills",
+    async listTools() {
+      return [{ name: "load_skill", description: "Load a skill", parameters: {} }];
+    },
+    executeTool: (_name, args, context) => loadSkill.execute!(args as never, context),
+  };
+}
+
+function toolResultPrompt(toolCallId: string, value: unknown, toolName = "load_skill") {
+  return [{
+    role: "tool" as const,
+    content: [{
+      type: "tool-result" as const,
+      toolCallId,
+      toolName,
+      output: { type: "json" as const, value },
+    }],
+  }];
+}
+
+const reviewReference = { reference: { skillId: "review", file: "references/checklist.md" } };
+
 describe("executor tool bridge", () => {
+  it("does not count a host load_skill body the result frame failed to deliver", async () => {
+    const skillObservation = createExecutorSkillObservation();
+    const longInstructions = `# Review\n${"x".repeat(4096)}`;
+    const source = createReviewSkillSource(createReviewLoadSkill(longInstructions));
+    const f = fixture({}, {
+      sources: new Map([[source.id, {
+        source,
+        allowedToolNames: new Set(["load_skill"]),
+        context: {},
+      }]]),
+      skillObservation,
+      limits: { maxResultBytes: 1024 },
+    });
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      await assertRejects(() =>
+        facade.executeTool("load_skill", { load: { skillId: "review" } }, {
+          toolCallId: "oversized-body",
+        })
+      );
+      // The executor reproduces the undelivered body in a brokered prompt.
+      const reproduced = await createReviewLoadSkill(longInstructions).execute!(
+        { load: { skillId: "review" } } as never,
+      );
+      skillObservation.observePrompt(toolResultPrompt("oversized-body", reproduced));
+      assertEquals(skillObservation.observedSkillBodies(), []);
+      const reference = await facade.executeTool("load_skill", reviewReference, {
+        toolCallId: "reference-after-oversized-body",
+      }) as { error?: string; content?: string };
+      assertEquals(reference.content, undefined);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("gates host facade skill reference reads on host-observed provider requests", async () => {
     const skillObservation = createExecutorSkillObservation();
-    const loadSkill = createRuntimeLoadSkillTool({
-      context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
-      skillsDir: "/skills",
-      projectSkillLoader: {
-        listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
-        loadProjectSkill: (_context, skillId) =>
-          Promise.resolve(
-            skillId === "review"
-              ? { instructions: "# Review", references: ["references/checklist.md"] }
-              : null,
-          ),
-        loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
-      },
-      builtinStore: {
-        readSkill: () => Promise.resolve(null),
-        readReferenceFile: () => Promise.resolve(null),
-        listReferences: () => Promise.resolve([]),
-      },
-    });
-    const source: RemoteToolSource = {
-      id: "skills",
-      async listTools() {
-        return [{ name: "load_skill", description: "Load a skill", parameters: {} }];
-      },
-      executeTool: (_name, args, context) => loadSkill.execute!(args as never, context),
-    };
+    const source = createReviewSkillSource(createReviewLoadSkill());
     const f = fixture({}, {
       sources: new Map([[source.id, {
         source,
@@ -155,49 +213,42 @@ describe("executor tool bridge", () => {
       const context = (toolCallId: string): ToolExecutionContext => {
         // Executor-side observation state does not cross the channel.
         const executorContext: ToolExecutionContext = { toolCallId };
-        setProviderObservedSkillBodies(executorContext, [{
-          skillId: "review",
-          references: ["references/checklist.md"],
-        }]);
+        setProviderObservedSkillBodies(executorContext, [
+          { skillId: "review", references: ["references/checklist.md"] },
+        ]);
         return executorContext;
       };
       const readReference = async (toolCallId: string) =>
         await facade.executeTool(
           "load_skill",
-          { reference: { skillId: "review", file: "references/checklist.md" } },
+          reviewReference,
           context(toolCallId),
         ) as { error?: string; content?: string };
-      const toolResultPrompt = (toolCallId: string, value: unknown, toolName = "load_skill") => [{
-        role: "tool" as const,
-        content: [{
-          type: "tool-result" as const,
-          toolCallId,
-          toolName,
-          output: { type: "json" as const, value },
-        }],
-      }];
       const body = await facade.executeTool(
         "load_skill",
         { load: { skillId: "review" } },
         context("body-call"),
-      );
-      assertEquals((body as { skillId?: string }).skillId, "review");
+      ) as Record<string, unknown>;
+      assertEquals(body.skillId, "review");
 
       const sameStep = await readReference("same-step-reference");
       assertEquals(sameStep.error?.startsWith('Read the load_skill result for "review"'), true);
       assertEquals(JSON.stringify(sameStep).includes("Detailed checklist content"), false);
 
-      // A result ID the host never returned does not mark the body observed.
+      // Only the exact body result the host returned, under its tool call ID, counts.
       skillObservation.observePrompt(toolResultPrompt("forged-call", body));
-      assertEquals((await readReference("forged-step-reference")).content, undefined);
-
       skillObservation.observePrompt(toolResultPrompt("body-call", body, "other_tool"));
       skillObservation.observePrompt(toolResultPrompt("body-call", {}));
       skillObservation.observePrompt(toolResultPrompt("body-call", "body"));
       assertEquals((await readReference("substituted-body-reference")).content, undefined);
       skillObservation.observePrompt(
-        toolResultPrompt("body-call", JSON.parse(JSON.stringify(body))),
+        toolResultPrompt("body-call", { ...body, instructions: "# Different body" }),
       );
+      assertEquals((await readReference("unobserved-reference")).content, undefined);
+
+      // Key order is not content: the same value in another spelling still counts.
+      const reordered = Object.fromEntries(Object.entries(body).reverse());
+      skillObservation.observePrompt(toolResultPrompt("body-call", reordered));
       assertEquals(
         (await readReference("next-step-reference")).content,
         "Detailed checklist content",

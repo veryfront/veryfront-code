@@ -19,7 +19,10 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
-import { createExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
+import {
+  createExecutorSkillObservation,
+  type ExecutorSkillObservation,
+} from "#veryfront/agent/hosted/executor-skill-observation.ts";
 import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 import type {
   TrustedManagedRuntime,
@@ -270,6 +273,7 @@ export function createManagedExecutorBroker(
     if (bindSessionOwnedWork !== undefined && typeof bindSessionOwnedWork !== "function") {
       throw new TypeError("Invalid executor session-owned work binder");
     }
+    const skillObservation = createExecutorSkillObservation();
     // Validate every trusted capability before reserving pool admission.
     buildBrokerOperations(
       validationBinding,
@@ -278,6 +282,7 @@ export function createManagedExecutorBroker(
       installation,
       allowedModelIds,
       selectedModelId,
+      skillObservation,
     );
 
     let gate: ExecutorOperationGate | undefined;
@@ -304,6 +309,7 @@ export function createManagedExecutorBroker(
           installation,
           allowedModelIds,
           selectedModelId,
+          skillObservation,
         );
         gate = createExecutorOperationGate({
           binding: channelBinding,
@@ -391,6 +397,7 @@ export function createManagedExecutorBroker(
               installation,
               allowedModelIds,
               selectedModelId,
+              skillObservation,
             );
             return createExecutorOperationGate({
               binding: channelBinding,
@@ -440,6 +447,8 @@ export function createManagedExecutorBroker(
           if (!session.accepted || gate!.state !== "prepared") {
             throw new Error("Managed executor runtime is not accepted");
           }
+          streamInput.abortSignal.throwIfAborted();
+          skillObservation.recordTrustedHistory(streamInput.messages);
           gate!.beginExecution();
           return await remoteAgent.stream(streamInput);
         },
@@ -674,9 +683,9 @@ function buildBrokerOperations(
   installation: ExecutorRuntimeInstall,
   allowedModelIds: ReadonlySet<string>,
   selectedModelId: string,
+  skillObservation: ExecutorSkillObservation,
 ): ReadonlyMap<string, ExecutorOperation> {
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
-  const skillObservation = createExecutorSkillObservation();
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
       skillObservation,

@@ -9,6 +9,7 @@ import {
   prepareTrustedPlatformPolicyMessageForPersistence,
   restoreTrustedPlatformPolicyResultsFromPersistedHistory,
   restoreTrustedSkillLoadResultsFromPauseCheckpoint,
+  snapshotTrustedSkillLoadResults,
 } from "./skill-policy-enforcement.ts";
 
 function resultMessage(result: unknown, trusted = true, toolName = "load_skill"): Message {
@@ -135,6 +136,43 @@ describe("provider-observed skill body history", () => {
       restoreTrustedPlatformPolicyResultsFromPersistedHistory(history);
       assertEquals(getProviderObservedSkillBodies(history), []);
     }
+  });
+
+  it("snapshots only unambiguous trusted load_skill results for executor history seeding", () => {
+    const trusted = resultMessage({ skillId: "stored", instructions: "# Stored" });
+    const duplicateUntrusted: Message = {
+      id: "duplicate-untrusted",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "skill-call",
+        toolName: "load_skill",
+        result: { skillId: "stored", instructions: "# Stored" },
+      }],
+    };
+    assertEquals(snapshotTrustedSkillLoadResults([trusted]), [{
+      toolCallId: "skill-call",
+      toolName: "load_skill",
+      result: { skillId: "stored", instructions: "# Stored" },
+    }]);
+    assertEquals(snapshotTrustedSkillLoadResults([trusted, duplicateUntrusted]), []);
+    assertEquals(
+      snapshotTrustedSkillLoadResults([
+        trusted,
+        {
+          id: "duplicate-malformed",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "skill-call" }],
+        } as unknown as Message,
+      ]),
+      [],
+    );
+    assertEquals(
+      snapshotTrustedSkillLoadResults([
+        resultMessage({ skillId: "stored", file: "references/checklist.md", content: "body" }),
+      ]),
+      [],
+    );
   });
 
   it("retains trusted successful bodies with their references, including canonical tool names", () => {

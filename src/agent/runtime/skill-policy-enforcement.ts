@@ -373,6 +373,72 @@ function forEachTrustedSkillLoadResult(
   }
 }
 
+export type TrustedSkillLoadResultSnapshot = Readonly<{
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+}>;
+
+export type TrustedSkillLoadHistoryMessage = Readonly<{
+  parts: readonly unknown[];
+}>;
+
+function countHistoryAnyToolResultIds(
+  messages: readonly TrustedSkillLoadHistoryMessage[],
+): Map<string, number> {
+  const counts = createPrivateMap<string, number>();
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex];
+      if (readToolResultOwnDataProperty(part, "type") !== "tool-result") continue;
+      const id = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof id === "string") counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Snapshot trusted successful load_skill results from host-owned history.
+ *
+ * This does not restore WeakStore provenance or mark a body as provider-observed.
+ * Consumers must still require the exact body to appear in a later brokered
+ * provider prompt before granting reference reads.
+ */
+export function snapshotTrustedSkillLoadResults(
+  messages: readonly TrustedSkillLoadHistoryMessage[],
+): readonly TrustedSkillLoadResultSnapshot[] {
+  const resultCounts = countHistoryAnyToolResultIds(messages);
+  const results: TrustedSkillLoadResultSnapshot[] = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
+      if (
+        !isOwnHistoryToolResult(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName) ||
+        resultCounts.get(part.toolCallId) !== 1 ||
+        !isSkillActivationResult(part.result)
+      ) continue;
+      pushPrivateArray(
+        results,
+        Object.freeze({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: part.result,
+        }),
+      );
+    }
+  }
+  return results;
+}
+
 /** List trusted skill load results so a pause checkpoint can restore their provenance. */
 export function getTrustedSkillLoadResultIds(messages: readonly Message[]): string[] {
   const toolCallIds: string[] = [];

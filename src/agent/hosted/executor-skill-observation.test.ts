@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntimePromptMessage } from "#veryfront/provider/types.ts";
+import type { Message, ToolResultPart } from "#veryfront/agent/types.ts";
+import { markTrustedPlatformPolicyToolResultPart } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createExecutorSkillObservation } from "./executor-skill-observation.ts";
 
 function body() {
@@ -23,6 +25,25 @@ function prompt(value: unknown, toolName = "load_skill"): ModelRuntimePromptMess
       output: { type: "json", value },
     }],
   }];
+}
+
+function historyMessage(
+  value: unknown,
+  trusted = true,
+  toolCallId = "body-call",
+  toolName = "load_skill",
+): Message {
+  const part: ToolResultPart = {
+    type: "tool-result",
+    toolCallId,
+    toolName,
+    result: value,
+  };
+  return {
+    id: `${toolCallId}-result`,
+    role: "tool",
+    parts: [trusted ? markTrustedPlatformPolicyToolResultPart(part) : part],
+  };
 }
 
 describe("executor skill body observation", () => {
@@ -57,6 +78,43 @@ describe("executor skill body observation", () => {
       const observation = createExecutorSkillObservation();
       observation.recordToolResult("load_skill", "body-call", body());
       observation.observePrompt(prompt(value));
+      assertEquals(observation.observedSkillBodies(), []);
+    }
+  });
+
+  it("uses trusted history only after an exact provider prompt dispatch carries the body", () => {
+    const observation = createExecutorSkillObservation();
+    observation.recordTrustedHistory([historyMessage(body())]);
+    assertEquals(observation.observedSkillBodies(), []);
+    observation.observePrompt(prompt(body()));
+    assertEquals(observation.observedSkillBodies(), [{
+      skillId: "review",
+      references: ["references/checklist.md"],
+    }]);
+  });
+
+  it("does not observe trusted history when the later prompt omits or substitutes the body", () => {
+    for (
+      const laterBody of [undefined, { ...body(), references: [] }, { ...body(), skillId: "x" }]
+    ) {
+      const observation = createExecutorSkillObservation();
+      observation.recordTrustedHistory([historyMessage(body())]);
+      if (laterBody !== undefined) observation.observePrompt(prompt(laterBody));
+      assertEquals(observation.observedSkillBodies(), []);
+    }
+  });
+
+  it("does not seed untrusted or duplicate historical body IDs", () => {
+    for (
+      const messages of [
+        [historyMessage(body(), false)],
+        [historyMessage(body()), historyMessage(body(), false)],
+        [historyMessage(body()), historyMessage({ ...body(), instructions: "# Other" }, true)],
+      ]
+    ) {
+      const observation = createExecutorSkillObservation();
+      observation.recordTrustedHistory(messages);
+      observation.observePrompt(prompt(body()));
       assertEquals(observation.observedSkillBodies(), []);
     }
   });

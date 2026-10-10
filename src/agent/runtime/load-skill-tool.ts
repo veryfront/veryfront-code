@@ -1600,15 +1600,24 @@ async function loadRuntimeSkillReferenceFile(
         file,
         normalizedFile,
       );
+    const observedBodyMayAuthorizeColdReference = !hasLoadedSkillResponse &&
+      observed === true;
     const reusableCachedAuthorization: RuntimeSkillReferenceAuthorization | undefined =
       cachedAuthorization &&
-        (!cachedAuthorization.requiresActiveSkillContext || resumedReferenceIsAdvertised)
+        (!cachedAuthorization.requiresActiveSkillContext || resumedReferenceIsAdvertised ||
+          (observedBodyMayAuthorizeColdReference &&
+            hasProviderObservedSkillReferences(
+                executionContext,
+                skillId,
+                cachedAuthorization.references,
+              ) === true))
         ? cachedAuthorization
         : undefined;
     if (
       !reusableCachedAuthorization &&
       !hasLoadedSkillResponse &&
-      !resumedReferenceIsAdvertised
+      !resumedReferenceIsAdvertised &&
+      !observedBodyMayAuthorizeColdReference
     ) {
       return {
         error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
@@ -1618,7 +1627,8 @@ async function loadRuntimeSkillReferenceFile(
 
     let authorization: RuntimeSkillReferenceAuthorization | undefined = reusableCachedAuthorization;
     if (!authorization) {
-      const requiresActiveSkillContext = !hasLoadedSkillResponse && resumedReferenceIsAdvertised;
+      const requiresActiveSkillContext = !hasLoadedSkillResponse &&
+        (resumedReferenceIsAdvertised || observedBodyMayAuthorizeColdReference);
       const bodyPublication = privateAuthority.captureBody(loadedSkillKey);
       const projectSkill = await loadRuntimeSkillBody(options, skillId, budget);
       budget.throwIfTerminated();
