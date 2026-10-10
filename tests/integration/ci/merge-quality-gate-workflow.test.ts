@@ -543,7 +543,7 @@ describe("merge quality gate workflow", () => {
     );
     assertStringIncludes(
       coverageScript,
-      "export function normalizeLcovSourcePath",
+      "export function normalizeLcovSourcePaths",
     );
     assertStringIncludes(
       coverageScript,
@@ -551,15 +551,19 @@ describe("merge quality gate workflow", () => {
     );
     assertStringIncludes(
       coverageScript,
-      'const GENERATED_MDX_CACHE_PREFIX =\n  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";',
+      "function githubWorkspaceRoots",
     );
     assertStringIncludes(
       coverageScript,
-      "validateProjectSources: true",
+      'const GENERATED_MDX_CACHE_PREFIX = "/home/runner/.cache/veryfront/veryfront-mdx-esm/";',
     );
     assertStringIncludes(
       coverageScript,
-      "Cannot map LCOV source path into the project",
+      "normalizeLcovArtifacts(",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "checkoutSourceExists",
     );
     assertStringIncludes(
       coverageScript,

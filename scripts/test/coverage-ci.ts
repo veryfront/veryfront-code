@@ -1,4 +1,5 @@
 import { walk } from "#std/fs/walk";
+import { dirname, resolve } from "#std/path";
 import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
@@ -25,14 +26,8 @@ interface LcovLineRecord {
   line: number;
 }
 
-export interface LcovMergeOptions {
-  projectRoot?: string;
-  validateProjectSources?: boolean;
-}
-
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
-const GENERATED_MDX_CACHE_PREFIX =
-  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
+const GENERATED_MDX_CACHE_PREFIX = "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -103,13 +98,185 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
   ];
 }
 
-export function mergeLcovReports(
-  reports: string[],
-  options: LcovMergeOptions = {},
+const WORKSPACE_RECORD_PREFIX = "# veryfront-coverage-workspace: ";
+
+export interface LcovArtifactReport {
+  path: string;
+  content: string;
+}
+
+type NormalizedLcovSource =
+  | { kind: "source"; path: string }
+  | { kind: "drop-generated-cache" }
+  | { kind: "external"; path: string };
+
+function validateProducerWorkspace(value: unknown): string {
+  if (
+    typeof value !== "string" || !/^(?:\/|[A-Za-z]:[\\/])/.test(value) ||
+    /[\r\n\0]/.test(value) ||
+    value.replaceAll("\\", "/").split("/").some((part) => part === "." || part === "..")
+  ) {
+    throw new Error("Invalid LCOV producer workspace provenance.");
+  }
+  const root = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!root || /^[A-Za-z]:$/.test(root)) {
+    throw new Error("Invalid LCOV producer workspace provenance.");
+  }
+  return root;
+}
+
+export function annotateLcovWorkspace(
+  report: string,
+  workspace: string,
 ): string {
-  const blockLayouts = reports.map((report) =>
-    collectBranchBlockLayouts(report, options)
+  const root = validateProducerWorkspace(workspace);
+  return `${WORKSPACE_RECORD_PREFIX}${JSON.stringify(root)}\n${report}`;
+}
+
+/** Producer provenance applies only within its uploaded artifact directory. */
+export function normalizeLcovArtifacts(
+  reports: readonly LcovArtifactReport[],
+  workspace: string,
+  sourceExists: (relativePath: string) => boolean,
+): string[] {
+  const roots = new Map<string, string>();
+  for (const report of reports) {
+    const directory = dirname(resolve(report.path)).replaceAll("\\", "/");
+    for (const line of report.content.split(/\r?\n/)) {
+      if (!line.startsWith(WORKSPACE_RECORD_PREFIX)) continue;
+      let value: unknown;
+      try {
+        value = JSON.parse(line.slice(WORKSPACE_RECORD_PREFIX.length));
+      } catch {
+        throw new Error("Invalid LCOV producer workspace provenance.");
+      }
+      const root = validateProducerWorkspace(value);
+      for (const [scope, existing] of roots) {
+        const related = directory === scope ||
+          directory.startsWith(`${scope}/`) ||
+          scope.startsWith(`${directory}/`);
+        if (related && existing !== root) {
+          throw new Error("Conflicting LCOV producer workspace provenance.");
+        }
+      }
+      roots.set(directory, root);
+    }
+  }
+  return reports.map((report) => {
+    const directory = dirname(resolve(report.path)).replaceAll("\\", "/");
+    const producer = [...roots].find(([scope]) =>
+      directory === scope || directory.startsWith(`${scope}/`)
+    )?.[1];
+    return normalizeLcovSourcePaths(report.content, [
+      workspace,
+      ...githubWorkspaceRoots(workspace),
+      ...(producer ? [producer] : []),
+      ...(producer ? githubWorkspaceRoots(producer) : []),
+    ], sourceExists);
+  });
+}
+
+/**
+ * Rewrite verified checkout prefixes, drop generated MDX cache records, and
+ * fail closed when a path that should be a checkout source is missing.
+ */
+export function normalizeLcovSourcePaths(
+  report: string,
+  producerRoots: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): string {
+  const prefixes = producerRoots.map((root) =>
+    root.replaceAll("\\", "/").replace(/\/+$/, "") + "/"
   );
+  const newline = report.includes("\r\n") ? "\r\n" : "\n";
+  const output: string[] = [];
+  let keepRecord = true;
+
+  for (const line of report.split(/\r?\n/)) {
+    if (line.startsWith("SF:")) {
+      const source = normalizeLcovSource(line.slice(3), prefixes, sourceExists);
+      if (source.kind === "drop-generated-cache") {
+        keepRecord = false;
+        continue;
+      }
+      keepRecord = true;
+      output.push(`SF:${source.path}`);
+      continue;
+    }
+    if (!keepRecord) {
+      if (line === "end_of_record") keepRecord = true;
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join(newline);
+}
+
+function normalizeLcovSource(
+  source: string,
+  prefixes: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): NormalizedLcovSource {
+  const portable = source.replaceAll("\\", "/");
+  if (portable.startsWith(GENERATED_MDX_CACHE_PREFIX)) {
+    return { kind: "drop-generated-cache" };
+  }
+
+  if (!portable.startsWith("/") && !/^[A-Za-z]:\//.test(portable)) {
+    return { kind: "source", path: normalizeRelativeLcovPath(portable) };
+  }
+
+  const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
+  if (prefix) {
+    const relative = normalizeRelativeLcovPath(portable.slice(prefix.length));
+    if (!sourceExists(relative)) {
+      throw new Error(`LCOV source path does not exist in the project: ${relative}`);
+    }
+    return { kind: "source", path: relative };
+  }
+
+  const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(portable);
+  if (githubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(githubCheckout[2]);
+    if (!sourceExists(relative)) {
+      throw new Error(`LCOV source path does not exist in the project: ${relative}`);
+    }
+    return { kind: "source", path: relative };
+  }
+
+  return { kind: "external", path: source };
+}
+
+function normalizeRelativeLcovPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) {
+        throw new Error(`LCOV source path escapes the project: ${path}`);
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  if (parts.length === 0) {
+    throw new Error(`LCOV source path is empty after normalization: ${path}`);
+  }
+  return parts.join("/");
+}
+
+function githubWorkspaceRoots(root: string): string[] {
+  const portable = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const match = /^\/home\/runner\/(_?work)\/([^/]+)\/\2$/.exec(portable);
+  if (!match?.[1] || !match[2]) return [];
+  const alternate = match[1] === "_work" ? "work" : "_work";
+  return [`/home/runner/${alternate}/${match[2]}/${match[2]}`];
+}
+
+export function mergeLcovReports(reports: string[]): string {
+  const blockLayouts = reports.map(collectBranchBlockLayouts);
   const shiftedBlockLines = findShiftedBranchBlockLines(blockLayouts);
   const files = new Map<string, {
     lines: Map<number, number>;
@@ -123,8 +290,7 @@ export function mergeLcovReports(
 
     for (const line of report.split(/\r?\n/)) {
       if (line.startsWith("SF:")) {
-        currentFile = normalizeLcovSourcePath(line.slice(3).trim(), options);
-        if (currentFile === undefined) continue;
+        currentFile = line.slice(3).trim();
         if (!files.has(currentFile)) {
           files.set(currentFile, { lines: new Map(), branches: new Map() });
         }
@@ -192,9 +358,7 @@ export function mergeLcovReports(
         { key: b },
       ) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
       const branchRecords = sortedBranches.length === 0 ? [] : [
-        ...sortedBranches.map(({ key, hits }) =>
-          `BRDA:${key.join(",")},${hits}`
-        ),
+        ...sortedBranches.map(({ key, hits }) => `BRDA:${key.join(",")},${hits}`),
         `BRF:${sortedBranches.length}`,
         `BRH:${sortedBranches.filter(({ hits }) => hits > 0).length}`,
       ];
@@ -220,14 +384,13 @@ interface BranchBlockLayout {
 
 function collectBranchBlockLayouts(
   report: string,
-  options: LcovMergeOptions,
 ): Map<string, Map<number, BranchBlockLayout>> {
   const blocks = new Map<string, Map<number, Map<number, Set<number>>>>();
   let currentFile: string | undefined;
 
   for (const line of report.split(/\r?\n/)) {
     if (line.startsWith("SF:")) {
-      currentFile = normalizeLcovSourcePath(line.slice(3).trim(), options);
+      currentFile = line.slice(3).trim();
       continue;
     }
     if (line === "end_of_record") {
@@ -311,87 +474,6 @@ function findShiftedBranchBlockLines(
   return shifted;
 }
 
-export function normalizeLcovSourcePath(
-  path: string,
-  options: LcovMergeOptions = {},
-): string | undefined {
-  const normalizedPath = path.replaceAll("\\", "/");
-  if (normalizedPath.startsWith(GENERATED_MDX_CACHE_PREFIX)) {
-    return undefined;
-  }
-
-  if (!normalizedPath.startsWith("/")) {
-    const relativePath = normalizeRelativeLcovPath(normalizedPath);
-    validateRelativeLcovSourcePath(relativePath, options);
-    return relativePath;
-  }
-
-  const projectRoot = options.projectRoot
-    ? normalizeProjectRoot(options.projectRoot)
-    : undefined;
-  if (projectRoot && normalizedPath.startsWith(`${projectRoot}/`)) {
-    const relativePath = normalizeRelativeLcovPath(
-      normalizedPath.slice(projectRoot.length + 1),
-    );
-    validateRelativeLcovSourcePath(relativePath, options);
-    return relativePath;
-  }
-
-  const githubWorkspaceMatch = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/
-    .exec(
-      normalizedPath,
-    );
-  if (githubWorkspaceMatch?.[2]) {
-    const relativePath = normalizeRelativeLcovPath(githubWorkspaceMatch[2]);
-    validateRelativeLcovSourcePath(relativePath, options);
-    return relativePath;
-  }
-
-  throw new Error(`Cannot map LCOV source path into the project: ${path}`);
-}
-
-function normalizeProjectRoot(path: string): string {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "");
-}
-
-function normalizeRelativeLcovPath(path: string): string {
-  const parts: string[] = [];
-  for (const part of path.replaceAll("\\", "/").split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      if (parts.length === 0) {
-        throw new Error(`LCOV source path escapes the project: ${path}`);
-      }
-      parts.pop();
-      continue;
-    }
-    parts.push(part);
-  }
-  if (parts.length === 0) {
-    throw new Error(`LCOV source path is empty after normalization: ${path}`);
-  }
-  return parts.join("/");
-}
-
-function validateRelativeLcovSourcePath(
-  path: string,
-  options: LcovMergeOptions,
-): void {
-  if (!options.validateProjectSources || !options.projectRoot) return;
-
-  const projectRoot = normalizeProjectRoot(options.projectRoot);
-  try {
-    Deno.statSync(`${projectRoot}/${path}`);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
-      throw new Error(
-        `LCOV source path does not exist in the project: ${path}`,
-      );
-    }
-    throw error;
-  }
-}
-
 async function runShard(args: string[]): Promise<void> {
   const shardValue = readOption(args, "--shard");
   const coverageDir = readOption(args, "--coverage-dir") ?? "coverage";
@@ -419,7 +501,39 @@ async function runShard(args: string[]): Promise<void> {
   await clearEmptyCoverageProfileJson(coverageDir);
   const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
   await clearCoverageProfileJson(coverageDir);
-  await Deno.writeTextFile(`${coverageDir}/lcov.info`, lcov);
+  await Deno.writeTextFile(
+    `${coverageDir}/lcov.info`,
+    prepareProducedLcov(lcov),
+  );
+}
+
+function checkoutSourceExists(relativePath: string): boolean {
+  try {
+    return Deno.statSync(relativePath).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+function prepareProducedLcov(report: string): string {
+  const workspace = Deno.cwd();
+  return annotateLcovWorkspace(
+    normalizeLcovSourcePaths(report, [workspace], checkoutSourceExists),
+    workspace,
+  );
+}
+
+async function runReport(args: string[]): Promise<void> {
+  const coverageDir = args[0];
+  if (!coverageDir) {
+    throw new Error("A coverage profile directory is required.");
+  }
+  const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
+  await Deno.writeTextFile(
+    `${coverageDir}/lcov.info`,
+    prepareProducedLcov(lcov),
+  );
 }
 
 async function runMerge(args: string[]): Promise<void> {
@@ -443,10 +557,27 @@ async function runMerge(args: string[]): Promise<void> {
     throw new Error("No LCOV files found to merge.");
   }
 
-  const lcov = mergeLcovReports(
-    await Promise.all(lcovFiles.map((path) => Deno.readTextFile(path))),
-    { projectRoot: Deno.cwd(), validateProjectSources: true },
+  // Coverage producers run on both hosted and self-hosted checkouts. Normalize
+  // before merging so identical source files share records across runner roots.
+  const reports = await Promise.all(lcovFiles.map(async (path) => ({
+    path,
+    content: await Deno.readTextFile(path),
+  })));
+  const normalizedReports = normalizeLcovArtifacts(
+    reports,
+    Deno.cwd(),
+    checkoutSourceExists,
   );
+  const retainedAbsoluteSources = normalizedReports.reduce(
+    (count, report) => count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
+    0,
+  );
+  if (retainedAbsoluteSources > 0) {
+    console.warn(
+      `LCOV retains ${retainedAbsoluteSources} external or unverified absolute source records; only verified checkout files are remapped.`,
+    );
+  }
+  const lcov = mergeLcovReports(normalizedReports);
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([
     "run",
@@ -574,7 +705,9 @@ if (import.meta.main) {
     await runShard(rawArgs);
   } else if (mode === "merge") {
     await runMerge(rawArgs);
+  } else if (mode === "report") {
+    await runReport(rawArgs);
   } else {
-    throw new Error("Usage: coverage-ci.ts <shard|merge> [options]");
+    throw new Error("Usage: coverage-ci.ts <shard|merge|report> [options]");
   }
 }
