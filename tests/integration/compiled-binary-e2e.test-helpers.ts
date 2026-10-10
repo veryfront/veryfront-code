@@ -145,17 +145,30 @@ async function ensureCoordinationDir(): Promise<void> {
 /**
  * Identify this process instance, not just its pid: a pid can be reused after a
  * run is killed before its unload handlers clean up. Every isolate of the
- * process sees the same pid and start time.
+ * process sees the same pid and start time. Linux reads the start time from
+ * /proc, other hosts from `ps`; without either, the pid alone identifies it.
  */
 async function getProcessIdentity(): Promise<string> {
-  const result = await new Deno.Command("ps", {
-    args: ["-o", "lstart=", "-p", String(Deno.pid)],
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  const startedAt = new TextDecoder().decode(result.stdout).trim();
-  if (!result.success || !startedAt) throw new Error("Failed to read the test process start time");
-  return `${Deno.pid} ${startedAt}`;
+  try {
+    const stat = await Deno.readTextFile("/proc/self/stat");
+    // Field 22 is the start time; fields restart after the parenthesized name.
+    const startedAt = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    if (startedAt) return `${Deno.pid} ${startedAt}`;
+  } catch {
+    // Not Linux; fall through to ps.
+  }
+  try {
+    const result = await new Deno.Command("ps", {
+      args: ["-o", "lstart=", "-p", String(Deno.pid)],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const startedAt = new TextDecoder().decode(result.stdout).trim();
+    if (result.success && startedAt) return `${Deno.pid} ${startedAt}`;
+  } catch {
+    // ps is not installed.
+  }
+  return String(Deno.pid);
 }
 
 let processIdentity = "";
