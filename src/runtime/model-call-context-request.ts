@@ -45,6 +45,7 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
+const MathMin = Math.min;
 const NativeWeakSet = WeakSet;
 const NativeNumber = Number;
 const NativeString = String;
@@ -55,6 +56,7 @@ const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeIncludes = String.prototype.includes;
 const NativeOpenAIChatModelPattern = /^(gpt-|o[134](-|$)|chatgpt-)/;
 
 function regexpTest(pattern: RegExp, value: string): boolean {
@@ -63,6 +65,10 @@ function regexpTest(pattern: RegExp, value: string): boolean {
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
 }
 
 function objectKeys(value: Record<string, unknown> | ModelCallRequest): string[] {
@@ -125,6 +131,10 @@ function numberIsInteger(value: number): boolean {
 
 function numberIsSafeInteger(value: number): boolean {
   return ReflectApply(NumberIsSafeInteger, Number, [value]) as boolean;
+}
+
+function mathMin(...values: number[]): number {
+  return ReflectApply(MathMin, Math, values) as number;
 }
 
 function readOwnEnumerableDataDescriptor(
@@ -736,12 +746,108 @@ function resolvePersistedControls(
   return effective;
 }
 
+function getAnthropicModelMaxOutputTokens(modelId: string | undefined): {
+  maxOutputTokens: number;
+  isKnownModel: boolean;
+} {
+  if (!modelId) return { maxOutputTokens: 4096, isKnownModel: false };
+  if (
+    stringIncludes(modelId, "claude-opus-4-8") ||
+    stringIncludes(modelId, "claude-opus-4-7") ||
+    stringIncludes(modelId, "claude-opus-4-6")
+  ) {
+    return { maxOutputTokens: 128_000, isKnownModel: true };
+  }
+  if (stringIncludes(modelId, "claude-sonnet-4-6")) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
+  }
+  if (
+    stringIncludes(modelId, "claude-sonnet-4-5") ||
+    stringIncludes(modelId, "claude-opus-4-5") ||
+    stringIncludes(modelId, "claude-haiku-4-5")
+  ) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
+  }
+  if (stringIncludes(modelId, "claude-opus-4-1")) {
+    return { maxOutputTokens: 32_000, isKnownModel: true };
+  }
+  if (stringIncludes(modelId, "claude-sonnet-4-")) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
+  }
+  if (stringIncludes(modelId, "claude-opus-4-")) {
+    return { maxOutputTokens: 32_000, isKnownModel: true };
+  }
+  if (stringIncludes(modelId, "claude-3-haiku")) {
+    return { maxOutputTokens: 4096, isKnownModel: true };
+  }
+  return { maxOutputTokens: 4096, isKnownModel: false };
+}
+
+function resolveAnthropicNeutralThinkingBudget(
+  reasoning: RuntimeReasoningOption | undefined,
+): number | undefined {
+  if (!reasoning || reasoning.enabled !== true) return undefined;
+  if (reasoning.budgetTokens !== undefined) {
+    return numberIsSafeInteger(reasoning.budgetTokens) && reasoning.budgetTokens >= 1024
+      ? reasoning.budgetTokens
+      : undefined;
+  }
+  switch (reasoning.effort) {
+    case "low":
+      return 1024;
+    case "high":
+      return 16_384;
+    case "max":
+      return 32_768;
+    case "medium":
+    default:
+      return 4096;
+  }
+}
+
+function resolveAnthropicProviderThinkingBudget(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+):
+  | number
+  | undefined {
+  const thinking = readProviderControl(model, options, "thinking")?.value;
+  if (!thinking || typeof thinking !== "object" || ArrayIsArray(thinking)) return undefined;
+  if (readOwnEnumerableDataDescriptor(thinking, "type")?.value !== "enabled") return undefined;
+  const budgetTokens = readOwnEnumerableDataDescriptor(thinking, "budget_tokens")?.value;
+  return typeof budgetTokens === "number" && numberIsSafeInteger(budgetTokens) &&
+      budgetTokens >= 1024
+    ? budgetTokens
+    : undefined;
+}
+
+function resolveAnthropicBaseMaxOutputTokens(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): number {
+  const { maxOutputTokens: modelMax, isKnownModel } = getAnthropicModelMaxOutputTokens(
+    model.modelId,
+  );
+  const requested = options.maxOutputTokens ?? modelMax;
+  return isKnownModel && requested > modelMax ? modelMax : requested;
+}
+
 function resolveAnthropicMaxOutputTokens(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): number | undefined {
   const native = readProviderControl(model, options, "max_tokens");
-  return native ? numberControl(native.value) : options.maxOutputTokens;
+  const nativeMaxTokens = native ? numberControl(native.value) : undefined;
+  if (nativeMaxTokens !== undefined) return nativeMaxTokens;
+
+  const baseMaxTokens = resolveAnthropicBaseMaxOutputTokens(model, options);
+  const thinkingBudget = resolveAnthropicNeutralThinkingBudget(options.reasoning) ??
+    resolveAnthropicProviderThinkingBudget(model, options);
+  if (thinkingBudget === undefined) return baseMaxTokens;
+  return mathMin(
+    baseMaxTokens + thinkingBudget,
+    getAnthropicModelMaxOutputTokens(model.modelId).maxOutputTokens,
+  );
 }
 
 function resolveAnthropicControls(

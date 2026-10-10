@@ -1144,7 +1144,6 @@ describe("model call request projection", () => {
           modelProvider: "anthropic",
           modelId: "claude-haiku-4-5",
         }, options);
-        assertEquals(projected?.maxOutputTokens, 64);
         for (const stream of [false, true]) {
           const body = buildAnthropicMessagesRequest(
             "claude-haiku-4-5",
@@ -1153,6 +1152,7 @@ describe("model call request projection", () => {
             stream,
             createWarningCollector(),
           ) as unknown as Record<string, unknown>;
+          assertEquals(projected?.maxOutputTokens, body.max_tokens);
           for (
             const [field, nativeField] of [...samplingFields, ["topK", "top_k"], [
               "seed",
@@ -1169,6 +1169,44 @@ describe("model call request projection", () => {
           assertEquals(projected?.stopSequences, body.stop_sequences);
         }
       }
+    }
+  });
+
+  it("matches Anthropic thinking token expansion and model caps", () => {
+    for (
+      const options of [
+        {
+          modelId: "claude-haiku-4-5",
+          maxOutputTokens: 64,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+        {
+          modelId: "claude-3-haiku",
+          maxOutputTokens: 4000,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+      ] as const
+    ) {
+      const callOptions = {
+        prompt,
+        maxOutputTokens: options.maxOutputTokens,
+        reasoning: options.reasoning,
+      };
+      const model = {
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: options.modelId,
+      };
+      const projected = buildModelCallContextRequest(model, callOptions);
+      const body = buildAnthropicMessagesRequest(
+        options.modelId,
+        "anthropic",
+        callOptions,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals(projected?.maxOutputTokens, body.max_tokens);
     }
   });
 
@@ -1295,6 +1333,7 @@ describe("model call request projection", () => {
       seed: 0,
       presencePenalty: 0.7,
       frequencyPenalty: -0.5,
+      maxOutputTokens: 64_000,
       stopSequences: ["native"],
       reasoning: { enabled: true, budgetTokens: 2048 },
     });
