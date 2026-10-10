@@ -66,6 +66,8 @@ export type DurableRunCanaryMessage = InferSchema<
 /** Public API contract for durable run canary run summary. */
 export interface DurableRunCanaryRunSummary {
   runId: string;
+  /** Verified canonical API run identity, distinct from the client admission key. */
+  canonicalRunId?: string;
   conversationId: string;
   messageId: string;
   agentId: string;
@@ -101,6 +103,7 @@ const getSnakeRunSummarySchema = defineSchema((v) =>
 const getCamelRunSummarySchema = defineSchema((v) =>
   v.object({
     runId: v.string(),
+    canonicalRunId: v.string().uuid().optional(),
     conversationId: v.string().uuid(),
     messageId: v.string().uuid(),
     agentId: v.string(),
@@ -146,6 +149,7 @@ export function parseDurableRunCanaryRunSummary(value: unknown): DurableRunCanar
   const camel = getCamelRunSummarySchema().parse(value);
   return {
     runId: camel.runId,
+    ...(camel.canonicalRunId === undefined ? {} : { canonicalRunId: camel.canonicalRunId }),
     conversationId: camel.conversationId,
     messageId: camel.messageId,
     agentId: camel.agentId,
@@ -390,6 +394,7 @@ export function createDurableRunCanaryApiClient(
     );
     return {
       runId: input.runId,
+      canonicalRunId: run.id,
       conversationId: run.conversation_id,
       messageId: run.output_message_id,
       agentId: config.agentId,

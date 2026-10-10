@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { createDurableRunCanaryApiClient } from "./runner.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { createDurableRunCanaryApiClient, parseDurableRunCanaryRunSummary } from "./runner.ts";
 Deno.test("durable canary admits once and reads canonical identity with the real snapshot cursor", async () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const conversation = "22222222-2222-4222-8222-222222222222";
@@ -56,4 +56,13 @@ Deno.test("durable canary admits once and reads canonical identity with the real
   assertEquals(summary.latestEventId, 7);
   assertEquals(summary.latestExternalEventSequence, null);
   assertEquals(summary.messageId, message);
+  assertEquals(summary.runId, "canary-key");
+  assertEquals(summary.canonicalRunId, id);
+  const { latestExternalEventSequence: _latestExternalEventSequence, ...parseInput } = summary;
+  assertEquals(parseDurableRunCanaryRunSummary(parseInput).canonicalRunId, id);
+  assertThrows(() =>
+    parseDurableRunCanaryRunSummary({ ...parseInput, canonicalRunId: "canary-key" })
+  );
+  const { canonicalRunId: _canonicalRunId, ...legacy } = parseInput;
+  assertEquals(parseDurableRunCanaryRunSummary(legacy).canonicalRunId, undefined);
 });
