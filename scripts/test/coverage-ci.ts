@@ -1,4 +1,5 @@
 import { walk } from "#std/fs/walk";
+import { dirname, resolve } from "#std/path";
 import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
@@ -94,6 +95,103 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
     "--exclude=/__tests__/",
     "--lcov",
   ];
+}
+
+const WORKSPACE_RECORD_PREFIX = "# veryfront-coverage-workspace: ";
+
+export interface LcovArtifactReport {
+  path: string;
+  content: string;
+}
+
+function validateProducerWorkspace(value: unknown): string {
+  if (
+    typeof value !== "string" || !/^(?:\/|[A-Za-z]:[\\/])/.test(value) ||
+    /[\r\n\0]/.test(value) ||
+    value.replaceAll("\\", "/").split("/").some((part) =>
+      part === "." || part === ".."
+    )
+  ) {
+    throw new Error("Invalid LCOV producer workspace provenance.");
+  }
+  const root = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!root || /^[A-Za-z]:$/.test(root)) {
+    throw new Error("Invalid LCOV producer workspace provenance.");
+  }
+  return root;
+}
+
+export function annotateLcovWorkspace(
+  report: string,
+  workspace: string,
+): string {
+  const root = validateProducerWorkspace(workspace);
+  return `${WORKSPACE_RECORD_PREFIX}${JSON.stringify(root)}\n${report}`;
+}
+
+/** Producer provenance applies only within its uploaded artifact directory. */
+export function normalizeLcovArtifacts(
+  reports: readonly LcovArtifactReport[],
+  workspace: string,
+  sourceExists: (relativePath: string) => boolean,
+): string[] {
+  const roots = new Map<string, string>();
+  for (const report of reports) {
+    const directory = dirname(resolve(report.path)).replaceAll("\\", "/");
+    for (const line of report.content.split(/\r?\n/)) {
+      if (!line.startsWith(WORKSPACE_RECORD_PREFIX)) continue;
+      let value: unknown;
+      try {
+        value = JSON.parse(line.slice(WORKSPACE_RECORD_PREFIX.length));
+      } catch {
+        throw new Error("Invalid LCOV producer workspace provenance.");
+      }
+      const root = validateProducerWorkspace(value);
+      for (const [scope, existing] of roots) {
+        const related = directory === scope ||
+          directory.startsWith(`${scope}/`) ||
+          scope.startsWith(`${directory}/`);
+        if (related && existing !== root) {
+          throw new Error("Conflicting LCOV producer workspace provenance.");
+        }
+      }
+      roots.set(directory, root);
+    }
+  }
+  return reports.map((report) => {
+    const directory = dirname(resolve(report.path)).replaceAll("\\", "/");
+    const producer = [...roots].find(([scope]) =>
+      directory === scope || directory.startsWith(`${scope}/`)
+    )?.[1];
+    return normalizeLcovSourcePaths(report.content, [
+      workspace,
+      ...(producer ? [producer] : []),
+    ], sourceExists);
+  });
+}
+
+/** Rewrite only exact checkout prefixes whose relative source exists in this checkout. */
+export function normalizeLcovSourcePaths(
+  report: string,
+  producerRoots: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): string {
+  const prefixes = producerRoots.map((root) =>
+    root.replaceAll("\\", "/").replace(/\/+$/, "") + "/"
+  );
+  return report.replace(/^SF:([^\r\n]+)/gm, (record, source: string) => {
+    const portable = source.replaceAll("\\", "/");
+    const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
+    if (!prefix) return record;
+    const relative = portable.slice(prefix.length);
+    if (
+      !relative ||
+      relative.split("/").some((part) => part === ".." || part === ".")
+    ) {
+      return record;
+    }
+    return sourceExists(relative) ? `SF:${relative}` : record;
+  });
 }
 
 export function mergeLcovReports(reports: string[]): string {
@@ -324,7 +422,39 @@ async function runShard(args: string[]): Promise<void> {
   await clearEmptyCoverageProfileJson(coverageDir);
   const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
   await clearCoverageProfileJson(coverageDir);
-  await Deno.writeTextFile(`${coverageDir}/lcov.info`, lcov);
+  await Deno.writeTextFile(
+    `${coverageDir}/lcov.info`,
+    prepareProducedLcov(lcov),
+  );
+}
+
+function checkoutSourceExists(relativePath: string): boolean {
+  try {
+    return Deno.statSync(relativePath).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+function prepareProducedLcov(report: string): string {
+  const workspace = Deno.cwd();
+  return annotateLcovWorkspace(
+    normalizeLcovSourcePaths(report, [workspace], checkoutSourceExists),
+    workspace,
+  );
+}
+
+async function runReport(args: string[]): Promise<void> {
+  const coverageDir = args[0];
+  if (!coverageDir) {
+    throw new Error("A coverage profile directory is required.");
+  }
+  const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
+  await Deno.writeTextFile(
+    `${coverageDir}/lcov.info`,
+    prepareProducedLcov(lcov),
+  );
 }
 
 async function runMerge(args: string[]): Promise<void> {
@@ -348,9 +478,28 @@ async function runMerge(args: string[]): Promise<void> {
     throw new Error("No LCOV files found to merge.");
   }
 
-  const lcov = mergeLcovReports(
-    await Promise.all(lcovFiles.map((path) => Deno.readTextFile(path))),
+  // Coverage producers run on both hosted and self-hosted checkouts. Normalize
+  // before merging so identical source files share records across runner roots.
+  const reports = await Promise.all(lcovFiles.map(async (path) => ({
+    path,
+    content: await Deno.readTextFile(path),
+  })));
+  const normalizedReports = normalizeLcovArtifacts(
+    reports,
+    Deno.cwd(),
+    checkoutSourceExists,
   );
+  const retainedAbsoluteSources = normalizedReports.reduce(
+    (count, report) =>
+      count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
+    0,
+  );
+  if (retainedAbsoluteSources > 0) {
+    console.warn(
+      `LCOV retains ${retainedAbsoluteSources} external or unverified absolute source records; only verified checkout files are remapped.`,
+    );
+  }
+  const lcov = mergeLcovReports(normalizedReports);
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([
     "run",
@@ -478,7 +627,9 @@ if (import.meta.main) {
     await runShard(rawArgs);
   } else if (mode === "merge") {
     await runMerge(rawArgs);
+  } else if (mode === "report") {
+    await runReport(rawArgs);
   } else {
-    throw new Error("Usage: coverage-ci.ts <shard|merge> [options]");
+    throw new Error("Usage: coverage-ci.ts <shard|merge|report> [options]");
   }
 }
