@@ -34,6 +34,7 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
+const NumberIsInteger = Number.isInteger;
 const RegExpPrototypeTest = RegExp.prototype.test;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 
@@ -47,6 +48,10 @@ function stringStartsWith(value: string, search: string): boolean {
 
 function objectKeys<TValue extends object>(value: TValue): string[] {
   return ObjectKeys(value);
+}
+
+function numberIsInteger(value: number): boolean {
+  return ReflectApply(NumberIsInteger, Number, [value]) as boolean;
 }
 
 function readOwnEnumerableDataDescriptor(
@@ -427,7 +432,7 @@ function resolveNonOpenAIReasoning(
     const budgetTokens = readOwnEnumerableDataDescriptor(thinking, "budget_tokens")?.value;
     return {
       enabled: true,
-      ...(typeof budgetTokens === "number" && Number.isInteger(budgetTokens) && budgetTokens >= 0
+      ...(typeof budgetTokens === "number" && numberIsInteger(budgetTokens) && budgetTokens >= 0
         ? { budgetTokens }
         : {}),
     };

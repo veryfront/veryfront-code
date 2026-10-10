@@ -72,4 +72,39 @@ describe("model call request projection intrinsic boundaries", () => {
       Object.keys = nativeObjectKeys;
     }
   });
+
+  it("preserves Anthropic thinking budgets when Number.isInteger is replaced before dispatch", () => {
+    const nativeNumberIsInteger = Number.isInteger;
+    const replacements: Array<typeof Number.isInteger> = [
+      () => {
+        throw new Error("poisoned Number.isInteger");
+      },
+      () => false,
+    ];
+
+    try {
+      for (const replacement of replacements) {
+        Number.isInteger = replacement;
+        const projected = buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "anthropic",
+          modelId: "claude-synthetic",
+        }, {
+          prompt,
+          ...sampling,
+          providerOptions: {
+            anthropic: {
+              thinking: { type: "enabled", budget_tokens: 2048 },
+            },
+          },
+        });
+
+        assertEquals(projected, {
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        });
+      }
+    } finally {
+      Number.isInteger = nativeNumberIsInteger;
+    }
+  });
 });

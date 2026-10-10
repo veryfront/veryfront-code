@@ -5,6 +5,7 @@ import {
   buildTemporaryJunitPaths,
   buildTestFileCommandArgGroups,
   buildTestFileCommandArgs,
+  getJunitPath,
   hasDenoNoRun,
   LOOPBACK_ALLOW_NET,
   mergeDenoJunitReports,
@@ -198,6 +199,69 @@ describe("test:file task command", () => {
 
     assertEquals(failedExitCode, 7);
     assertEquals(calls, [["source-group"], ["script-group"]]);
+  });
+
+  it("treats bare JUnit path as stdout without swallowing following options", () => {
+    assertEquals(
+      getJunitPath([
+        "src/foo.test.ts",
+        "scripts/foo.test.ts",
+        "--junit-path",
+        "--filter",
+        "needle",
+      ]),
+      "-",
+    );
+
+    const groups = buildTestFileCommandArgGroups([
+      "src/foo.test.ts",
+      "scripts/foo.test.ts",
+      "--junit-path",
+      "--filter",
+      "needle",
+    ]);
+    assertEquals(groups.length, 2);
+    assertEquals(groups[0]!.slice(-3), ["--junit-path", "--filter", "needle"]);
+    assertEquals(groups[1]!.slice(-3), ["--junit-path", "--filter", "needle"]);
+
+    const rewritten = rewriteSplitJunitPathForCommandArgGroups(groups, [
+      "/tmp/source.xml",
+      "/tmp/scripts.xml",
+    ]);
+    assertEquals(rewritten.requestedJunitPath, "-");
+    assertEquals(groups[0]!.includes("--filter"), true);
+    assertEquals(rewritten.commandArgGroups[0]!.slice(-4), [
+      "--junit-path",
+      "/tmp/source.xml",
+      "--filter",
+      "needle",
+    ]);
+    assertEquals(rewritten.commandArgGroups[1]!.slice(-4), [
+      "--junit-path",
+      "/tmp/scripts.xml",
+      "--filter",
+      "needle",
+    ]);
+
+    const explicitStdoutGroups = buildTestFileCommandArgGroups([
+      "src/foo.test.ts",
+      "scripts/foo.test.ts",
+      "--junit-path",
+      "-",
+    ]);
+    const explicitStdoutRewrite = rewriteSplitJunitPathForCommandArgGroups(
+      explicitStdoutGroups,
+      ["/tmp/source.xml", "/tmp/scripts.xml"],
+    );
+    assertEquals(explicitStdoutRewrite.requestedJunitPath, "-");
+    assertEquals(explicitStdoutRewrite.commandArgGroups[0]!.slice(-2), [
+      "--junit-path",
+      "/tmp/source.xml",
+    ]);
+    assertEquals(explicitStdoutRewrite.commandArgGroups[1]!.slice(-2), [
+      "--junit-path",
+      "/tmp/scripts.xml",
+    ]);
   });
 
   it("uses safe temporary JUnit paths when merged reports print to stdout", () => {

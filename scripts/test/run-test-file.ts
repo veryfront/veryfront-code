@@ -58,10 +58,7 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
     const arg = rawArgs[index]!;
     if (arg === "--") break;
     if (arg.startsWith("-")) {
-      const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
-        index += 1;
-      }
+      if (shouldConsumeSeparateOptionValue(rawArgs, index)) index += 1;
       continue;
     }
     targets.push(arg);
@@ -73,6 +70,21 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
 }
 
 class TestFileUsageError extends Error {}
+
+function shouldConsumeSeparateOptionValue(
+  rawArgs: readonly string[],
+  index: number,
+): boolean {
+  const arg = rawArgs[index]!;
+  if (arg.includes("=")) return false;
+  const option = arg.split("=", 1)[0]!;
+  if (option === "--junit-path") {
+    const nextArg = rawArgs[index + 1];
+    return nextArg !== undefined &&
+      (nextArg === "-" || !nextArg.startsWith("-"));
+  }
+  return TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option);
+}
 
 function buildTestFileCommandArgsForRawArgs(
   rawArgs: string[],
@@ -107,15 +119,16 @@ export function getJunitPath(rawArgs: readonly string[]): string | undefined {
   for (let index = 0; index < rawArgs.length; index++) {
     const arg = rawArgs[index]!;
     if (arg === "--") return undefined;
-    if (arg === "--junit-path") return rawArgs[index + 1];
+    if (arg === "--junit-path") {
+      return shouldConsumeSeparateOptionValue(rawArgs, index)
+        ? rawArgs[index + 1]
+        : "-";
+    }
     if (arg.startsWith("--junit-path=")) {
       return arg.slice("--junit-path=".length);
     }
     if (arg.startsWith("-")) {
-      const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
-        index += 1;
-      }
+      if (shouldConsumeSeparateOptionValue(rawArgs, index)) index += 1;
     }
   }
   return undefined;
@@ -127,10 +140,7 @@ export function hasDenoNoRun(rawArgs: readonly string[]): boolean {
     if (arg === "--") return false;
     if (arg === "--no-run" || arg.startsWith("--no-run=")) return true;
     if (arg.startsWith("-")) {
-      const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
-        index += 1;
-      }
+      if (shouldConsumeSeparateOptionValue(rawArgs, index)) index += 1;
     }
   }
   return false;
@@ -149,7 +159,7 @@ function rewriteJunitPath(
     }
     if (arg === "--junit-path") {
       rewritten.push(arg, junitPath);
-      index += 1;
+      if (shouldConsumeSeparateOptionValue(rawArgs, index)) index += 1;
       continue;
     }
     if (arg.startsWith("--junit-path=")) {
@@ -235,8 +245,7 @@ function filterRawArgsByTargetKind(
     }
     if (arg.startsWith("-")) {
       filtered.push(arg);
-      const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+      if (shouldConsumeSeparateOptionValue(rawArgs, index)) {
         index += 1;
         filtered.push(rawArgs[index]!);
       }
