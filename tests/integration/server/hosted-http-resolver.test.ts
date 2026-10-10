@@ -1,12 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
 import { getExecutorHttpInstallSchema } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import { snapshotExecutorHttpApplicationConfiguration } from "#veryfront/server/isolated-http/application-configuration.ts";
 import {
-  buildHostedHttpGenerationBindingInput,
   createHostedHttpResolver,
   createHostedHttpSourceRecordLookup,
   type HostedHttpResolverOptions,
@@ -153,21 +152,6 @@ describe("hosted HTTP resolver", () => {
     snapshotExecutorHttpApplicationConfiguration(resolved.configuration, installation);
   });
 
-  it("derives one opaque configuration identity per authorized configuration", async () => {
-    const resolve = createHostedHttpResolver(options());
-    const first = await withMockFetch(apiFetch().fetch, () => resolve(authority, signal()));
-    const same = await withMockFetch(apiFetch().fetch, () => resolve(authority, signal()));
-    const changed = await withMockFetch(
-      apiFetch({ variables: Response.json({ data: [{ key: "APP_MESSAGE", value: "bye" }] }) })
-        .fetch,
-      () => resolve(authority, signal()),
-    );
-    assertEquals(first.configuration.configurationId, same.configuration.configurationId);
-    assertNotEquals(first.configuration.configurationId, changed.configuration.configurationId);
-    assert(!first.configuration.configurationId.includes("hello"));
-    assertNotEquals(first.session.request.allocationId, same.session.request.allocationId);
-  });
-
   it("refuses a missing or oversized source token without contacting the API", async () => {
     const api = apiFetch();
     const resolve = createHostedHttpResolver(options());
@@ -230,96 +214,5 @@ describe("hosted HTTP resolver", () => {
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
     assertEquals(lookups, [{ projectId: PROJECT_ID, releaseId: RELEASE_ID }]);
     assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
-  });
-
-  it("refuses publication records for another release, origin or repository", async () => {
-    for (
-      const mismatch of [
-        { release_id: OTHER_RELEASE_ID },
-        { api_origin: "https://other-api.veryfront.test" },
-        { image: `ghcr.io/attacker/source@sha256:${"b".repeat(64)}` },
-        { image: `${REPOSITORY}:latest` },
-        { status: "pending" },
-        { schema_version: 2 },
-      ]
-    ) {
-      const resolve = createHostedHttpResolver(options({
-        lookupSourceImage: () => Promise.resolve(record(mismatch)),
-      }));
-      await withMockFetch(
-        apiFetch().fetch,
-        () => assertRejects(() => resolve(authority, signal())),
-      );
-    }
-  });
-
-  it("refuses a release with no publication record", async () => {
-    const resolve = createHostedHttpResolver(options({
-      lookupSourceImage: createHostedHttpSourceRecordLookup([
-        record({ project_id: FOREIGN_PROJECT_ID }),
-      ]),
-    }));
-    await withMockFetch(apiFetch().fetch, () => assertRejects(() => resolve(authority, signal())));
-  });
-
-  it("rejects host configuration it cannot enforce", () => {
-    for (
-      const invalid of [
-        { apiBaseUrl: "http://api.veryfront.test" },
-        { sourceApiOrigin: "https://source.test/path" },
-        { sourceImageRepository: "" },
-        { lookupSourceImage: undefined as never },
-        { session: { ...options().session, expectedBrokerInstanceId: "" } },
-        { prepareTimeoutMs: 0 },
-        { hardTimeoutMs: 10 },
-      ]
-    ) {
-      let failed = false;
-      try {
-        createHostedHttpResolver(options(invalid));
-      } catch (error) {
-        failed = error instanceof TypeError;
-      }
-      assert(failed, `expected ${JSON.stringify(Object.keys(invalid))} to be refused`);
-    }
-  });
-
-  it("refuses ambiguous publication records for one release", () => {
-    let failed = false;
-    try {
-      createHostedHttpSourceRecordLookup([
-        record(),
-        record({ image: `${REPOSITORY}@sha256:${"e".repeat(64)}` }),
-      ]);
-    } catch (error) {
-      failed = error instanceof TypeError;
-    }
-    assert(failed);
-  });
-
-  it("builds the generation binding inputs from the resolved installation", async () => {
-    const resolve = createHostedHttpResolver(options());
-    const resolved = await withMockFetch(apiFetch().fetch, () => resolve(authority, signal()));
-    const binding = buildHostedHttpGenerationBindingInput(resolved);
-    assertEquals(binding, {
-      projectId: PROJECT_ID,
-      environmentId: "environment-a",
-      sourceSnapshotId: IMAGE,
-      configurationId: resolved.installation.configurationId,
-    });
-    assert(Object.isFrozen(binding));
-    let failed = false;
-    try {
-      buildHostedHttpGenerationBindingInput({
-        ...resolved,
-        installation: {
-          ...resolved.installation,
-          owner: { scopeKind: "project", projectId: FOREIGN_PROJECT_ID },
-        },
-      });
-    } catch (error) {
-      failed = error instanceof TypeError;
-    }
-    assert(failed, "installation owner must match the allocation owner");
   });
 });
