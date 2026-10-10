@@ -333,6 +333,7 @@ it("a broad capability query loads deferred tools despite equally matching visib
     assert(result.matches.some((match) => match.name === name && match.status === "loaded"));
     assert(state.loadedToolNames.has(name));
   }
+  // TOOL_SEARCH_RESULT_LIMIT caps the nine authorized matches at five results.
   assertEquals(result.loadedCount, 5);
   assertEquals(result.matches.length, 5);
 });

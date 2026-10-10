@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { listOpenLiveEvalInputRequests, waitForOpenLiveEvalInputRequest } from "./api-client.ts";
 
 const requestId = "64fb6029-c081-4f3b-8612-770371e9fab7";
@@ -13,7 +14,7 @@ function contextFor(data: unknown[]) {
   };
 }
 
-Deno.test("live eval sidecar finds the canonical API input request identifier", async () => {
+it("live eval sidecar finds the canonical API input request identifier", async () => {
   const id = await waitForOpenLiveEvalInputRequest(
     contextFor([{ input_request_id: requestId, status: "open" }]),
     {
@@ -27,7 +28,7 @@ Deno.test("live eval sidecar finds the canonical API input request identifier", 
   assertEquals(id, requestId);
 });
 
-Deno.test("live eval input listing normalizes canonical and legacy IDs without ambiguity", async () => {
+it("live eval input listing normalizes canonical and legacy IDs without ambiguity", async () => {
   const records = await listOpenLiveEvalInputRequests(
     contextFor([
       { input_request_id: requestId, status: "open" },
