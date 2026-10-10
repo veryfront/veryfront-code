@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import process from "node:process";
 import { isDeno, isDenoCompiled, isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger as logger } from "#veryfront/utils";
@@ -75,7 +75,10 @@ type HostedHttpCompositionBroker =
 
 interface HostedHttpCompositionDependencies {
   /** @internal Host file reader; replaced in hermetic tests. */
-  readFile?: (path: string, options: { signal?: AbortSignal }) => Promise<Uint8Array>;
+  readFile?: (
+    path: string,
+    options: { signal?: AbortSignal; maxBytes: number },
+  ) => Promise<Uint8Array>;
   /** @internal Host override check; replaced in hermetic tests. */
   isOverrideEnabled?: () => boolean;
   /** @internal Runtime support check; replaced in hermetic tests. */
@@ -171,6 +174,35 @@ export function readHostedHttpCompositionConfig(
 }
 
 /**
+ * Read at most `maxBytes + 1` bytes of a host file, so an oversized file is detected
+ * without loading it whole.
+ * @internal
+ */
+export async function readHostFilePrefix(
+  path: string,
+  options: { signal?: AbortSignal; maxBytes: number },
+): Promise<Uint8Array> {
+  options.signal?.throwIfAborted();
+  const limit = options.maxBytes + 1;
+  const buffer = new Uint8Array(limit);
+  const handle = await open(path, "r");
+  try {
+    let length = 0;
+    while (length < limit) {
+      options.signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(buffer, length, limit - length, null);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    const result = buffer.slice(0, length);
+    buffer.fill(0);
+    return result;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Read a bounded UTF-8 host file. Failures name the setting, never the host path,
  * so file system errors do not reach user-facing output or error reporting.
  */
@@ -183,7 +215,7 @@ async function readBoundedText(
 ) {
   let bytes: Uint8Array;
   try {
-    bytes = await read(path, { signal });
+    bytes = await read(path, { signal, maxBytes });
   } catch {
     signal?.throwIfAborted();
     throw CONFIG_INVALID.create({ detail: `The file named by ${setting} could not be read` });
@@ -285,7 +317,7 @@ export async function createHostedHttpComposition(
   if ((dependencies.isOverrideEnabled ?? isHostProjectExecutionOverrideEnabled)()) {
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }
-  const read = dependencies.readFile ?? readFile;
+  const read = dependencies.readFile ?? readHostFilePrefix;
   const ca = config.allocatorCaFile
     ? await readBoundedText(
       read,

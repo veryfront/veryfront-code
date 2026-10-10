@@ -15,6 +15,7 @@ import {
   type HostedHttpCompositionConfig,
   isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
+  readHostFilePrefix,
 } from "#veryfront/server/isolated-http/hosted-http-composition.ts";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -186,6 +187,32 @@ describe("hosted HTTP host composition", () => {
           }),
         TypeError,
         "unsupported on Deno",
+      );
+    });
+  });
+
+  it("reads at most one byte past the limit of a host file", async () => {
+    await withTempDir(async (dir) => {
+      await Deno.writeFile(`${dir}/large`, new Uint8Array(1024 * 1024).fill(65));
+      const prefix = await readHostFilePrefix(`${dir}/large`, { maxBytes: 16 });
+      assertEquals(prefix.byteLength, 17);
+      await Deno.writeTextFile(`${dir}/small`, "token");
+      assertEquals(
+        new TextDecoder().decode(await readHostFilePrefix(`${dir}/small`, { maxBytes: 16 })),
+        "token",
+      );
+
+      const config = await writeHostFiles(dir);
+      await Deno.writeFile(`${dir}/ca.pem`, new Uint8Array(256 * 1024 + 1).fill(65));
+      await assertRejects(
+        () =>
+          createHostedHttpComposition(config, {
+            runtime: nodeRuntime,
+            createAllocatorClient: () => allocator,
+            createBroker: () => fakeBroker().broker,
+          }),
+        Error,
+        "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE is too large",
       );
     });
   });
