@@ -16,6 +16,7 @@ const selection = {
   ...identity,
   sourceToken: "source-only",
   mode: "production" as const,
+  hostMode: "production" as const,
   proxyTrusted: true,
 };
 const request = () => new Request("https://app.example/api/proof");
@@ -193,6 +194,12 @@ describe("hosted HTTP ingress", () => {
       (await fetch(request(), { ...selection, mode: "preview" })).status,
       503,
     );
+    // A preview host stays preview even when the header names production.
+    for (const hostMode of ["preview", undefined] as const) {
+      const response = await fetch(request(), { ...selection, hostMode });
+      assertEquals(response.status, 503);
+      assertEquals((await response.json()).detail, "This surface is unsupported under isolation");
+    }
     assertEquals(resolutions, 0);
   });
   it("serves production Markdown paths through the isolated application", async () => {
