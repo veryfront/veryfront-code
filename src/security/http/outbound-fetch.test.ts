@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
+import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
@@ -1263,6 +1264,22 @@ denoDescribe("explicit HTTP host API transport", () => {
     VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
     VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "",
   };
+
+  it("rejects malformed API targets and embedded credentials", async () => {
+    await withEnv(environment, async () => {
+      for (const value of ["not-a-url", "http://[", "/api", "http://:pass@127.0.0.1:4000"]) {
+        assertThrows(() => requireHostPrivateApiHttps(value), TypeError);
+      }
+    });
+  });
+
+  it("rejects malformed operator HTTP API configuration", async () => {
+    for (const value of ["not-a-url", "http://:pass@127.0.0.1:4000"]) {
+      await withEnv({ ...environment, VERYFRONT_API_URL: value }, async () => {
+        assertThrows(() => requireHostPrivateApiHttps(origin), TypeError);
+      });
+    }
+  });
 
   it("allows an approved HTTP service origin without authorizing generic fetch", async () => {
     const service = "http://api.svc.example:4000";
