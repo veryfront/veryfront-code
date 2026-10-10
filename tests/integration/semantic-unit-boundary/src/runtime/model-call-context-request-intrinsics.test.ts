@@ -75,17 +75,27 @@ describe("model call request projection intrinsic boundaries", () => {
   });
 
   it("preserves native OpenAI provider options when Map is replaced before dispatch", () => {
+    const nativeOpenAIOptions = {
+      max_tokens: 777,
+      seed: undefined,
+    };
+    Object.defineProperty(nativeOpenAIOptions, "__proto__", {
+      value: "literal-proto",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const protoDescriptor = Object.getOwnPropertyDescriptor(nativeOpenAIOptions, "__proto__");
+    assertEquals(protoDescriptor?.value, "literal-proto");
+    assertEquals(protoDescriptor?.enumerable, true);
+    assertEquals(Object.getPrototypeOf(nativeOpenAIOptions), Object.prototype);
     const options: ModelRuntimeCallOptions = {
       prompt,
       maxOutputTokens: 100,
       seed: 42,
       providerOptions: {
         "openai-compatible": { max_tokens: 111 },
-        openai: {
-          max_tokens: 777,
-          seed: undefined,
-          ["__proto__"]: "literal-proto",
-        },
+        openai: nativeOpenAIOptions,
       },
     };
     const nativeMap = globalThis.Map;
