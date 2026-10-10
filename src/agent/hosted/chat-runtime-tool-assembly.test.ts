@@ -907,7 +907,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly bootstraps a trusted canonical l
   assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly exposes one deferred skill loader when aliases coexist", async () => {
+it("prepareHostedChatRuntimeToolAssembly exposes one deferred skill loader when aliases coexist", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -942,7 +942,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly exposes one deferred skill loade
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly does not expose tool_search for loader aliases only", async () => {
+it("prepareHostedChatRuntimeToolAssembly does not expose tool_search for loader aliases only", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -972,7 +972,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly does not expose tool_search for 
   assertEquals(taskContext.availableToolNames, ["veryfront__load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps the unused loader alias out of deferred search", async () => {
+it("prepareHostedChatRuntimeToolAssembly keeps the unused loader alias out of deferred search", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1028,7 +1028,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps the unused loader alias ou
   assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps a project load_skill collision discoverable", async () => {
+it("prepareHostedChatRuntimeToolAssembly keeps a project load_skill collision discoverable", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1091,7 +1091,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps a project load_skill colli
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps tool_search for only a project load_skill collision", async () => {
+it("prepareHostedChatRuntimeToolAssembly keeps tool_search for only a project load_skill collision", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1150,7 +1150,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps tool_search for only a pro
   assertEquals(search.matches.map((match) => match.name), ["load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps canonical loader visible when explicit legacy selector names a project collision", async () => {
+it("prepareHostedChatRuntimeToolAssembly keeps canonical loader visible when explicit legacy selector names a project collision", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1214,7 +1214,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps canonical loader visible w
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly preserves an explicit legacy loader selector", async () => {
+it("prepareHostedChatRuntimeToolAssembly preserves an explicit legacy loader selector", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1246,7 +1246,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves an explicit legacy loa
   assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical loader selector", async () => {
+it("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical loader selector", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1278,7 +1278,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical 
   assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly does not leak hidden loader alias state across assemblies", async () => {
+it("prepareHostedChatRuntimeToolAssembly does not leak hidden loader alias state across assemblies", async () => {
   const localTools = withPlatformHostToolAliases(
     markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
     {

@@ -36,8 +36,13 @@ export function markRuntimeProviderSchemaHiddenTool(tool: Tool): Tool {
 
 /** Return whether a runtime-local tool should stay out of provider schemas. */
 export function isRuntimeProviderSchemaHiddenTool(value: unknown): boolean {
-  return value !== null && typeof value === "object" &&
-    objectGetOwnPropertyDescriptor(value, AGENT_RUNTIME_PROVIDER_SCHEMA_HIDDEN)?.value === true;
+  if (value === null || typeof value !== "object") return false;
+  try {
+    return objectGetOwnPropertyDescriptor(value, AGENT_RUNTIME_PROVIDER_SCHEMA_HIDDEN)?.value ===
+      true;
+  } catch {
+    return false;
+  }
 }
 
 /** Copy provider-schema hidden metadata across a runtime-owned wrapper. */

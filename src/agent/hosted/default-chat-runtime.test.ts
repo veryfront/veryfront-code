@@ -41,6 +41,7 @@ import {
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
+  createPreparedHostedRuntimeAgent,
   type DefaultHostedChatRuntimeTaskContext,
   scopeHostedRuntimeToolResults,
   scopeHostedRuntimeTools,
@@ -48,6 +49,7 @@ import {
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
@@ -185,7 +187,7 @@ for (const trusted of [false, true]) {
           skillId: "review",
           instructions: "# Review",
           references: [],
-          scripts: ["scripts/review.sh"],
+          scripts: ["scripts/build.sh"],
         }),
       };
       const form = {
@@ -238,7 +240,222 @@ for (const trusted of [false, true]) {
   });
 }
 
-Deno.test("default hosted runtime defers a project load_skill collision after full construction", async () => {
+it("default hosted runtime executes a trusted legacy loader alias after canonical-only stream exposure", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let platformLoadSkillExecutions = 0;
+  const toolNamesByCall: string[][] = [];
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/default-loader-trusted-legacy-alias",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      modelCallCount += 1;
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            if (modelCallCount === 1) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: "call-legacy-loader",
+                toolName: "load_skill",
+                input: { skillId: "build" },
+              });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            } else {
+              controller.enqueue({ type: "text-delta", text: "done" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              });
+            }
+            controller.close();
+          },
+        }),
+      });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project",
+        authToken: "token",
+        instructions: "Use the selected loader.",
+        model: "test/default-loader-trusted-legacy-alias",
+        allowedTools: ["load_skill", "veryfront__load_skill", "execute_skill_script"],
+        toolLoading: "deferred",
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () =>
+        withPlatformHostToolAliases(
+          markTrustedHostToolSet({
+            load_skill: {
+              description: "Platform load skill",
+              inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+              execute: () => {
+                platformLoadSkillExecutions += 1;
+                return {
+                  skillId: "build",
+                  instructions: "# Build",
+                  references: [],
+                  scripts: ["scripts/review.sh"],
+                };
+              },
+            },
+          }),
+          { execute_skill_script: localTool("Run loaded script") },
+        ),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // Consume the two-step model run.
+      }
+    });
+
+    assertEquals(modelCallCount, 2);
+    assertEquals(toolNamesByCall[0], ["veryfront__load_skill"]);
+    assertEquals(toolNamesByCall[0]?.includes("load_skill"), false);
+    assertEquals(platformLoadSkillExecutions, 1);
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("prepared hosted runtime generate accepts a trusted hidden legacy loader alias after canonical-only exposure", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let platformLoadSkillExecutions = 0;
+  const toolNamesByCall: string[][] = [];
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/prepared-loader-trusted-legacy-alias-generate",
+    doStream: () => Promise.reject(new Error("unused")),
+    doGenerate(options: unknown) {
+      modelCallCount += 1;
+      const tools = typeof options === "object" && options !== null && "tools" in options
+        ? options.tools
+        : undefined;
+      toolNamesByCall.push(
+        Array.isArray(tools)
+          ? tools.flatMap((tool) =>
+            typeof tool === "object" && tool !== null && "name" in tool &&
+              typeof tool.name === "string"
+              ? [tool.name]
+              : []
+          )
+          : [],
+      );
+      if (modelCallCount === 1) {
+        return Promise.resolve({
+          content: [{
+            type: "tool-call",
+            toolCallId: "call-legacy-loader",
+            toolName: "load_skill",
+            input: JSON.stringify({ skillId: "build" }),
+          }],
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        });
+      }
+      return Promise.resolve({
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+    },
+  }));
+  try {
+    const runtimeTools = createToolsFromHostDefinitions(
+      withPlatformHostToolAliases(
+        markTrustedHostToolSet({
+          load_skill: {
+            description: "Platform load skill",
+            inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+            execute: () => {
+              platformLoadSkillExecutions += 1;
+              return {
+                skillId: "build",
+                instructions: "# Build",
+                references: [],
+                scripts: [],
+              };
+            },
+          },
+        }),
+      ),
+    );
+    if (runtimeTools.load_skill !== undefined) {
+      markRuntimeProviderSchemaHiddenTool(runtimeTools.load_skill);
+    }
+    const runtime = createPreparedHostedRuntimeAgent({
+      options: {
+        projectId: "project",
+        instructions: "Use the selected loader.",
+        model: "test/prepared-loader-trusted-legacy-alias-generate",
+        allowedTools: ["load_skill", "veryfront__load_skill"],
+        toolLoading: "deferred",
+      },
+      taskContext: {
+        projectId: "project",
+        branchId: null,
+      },
+      toolAssembly: {
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        runtimeTools,
+        remoteToolSources: [],
+        localToolNames: ["load_skill", "veryfront__load_skill"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["load_skill", "veryfront__load_skill"],
+        modelVisibleToolNames: ["veryfront__load_skill"],
+        toolLoadingMode: "deferred",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "Use the selected loader.",
+      },
+      modelId: "test/prepared-loader-trusted-legacy-alias-generate",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    }, {});
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      await runtime.generate({ input: "Load the build skill" });
+    });
+
+    assertEquals(modelCallCount, 2);
+    assertEquals(toolNamesByCall[0], ["veryfront__load_skill"]);
+    assertEquals(toolNamesByCall[0]?.includes("load_skill"), false);
+    assertEquals(platformLoadSkillExecutions, 1);
+  } finally {
+    clearModelProviders();
+  }
+});
+
+it("default hosted runtime defers a project load_skill collision after full construction", async () => {
   clearModelProviders();
   let modelCallCount = 0;
   const toolNamesByCall: string[][] = [];

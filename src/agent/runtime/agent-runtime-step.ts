@@ -79,6 +79,7 @@ export type RuntimeStepToolLoader = (
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     frameworkLocalTools?: Record<string, Tool>;
+    includeProviderSchemaHiddenTools?: boolean;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -281,6 +282,7 @@ export async function prepareAgentRuntimeStep(
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
       frameworkLocalTools: input.frameworkLocalTools,
+      includeProviderSchemaHiddenTools: true,
     })
     : [];
 

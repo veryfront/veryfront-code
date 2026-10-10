@@ -18,7 +18,7 @@ import {
   restoreTrustedPlatformPolicyResultsFromPersistedHistory,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import { tool, type ToolDefinition } from "#veryfront/tool";
 import type { ToolResultPart } from "../types.ts";
 import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
@@ -31,6 +31,11 @@ import {
   markProviderReplayDelivered,
   readAttachedProviderMetadata,
 } from "./provider-metadata.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 function policyToolDefinition(name: string): ToolDefinition {
   return {
@@ -243,8 +248,17 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("preserves platform provenance on narrowed active-skill reference schemas", () => {
+      const hiddenLoadSkill = inheritRuntimeProviderSchemaHiddenTool(
+        markRuntimeProviderSchemaHiddenTool(tool({
+          id: "load_skill",
+          description: "Hidden load skill source",
+          inputSchema: { type: "object", properties: {} },
+          execute: () => ({}),
+        })),
+        platformPolicyToolDefinition("load_skill"),
+      );
       const [narrowed] = filterToolsAfterSubmittedFormInput(
-        [platformPolicyToolDefinition("load_skill")],
+        [hiddenLoadSkill],
         [],
         { hasSubmittedFormInputResult: true },
         {
@@ -258,6 +272,7 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
 
       assertEquals(hasTrustedPlatformPolicyToolDefinition(narrowed), true);
+      assertEquals(isRuntimeProviderSchemaHiddenTool(narrowed), true);
       assertEquals(
         enforceSkillPolicy("load_skill", {
           activeSkillId: "plan",
