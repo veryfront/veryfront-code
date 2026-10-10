@@ -1681,12 +1681,11 @@ function toolNotVisibleError(toolName: string): string {
   return `Tool "${toolName}" is not available in the current model step`;
 }
 
-function isHiddenTrustedLoadSkillToolDefinition(
+function isHiddenTrustedToolDefinition(
   toolName: string,
   toolDefinition: ToolDefinition | undefined,
 ): toolDefinition is ToolDefinition {
-  return isLoadSkillToolName(toolName) &&
-    toolDefinition !== undefined &&
+  return toolDefinition !== undefined &&
     toolDefinition.name === toolName &&
     isRuntimeProviderSchemaHiddenTool(toolDefinition) &&
     hasTrustedPlatformPolicyToolDefinition(toolDefinition);
@@ -1700,7 +1699,7 @@ function collectAcceptedRuntimeToolNames(
   for (let index = 0; index < plan.authorized.length; index++) {
     if (!ObjectHasOwn(plan.authorized, index)) continue;
     const toolDefinition = plan.authorized[index];
-    if (isHiddenTrustedLoadSkillToolDefinition(toolDefinition?.name ?? "", toolDefinition)) {
+    if (isHiddenTrustedToolDefinition(toolDefinition?.name ?? "", toolDefinition)) {
       names.add(toolDefinition.name);
     }
   }
@@ -1718,13 +1717,10 @@ function resolveToolExecutionAuthority(input: {
       return { kind: "visible", toolDefinition };
     }
   }
-  if (!isLoadSkillToolName(input.toolName)) return undefined;
   for (let index = 0; index < input.plan.authorized.length; index++) {
     if (!ObjectHasOwn(input.plan.authorized, index)) continue;
     const toolDefinition = input.plan.authorized[index];
-    if (
-      isHiddenTrustedLoadSkillToolDefinition(input.toolName, toolDefinition)
-    ) {
+    if (isHiddenTrustedToolDefinition(input.toolName, toolDefinition)) {
       return { kind: "visible", toolDefinition };
     }
   }

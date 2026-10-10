@@ -730,6 +730,10 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
+      const providerSchemaHidden = isRuntimeProviderSchemaHiddenTool(entry);
+      if (providerSchemaHidden && !hasTrustedHostToolProvenance(entry)) {
+        continue;
+      }
       if (
         configuredRemoteToolName !== undefined &&
         !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
@@ -744,10 +748,7 @@ export async function getAvailableTools(
         assertLocalToolId(entry.id);
       }
       configuredAuthorizationToolNames.set(name, authorizationToolName);
-      if (
-        isRuntimeProviderSchemaHiddenTool(entry) &&
-        options?.includeProviderSchemaHiddenTools !== true
-      ) {
+      if (providerSchemaHidden && options?.includeProviderSchemaHiddenTools !== true) {
         continue;
       }
       addToolDefinition(tools, name, entry);
