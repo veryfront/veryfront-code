@@ -47,7 +47,8 @@ function isProviderSchemaVisibleToolDefinition(tool: ToolDefinition): boolean {
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill", "veryfront__load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
+const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** The platform's own namespace, which models also use as an alias for local platform tools. */
 const PLATFORM_TOOL_NAMESPACE = "veryfront";
@@ -541,7 +542,9 @@ function rankToolExposureMatches(input: {
       const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
       const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
         (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
-      if (identity !== null && !isPlatformCatalogReader) return false;
+      const isLocalCatalogReader = candidate.name === "get_integration" ||
+        candidate.name === "list_integrations";
+      if (!isPlatformCatalogReader && !isLocalCatalogReader) return false;
       // A non-canonical tool carrying the namespace in its *name* is a
       // normalization coincidence, not the integration, whatever its description
       // happens to mention: `jira_list_projects` is a local tool, not Jira.
@@ -583,6 +586,21 @@ function rankToolExposureMatches(input: {
       compareToolSearchMatches,
     );
   }
+
+  // A literal local id identifies one capability, not every tool whose schema
+  // mentions it. Keep phrase searches broad while exact calls load only that schema.
+  const literalName = privateTextToLowerCase(privateTextTrim(input.query));
+  const exactLocalMatches = sortSearchItems(
+    mapPrivateArray(
+      filterPrivateArray(
+        candidates,
+        (candidate) => privateTextToLowerCase(candidate.name) === literalName,
+      ),
+      toSearchMatch,
+    ),
+    compareToolSearchMatches,
+  );
+  if (exactLocalMatches.length > 0) return exactLocalMatches;
 
   // The query taken whole is the strongest signal for every non-canonical query.
   const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
@@ -672,7 +690,14 @@ export function createToolExposurePlan(input: {
     }
   }
 
-  const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
+  const hasCanonicalSkillLoader = somePrivateArray(
+    authorized,
+    (tool) => tool.name === "veryfront__load_skill" && isProviderSchemaVisibleToolDefinition(tool),
+  );
+  // Match hosted inventory instructions and preserve the framework loader when
+  // a project owns the local name. Defer the local alias when both are authorized.
+  const bootstrap = input.bootstrapToolNames ??
+    (hasCanonicalSkillLoader ? DEFAULT_BOOTSTRAP_TOOL_NAMES : LEGACY_BOOTSTRAP_TOOL_NAMES);
   let bootstrapCount = 0;
   const loadable: ToolDefinition[] = [];
   const loadableNames = createPrivateSet<string>();
