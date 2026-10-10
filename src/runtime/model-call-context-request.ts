@@ -493,6 +493,59 @@ function resolveOpenAIMaxOutputTokens(
   return options.maxOutputTokens;
 }
 
+function readNativeOpenAIJsonSchemaResponseFormat(
+  value: unknown,
+): ModelCallResponseFormat | undefined {
+  if (!isProviderOptionsBucket(value)) return undefined;
+  const name = readOwnEnumerableDataDescriptor(value, "name")?.value;
+  if (typeof name !== "string") return undefined;
+  const schema = readOwnEnumerableDataDescriptor(value, "schema")?.value;
+  if (schema === undefined) return undefined;
+  const description = readOwnEnumerableDataDescriptor(value, "description")?.value;
+  const strict = readOwnEnumerableDataDescriptor(value, "strict")?.value;
+  return {
+    type: "json_schema",
+    name,
+    schema: snapshotProviderOptionValue(
+      "responseFormat",
+      schema,
+      { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0 },
+      0,
+    ),
+    ...(typeof description === "string" ? { description } : {}),
+    ...(typeof strict === "boolean" ? { strict } : {}),
+  };
+}
+
+function readNativeOpenAIResponseFormat(value: unknown): ModelCallResponseFormat | undefined {
+  if (!isProviderOptionsBucket(value)) return undefined;
+  const type = readOwnEnumerableDataDescriptor(value, "type")?.value;
+  if (type === "text") return { type: "text" };
+  if (type === "json_object") return { type: "json" };
+  if (type !== "json_schema") return undefined;
+  return readNativeOpenAIJsonSchemaResponseFormat(
+    readOwnEnumerableDataDescriptor(value, "json_schema")?.value ?? value,
+  );
+}
+
+function resolveOpenAIResponseFormat(
+  options: ModelCallRequestSource,
+  providerOptions: Record<string, unknown>,
+  transport: "chat-completions" | "responses" | undefined,
+): ModelCallResponseFormat | undefined {
+  if (transport === "chat-completions" && ObjectHasOwn(providerOptions, "response_format")) {
+    return readNativeOpenAIResponseFormat(providerOptions.response_format);
+  }
+  if (transport === "responses" && ObjectHasOwn(providerOptions, "text")) {
+    const text = providerOptions.text;
+    if (!isProviderOptionsBucket(text) || !ObjectHasOwn(text, "format")) return undefined;
+    return readNativeOpenAIResponseFormat(text.format);
+  }
+  return snapshotResponseFormat(options.responseFormat, {
+    responsesJsonSchemaStrictDefault: transport === "responses",
+  });
+}
+
 const MaxProviderOptionSnapshotDepth = 64;
 const MaxProviderOptionSnapshotNodes = 65_536;
 
@@ -741,6 +794,7 @@ function resolvePersistedControls(
   const effective = {
     ...options,
     maxOutputTokens: resolveOpenAIMaxOutputTokens(model, options, providerOptions, transport),
+    responseFormat: resolveOpenAIResponseFormat(options, providerOptions, transport),
     topK: numberControl(providerOptions.top_k),
     seed: ObjectHasOwn(providerOptions, "seed")
       ? numberControl(providerOptions.seed)
@@ -964,6 +1018,7 @@ function resolveGoogleControls(
 
 function snapshotResponseFormat(
   responseFormat: ModelCallRequestSource["responseFormat"],
+  options: { responsesJsonSchemaStrictDefault?: boolean } = {},
 ): ModelCallResponseFormat | undefined {
   if (responseFormat === undefined) return undefined;
   if (responseFormat.type === "text" || responseFormat.type === "json") {
@@ -981,7 +1036,9 @@ function snapshotResponseFormat(
     ...(responseFormat.description === undefined
       ? {}
       : { description: responseFormat.description }),
-    ...(responseFormat.strict === undefined ? {} : { strict: responseFormat.strict }),
+    ...(responseFormat.strict === undefined
+      ? options.responsesJsonSchemaStrictDefault ? { strict: false } : {}
+      : { strict: responseFormat.strict }),
   };
 }
 

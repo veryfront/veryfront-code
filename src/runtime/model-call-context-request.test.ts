@@ -387,6 +387,207 @@ describe("model call request projection", () => {
     assertEquals(projected?.reasoning, { enabled: true, effort: "low" });
   });
 
+  it("persists OpenAI Chat native response_format precedence", () => {
+    const neutralFormat = {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: { neutral: { type: "string" } } },
+    } as const;
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          providerName: "openai",
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          providerName: "veryfront-cloud",
+        },
+      ] as const
+    ) {
+      const nativeJsonOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: { response_format: { type: "json_object" } },
+        },
+      };
+      const projected = buildModelCallContextRequest(testCase.model, nativeJsonOptions);
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        testCase.providerName,
+        nativeJsonOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.responseFormat, { type: "json" });
+      assertEquals(body.response_format, { type: "json_object" });
+
+      const suppressedOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: { response_format: undefined },
+        },
+      };
+      const suppressed = buildModelCallContextRequest(testCase.model, suppressedOptions);
+      const suppressedBody = buildOpenAIChatRequest(
+        "gpt-4o",
+        testCase.providerName,
+        suppressedOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(suppressed?.responseFormat, undefined);
+      assertEquals(suppressedBody.response_format, undefined);
+    }
+  });
+
+  it("persists OpenAI Responses native text.format precedence", () => {
+    const neutralFormat = {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: { neutral: { type: "string" } } },
+    } as const;
+    const nativeSchema = { type: "object", properties: { native: { type: "string" } } };
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          providerName: "openai",
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          providerName: "veryfront-cloud",
+        },
+      ] as const
+    ) {
+      const nativeOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: {
+            text: {
+              format: {
+                type: "json_schema",
+                name: "native",
+                schema: nativeSchema,
+                strict: true,
+              },
+            },
+          },
+        },
+      };
+      const projected = buildModelCallContextRequest(testCase.model, nativeOptions);
+      const body = buildOpenAIResponsesRequest(
+        "gpt-5.4-mini",
+        testCase.providerName,
+        nativeOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.responseFormat, {
+        type: "json_schema",
+        name: "native",
+        schema: nativeSchema,
+        strict: true,
+      });
+      assertEquals(body.text?.format, {
+        type: "json_schema",
+        name: "native",
+        schema: nativeSchema,
+        strict: true,
+      });
+
+      const suppressedOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: { [testCase.providerName]: { text: { format: undefined } } },
+      };
+      const suppressed = buildModelCallContextRequest(testCase.model, suppressedOptions);
+      const suppressedBody = buildOpenAIResponsesRequest(
+        "gpt-5.4-mini",
+        testCase.providerName,
+        suppressedOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(suppressed?.responseFormat, undefined);
+      assertEquals(suppressedBody.text?.format, undefined);
+    }
+  });
+
+  it("persists OpenAI neutral response format builder defaults", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: {
+        type: "json_schema",
+        name: "neutral",
+        schema: { type: "object", properties: {} },
+      },
+    };
+
+    const chatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, options);
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(chatProjected?.responseFormat, options.responseFormat);
+    assertEquals(
+      (chatBody.response_format as { json_schema?: { strict?: boolean } }).json_schema?.strict,
+      undefined,
+    );
+
+    const responsesProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+    }, options);
+    const responsesBody = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(responsesProjected?.responseFormat, {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: {} },
+      strict: false,
+    });
+    assertEquals(responsesBody.text?.format.strict, false);
+  });
+
   it("omits adaptive effort overwritten by Anthropic structured output", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,

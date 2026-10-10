@@ -1,4 +1,5 @@
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
@@ -432,6 +433,7 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
+const MathMin = Math.min;
 const ObjectValues = Object.values;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -1234,6 +1236,267 @@ async function observeGeneratedAgentOutputSchemaRejection(
 ): Promise<void> {
   await observeGeneratedAgentTurn(messageId, response);
   await observeGeneratedAgentOutputSchemaFailure();
+}
+
+type OutputSchemaObservationSnapshotStatus = "complete" | "partial" | "unsupported";
+
+interface OutputSchemaObservationSnapshot {
+  value: unknown;
+  status: OutputSchemaObservationSnapshotStatus;
+  reasons: string[];
+}
+
+interface OutputSchemaObservationSnapshotContext {
+  seen: WeakMap<object, true>;
+  remainingNodes: number;
+}
+
+const OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT = "[unsupported object]";
+const OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR = "[unsupported accessor]";
+const OUTPUT_SCHEMA_OBSERVATION_MAX_DEPTH = 32;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS = 100;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS = 100;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_NODES = 1_000;
+
+function addOutputSchemaObservationReason(reasons: string[], reason: string): void {
+  for (let index = 0; index < reasons.length; index++) {
+    if (ObjectHasOwn(reasons, index) && reasons[index] === reason) return;
+  }
+  pushPrivateArray(reasons, reason);
+}
+
+function snapshotOutputSchemaObservationValue(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext = {
+    seen: new IntrinsicWeakMap<object, true>(),
+    remainingNodes: OUTPUT_SCHEMA_OBSERVATION_MAX_NODES,
+  },
+  depth = 0,
+): OutputSchemaObservationSnapshot {
+  const reasons: string[] = [];
+  context.remainingNodes -= 1;
+  if (context.remainingNodes < 0) {
+    return {
+      value: "[truncated nested data]",
+      status: "partial",
+      reasons: ["aggregate_budget_exhausted"],
+    };
+  }
+  if (
+    value === null || typeof value === "string" || typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return { value, status: "complete", reasons };
+  }
+  if (typeof value !== "object") {
+    return {
+      value: `[unsupported ${typeof value}]`,
+      status: "unsupported",
+      reasons: [`unsupported_${typeof value}`],
+    };
+  }
+
+  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  if (IntrinsicReflectApply(WeakMapGet, context.seen, [value]) === true) {
+    return { value: "[circular]", status: "partial", reasons: ["circular"] };
+  }
+  if (depth >= OUTPUT_SCHEMA_OBSERVATION_MAX_DEPTH) {
+    return {
+      value: "[truncated nested data]",
+      status: "partial",
+      reasons: ["max_depth"],
+    };
+  }
+
+  let isArray: boolean;
+  try {
+    isArray = ArrayIsArray(value);
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+
+  if (!isArray) {
+    let prototype: object | null;
+    try {
+      prototype = ObjectGetPrototypeOf(value);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    if (!isOrdinaryRecordPrototype(prototype)) {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+  }
+
+  IntrinsicReflectApply(WeakMapSet, context.seen, [value, true]);
+  {
+    if (isArray) {
+      const output: unknown[] = [];
+      const arrayValue = value as unknown[];
+      let length: number;
+      try {
+        length = arrayValue.length;
+      } catch {
+        return {
+          value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+          status: "unsupported",
+          reasons: ["unsupported_object"],
+        };
+      }
+      const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
+      for (let index = 0; index < limit; index++) {
+        let property: PropertyDescriptor | undefined;
+        try {
+          property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
+        } catch {
+          return {
+            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+            status: "unsupported",
+            reasons: ["unsupported_object"],
+          };
+        }
+        const item = property && ObjectHasOwn(property, "value")
+          ? snapshotOutputSchemaObservationValue(property.value, context, depth + 1)
+          : property
+          ? {
+            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
+            status: "partial",
+            reasons: ["accessor_property"],
+          } satisfies OutputSchemaObservationSnapshot
+          : {
+            value: null,
+            status: "complete",
+            reasons: [],
+          } satisfies OutputSchemaObservationSnapshot;
+        defineOwnDataProperty(output, index, item.value, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        forEachPrivateArray(
+          item.reasons,
+          (reason) => addOutputSchemaObservationReason(reasons, reason),
+        );
+        if (item.status === "unsupported") {
+          addOutputSchemaObservationReason(reasons, "unsupported_array_item");
+        }
+      }
+      if (length > limit) {
+        defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        addOutputSchemaObservationReason(reasons, "array_truncated");
+      }
+      return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+    }
+
+    const output = ObjectCreate(null) as Record<string, unknown>;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      descriptors = ObjectGetOwnPropertyDescriptors(value);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    let copiedKeys = 0;
+    const descriptorKeys = ReflectOwnKeys(descriptors);
+    for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
+      if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
+      const key = descriptorKeys[keyIndex];
+      if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
+        addOutputSchemaObservationReason(reasons, "object_keys_truncated");
+        break;
+      }
+      if (context.remainingNodes <= 0) {
+        addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
+        break;
+      }
+      if (typeof key !== "string") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
+        continue;
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable) continue;
+      if (!ObjectHasOwn(descriptor, "value")) {
+        defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        copiedKeys += 1;
+        addOutputSchemaObservationReason(reasons, "accessor_property");
+        continue;
+      }
+      const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
+      defineOwnDataProperty(output, key, item.value, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      copiedKeys += 1;
+      forEachPrivateArray(
+        item.reasons,
+        (reason) => addOutputSchemaObservationReason(reasons, reason),
+      );
+      if (item.status === "unsupported") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property");
+      }
+    }
+    return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+  }
+}
+
+function createOutputSchemaObservationObject(object: unknown): unknown {
+  let snapshot: OutputSchemaObservationSnapshot;
+  try {
+    snapshot = snapshotOutputSchemaObservationValue(object);
+  } catch {
+    snapshot = {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  if (snapshot.status === "complete") return snapshot.value;
+  return {
+    captureStatus: snapshot.status,
+    reasons: snapshot.reasons,
+    value: snapshot.value,
+  };
+}
+
+function withOutputSchemaObservationObject<
+  TTurn extends RuntimeGenerateTextResult & { object?: unknown },
+>(
+  turn: TTurn,
+): TTurn {
+  if (!("object" in turn) || turn.object === undefined) return turn;
+  return {
+    ...turn,
+    object: createOutputSchemaObservationObject(turn.object),
+  };
 }
 
 function buildGeneratedAssistantMessage(
@@ -3809,7 +4072,10 @@ export class AgentRuntime {
           turn: RuntimeGenerateTextResult & { object?: unknown },
         ): Promise<void> => {
           if (generatedTurnObserved) return;
-          await observeGeneratedAgentTurn(assistantMessage.id, turn);
+          await observeGeneratedAgentTurn(
+            assistantMessage.id,
+            withOutputSchemaObservationObject(turn),
+          );
           generatedTurnObserved = true;
         };
         const parseMaxStepsOutputOnce = async (): Promise<MaxStepsOutputParse> => {
