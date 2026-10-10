@@ -96,6 +96,49 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
   ];
 }
 
+/** Known checkout roots are explicit; external/generated sources retain their paths. */
+export function coverageProducerRoots(
+  workspace: string,
+  repository?: string,
+): string[] {
+  const roots = [workspace];
+  if (
+    repository && /^[\w.-]+\/[\w.-]+$/.test(repository) &&
+    !repository.split("/").some((part) => part === "." || part === "..")
+  ) {
+    const name = repository.split("/")[1];
+    roots.push(
+      `/home/runner/work/${name}/${name}`,
+      `/home/runner/_work/${name}/${name}`,
+    );
+  }
+  return [...new Set(roots)];
+}
+
+/** Rewrite only exact checkout prefixes whose relative source exists in this checkout. */
+export function normalizeLcovSourcePaths(
+  report: string,
+  producerRoots: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): string {
+  const prefixes = producerRoots.map((root) =>
+    root.replaceAll("\\", "/").replace(/\/+$/, "") + "/"
+  );
+  return report.replace(/^SF:([^\r\n]+)/gm, (record, source: string) => {
+    const portable = source.replaceAll("\\", "/");
+    const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
+    if (!prefix) return record;
+    const relative = portable.slice(prefix.length);
+    if (
+      !relative ||
+      relative.split("/").some((part) => part === ".." || part === ".")
+    ) {
+      return record;
+    }
+    return sourceExists(relative) ? `SF:${relative}` : record;
+  });
+}
+
 export function mergeLcovReports(reports: string[]): string {
   const blockLayouts = reports.map(collectBranchBlockLayouts);
   const shiftedBlockLines = findShiftedBranchBlockLines(blockLayouts);
@@ -348,9 +391,37 @@ async function runMerge(args: string[]): Promise<void> {
     throw new Error("No LCOV files found to merge.");
   }
 
-  const lcov = mergeLcovReports(
-    await Promise.all(lcovFiles.map((path) => Deno.readTextFile(path))),
+  // Coverage producers run on both hosted and self-hosted checkouts. Normalize
+  // before merging so identical source files share records across runner roots.
+  const roots = coverageProducerRoots(
+    Deno.cwd(),
+    Deno.env.get("GITHUB_REPOSITORY"),
   );
+  const sourceExists = (relativePath: string): boolean => {
+    try {
+      return Deno.statSync(relativePath).isFile;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return false;
+      throw error;
+    }
+  };
+  const reports = await Promise.all(
+    lcovFiles.map((path) => Deno.readTextFile(path)),
+  );
+  const normalizedReports = reports.map((report) =>
+    normalizeLcovSourcePaths(report, roots, sourceExists)
+  );
+  const retainedAbsoluteSources = normalizedReports.reduce(
+    (count, report) =>
+      count + (report.match(/^SF:(?:\/|[A-Za-z]:[\\/])/gm)?.length ?? 0),
+    0,
+  );
+  if (retainedAbsoluteSources > 0) {
+    console.warn(
+      `LCOV retains ${retainedAbsoluteSources} external or unverified absolute source records; only verified checkout files are remapped.`,
+    );
+  }
+  const lcov = mergeLcovReports(normalizedReports);
   await Deno.writeTextFile("coverage/lcov.info", lcov);
   await runDeno([
     "run",

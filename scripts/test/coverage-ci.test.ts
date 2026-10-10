@@ -4,8 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
+  coverageProducerRoots,
   LOOPBACK_ALLOW_NET,
   mergeLcovReports,
+  normalizeLcovSourcePaths,
 } from "./coverage-ci.ts";
 
 /**
@@ -285,6 +287,90 @@ describe("mergeLcovReports", () => {
         "LF:1",
         "end_of_record",
       ].join("\n"),
+    );
+  });
+});
+
+describe("coverage source paths", () => {
+  it("limits alternate checkout roots to a validated repository name", () => {
+    assertEquals(
+      coverageProducerRoots("/local/repo", "veryfront/veryfront-code"),
+      [
+        "/local/repo",
+        "/home/runner/work/veryfront-code/veryfront-code",
+        "/home/runner/_work/veryfront-code/veryfront-code",
+      ],
+    );
+    assertEquals(coverageProducerRoots("/local/repo", "../outside/path"), [
+      "/local/repo",
+    ]);
+    assertEquals(coverageProducerRoots("/local/repo", "../outside"), [
+      "/local/repo",
+    ]);
+    assertEquals(coverageProducerRoots("/local/repo", "owner/.."), [
+      "/local/repo",
+    ]);
+    assertEquals(coverageProducerRoots("/local/repo"), ["/local/repo"]);
+  });
+  it("maps verified checkout files across producer roots without changing coverage records", () => {
+    const roots = [
+      "/home/runner/work/veryfront-code/veryfront-code",
+      "/home/runner/_work/veryfront-code/veryfront-code",
+      "C:\\runner\\veryfront-code",
+    ];
+    const records =
+      "\nFN:10,run\nFNDA:2,run\nDA:10,2\nBRDA:10,0,0,2\nBRDA:10,0,1,-\nend_of_record\n";
+    for (const root of roots) {
+      const separator = root.includes("\\") ? "\\" : "/";
+      const report = `SF:${root}${separator}src${separator}task.ts${records}`;
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          roots,
+          (path) => path === "src/task.ts",
+        ),
+        `SF:src/task.ts${records}`,
+      );
+    }
+  });
+
+  it("coalesces the same source across checkout roots without losing hits", () => {
+    const roots = ["/hosted/repo", "/self-hosted/repo"];
+    const reports = roots.map((root, index) =>
+      `SF:${root}/src/task.ts\r\nDA:10,${index + 1}\r\nBRDA:10,0,0,${
+        index + 1
+      }\r\nend_of_record\r\n`
+    );
+    const normalized = reports.map((report) =>
+      normalizeLcovSourcePaths(report, roots, (path) => path === "src/task.ts")
+    );
+    assert(normalized.every((report) => report.includes("\r\n")));
+    const merged = mergeLcovReports(normalized);
+    assertEquals(merged.match(/^SF:/gm)?.length, 1);
+    assert(merged.includes("DA:10,3\n"));
+    assert(merged.includes("BRDA:10,0,0,3\n"));
+  });
+
+  it("preserves relative, external, foreign and nonexistent source records", () => {
+    const root = "/home/runner/_work/veryfront-code/veryfront-code";
+    const sources = [
+      "src/task.ts",
+      "/home/runner/.cache/veryfront/src/task.ts.mjs",
+      "/foreign/src/task.ts",
+      `${root}-other/src/task.ts`,
+      `${root}/src/missing.ts`,
+      `${root}/../outside.ts`,
+    ];
+    const report = sources.map((source) =>
+      `SF:${source}\nDA:10,2\nend_of_record\n`
+    ).join("");
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        [root],
+        (path) => path === "src/task.ts",
+      ),
+      report,
     );
   });
 });
