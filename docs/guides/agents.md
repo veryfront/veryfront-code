@@ -185,7 +185,7 @@ with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up t
 import { agent } from "veryfront";
 
 export default agent({
-  instructions: "Use tools to answer the user's questions.",
+  system: "Use tools to answer the user's questions.",
   toolResultContext: {
     maxInlineBytes: 8192,
     previewBytes: 2048,
