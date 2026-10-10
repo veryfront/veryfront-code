@@ -770,6 +770,88 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  for (
+    const selection of [
+      { allowed: "load_skill", replayed: "veryfront__load_skill" },
+      { allowed: "veryfront__load_skill", replayed: "load_skill" },
+    ]
+  ) {
+    it(`executes a hidden loader alias through the granted facade (${selection.allowed})`, async () => {
+      const visible: string[][] = [];
+      const executed: string[] = [];
+      const result = { skillId: "example", instructions: "Granted facade instructions" };
+      const tools = markTrustedHostToolSet({
+        [selection.allowed]: {
+          id: selection.allowed,
+          description: "Granted loader",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: () => {
+            executed.push(selection.allowed);
+            return Promise.resolve(result);
+          },
+        },
+        [selection.replayed]: {
+          id: selection.replayed,
+          description: "Ungrantable loader operation",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: () => {
+            throw new Error("The ungranted facade operation must not execute");
+          },
+        },
+      });
+      const f = fixture({
+        grant: {
+          ...grant,
+          allowedToolNames: [selection.allowed],
+          hostToolFacadeIds: ["skills"],
+        },
+        facades: {
+          hostTools: new Map([["skills", tools]]),
+          projectSteering: {
+            prepare: ({ definition }) =>
+              Promise.resolve({
+                agent: definition,
+                initialSkills: [{
+                  id: "example",
+                  name: "example",
+                  description: "Synthetic",
+                  instructions: "Synthetic",
+                  allowedTools: [],
+                }],
+              }),
+            refresh: () => "Synthetic instructions",
+          },
+          resolveModelRuntime: () =>
+            scriptedModel([
+              (options) => {
+                visible.push(options.tools?.map((tool) => tool.name) ?? []);
+                return {
+                  toolCalls: [{
+                    id: "hidden-loader-call",
+                    name: selection.replayed,
+                    input: { skillId: "example" },
+                  }],
+                };
+              },
+              (options) => {
+                visible.push(options.tools?.map((tool) => tool.name) ?? []);
+                assertEquals(JSON.stringify(options.prompt).includes(result.instructions), true);
+                return { text: "Synthetic answer" };
+              },
+            ], { only: "stream", provider: "openai", modelId: "gpt-5.4" }),
+        },
+      });
+      try {
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
+        assertEquals(executed, [selection.allowed]);
+        assertEquals(visible, [[selection.allowed], [selection.allowed]]);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("requires a locally installed grant even after discovery", async () => {
     const f = fixture({ grant: null });
     try {

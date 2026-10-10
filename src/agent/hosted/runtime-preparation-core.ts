@@ -1,3 +1,4 @@
+import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
@@ -250,6 +251,7 @@ async function pruneUnavailableOptionalStudioToolNames(
 function selectAllowedHostTools(
   tools: HostToolSet,
   allowedNames: readonly string[],
+  deniedToolNames: readonly string[],
 ): HostToolSet {
   const allowed = createPrivateSet(allowedNames);
   const entries = apply(objectEntries, Object, [tools]) as Array<
@@ -266,7 +268,11 @@ function selectAllowedHostTools(
       { enumerable: true, configurable: true, writable: true },
     );
   }
-  return selected;
+  return retainTrustedSkillLoaderAliases({
+    tools: selected,
+    originalTools: tools,
+    deniedToolNames,
+  });
 }
 
 type CreationOptions = HostedChatRuntimeCreationOptions<
@@ -938,7 +944,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
-        localTools: selectAllowedHostTools(localTools, facadeAllowedToolNames),
+        localTools: selectAllowedHostTools(localTools, facadeAllowedToolNames, deniedToolNames),
         sourceIntegrationPolicy: preparedSource.sourceIntegrationPolicy,
         hostToolPolicy: { allow: facadeAllowedToolNames },
         allowedToolNames,

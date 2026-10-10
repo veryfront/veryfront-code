@@ -64,7 +64,6 @@ No factory options. Inherited configuration, accessors, and unknown keys are
 rejected. The base stylesheet is local and mandatory; there is no CDN or empty
 stylesheet fallback.
 
-
 ## Typography parser security
 
 The static Typography plugin uses a reviewed distribution of upstream 0.5.19's
@@ -91,13 +90,11 @@ fixtures retain exact CSS hashes produced by the original pinned plugin for eigh
 supported stylesheet/theme inputs. Other native and deployed release findings
 remain separately qualified.
 
-
 The vendored module uses extension-declared exact aliases for the compiler plugin,
 colors and selector parser. This preserves npm subpaths in supported Node source
 loaders. Its private default export has an explicit opaque type, matching the
 existing plugin loader contract and keeping generated declarations independent
 of Tailwind's private declaration filenames.
-
 
 The configuration merge also rejects `__proto__`, `constructor` and `prototype`
 keys before copying a value, and only enumerates own properties. This fixes the
