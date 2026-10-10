@@ -1,9 +1,4 @@
-import {
-  jsonValuesEqual,
-  readProviderOptions,
-  readRecord,
-  unwrapToolInputSchema,
-} from "veryfront/provider/shared";
+import { jsonValuesEqual, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
 import type {
   ModelRuntimeCallOptions,
   ModelRuntimePromptMessage,
@@ -21,8 +16,11 @@ import {
 } from "./google-content-parts.ts";
 import { readGoogleRawAssistantReplay } from "./google-thought-signatures.ts";
 
+const arrayIsArray = Array.isArray;
 const numberIsSafeInteger = Number.isSafeInteger;
-const objectAssign = Object.assign;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
@@ -69,6 +67,77 @@ type GoogleCompatibleRequest = {
   generationConfig?: Record<string, unknown>;
   [key: string]: unknown;
 };
+
+function defineGoogleProviderOption(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  objectDefineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+function mergeGoogleProviderOptions(
+  target: GoogleCompatibleRequest,
+  providerOptions: Record<string, unknown>,
+): void {
+  for (const optionName of objectKeys(providerOptions)) {
+    const descriptor = objectGetOwnPropertyDescriptor(providerOptions, optionName);
+    if (!descriptor || !descriptor.enumerable || !objectHasOwn(descriptor, "value")) continue;
+    defineGoogleProviderOption(target, optionName, descriptor.value);
+  }
+}
+
+function readGoogleProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+  ...providerNames: string[]
+): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  if (!providerOptions) return output;
+
+  for (const providerName of providerNames) {
+    let bucketDescriptor: PropertyDescriptor | undefined;
+    try {
+      bucketDescriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be read`);
+    }
+    if (!bucketDescriptor) continue;
+    if (!objectHasOwn(bucketDescriptor, "value")) {
+      throw new TypeError(`Provider options for "${providerName}" must be a data property`);
+    }
+    const bucket = bucketDescriptor.value;
+    if (!bucket || typeof bucket !== "object" || arrayIsArray(bucket)) continue;
+
+    let keys: string[];
+    try {
+      keys = objectKeys(bucket);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+    }
+    for (const optionName of keys) {
+      let optionDescriptor: PropertyDescriptor | undefined;
+      try {
+        optionDescriptor = objectGetOwnPropertyDescriptor(bucket, optionName);
+      } catch {
+        throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+      }
+      if (
+        !optionDescriptor || !optionDescriptor.enumerable ||
+        !objectHasOwn(optionDescriptor, "value")
+      ) {
+        continue;
+      }
+      defineGoogleProviderOption(output, optionName, optionDescriptor.value);
+    }
+  }
+
+  return output;
+}
 
 type CanonicalProviderCall = {
   id: string;
@@ -962,7 +1031,10 @@ export function buildGoogleGenerateContentRequest(
       : {}),
   };
 
-  objectAssign(body, readProviderOptions(options.providerOptions, "google", providerName));
+  mergeGoogleProviderOptions(
+    body,
+    readGoogleProviderOptions(options.providerOptions, "google", providerName),
+  );
   // Provider options replace `generationConfig` wholesale, so re-pin the
   // runtime-owned structured-output keys the caller asked for.
   const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);

@@ -22,13 +22,16 @@ function objectKeys(value: Record<string, unknown>): string[] {
   return ReflectApply(ObjectKeys, Object, [value]) as string[];
 }
 
-function ownPropertyDescriptor(record: object, key: string): PropertyDescriptor | undefined {
+function ownPropertyDescriptor(
+  record: Record<string, unknown>,
+  key: string,
+): PropertyDescriptor | undefined {
   return ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [record, key]) as
     | PropertyDescriptor
     | undefined;
 }
 
-function ownDataValue(record: object, key: string): unknown {
+function ownDataValue(record: Record<string, unknown>, key: string): unknown {
   const descriptor = ownPropertyDescriptor(record, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
@@ -202,7 +205,7 @@ const LEGACY_AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CON
  * event. Either spelling of a renamed private type maps to its past-tense name.
  */
 export function getCanonicalPrivateConversationRunEventType(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || ArrayIsArray(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const type = ownDataValue(value, "type");
   if (
     type === AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE ||
@@ -216,7 +219,9 @@ export function getCanonicalPrivateConversationRunEventType(value: unknown): str
 }
 
 /** Return whether an event declares the private durable run-event discriminator. */
-export function hasPrivateConversationRunEventType(value: unknown): value is object {
+export function hasPrivateConversationRunEventType(
+  value: unknown,
+): value is Record<string, unknown> {
   return getCanonicalPrivateConversationRunEventType(value) !== undefined;
 }
 

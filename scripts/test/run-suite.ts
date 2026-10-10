@@ -106,6 +106,8 @@ const UNIT_PARALLEL_EXCLUSIONS = new Set([
 ]);
 const SSR_PIPELINE_RUNTIME_FIXTURE =
   "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
+const HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS =
+  "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
 const RUNTIME_PATTERNS = {
   node: [
     "src/**/*.test.ts",
@@ -133,6 +135,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
+    HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
@@ -162,6 +165,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
+    HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
@@ -1178,6 +1178,52 @@ describe("model call request projection", () => {
       assertEquals(projected?.frequencyPenalty, undefined);
       assertEquals(projected?.reasoning, reasoning);
     }
+  });
+
+  it("rejects Google accessor provider buckets before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "google", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          generationConfig: {
+            maxOutputTokens: 999,
+            temperature: 0.1,
+            thinkingConfig: { thinkingBudget: 999 },
+          },
+        };
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      temperature: 0.4,
+      maxOutputTokens: 64,
+      reasoning: { enabled: true, budgetTokens: 1024 },
+      providerOptions,
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "google",
+          modelId: "gemini-synthetic",
+        }, options),
+      TypeError,
+      'Provider options for "google" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildGoogleGenerateContentRequest(
+          "veryfront-cloud",
+          options,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "google" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
   });
 
   it("uses Google's replacement generationConfig for controls and representable thinking", () => {

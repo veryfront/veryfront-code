@@ -136,6 +136,46 @@ function readProviderControl(
   return selected;
 }
 
+function readRequiredProviderDataBucket(
+  providerOptions: unknown,
+  providerName: string,
+): unknown {
+  if (providerOptions === null || typeof providerOptions !== "object") return undefined;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      providerOptions,
+      providerName,
+    ]) as
+      | PropertyDescriptor
+      | undefined;
+  } catch {
+    throw new TypeError(`Provider options for "${providerName}" could not be read`);
+  }
+  if (!descriptor) return undefined;
+  if (!ObjectHasOwn(descriptor, "value")) {
+    throw new TypeError(`Provider options for "${providerName}" must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function readGoogleProviderControl(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+  key: string,
+): PropertyDescriptor | undefined {
+  const provider = resolveModelCallProvider(model);
+  let selected: PropertyDescriptor | undefined;
+  const bucketNames = [resolveModelCallProtocol(model), provider, model.provider ?? provider];
+  forEachPrivateArray(bucketNames, (name) => {
+    if (!name) return;
+    const bucket = readRequiredProviderDataBucket(options.providerOptions, name);
+    if (ArrayIsArray(bucket)) return;
+    selected = readOwnEnumerableDataDescriptor(bucket, key) ?? selected;
+  });
+  return selected;
+}
+
 function numberControl(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
@@ -481,7 +521,7 @@ function resolveGoogleControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource {
-  const native = readProviderControl(model, options, "generationConfig");
+  const native = readGoogleProviderControl(model, options, "generationConfig");
   const effective = {
     ...options,
     presencePenalty: undefined as number | undefined,
@@ -693,7 +733,7 @@ function resolveGoogleReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
-  const native = readProviderControl(model, options, "generationConfig");
+  const native = readGoogleProviderControl(model, options, "generationConfig");
   if (!native) return options.reasoning;
   const thinking = readOwnEnumerableDataDescriptor(native.value, "thinkingConfig")?.value;
   const budget = readOwnEnumerableDataDescriptor(thinking, "thinkingBudget")?.value;
