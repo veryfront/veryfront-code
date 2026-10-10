@@ -481,6 +481,12 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isSupportedExtension("page.mdx"), true);
     });
 
+    it("should support Python files", () => {
+      const checker = createDefaultIgnoreChecker();
+
+      assertEquals(checker.isSupportedExtension("attesters/sql_equality.py"), true);
+    });
+
     it("should reject unsupported extensions", () => {
       const checker = createDefaultIgnoreChecker();
 

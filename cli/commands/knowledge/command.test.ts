@@ -765,6 +765,65 @@ describe("collectKnowledgeSources", () => {
     }
   });
 
+  it("preserves root-relative remote OKF companions referenced from nested computations", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-okf-remote-root-companions-" });
+    const remoteFiles = new Map([
+      [
+        "uploads/bundle/computations/revenue-ytd.md",
+        "---\ntype: Attested Computation\nattester:\n  resource: attesters/sql_equality.py\n---\nRevenue\n",
+      ],
+      ["uploads/bundle/attesters/sql_equality.py", "def attest():\n    return True\n"],
+      ["uploads/bundle/viz.html", "<html>viewer</html>"],
+    ]);
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [...remoteFiles.keys()].map((path) => ({ type: "file", path })),
+          page_info: { next: null },
+        }),
+    });
+    const downloadCalls: string[][] = [];
+
+    try {
+      const collection = await collectKnowledgeSources(
+        createKnowledgeCommandArgs({ path: "uploads/bundle", all: true, okfBundle: true }),
+        {
+          client,
+          projectSlug: "my-project",
+          downloadUploads: async (uploadPaths) => {
+            downloadCalls.push(uploadPaths);
+            const downloads = [];
+            for (const uploadPath of uploadPaths) {
+              const localPath = join(tempDir, uploadPath);
+              await Deno.mkdir(dirname(localPath), { recursive: true });
+              await Deno.writeTextFile(localPath, remoteFiles.get(uploadPath) ?? "");
+              downloads.push({ uploadPath, localPath });
+            }
+            return downloads;
+          },
+        },
+      );
+
+      assertEquals(downloadCalls, [["uploads/bundle/computations/revenue-ytd.md"], [
+        "uploads/bundle/attesters/sql_equality.py",
+      ]]);
+      assertEquals(
+        collection.sources.map((source) =>
+          source.kind === "upload" ? source.uploadPath : source.localPath
+        ).sort(),
+        [
+          "uploads/bundle/attesters/sql_equality.py",
+          "uploads/bundle/computations/revenue-ytd.md",
+        ],
+      );
+      assertEquals(collection.skipped.map((skipped) => skipped.source), [
+        "uploads/bundle/viz.html",
+      ]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("skips unsupported files when listing uploads by prefix instead of failing", async () => {
     const client = createMockClient({
       get: () =>
@@ -2085,6 +2144,176 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
     assertEquals(
       [...uploaded].sort(),
       [...files].map(([path, content]) => [`knowledge/${path}`, content]).sort(),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("preserves root-relative attester resources referenced from nested computations", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-root-attester-" });
+  const bundle = join(root, "bundle");
+  try {
+    const files = new Map([
+      ["index.md", "---\nokf_version: 0.2\n---\n# Bundle\n"],
+      [
+        "computations/revenue-ytd.md",
+        "---\ntype: Attested Computation\nattester:\n  resource: attesters/sql_equality.py\n---\nRevenue\n",
+      ],
+      [
+        "computations/gross-margin-period.md",
+        "---\ntype: Attested Computation\nattester:\n  resource: attesters/sql_equality.py\n---\nMargin\n",
+      ],
+      ["attesters/index.md", "# Attesters\n[SQL equality](sql_equality.py)\n"],
+      ["attesters/sql_equality.py", "def attest():\n    return True\n"],
+      ["viz.html", "<html>viewer</html>\n"],
+    ]);
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      [
+        "attesters/index.md",
+        "attesters/sql_equality.py",
+        "computations/gross-margin-period.md",
+        "computations/revenue-ytd.md",
+        "index.md",
+      ],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["viz.html"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("prefers document-relative OKF companions when root and nested paths both exist", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-relative-attester-" });
+  const bundle = join(root, "bundle");
+  try {
+    const files = new Map([
+      ["index.md", "---\nokf_version: 0.2\n---\n# Bundle\n"],
+      [
+        "computations/revenue-ytd.md",
+        "---\ntype: Attested Computation\nattester:\n  resource: attesters/sql_equality.py\n---\nRevenue\n",
+      ],
+      ["computations/attesters/sql_equality.py", "def attest_nested():\n    return True\n"],
+      ["attesters/sql_equality.py", "def attest_root():\n    return True\n"],
+    ]);
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      [
+        "computations/attesters/sql_equality.py",
+        "computations/revenue-ytd.md",
+        "index.md",
+      ],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["attesters/sql_equality.py"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("treats leading-slash OKF companion references as bundle-root paths", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-root-slash-" });
+  const bundle = join(root, "bundle");
+  try {
+    const files = new Map([
+      ["index.md", "---\nokf_version: 0.2\n---\n# Bundle\n"],
+      [
+        "computations/revenue-ytd.md",
+        "---\ntype: Attested Computation\nattester:\n  resource: /attesters/sql_equality.py\n---\nRevenue\n",
+      ],
+      ["computations/attesters/sql_equality.py", "def attest_nested():\n    return True\n"],
+      ["attesters/sql_equality.py", "def attest_root():\n    return True\n"],
+    ]);
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      [
+        "attesters/sql_equality.py",
+        "computations/revenue-ytd.md",
+        "index.md",
+      ],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["computations/attesters/sql_equality.py"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("ignores escaping and external OKF companion references", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-ignored-reference-" });
+  const bundle = join(root, "bundle");
+  try {
+    const files = new Map([
+      ["index.md", "---\nokf_version: 0.2\n---\n# Bundle\n"],
+      [
+        "computations/revenue-ytd.md",
+        "---\ntype: Attested Computation\nexecutor: ../../bin/run\nsources:\n  - resource: https://example.com/raw.json\nattester:\n  resource: #inline\n---\nRevenue\n",
+      ],
+      ["bin/run", "#!/bin/sh\necho run\n"],
+    ]);
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+
+    const options = createKnowledgeCommandArgs({ path: bundle, all: true, okfBundle: true });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      ["computations/revenue-ytd.md", "index.md"],
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["bin/run"],
     );
   } finally {
     await Deno.remove(root, { recursive: true });

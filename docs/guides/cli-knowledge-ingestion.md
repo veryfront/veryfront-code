@@ -74,7 +74,14 @@ sources. Documents retain their metadata, Markdown, links and relative paths,
 including files in hidden directories. Document envelopes are validated before
 upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
 with their relative paths, regardless of filename extension. Unreferenced viewer
-artifacts are excluded. Referenced Markdown companions preserve their bytes even when their contents resemble malformed
+artifacts are excluded. Companion references are resolved relative to the
+referencing document when that file exists. Leading-slash references resolve
+from the bundle root. For legacy bundles whose nested documents use root
+bundle paths without a leading slash, bundle mode preserves the existing root
+file when no document-relative file exists; this compatibility behavior is for
+byte-preserving ingestion and does not rewrite OKF graph semantics. Project pull
+manages supported text file extensions; other referenced companion extensions can
+still require branch file retrieval until source sync supports that extension. Referenced Markdown companions preserve their bytes even when their contents resemble malformed
 YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log files
 retain document validation and classification. Unreferenced Markdown remains subject to document
 diagnostics.
