@@ -445,23 +445,26 @@ function resolveAnthropicControls(
   const thinkingEnabled = options.reasoning?.enabled === true ||
     readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled";
   const effective = { ...options };
-  for (
-    const [field, nativeField] of [
+  forEachPrivateArray(
+    [
       ["temperature", "temperature"],
       ["topP", "top_p"],
       ["topK", "top_k"],
       ["seed", "seed"],
       ["presencePenalty", "presence_penalty"],
       ["frequencyPenalty", "frequency_penalty"],
-    ] as const
-  ) {
-    const native = readProviderControl(model, options, nativeField);
-    effective[field] = native
-      ? numberControl(native.value)
-      : !thinkingEnabled && (field === "temperature" || field === "topP")
-      ? options[field]
-      : undefined;
-  }
+    ] as const,
+    (entry) => {
+      const field = entry[0];
+      const nativeField = entry[1];
+      const native = readProviderControl(model, options, nativeField);
+      effective[field] = native
+        ? numberControl(native.value)
+        : !thinkingEnabled && (field === "temperature" || field === "topP")
+        ? options[field]
+        : undefined;
+    },
+  );
   const stops = readProviderControl(model, options, "stop_sequences");
   effective.stopSequences = stops
     ? stopControl(stops.value)
@@ -488,8 +491,8 @@ function resolveGoogleControls(
   if (!native) return effective;
   // The builder replaces generationConfig wholesale, rather than merging
   // its fields over the neutral controls.
-  for (
-    const field of [
+  forEachPrivateArray(
+    [
       "maxOutputTokens",
       "temperature",
       "topP",
@@ -497,8 +500,11 @@ function resolveGoogleControls(
       "seed",
       "presencePenalty",
       "frequencyPenalty",
-    ] as const
-  ) effective[field] = numberControl(readOwnEnumerableDataDescriptor(native.value, field)?.value);
+    ] as const,
+    (field) => {
+      effective[field] = numberControl(readOwnEnumerableDataDescriptor(native.value, field)?.value);
+    },
+  );
   effective.stopSequences = stopControl(
     readOwnEnumerableDataDescriptor(native.value, "stopSequences")?.value,
   );

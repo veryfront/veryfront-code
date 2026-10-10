@@ -175,6 +175,118 @@ describe("model call request projection intrinsic boundaries", () => {
     assertEquals(projectedMaxOutputTokens, 333);
   });
 
+  it("preserves native Anthropic controls when Array iteration is replaced before dispatch", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      ...sampling,
+      maxOutputTokens: 64,
+      topK: 9,
+      seed: 7,
+      stopSequences: ["neutral"],
+      providerOptions: {
+        anthropic: {
+          max_tokens: 512,
+          temperature: 0.1,
+          top_p: 0.2,
+          top_k: 3,
+          seed: 4,
+          presence_penalty: 0.5,
+          frequency_penalty: 0.6,
+          stop_sequences: ["native"],
+        },
+      },
+    };
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    let projected: ReturnType<typeof buildModelCallContextRequest>;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("patched array iterator");
+      },
+    });
+    try {
+      projected = buildModelCallContextRequest({
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: "claude-synthetic",
+      }, options);
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+    }
+
+    assertEquals(projected, {
+      maxOutputTokens: 512,
+      temperature: 0.1,
+      topP: 0.2,
+      topK: 3,
+      seed: 4,
+      presencePenalty: 0.5,
+      frequencyPenalty: 0.6,
+      stopSequences: ["native"],
+    });
+  });
+
+  it("preserves Google generation config controls when Array iteration is replaced before dispatch", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      ...sampling,
+      maxOutputTokens: 64,
+      topK: 9,
+      seed: 7,
+      stopSequences: ["neutral"],
+      providerOptions: {
+        google: {
+          generationConfig: {
+            maxOutputTokens: 128,
+            temperature: 0.2,
+            topP: 0.6,
+            topK: 4,
+            seed: 3,
+            presencePenalty: 0.7,
+            frequencyPenalty: 0.8,
+            stopSequences: ["NATIVE_STOP"],
+          },
+        },
+      },
+    };
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    let projected: ReturnType<typeof buildModelCallContextRequest>;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("patched array iterator");
+      },
+    });
+    try {
+      projected = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "google",
+        modelId: "gemini-synthetic",
+      }, options);
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+    }
+
+    assertEquals(projected, {
+      maxOutputTokens: 128,
+      temperature: 0.2,
+      topP: 0.6,
+      topK: 4,
+      seed: 3,
+      presencePenalty: 0.7,
+      frequencyPenalty: 0.8,
+      stopSequences: ["NATIVE_STOP"],
+    });
+  });
+
   it("preserves native OpenAI Chat token aliases when RegExp matching is replaced before dispatch", () => {
     const nativeRegExpExec = RegExp.prototype.exec;
     const nativeRegExpTest = RegExp.prototype.test;
