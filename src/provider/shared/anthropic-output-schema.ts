@@ -11,10 +11,8 @@ const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
 const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
-const arrayIncludes = Array.prototype.includes;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
-const stringStartsWith = String.prototype.startsWith;
 
 /**
  * JSON Schema keywords whose value is itself a schema, a list of schemas, or a
@@ -101,14 +99,6 @@ function hasSetValue(values: Set<string>, value: string): boolean {
 
 function addSetValue(values: Set<string>, value: string): void {
   apply(setAdd, values, [value]);
-}
-
-function includesArrayValue(values: readonly unknown[], value: unknown): boolean {
-  return apply(arrayIncludes, values, [value]) as boolean;
-}
-
-function startsWithString(value: string, prefix: string): boolean {
-  return apply(stringStartsWith, value, [prefix]) as boolean;
 }
 
 /**
@@ -289,7 +279,7 @@ function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
         const branch = branches[branchIndex];
         if (typeof branch !== "object" || branch === null) continue;
         const ref = (branch as SchemaRecord).$ref;
-        if (typeof ref === "string" && startsWithString(ref, "#/")) addSetValue(out, ref);
+        if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") addSetValue(out, ref);
       }
     }
     collectAllOfRefTargets(value, out);
@@ -305,5 +295,10 @@ function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
  * string would leave that branch open and let Anthropic reject it.
  */
 function isObjectTyped(type: unknown): boolean {
-  return type === "object" || (ArrayIsArray(type) && includesArrayValue(type, "object"));
+  if (type === "object") return true;
+  if (!ArrayIsArray(type)) return false;
+  for (let index = 0; index < type.length; index += 1) {
+    if (type[index] === "object") return true;
+  }
+  return false;
 }
