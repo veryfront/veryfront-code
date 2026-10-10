@@ -413,10 +413,16 @@ export class MCPServer {
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
       const outputSchema = mcpOutputSchema(tool);
-      if (
-        outputSchema !== undefined && resolve<SchemaValidator>("SchemaValidator").compileJsonSchema
-      ) {
-        entry.outputSchema = outputSchema;
+      if (outputSchema !== undefined) {
+        const validator = resolve<SchemaValidator>("SchemaValidator");
+        if (validator.compileJsonSchema) {
+          try {
+            validator.compileJsonSchema(outputSchema);
+            entry.outputSchema = outputSchema;
+          } catch {
+            // An invalid output contract must not break the rest of discovery.
+          }
+        }
       }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;

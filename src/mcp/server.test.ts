@@ -754,6 +754,42 @@ describe("mcp/server", () => {
     });
   });
 
+  it("omits uncompilable output contracts without breaking tool discovery", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:uncompilable-output",
+      tool({
+        id: "test:uncompilable-output",
+        description: "Has an unresolved output reference",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: {
+          type: "object",
+          properties: { value: { $ref: "#/$defs/missing" } },
+        },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    registerTool(
+      "test:valid-output",
+      tool({
+        id: "test:valid-output",
+        description: "Has a valid output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { value: { type: "string" } } },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" });
+    const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+    const definition = definitions.find((entry) => entry.name === "test:uncompilable-output");
+    assertExists(definition);
+    assertEquals(Object.hasOwn(definition, "outputSchema"), false);
+    assertExists(definitions.find((entry) => entry.name === "test:valid-output")?.outputSchema);
+  });
+
   it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {
     const server = createMCPServer({
       enabled: true,

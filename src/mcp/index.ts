@@ -2,7 +2,7 @@
  * MCP server exposing tools, prompts, and resources. Resource-template captures
  * are percent-decoded exactly once; malformed escapes are not found, and
  * resources with `mcp.enabled: false` are omitted from both lists and reads.
- * Verifiable object output schemas are included in discovery. Calls to those tools
+ * Object output schemas that compile are included in discovery. Calls to those tools
  * validate output and return its snapshot as structured content and serialized
  * text. Validators without JSON Schema compilation omit output contracts;
  * native schemas still validate results, and raw schemas retain text-only results.
