@@ -13,7 +13,10 @@ import {
 } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "../conversation/run-event-limits.ts";
+import {
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "../conversation/run-event-limits.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { AgentResponse } from "../types.ts";
@@ -29,6 +32,7 @@ const mathMin = Math.min;
 const mathRound = Math.round;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
+const numberMaxValue = Number.MAX_VALUE;
 const ArrayIsArray = Array.isArray;
 const objectKeys = Object.keys;
 const objectAssign = Object.assign;
@@ -50,7 +54,6 @@ const MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS = 100;
 const MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS = 100;
 const MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES = JSON_VALUE_MAX_STRING_BYTES;
 const MESSAGE_FINISH_OBJECT_MAX_KEY_BYTES = 16 * 1024;
-const MESSAGE_FINISH_OBJECT_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 const MESSAGE_FINISH_OBJECT_MAX_NODES = 50_000;
 const MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR = "[unsupported accessor]";
 const MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET = "[truncated message-finish object budget]";
@@ -712,14 +715,37 @@ function isSupportedMessageFinishObjectKey(key: string): boolean {
   return getUtf8ByteLength(key) <= MESSAGE_FINISH_OBJECT_MAX_KEY_BYTES;
 }
 
-function isMessageFinishMetadataValueWithinNativeBudget(value: unknown): boolean {
+function getMessageFinishMetadataDurableByteLength(value: unknown): number {
   try {
-    const serialized = privateJsonStringify(value);
-    return typeof serialized === "string" &&
-      getUtf8ByteLength(serialized) <= MESSAGE_FINISH_OBJECT_MAX_SERIALIZED_BYTES;
+    const durable = buildRuntimeEventRecordedEvent({
+      runtime: "veryfront",
+      kind: "message_finish_metadata",
+      value,
+    }).durable;
+    const serialized = privateJsonStringify(
+      {
+        ...durable,
+        // AG-UI timing is stamped after native payload construction. Reserve
+        // the largest valid JSON representations so a payload accepted here
+        // cannot become omitted by durable normalization after stamping.
+        elapsedMs: numberMaxValue,
+        emittedAt: numberMaxValue,
+      },
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
+    return typeof serialized === "string"
+      ? getUtf8ByteLength(serialized)
+      : Number.POSITIVE_INFINITY;
   } catch {
-    return false;
+    return Number.POSITIVE_INFINITY;
   }
+}
+
+function isMessageFinishMetadataValueWithinDurableBudget(value: unknown): boolean {
+  return getMessageFinishMetadataDurableByteLength(value) <=
+    MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES;
 }
 
 function createTruncatedMessageFinishObjectObservation(reason: string): Record<string, unknown> {
@@ -885,14 +911,47 @@ function snapshotMessageFinishObjectValue(
   }
 }
 
-function createMessageFinishObjectObservation(object: unknown): unknown {
-  const snapshot = snapshotMessageFinishObjectValue(object);
+function createMessageFinishObjectObservation(
+  object: unknown,
+  maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+): unknown {
+  const snapshot = snapshotMessageFinishObjectValue(object, {
+    remainingBytes: maxOutputBytes,
+    remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
+    seen: createPrivateWeakStore<object, true>(),
+  });
   if (snapshot.status === "complete") return snapshot.value;
   return {
     captureStatus: snapshot.status,
     reasons: snapshot.reasons,
     value: snapshot.value,
   };
+}
+
+function createMessageFinishObjectObservationWithinDurableBudget(
+  baseValue: Record<string, unknown>,
+  object: unknown,
+): unknown {
+  const placeholder = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
+  let best: unknown = placeholder;
+
+  let low = 0;
+  let high = mathMin(
+    MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+    MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+  );
+  while (low <= high) {
+    const mid = mathRound((low + high) / 2);
+    const candidate = createMessageFinishObjectObservation(object, mid);
+    if (isMessageFinishMetadataValueWithinDurableBudget({ ...baseValue, object: candidate })) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
 }
 
 function createMessageFinishMetadataEvent(
@@ -925,19 +984,23 @@ function createMessageFinishMetadataEvent(
 
   if (event.object !== undefined) {
     value.object = createMessageFinishObjectObservation(event.object);
-    if (!isMessageFinishMetadataValueWithinNativeBudget(value)) {
-      value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
+    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+      const { object: _object, ...baseValue } = value;
+      value.object = createMessageFinishObjectObservationWithinDurableBudget(
+        baseValue,
+        event.object,
+      );
     }
   }
 
-  if (!isMessageFinishMetadataValueWithinNativeBudget(value)) {
+  if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
     if (objectHasOwn(value, "finishReason")) {
       value.finishReason = createTruncatedMessageFinishScalarObservation(
         "finishReason",
         "serialized_budget_exhausted",
       );
     }
-    if (!isMessageFinishMetadataValueWithinNativeBudget(value)) {
+    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
       value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
     }
   }

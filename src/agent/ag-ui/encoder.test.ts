@@ -13,6 +13,11 @@ import {
   mapRuntimeStreamEventToAgUiEvents,
   stampAgUiEventTiming,
 } from "./encoder.ts";
+import {
+  getConversationRunEventJsonByteLength,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+  normalizeConversationRunEvent,
+} from "../conversation/run-event-normalization.ts";
 
 function requireStepId(value: unknown): string {
   if (typeof value !== "string") throw new Error("expected stepId");
@@ -1076,6 +1081,58 @@ describe("agent/ag-ui-encoder", () => {
     }]);
   });
 
+  it("keeps oversized message-finish result metadata durable without losing usage", () => {
+    const state = createAgUiEncoderState({
+      nowMs: () => 100,
+      epochMs: () => Number.MAX_VALUE,
+    });
+    const events = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "stop",
+      totalUsage: {
+        inputTokens: 2,
+        outputTokens: 3,
+        reasoningTokens: 1,
+        usageCaptureStatus: "complete",
+      },
+      object: {
+        answer: "preserved",
+        padding: '\\"\n😀'.repeat(MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES / 4),
+      },
+    });
+    const event = events[0];
+    if (!event) throw new Error("Expected message-finish metadata event");
+
+    const [normalized] = normalizeConversationRunEvent({
+      type: "RUNTIME_EVENT_RECORDED",
+      ...event.payload,
+    });
+    if (!normalized) throw new Error("Expected normalized durable metadata event");
+    const value = normalized.value as Record<string, unknown>;
+    const object = value.object as { captureStatus?: unknown; value?: Record<string, unknown> };
+    const objectValue = object.value ?? {};
+
+    assertEquals(normalized.type, "RUNTIME_EVENT_RECORDED");
+    assertEquals(normalized.kind, "message_finish_metadata");
+    assertEquals(normalized.elapsedMs, 0);
+    assertEquals(normalized.emittedAt, Number.MAX_VALUE);
+    assertEquals(value.finishReason, "stop");
+    assertEquals(value.totalUsage, {
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+      reasoningTokens: 1,
+      usageCaptureStatus: "complete",
+    });
+    assertEquals(object.captureStatus, "partial");
+    assertEquals(objectValue.answer, "preserved");
+    assertEquals(String(objectValue.padding).includes("[truncated]"), true);
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
+  });
+
   it("records message-finish metadata without completing bookkeeping-only output", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 
@@ -1253,7 +1310,7 @@ describe("agent/ag-ui-encoder", () => {
 
     assertEquals(events[0]?.event, "RuntimeEventRecorded");
     assertEquals(snapshot.captureStatus, "partial");
-    assertEquals((snapshot.reasons as string[]).includes("aggregate_budget_exhausted"), true);
+    assertEquals((snapshot.reasons as string[]).includes("string_truncated"), true);
     assertEquals(
       Object.values(partial).some((entry) => entry === "[truncated message-finish object budget]"),
       true,
@@ -1275,8 +1332,19 @@ describe("agent/ag-ui-encoder", () => {
 
     assertEquals(events[0]?.event, "RuntimeEventRecorded");
     assertEquals(snapshot.captureStatus, "partial");
-    assertEquals((snapshot.reasons as string[]).includes("aggregate_budget_exhausted"), true);
-    assertEquals(partial.b, "[truncated message-finish object budget]");
+    assertEquals((snapshot.reasons as string[]).includes("string_truncated"), true);
+    assertEquals(
+      Object.values(partial).some((entry) => String(entry).includes("[truncated]")),
+      true,
+    );
+    assertEquals(
+      getConversationRunEventJsonByteLength({
+        type: "RUNTIME_EVENT_RECORDED",
+        ...events[0]?.payload,
+      }) <=
+        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
   });
 
   it("skips oversized message-finish object keys before native validation", () => {
@@ -1310,7 +1378,15 @@ describe("agent/ag-ui-encoder", () => {
 
     assertEquals(events[0]?.event, "RuntimeEventRecorded");
     assertEquals(snapshot.captureStatus, "partial");
-    assertEquals(snapshot.reasons, ["serialized_budget_exhausted"]);
+    assertEquals(snapshot.reasons, ["string_truncated"]);
+    assertEquals(
+      getConversationRunEventJsonByteLength({
+        type: "RUNTIME_EVENT_RECORDED",
+        ...events[0]?.payload,
+      }) <=
+        MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
   });
 
   it("records structurally large key snapshots as partial metadata before native validation", () => {
