@@ -13,13 +13,19 @@ export interface EmbeddingConfig {
   batchSize?: number; // max texts per embedMany API call (default 100)
 }
 
+/** Options for an embedding call. */
+export interface EmbeddingCallOptions {
+  /** Cancel provider work and stop subsequent batches. */
+  signal?: AbortSignal;
+}
+
 /** Public API contract for embedding. */
 export interface Embedding {
   model: string;
   /** Embed a single text. Applies queryPrefix if configured. */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, options?: EmbeddingCallOptions): Promise<number[]>;
   /** Embed multiple texts. Applies documentPrefix if configured. Batches automatically. */
-  embedMany(texts: string[]): Promise<number[][]>;
+  embedMany(texts: string[], options?: EmbeddingCallOptions): Promise<number[][]>;
 }
 
 /** Options accepted by chunk. */

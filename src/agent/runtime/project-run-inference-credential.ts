@@ -1,3 +1,5 @@
+import { createVeryfrontCloudInferenceEmbeddingModel } from "#veryfront/embedding/veryfront-cloud/provider.ts";
+import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import {
@@ -148,4 +150,30 @@ export function createProjectRunInferenceModelResolver(): AgentModelRuntimeResol
     active = false;
   });
   return resolver;
+}
+
+/** @internal Build a managed embedding model from the active signed execution scope. */
+export function createProjectRunInferenceEmbeddingModel(
+  modelId: string,
+): EmbeddingRuntime | undefined {
+  const scope = IntrinsicReflectApply(AsyncLocalStorageGetStore, projectRunInferenceScopes, []) as
+    | ProjectRunInferenceScope
+    | undefined;
+  if (
+    !scope?.active ||
+    !IntrinsicReflectApply(StringStartsWith, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX])
+  ) {
+    return undefined;
+  }
+  const assertInferenceCredentialActive = (): void => {
+    if (!scope.active) {
+      throw new TypeError("Project run inference credential is no longer active");
+    }
+  };
+  assertInferenceCredentialActive();
+  return createVeryfrontCloudInferenceEmbeddingModel(
+    IntrinsicReflectApply(StringSlice, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX.length]) as string,
+    scope.credential,
+    { apiBaseUrl: scope.apiBaseUrl, assertInferenceCredentialActive },
+  );
 }

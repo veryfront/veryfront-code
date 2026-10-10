@@ -339,3 +339,9 @@ text and that the embedding provider is configured.
 - [veryfront/embedding](../api-reference/veryfront/embedding.md): RAG store and upload helpers
 - [veryfront/agent](../api-reference/veryfront/agent.md): AG-UI route helpers
 - [veryfront/chat](../api-reference/veryfront/chat.md): Chat components and hooks
+
+## Cancel embedding calls
+
+Pass `{ signal }` as the second argument to `embed()` or `embedMany()` to cancel
+provider work and stop later batches. Local inference settles before cancellation
+returns; no later batch starts after cancellation.

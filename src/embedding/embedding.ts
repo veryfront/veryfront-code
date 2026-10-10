@@ -1,4 +1,5 @@
-import type { Embedding, EmbeddingConfig } from "./types.ts";
+import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
+import type { Embedding, EmbeddingCallOptions, EmbeddingConfig } from "./types.ts";
 import { resolveEmbeddingModel } from "./resolve.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import { embed, embedMany } from "#veryfront/runtime/runtime-bridge.ts";
@@ -27,7 +28,15 @@ const DEFAULT_BATCH_SIZE = 100;
  */
 export function embedding(config: EmbeddingConfig): Embedding {
   const modelId = resolveConfiguredEmbeddingModel(config.model);
-  const model = resolveEmbeddingModel(modelId);
+  return createEmbeddingFacade(config, modelId, resolveEmbeddingModel(modelId));
+}
+
+/** @internal Build the same cancellable facade around a host-owned model. */
+export function createEmbeddingFacade(
+  config: EmbeddingConfig,
+  modelId: string,
+  model: EmbeddingRuntime,
+): Embedding {
   const batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE;
   const docPrefix = config.documentPrefix ?? "";
   const queryPrefix = config.queryPrefix ?? "";
@@ -35,31 +44,37 @@ export function embedding(config: EmbeddingConfig): Embedding {
   return {
     model: modelId,
 
-    async embed(text: string): Promise<number[]> {
+    async embed(text: string, options?: EmbeddingCallOptions): Promise<number[]> {
+      options?.signal?.throwIfAborted();
       if (!text.trim()) {
         throw INVALID_ARGUMENT.create({ detail: "Cannot embed an empty string" });
       }
       const value = queryPrefix + text;
-      const result = await embed({ model, value });
+      const result = await embed({ model, value, abortSignal: options?.signal });
+      options?.signal?.throwIfAborted();
       return result.embedding;
     },
 
-    async embedMany(texts: string[]): Promise<number[][]> {
+    async embedMany(texts: string[], options?: EmbeddingCallOptions): Promise<number[][]> {
+      options?.signal?.throwIfAborted();
       if (texts.length === 0) return [];
 
       const prefixed = docPrefix ? texts.map((t) => docPrefix + t) : texts;
 
       // Single batch — no chunking needed
       if (prefixed.length <= batchSize) {
-        const result = await embedMany({ model, values: prefixed });
+        const result = await embedMany({ model, values: prefixed, abortSignal: options?.signal });
+        options?.signal?.throwIfAborted();
         return result.embeddings;
       }
 
       // Chunked batches for large inputs
       const results: number[][] = [];
       for (let i = 0; i < prefixed.length; i += batchSize) {
+        options?.signal?.throwIfAborted();
         const batch = prefixed.slice(i, i + batchSize);
-        const result = await embedMany({ model, values: batch });
+        const result = await embedMany({ model, values: batch, abortSignal: options?.signal });
+        options?.signal?.throwIfAborted();
         results.push(...result.embeddings);
       }
       return results;

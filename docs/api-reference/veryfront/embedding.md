@@ -51,6 +51,7 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | --------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `ChunkOptions`              | Options accepted by chunk.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
 | `Embedding`                 | Public API contract for embedding.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
+| `EmbeddingCallOptions`      | Options for an embedding call.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
 | `EmbeddingConfig`           | Configuration used by embedding.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
 | `RagChunk`                  | Public API contract for rag chunk.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
 | `RagDocumentMeta`           | Public API contract for rag document meta.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts)          |
