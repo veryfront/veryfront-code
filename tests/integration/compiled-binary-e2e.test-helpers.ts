@@ -192,10 +192,15 @@ async function readBinaryRecord(path: string): Promise<Partial<BinaryRecord> | u
   }
 }
 
+/** A record whose process liveness cannot be read is presumed exited after this long. */
+const UNVERIFIABLE_RECORD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Remove binaries compiled by test processes that have exited, except
- * this process's BINARY_PATH, which compileBinary checks against the source hash.
- * A process whose liveness cannot be read keeps its binary.
+ * Remove default per-pid binaries compiled by test processes that have exited,
+ * except this process's BINARY_PATH, which compileBinary checks against the
+ * source hash.
+ * Where liveness cannot be read (no /proc and no ps), a record counts as exited
+ * once it is older than any test run, so binaries stay bounded there too.
  */
 async function removeBinariesOfExitedProcesses(): Promise<void> {
   for await (const entry of Deno.readDir(COORDINATION_DIR)) {
@@ -205,9 +210,18 @@ async function removeBinariesOfExitedProcesses(): Promise<void> {
     const pid = Number.parseInt(record?.process ?? "", 10);
     if (Number.isInteger(pid)) {
       const current = await readProcessIdentity(pid);
-      if (current === undefined || current === record?.process) continue;
+      if (current === record?.process) continue;
+      if (current === undefined) {
+        const { mtime } = await Deno.stat(recordPath);
+        if (!mtime || Date.now() - mtime.getTime() < UNVERIFIABLE_RECORD_MAX_AGE_MS) continue;
+      }
     }
-    if (record?.binaryPath && record.binaryPath !== RECORDED_BINARY_PATH) {
+    // Only the default per-pid binary is private to its run. A VERYFRONT_BINARY
+    // path may be shared with other helpers, so it is left in place.
+    const ownsBinary = Number.isInteger(pid) && record?.binaryPath?.endsWith(
+      join(".veryfront", "e2e", `veryfront-e2e-bin-${pid}`),
+    );
+    if (ownsBinary && record?.binaryPath && record.binaryPath !== RECORDED_BINARY_PATH) {
       for (const path of [record.binaryPath, `${record.binaryPath}.srcHash`]) {
         await Deno.remove(path).catch(() => {});
       }
