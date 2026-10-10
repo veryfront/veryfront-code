@@ -310,6 +310,48 @@ it("tool search reports a capability-matched visible tool without loading deferr
   assertEquals([...state.loadedToolNames], []);
 });
 
+it("a broad capability query loads deferred tools despite equally matching visible readers", () => {
+  const names = ["create_agent", "create_agent_avatar", "delete_agent", "get_agent"];
+  const authorized = [
+    ...names.map((name) => definition(name, "Manage project agents")),
+    ...names.map((name) => definition(`veryfront__${name}`, "Manage project agents")),
+    definition("get_agent_run", "Read a project agent run"),
+  ];
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "agent",
+    available: [
+      definition("list_agent_tool_references", "Find attachable agent tools"),
+      definition("veryfront__list_agent_tool_references", "Find attachable agent tools"),
+      definition("load_skill", "Load agent task instructions"),
+    ],
+    authorized,
+    state,
+  });
+
+  for (const name of names) {
+    assert(result.matches.some((match) => match.name === name && match.status === "loaded"));
+    assert(state.loadedToolNames.has(name));
+  }
+  assertEquals(result.loadedCount, 5);
+  assertEquals(result.matches.length, 5);
+});
+
+it("an exact visible reader match does not load weaker deferred capabilities", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "list_agent_tool_references",
+    available: [definition("list_agent_tool_references", "Find attachable agent tools")],
+    authorized: [
+      definition("create_agent", "Use list_agent_tool_references before creating agents"),
+    ],
+    state,
+  });
+  assertEquals(result.matches.map((match) => match.name), ["list_agent_tool_references"]);
+  assertEquals(result.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], []);
+});
+
 it("tool search loads a deferred exact-name match ahead of a visible capability match", () => {
   const state = createToolExposureState();
   const result = searchToolExposure({
