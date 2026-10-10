@@ -31,7 +31,9 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * a non-cacheable project-execution-unavailable response without host execution fallback.
  * Control-plane routes retain their existing handlers. Preview mode (including Markdown
  * preview), component snippets and WebSocket upgrades (including preview HMR) are
- * unsupported under isolation and refused. The installed application handles its own authentication, CORS and middleware.
+ * unsupported under isolation and refused. A refused WebSocket upgrade receives no 101; on
+ * Node.js the upgrade transport closes the connection rather than writing the 503 body.
+ * The installed application handles its own authentication, CORS and middleware.
  * Source publication, resolver authorization and executor deployment remain caller prerequisites.
  */
 export interface HostedHttpIngressOptions {
