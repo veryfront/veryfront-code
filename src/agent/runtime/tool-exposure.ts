@@ -516,7 +516,7 @@ function rankToolExposureMatches(input: {
   // Normalization maps `jira__list_projects` and the *local* id `jira_list_projects`
   // onto the same text, so a phrase pass here would hand back a same-named local
   // tool instead of the namespace the caller actually asked for. Only the real
-  // canonical name satisfies a canonical query; anything else is namespace discovery.
+  // canonical name satisfies a canonical query; catalog readers can provide guidance.
   const canonical = parseCanonicalIntegrationQuery(input.query);
   if (canonical !== null) {
     const canonicalName = canonical.canonicalName;
@@ -532,19 +532,16 @@ function rankToolExposureMatches(input: {
     );
     if (exact.length > 0) return exact;
 
-    // Namespace discovery accepts two kinds of evidence, and a coincidental name
-    // match is neither: a sibling tool in the same namespace, or a tool that
-    // *documents* the namespace (the catalog readers do). A local
-    // `jira_list_projects` merely contains the word and is not the Jira integration.
-    //
-    // Sibling identity compares raw ids; text evidence must compare normalized,
-    // because a namespace may itself contain `_` (`foo_bar__list_items`) and every
-    // candidate's text has already had underscores rewritten to spaces.
+    // A missing exact action can discover catalog guidance, never another action.
+    // Loading a sibling would report success for a capability the caller lacks.
+    // Text evidence compares normalized namespaces, including names with underscores.
     const namespaceTerm = normalizeSearchText(canonical.namespace);
     const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
     const namespaceCandidates = filterPrivateArray(candidates, (candidate) => {
       const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
-      if (identity !== null) return identity.integration === canonical.namespace;
+      const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
+        (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
+      if (identity !== null && !isPlatformCatalogReader) return false;
       // A non-canonical tool carrying the namespace in its *name* is a
       // normalization coincidence, not the integration, whatever its description
       // happens to mention: `jira_list_projects` is a local tool, not Jira.
@@ -557,7 +554,13 @@ function rankToolExposureMatches(input: {
     });
     const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
     if (
-      namespaceMatches.length > 0 || canonicalName === null ||
+      namespaceMatches.length > 0 ||
+      somePrivateArray(
+        candidates,
+        (candidate) =>
+          parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name))?.integration ===
+            canonical.namespace,
+      ) || canonicalName === null ||
       canonical.namespace !== PLATFORM_TOOL_NAMESPACE
     ) {
       return namespaceMatches;
