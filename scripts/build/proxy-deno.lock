@@ -1584,7 +1584,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "npm:purgecss@7.0.2"
+          "npm:purgecss@8.0.0"
         ]
       },
       "extensions/ext-css-tailwind": {

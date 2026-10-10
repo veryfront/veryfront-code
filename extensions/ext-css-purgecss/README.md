@@ -25,14 +25,23 @@ network, or workspace fallback.
 ## Configuration and capabilities
 
 The factory accepts no options. It receives only bounded in-memory CSS and
-content snapshots from core. PurgeCSS 7 uses `glob`, whose matcher reads
-`__MINIMATCH_TESTING_PLATFORM__` during module loading. Its PostCSS dependency
+content snapshots from core. PurgeCSS 8 uses `fast-glob`; its PostCSS dependency
 loads `picocolors`, which reads `NO_COLOR`, `FORCE_COLOR`, `TERM`, and `CI` to
-select terminal colors. The extension scopes `env:read` to those five keys. Its
-standalone test task grants the same keys, so module loading works even when
-`FORCE_COLOR` is unset. The exact capability audit rejects unscoped environment
-access and any additional key or capability. The extension requests no
-filesystem, network, subprocess, native, or system capability.
+select terminal colors. The extension scopes `env:read` to those four keys. Its
+standalone test task grants the same keys. Fast-glob reads CPU information at
+module load to choose its default concurrency, including for in-memory callers.
+The extension declares only `system:read` with `apis: ["cpus"]`,
+mapped to `--allow-sys=cpus`. The exact audit rejects unscoped system access,
+other system APIs, additional environment keys and other capabilities.
+
+Consuming applications must approve this CPU-information permission when upgrading.
+
+The extension pins PurgeCSS 8.0.0. The frozen repository lock resolves its
+`postcss-selector-parser` dependency to 7.1.6, the patched minimum for
+[GHSA-rj75-hqrm-r3gf](https://github.com/advisories/GHSA-rj75-hqrm-r3gf).
+Published consumers must also resolve that parser to at least 7.1.6: upstream's
+range permits older versions in an existing consumer lockfile. The separately
+pinned typography parser finding remains retained for its own disposition.
 
 PurgeCSS does not expose an operation-level cancellation signal, so this
 contract cannot interrupt an invocation after it enters the provider. Core

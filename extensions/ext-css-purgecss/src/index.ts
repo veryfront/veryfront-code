@@ -262,8 +262,8 @@ const extCSSPurgeCSS: ExtensionFactory = (config) => {
     contracts: { provides: ["CSSPurgingEngine"] },
     capabilities: [{
       type: "env:read",
-      keys: ["__MINIMATCH_TESTING_PLATFORM__", "NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
-    }],
+      keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"],
+    }, { type: "system:read", apis: ["cpus"] }],
     setup(ctx) {
       ctx.provide(CSSPurgingEngineName, engine);
       ctx.logger.debug(
