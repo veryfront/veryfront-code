@@ -45,6 +45,13 @@ Deno.test("durable canary admits once and reads canonical identity with the real
   assertEquals(calls[0].body?.config, {
     agent_admission: { mode: "hosted", input_message_id: message, client_run_id: "canary-key" },
   });
+  assertEquals(calls[0].body?.input, {
+    messages: [{ id: message, role: "user", parts: [{ type: "text", text: "prove output" }] }],
+    context: { conversationId: conversation, projectId: id, branchId: null },
+    forwardedProps: {
+      veryfront: { client: { id: "veryfront-studio", type: "web", platform: "durable-canary" } },
+    },
+  });
   assert(calls[0].headers.get("Idempotency-Key"));
   assertEquals(summary.latestEventId, 7);
   assertEquals(summary.latestExternalEventSequence, null);
