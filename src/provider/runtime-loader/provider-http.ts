@@ -276,6 +276,14 @@ export class ProviderQuotaError extends ProviderError {}
 export class ProviderRequestError extends ProviderError {}
 
 /**
+ * Provider answered with a successful status, but its response stream broke the
+ * provider's own event protocol, so the runtime could not read it.
+ *
+ * Non-retryable: the stream already reached the runtime and was rejected.
+ */
+export class ProviderStreamProtocolError extends ProviderRequestError {}
+
+/**
  * Provider stopped generating at the output token limit, leaving the response
  * incomplete (for example a `tool_use` block whose input JSON never closed).
  *
@@ -817,6 +825,23 @@ function buildProviderErrorFromBody(
   truncated: boolean,
 ): ProviderError {
   const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
+
+  // Preserve platform admission failures before generic provider overload classification.
+  if (
+    isVeryfrontGatewayResponse(response) && !context.truncated && context.status === 503 &&
+    context.parsedBody?.code === "ai_provider_spend_check_unavailable"
+  ) {
+    return preserveStructuredResponseBody(
+      new ProviderRequestError({
+        provider,
+        status: 503,
+        message: context.message,
+        retryable: true,
+        ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+      }),
+      rawBody,
+    );
+  }
 
   const policyRefusal = classifyInferencePolicyRefusal(context, response);
   if (policyRefusal !== undefined) return policyRefusal;

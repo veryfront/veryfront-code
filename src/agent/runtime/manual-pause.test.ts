@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { agentManualPauseBoundary } from "./manual-pause.ts";
 import { createRunBoundAgentManualPause } from "../hosted/manual-pause-credential.ts";
@@ -8,10 +7,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { AgentRuntime } from "./index.ts";
+import { markRuntimeLocalTool } from "./local-tool.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 
 function userMessage(text: string): Message[] {
   return [{ id: "pause-input", role: "user", parts: [{ type: "text", text }] }];
@@ -232,7 +234,7 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
     system: "Load and delegate.",
     maxSteps: 4,
     tools: {
-      load_skill: tool({
+      load_skill: markRuntimeLocalTool(markTrustedHostToolProvenance(tool({
         id: "load_skill",
         description: "Load research skill",
         inputSchema: defineSchema((v) => v.object({}))(),
@@ -245,7 +247,7 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
           thinking: false,
           maxSteps: 160,
         }),
-      }),
+      }))),
       invoke_agent: tool({
         id: "invoke_agent",
         description: "Delegate research",
@@ -283,10 +285,22 @@ it("retains a trusted skill's delegation defaults across pause", async () => {
     },
   });
   await new Response(await paused.stream(messages)).text();
+  const checkpointJson: unknown = JSON.parse(JSON.stringify(saved));
+  assertEquals(
+    checkpointJson !== null && typeof checkpointJson === "object" &&
+      "activeSkillDelegationOverrides" in checkpointJson
+      ? checkpointJson.activeSkillDelegationOverrides
+      : undefined,
+    {
+      model: "opus",
+      thinking: false,
+      maxSteps: 160,
+    },
+  );
   const resumed = new AgentRuntime("delegation", config, {
     preserveToolCatalog: true,
     manualPause: {
-      load: async () => saved,
+      load: async () => checkpointJson,
       acknowledge: async () => false,
     },
   });
@@ -431,8 +445,10 @@ it("holds an oversized pause until its dispatch stops without claiming confirmat
     token: "pause-test-token",
     signal: cancellation.signal,
     fetch: (url, init) => {
-      if (observeFetchRequestInit(init).method === "POST") {
-        assertEquals(JSON.parse(String(observeFetchRequestInit(init).body)), { checkpoint: null });
+      if (init && "method" in init && init.method === "POST") {
+        assertEquals("body" in init ? JSON.parse(String(init.body)) : undefined, {
+          checkpoint: null,
+        });
         releaseRequested = true;
         return Promise.resolve(Response.json({ stop: true }));
       }
@@ -550,11 +566,24 @@ it("emits an acknowledged pause even when local memory finalization fails", asyn
       },
     };
   };
-  const body = await new Response(
-    await runtime.stream(userMessage("Pause me"), undefined, {
-      onFinish: () => finishes++,
-    }),
-  ).text();
+  const entries: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => entries.push(entry));
+  let body: string;
+  try {
+    body = await new Response(
+      await runtime.stream(userMessage("Pause me"), undefined, {
+        onFinish: () => finishes++,
+      }),
+    ).text();
+  } finally {
+    unsubscribe();
+  }
+  assertEquals(
+    entries.filter((entry) =>
+      entry.level === "info" && entry.message === "Agent stopped at a pause boundary"
+    ).length,
+    1,
+  );
   assertEquals(saved !== null, true);
   assertEquals(commits, 1);
   assertEquals(rollbacks, 1);

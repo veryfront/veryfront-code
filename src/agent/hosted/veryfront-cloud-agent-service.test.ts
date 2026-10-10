@@ -35,6 +35,7 @@ import {
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -48,6 +49,9 @@ import {
 import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
 import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
 import { createInvokeAgentTool } from "./cloud-agent-child-tools.ts";
+import { createEphemeralAgentWithRuntimeOptions } from "#veryfront/agent/factory.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import { markRuntimeLocalTool } from "#veryfront/agent/runtime/local-tool.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
@@ -533,6 +537,7 @@ Deno.test("hosted child project agents request only materialized skill and deleg
       tools: [
         "get_file",
         "execute_skill_script",
+        "veryfront__execute_skill_script",
         "load_skill",
         "load_skill_reference",
       ],
@@ -540,6 +545,19 @@ Deno.test("hosted child project agents request only materialized skill and deleg
       delegates: ["validation-agent"],
     })?.toSorted(),
     ["agent_validation-agent", "get_file", "load_skill", "web_search"],
+  );
+});
+
+Deno.test("hosted child project agents drop parent-only canonical control tools from configured child selectors", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      tools: ["get_file", "veryfront__invoke_agent", "veryfront__form_input"],
+    }, { allowedSkillIds: [] }),
+    ["get_file"],
   );
 });
 
@@ -595,6 +613,47 @@ Deno.test("hosted child project agents keep load_skill for a non-empty exact ski
     }, { allowedSkillIds: ["extraction-agent--extract"] }),
     ["get_file", "load_skill"],
   );
+});
+
+Deno.test("hosted child project agents materialize an advertised canonical load_skill", () => {
+  const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+    id: "extraction-agent",
+    name: "Extraction agent",
+    description: "Extract an application",
+    instructions: "Extract the application.",
+    skills: ["extract"],
+    tools: ["get_file", "veryfront__load_skill"],
+  }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+  assertEquals(toolNames, ["get_file", "veryfront__load_skill"]);
+  const context = {
+    projectSteeringByAgentId: new Map([["extraction-agent", {
+      createLoadSkillTool: () =>
+        tool({
+          id: "load_skill",
+          description: "Load skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+    }]]),
+  } as never;
+  const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+    context,
+    {
+      childAgentId: "extraction-agent",
+      childConfig: {
+        system: "Use exact child policy",
+        toolNames,
+        availableSkillIds: ["extraction-agent--extract"],
+        skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+        skillSourcePaths: {},
+      },
+      childToolContext: { agentId: "extraction-agent" } as never,
+    },
+  );
+
+  assertEquals("veryfront__load_skill" in hostTools, true);
+  assertEquals("load_skill" in hostTools, false);
 });
 
 describe("hosted child tool denials", () => {
@@ -2109,9 +2168,191 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
 
     assertEquals("get_file" in hostTools, true);
     assertEquals("load_skill" in hostTools, true);
+    const loadSkill = hostTools.load_skill;
+    assert(loadSkill);
+    assertEquals(hasTrustedHostToolProvenance(loadSkill), true);
+    assertEquals(
+      hasTrustedHostToolProvenance(hostTools.get_file),
+      false,
+      "project-discovered tools must not inherit framework provenance",
+    );
+    assertEquals(await loadSkill.execute?.({ skillId: "extraction-agent--extract" }), {
+      ok: true,
+    });
   } finally {
     toolRegistryInternal.clearAll();
   }
+});
+
+Deno.test("hosted child AgentRuntime applies delegation defaults from its assembled trusted loader", async () => {
+  const invokedInputs: unknown[] = [];
+  const context = {
+    projectSteeringByAgentId: new Map([["extraction-agent", {
+      createLoadSkillTool: () =>
+        tool({
+          id: "load_skill",
+          description: "Load skill",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: ({ skillId }) => ({
+            skillId,
+            instructions: "Use extraction skill.",
+            references: [],
+            scripts: [],
+            model: "openai/gpt-5.1",
+            thinking: 400,
+            maxSteps: 12,
+          }),
+        }),
+    }]]),
+  } as never;
+  const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+    context,
+    {
+      childAgentId: "extraction-agent",
+      childConfig: {
+        system: "Use exact child policy",
+        toolNames: ["load_skill", "invoke_agent"],
+        availableSkillIds: ["extraction-agent--extract"],
+        skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+        skillSourcePaths: {},
+      },
+      childToolContext: { agentId: "extraction-agent" } as never,
+    },
+  );
+  const model = scriptedModel([
+    {
+      toolCalls: [{
+        id: "load-skill",
+        name: "load_skill",
+        input: { skillId: "extraction-agent--extract" },
+      }],
+    },
+    {
+      toolCalls: [{
+        id: "delegate",
+        name: "invoke_agent",
+        input: {
+          agent_id: "reviewer",
+          description: "Review extraction",
+          prompt: "Review the extraction.",
+        },
+      }],
+    },
+    { text: "delegated" },
+  ], { only: "generate", modelId: "hosted/child-loader-activation" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "hosted-child-loader-activation",
+    system: "Use the assembled hosted child tools.",
+    tools: {
+      ...hostTools,
+      invoke_agent: tool({
+        id: "invoke_agent",
+        description: "Invoke a child agent",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            agent_id: v.string(),
+            description: v.string(),
+            prompt: v.string(),
+            model: v.string().optional(),
+            thinking: v.number().optional(),
+            max_steps: v.number().optional(),
+          })
+        )(),
+        execute: (input) => {
+          invokedInputs.push(input);
+          return { ok: true };
+        },
+      }),
+    },
+    maxSteps: 4,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  const response = await assistant.generate({ input: "Load skill and delegate." });
+
+  assertEquals(response.text, "delegated");
+  assertEquals(invokedInputs, [{
+    agent_id: "reviewer",
+    description: "Review extraction",
+    prompt: "Review the extraction.",
+    model: "openai/gpt-5.1",
+    thinking: 400,
+    max_steps: 12,
+  }]);
+});
+
+Deno.test("project-owned load_skill collisions do not seed hosted child delegation defaults", async () => {
+  const invokedInputs: unknown[] = [];
+  const model = scriptedModel([
+    {
+      toolCalls: [{
+        id: "project-load-skill",
+        name: "load_skill",
+        input: { skillId: "project-owned" },
+      }],
+    },
+    {
+      toolCalls: [{
+        id: "delegate",
+        name: "invoke_agent",
+        input: {
+          agent_id: "reviewer",
+          description: "Review extraction",
+          prompt: "Review the extraction.",
+        },
+      }],
+    },
+    { text: "project loader ignored for defaults" },
+  ], { only: "generate", modelId: "hosted/project-loader-collision" });
+  const assistant = createEphemeralAgentWithRuntimeOptions({
+    id: "hosted-child-project-loader-collision",
+    system: "Use the project-owned loader collision.",
+    tools: {
+      load_skill: markRuntimeLocalTool(tool({
+        id: "load_skill",
+        description: "Project-owned loader collision",
+        inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+        execute: ({ skillId }) => ({
+          skillId,
+          instructions: "Untrusted project skill.",
+          references: [],
+          scripts: [],
+          model: "openai/gpt-5.1",
+          thinking: 400,
+          maxSteps: 12,
+        }),
+      })),
+      invoke_agent: tool({
+        id: "invoke_agent",
+        description: "Invoke a child agent",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            agent_id: v.string(),
+            description: v.string(),
+            prompt: v.string(),
+            model: v.string().optional(),
+            thinking: v.number().optional(),
+            max_steps: v.number().optional(),
+          })
+        )(),
+        execute: (input) => {
+          invokedInputs.push(input);
+          return { ok: true };
+        },
+      }),
+    },
+    maxSteps: 4,
+    resolveModelTransport: () => ({ model }),
+  }, {});
+
+  const response = await assistant.generate({ input: "Load project skill and delegate." });
+
+  assertEquals(response.text, "project loader ignored for defaults");
+  assertEquals(invokedInputs, [{
+    agent_id: "reviewer",
+    description: "Review extraction",
+    prompt: "Review the extraction.",
+  }]);
 });
 
 Deno.test({
@@ -2329,5 +2570,21 @@ Deno.test("Studio availability survives service intersection without weakening e
         ...(expected === undefined ? {} : { required: expected }),
       }]);
     }
+  }
+});
+
+it("hosted child explicit loader grants survive sibling spelling denials", () => {
+  for (const granted of ["load_skill", "veryfront__load_skill", undefined]) {
+    const names = ["load_skill", "veryfront__load_skill"];
+    const tools = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "child",
+      name: "Child",
+      description: "Child",
+      instructions: "Base",
+      skills: ["extract"],
+      tools: granted ? [granted] : [],
+      deniedTools: names.filter((name) => name !== granted),
+    }, { allowedSkillIds: ["child--extract"] });
+    assertEquals(tools, granted ? [granted] : []);
   }
 });

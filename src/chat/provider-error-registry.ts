@@ -39,6 +39,12 @@ export const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   status: 402,
 } as const;
 
+export const AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR = {
+  code: "ai_provider_spend_check_unavailable",
+  message: "Veryfront cannot verify provider spend. Contact your administrator.",
+  status: 503,
+} as const;
+
 export const AI_PROVIDER_WORKSPACE_LIMIT_ERROR = {
   code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
   message:
@@ -57,6 +63,17 @@ export const PROVIDER_OUTPUT_TRUNCATED_ERROR = {
   code: "PROVIDER_OUTPUT_TRUNCATED",
   message:
     "The model stopped at its output token limit before it finished the response. Raise the model output token limit, or ask for a shorter response.",
+  status: 502,
+} as const;
+
+/**
+ * The provider returned a successful status, but its response stream broke the
+ * provider's event protocol. Non-retryable for the same attempt.
+ */
+export const PROVIDER_STREAM_PROTOCOL_ERROR = {
+  code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+  message:
+    "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
   status: 502,
 } as const;
 
@@ -99,10 +116,12 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "OUTPUT_SCHEMA_NOT_CLOSED",
   "OUTPUT_SCHEMA_INVALID",
   "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+  "ai_provider_spend_check_unavailable",
   "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
   "AI_PROVIDER_BILLING_ERROR",
   "GATEWAY_PROJECT_REQUIRED",
   "PROVIDER_OUTPUT_TRUNCATED",
+  "PROVIDER_STREAM_PROTOCOL_ERROR",
   "MODEL_NOT_PERMITTED",
   "INFERENCE_POLICY_DENIED",
 ] as const;
@@ -144,10 +163,12 @@ const failures = {
   OUTPUT_SCHEMA_NOT_CLOSED: { ...OUTPUT_SCHEMA_NOT_CLOSED_ERROR, status: 400 },
   OUTPUT_SCHEMA_INVALID: { ...OUTPUT_SCHEMA_INVALID_ERROR, status: 400 },
   AI_PROVIDER_SPEND_LIMIT_EXCEEDED: AI_PROVIDER_SPEND_LIMIT_ERROR,
+  ai_provider_spend_check_unavailable: AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
   GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
   PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  PROVIDER_STREAM_PROTOCOL_ERROR: PROVIDER_STREAM_PROTOCOL_ERROR,
   MODEL_NOT_PERMITTED: MODEL_NOT_PERMITTED_ERROR,
   INFERENCE_POLICY_DENIED: INFERENCE_POLICY_DENIED_ERROR,
 } as const;

@@ -7,6 +7,7 @@ import {
   MINIMUM_NODE_VERSION,
   NPM_SMOKE_NODE_VERSIONS,
 } from "./runtime-support.ts";
+import { inlinePublicPoolJobs } from "../ci/public-pool-jobs.ts";
 
 const WORKFLOW_PATH = new URL(
   "../../.github/workflows/cicd.yml",
@@ -65,7 +66,7 @@ describe("npm smoke Node support contract", () => {
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
       "CI workflow",
     );
-    const jobs = record(workflow.jobs, "CI workflow jobs");
+    const jobs = await inlinePublicPoolJobs(workflow);
     const versionsJob = record(
       jobs["npm-smoke-node-versions"],
       "npm smoke Node versions job",

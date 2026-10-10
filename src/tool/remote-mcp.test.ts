@@ -69,9 +69,7 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
-        ) as {
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
           id: string;
         };
         return Response.json({
@@ -96,9 +94,7 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api:80/mcp"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
-        ) as {
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
           id: string;
         };
         return Response.json({
@@ -120,7 +116,7 @@ describe("tool/remote-mcp", () => {
       requestFetch: async (_input, init) => {
         transportCalls++;
         const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
+          String(init && "body" in init ? init.body : undefined),
         ) as { id: string };
         return Response.json({
           jsonrpc: "2.0",
@@ -142,7 +138,7 @@ describe("tool/remote-mcp", () => {
       requestFetch: async (input, init) => {
         requestedEndpoint = input;
         const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
+          String(init && "body" in init ? init.body : undefined),
         ) as { id: string };
         return Response.json({
           jsonrpc: "2.0",
@@ -229,11 +225,16 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       // Stands in for the native send: it reads the null-prototype record.
       requestFetch: (_input, init) => {
-        const headers = observeFetchRequestInit(init).headers as Record<string, string> | undefined;
+        const headers = observeFetchRequestInit(init).headers;
+        const headerRecord = headers && !(headers instanceof Headers) && !Array.isArray(headers)
+          ? headers
+          : undefined;
         authorizations.push(
-          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+          headerRecord && Object.hasOwn(headerRecord, "authorization")
+            ? headerRecord.authorization
+            : undefined,
         );
-        writerTokens.push(headers?.["x-veryfront-run-event-writer-token"]);
+        writerTokens.push(headerRecord?.["x-veryfront-run-event-writer-token"]);
         const body = JSON.parse(String(observeFetchRequestInit(init).body)) as { id: string };
         return Promise.resolve(
           Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
@@ -271,9 +272,7 @@ describe("tool/remote-mcp", () => {
       requestFetch: async (input, init) => {
         transportCalls++;
         requestUrls.push(String(input));
-        const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
-        ) as {
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
           id: string;
         };
         return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
@@ -300,9 +299,7 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(
-          String(init && "body" in init ? observeFetchRequestInit(init).body : undefined),
-        ) as {
+        const body = JSON.parse(String(init && "body" in init ? init.body : undefined)) as {
           id: string;
         };
         return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
@@ -1562,7 +1559,7 @@ describe("tool/remote-mcp", () => {
     });
 
     await withMockFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      redirectMode = observeFetchRequestInit(init).redirect;
+      redirectMode = init?.redirect;
       return Response.json({
         jsonrpc: "2.0",
         id: "docs:tools:list",

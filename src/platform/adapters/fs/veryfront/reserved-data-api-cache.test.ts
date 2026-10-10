@@ -31,30 +31,16 @@ it("reserved data writes remove every authority listing from the shared API cach
     const transport = backend as unknown as {
       request: (method: string, path: string, body?: Record<string, string>) => Promise<unknown>;
     };
-    transport.request = (_method, path, body = {}) => {
+    transport.request = (method, path, body = {}) => {
       const url = new URL(path, "https://api.example.com");
-      if (url.pathname.endsWith("/set")) {
-        assertExists(body.key);
-        assertExists(body.value);
-        stored.set(body.key, body.value);
-        return Promise.resolve({});
-      }
-      if (url.pathname.endsWith("/get")) {
-        return Promise.resolve(
-          { value: stored.get(url.searchParams.get("key")!) ?? null },
-        );
-      }
-      if (url.pathname.endsWith("/del")) {
-        assertExists(body.key);
-        stored.delete(body.key);
-        return Promise.resolve({});
-      }
-      if (url.pathname.endsWith("/del-pattern")) {
-        assertExists(body.pattern);
-        patterns.push(body.pattern);
+      const entryPrefix = "/entries/";
+      if (method === "DELETE" && url.pathname === "/entries") {
+        const pattern = url.searchParams.get("pattern");
+        assertExists(pattern);
+        patterns.push(pattern);
         // This path only receives a source prefix followed by one wildcard.
-        assertEquals(body.pattern.endsWith("*"), true);
-        const prefix = body.pattern.slice(0, -1);
+        assertEquals(pattern.endsWith("*"), true);
+        const prefix = pattern.slice(0, -1);
         let deleted = 0;
         for (const key of stored.keys()) {
           if (key.startsWith(prefix)) {
@@ -62,9 +48,25 @@ it("reserved data writes remove every authority listing from the shared API cach
             deleted++;
           }
         }
-        return Promise.resolve({ deleted });
+        return Promise.resolve({ pattern, status: "deleted", deleted_count: deleted });
       }
-      throw new Error(`Unexpected cache operation: ${url.pathname}`);
+      if (url.pathname.startsWith(entryPrefix)) {
+        const key = decodeURIComponent(url.pathname.slice(entryPrefix.length));
+        if (method === "PUT") {
+          assertExists(body.value);
+          stored.set(key, body.value);
+          return Promise.resolve({ key, expires_at: null });
+        }
+        if (method === "GET") {
+          const value = stored.get(key) ?? null;
+          return Promise.resolve({ key, found: value !== null, value, expires_at: null });
+        }
+        if (method === "DELETE") {
+          const status = stored.delete(key) ? "deleted" : "absent";
+          return Promise.resolve({ key, status });
+        }
+      }
+      throw new Error(`Unexpected cache operation: ${method} ${url.pathname}`);
     };
     {
       for (

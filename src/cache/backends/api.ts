@@ -40,6 +40,9 @@ import {
 const logger = baseLogger.component("api-cache-backend");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_EXPIRATION_CONCURRENCY = 8;
+// Canonical cache entries API accepts at most 100 distinct keys per batch.
+const MAX_ENTRIES_PER_BATCH = 100;
 const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
@@ -54,6 +57,17 @@ const ERROR_BODY_MAX_LENGTH = 500;
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
+/** Longest TTL the cache entry API accepts (`ttl_seconds` is 1 to 86400). */
+const API_CACHE_MAX_TTL_SECONDS = 86_400;
+/**
+ * Operation templates recorded in spans and logs. A cache key sits in the
+ * request path, and keys can embed identifiers, so telemetry records the route
+ * template and never the key.
+ */
+const ENTRY_OPERATION = "/entries/{key}";
+const ENTRIES_OPERATION = "/entries";
+const READ_ENTRIES_OPERATION = "/entries/read";
+const WRITE_ENTRIES_OPERATION = "/entries/write";
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
@@ -92,6 +106,11 @@ function readUrlProperty(
 
 type CacheRequestOptions = {
   failOnError?: boolean;
+  /**
+   * Route template recorded as `cache.operation`, in `http.url` and in logs
+   * instead of the request path, so a key in the path never reaches telemetry.
+   */
+  operation: string;
   boundedJsonString?: { fieldName: string; maximumBytes: number };
   /**
    * Reports the authority this request resolves at the moment it performs the
@@ -107,6 +126,37 @@ type CacheRequestOptions = {
    */
   credentialRejectionIsNeutral?: boolean;
 };
+
+/** One item of a cache entry read: a hit carries the value, a miss found=false. */
+type CacheEntryResult = { key: string; found: boolean; value: string | null };
+
+/**
+ * Maps a backend TTL to the cache entry API's `ttl_seconds`, a whole number of
+ * seconds from 1 to {@link API_CACHE_MAX_TTL_SECONDS}. A non-positive TTL
+ * expires the entry at once (see `CacheBackend.set`), and a non-finite TTL
+ * (NaN or either infinity) is invalid, so it neither writes nor expires.
+ */
+function toApiTtlSeconds(ttlSeconds: number): number | "expire" | "invalid" {
+  if (!Number.isFinite(ttlSeconds)) return "invalid";
+  if (ttlSeconds <= 0) return "expire";
+  return Math.min(Math.ceil(ttlSeconds), API_CACHE_MAX_TTL_SECONDS);
+}
+
+/**
+ * A key with a complete `.` or `..` slash-separated segment cannot be addressed
+ * through the cache entry API: URL parsing normalises dot segments out of the
+ * entry path, and the API refuses such keys on every route.
+ */
+function hasDotOnlySegment(key: string): boolean {
+  for (const segment of key.split("/")) {
+    if (segment === "." || segment === "..") return true;
+  }
+  return false;
+}
+
+function entryPath(prefixedKey: string): string {
+  return `/entries/${encodeURIComponent(prefixedKey)}`;
+}
 
 /**
  * The pattern delete running now and the one queued behind it, with the
@@ -141,6 +191,7 @@ export class ApiCacheBackend implements CacheBackend {
   private readonly circuitBreakerName: string;
   private readonly patternDeleteRounds = new Map<string, PatternDeleteRound>();
   private readonly invalidationCircuitBreakers = new Map<string, CircuitBreaker>();
+  private warnedDotOnlySegmentKey = false;
 
   constructor(
     options: {
@@ -186,8 +237,21 @@ export class ApiCacheBackend implements CacheBackend {
     return resolveCacheRequestAuthority(this.explicitApiToken);
   }
 
-  private async prefixKey(key: string): Promise<string> {
+  /**
+   * Returns the API key for `key`, or null when the key has a dot-only segment
+   * and cannot be cached through the API: reads miss, writes and deletes do
+   * nothing, and no request is sent for it.
+   */
+  private async prefixKey(key: string): Promise<string | null> {
     const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    if (hasDotOnlySegment(prefixed)) {
+      if (!this.warnedDotOnlySegmentKey) {
+        this.warnedDotOnlySegmentKey = true;
+        // Do not log the key: keys can embed identifiers.
+        logger.warn("Cache key has a dot-only path segment; not cached through the API");
+      }
+      return null;
+    }
     const sanitized = await sanitizeCacheKey(prefixed, this.keyPrefix);
     if (sanitized === prefixed) return prefixed;
 
@@ -207,8 +271,8 @@ export class ApiCacheBackend implements CacheBackend {
   private async request<T>(
     method: string,
     path: string,
-    body?: Record<string, unknown>,
-    options: CacheRequestOptions = {},
+    body: Record<string, unknown> | undefined,
+    options: CacheRequestOptions,
   ): Promise<T | null> {
     let boundedJsonString:
       | { fieldName: string; maximumBytes: number; maximumDocumentBytes: number }
@@ -235,13 +299,12 @@ export class ApiCacheBackend implements CacheBackend {
     // Shared with the process-local file-cache tier, which must scope what it
     // holds on exactly the authority this read would have been made under.
     // Resolved here, when the request is performed, and reported to the caller
-    // before the gate below: a batched read that fails over to individual gets
-    // re-resolves the authority per attempt, and a caller admitting results
-    // into a local tier must learn about every authority that could have
-    // fetched them.
+    // before the gate below: a caller admitting results into a local tier must
+    // learn about every authority that could have fetched them.
     const authority = this.cacheAuthority();
     options.onAuthority?.(authority);
     const { token, projectRef, tokenSource } = authority;
+    const { operation } = options;
 
     if (!token || !projectRef) {
       logger.debug("Missing auth or project context", {
@@ -262,9 +325,11 @@ export class ApiCacheBackend implements CacheBackend {
         if (tokenSource === "host-private") requireHostPrivateApiHttps(apiBaseUrl);
         const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
         const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
-        const url = `${apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
-        const spanUrl = sanitizeUrlForSpan(url);
-        const cacheOperation = sanitizeUrlForSpan(path);
+        const cacheBaseUrl = `${apiBaseUrl}/projects/${encodedProjectRef}/cache`;
+        const url = `${cacheBaseUrl}${path}`;
+        // The operation is a route template; appended after sanitizing so its
+        // braces stay readable.
+        const spanUrl = `${sanitizeUrlForSpan(cacheBaseUrl)}${operation}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -298,7 +363,7 @@ export class ApiCacheBackend implements CacheBackend {
               "http.method": method,
               "http.url": spanUrl,
               "http.host": readUrlProperty(parsedApiBaseUrl, urlHostGetter),
-              "cache.operation": cacheOperation,
+              "cache.operation": operation,
               "cache.project_slug": projectRef,
             },
           );
@@ -366,7 +431,7 @@ export class ApiCacheBackend implements CacheBackend {
       if (error instanceof CacheValueTooLargeError) throw error;
       if (error instanceof CircuitBreakerOpen) {
         logger.info("Circuit breaker open, failing fast", {
-          path: sanitizeUrlForSpan(path),
+          path: operation,
           nextAttemptMs: error.nextAttemptMs,
         });
         if (options.failOnError) throw error;
@@ -376,7 +441,7 @@ export class ApiCacheBackend implements CacheBackend {
       const isTimeout = error instanceof Error && error.name === "AbortError";
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.info(`Request ${isTimeout ? "timeout" : "error"}`, {
-        path: sanitizeUrlForSpan(path),
+        path: operation,
         error: errorMsg,
         isTimeout,
         tokenSource,
@@ -389,23 +454,31 @@ export class ApiCacheBackend implements CacheBackend {
 
   async get(key: string, options?: CacheReadOptions): Promise<string | null> {
     const prefixedKey = await this.prefixKey(key);
-    const result = await this.request<{ value: string | null }>(
+    if (prefixedKey === null) return null;
+    const result = await this.request<CacheEntryResult>(
       "GET",
-      `/get?key=${encodeURIComponent(prefixedKey)}`,
+      entryPath(prefixedKey),
       undefined,
-      { onAuthority: options?.onAuthority },
+      { onAuthority: options?.onAuthority, operation: ENTRY_OPERATION },
     );
-    return result?.value ?? null;
+    // A miss carries found=false and a null value.
+    return result?.found === false || typeof result?.value !== "string" ? null : result.value;
   }
 
   async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
     const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
     const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return null;
+    // A miss returns found=false with a null value, which the bounded reader
+    // reports as null.
     const result = await this.request<string>(
       "GET",
-      `/get?key=${encodeURIComponent(prefixedKey)}`,
+      entryPath(prefixedKey),
       undefined,
-      { boundedJsonString: { fieldName: "value", maximumBytes: admittedMaximum } },
+      {
+        boundedJsonString: { fieldName: "value", maximumBytes: admittedMaximum },
+        operation: ENTRY_OPERATION,
+      },
     );
     if (result === null) return null;
     if (typeof result !== "string") {
@@ -424,41 +497,54 @@ export class ApiCacheBackend implements CacheBackend {
     const prefixedByKey = new Map(
       await Promise.all(keys.map(async (key) => [key, await this.prefixKey(key)] as const)),
     );
-    const response = await this.request<{ values: Record<string, string | null> }>(
-      "POST",
-      "/get-batch",
-      { keys: keys.map((k) => prefixedByKey.get(k) as string) },
-      { onAuthority: options?.onAuthority },
-    );
-
-    if (!response?.values) {
-      logger.debug("Batch endpoint failed, falling back to individual gets", {
-        keyCount: keys.length,
-      });
-      return this.getIndividually(keys, options);
+    // The API refuses a read that names a key twice; two requested keys can
+    // also sanitize to the same prefixed key.
+    const prefixedKeys = [
+      ...new Set([...prefixedByKey.values()].filter((key): key is string => key !== null)),
+    ];
+    const hits = new Map<string, string>();
+    for (let offset = 0; offset < prefixedKeys.length; offset += MAX_ENTRIES_PER_BATCH) {
+      const batch = prefixedKeys.slice(offset, offset + MAX_ENTRIES_PER_BATCH);
+      const response = await this.request<{ data?: CacheEntryResult[] }>(
+        "POST",
+        READ_ENTRIES_OPERATION,
+        { keys: batch },
+        { onAuthority: options?.onAuthority, operation: READ_ENTRIES_OPERATION },
+      );
+      if (Array.isArray(response?.data)) {
+        for (const entry of response.data) {
+          if (entry?.found !== false && typeof entry?.value === "string") {
+            hits.set(entry.key, entry.value);
+          }
+        }
+      } else {
+        // Avoid multiplying an unavailable batch endpoint into per-key retries.
+        logger.warn("Batch cache read failed; treating its keys as misses", {
+          keyCount: batch.length,
+        });
+      }
     }
 
     return buildBatchResults(keys, (key) => {
-      const prefixedKey = prefixedByKey.get(key) as string;
-      return response.values[prefixedKey] ?? null;
+      const prefixedKey = prefixedByKey.get(key);
+      return prefixedKey ? hits.get(prefixedKey) ?? null : null;
     });
   }
 
-  private async getIndividually(
-    keys: string[],
-    options?: CacheReadOptions,
-  ): Promise<Map<string, string | null>> {
-    const results = await Promise.all(
-      keys.map(async (key) => [key, await this.get(key, options)] as const),
-    );
-    return new Map(results);
-  }
-
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    await this.request("POST", "/set", {
-      key: await this.prefixKey(key),
-      value,
-      ttl: ttlSeconds,
+    const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return;
+    const ttl = toApiTtlSeconds(ttlSeconds);
+    if (ttl === "invalid") {
+      logger.warn("Refusing cache write with a non-finite TTL; skipping", { keyCount: 1 });
+      return;
+    }
+    if (ttl === "expire") {
+      await this.expireImmediately([prefixedKey]);
+      return;
+    }
+    await this.request("PUT", entryPath(prefixedKey), { value, ttl_seconds: ttl }, {
+      operation: ENTRY_OPERATION,
     });
   }
 
@@ -473,15 +559,70 @@ export class ApiCacheBackend implements CacheBackend {
       })),
     );
 
-    await this.request("POST", "/set-batch", { entries: prefixedEntries });
+    // The API refuses a write that names a key twice. Applied in order, the
+    // last entry for a key wins, so keep only that one.
+    const lastByKey = new Map<string, { key: string; value: string; ttl?: number }>();
+    for (const entry of prefixedEntries) {
+      if (entry.key === null) continue;
+      lastByKey.delete(entry.key);
+      lastByKey.set(entry.key, { key: entry.key, value: entry.value, ttl: entry.ttl });
+    }
+
+    const writes: Array<{ key: string; value: string; ttl_seconds?: number }> = [];
+    const expired: string[] = [];
+    let invalid = 0;
+    for (const { key, value, ttl } of lastByKey.values()) {
+      if (ttl === undefined) {
+        writes.push({ key, value });
+        continue;
+      }
+      const ttlSeconds = toApiTtlSeconds(ttl);
+      if (ttlSeconds === "invalid") {
+        invalid++;
+      } else if (ttlSeconds === "expire") {
+        expired.push(key);
+      } else {
+        writes.push({ key, value, ttl_seconds: ttlSeconds });
+      }
+    }
+
+    if (invalid > 0) {
+      logger.warn("Refusing cache write with a non-finite TTL; skipping", { keyCount: invalid });
+    }
+    if (expired.length > 0) await this.expireImmediately(expired);
+    if (writes.length === 0) return;
+    for (let offset = 0; offset < writes.length; offset += MAX_ENTRIES_PER_BATCH) {
+      await this.request("POST", WRITE_ENTRIES_OPERATION, {
+        entries: writes.slice(offset, offset + MAX_ENTRIES_PER_BATCH),
+      }, { operation: WRITE_ENTRIES_OPERATION });
+    }
+  }
+
+  /**
+   * A non-positive TTL expires the entry at once (see `CacheBackend.set`): the
+   * existing entry is removed and nothing is stored. Best effort, like every
+   * write through this backend.
+   */
+  private async expireImmediately(prefixedKeys: string[]): Promise<void> {
+    for (let offset = 0; offset < prefixedKeys.length; offset += MAX_EXPIRATION_CONCURRENCY) {
+      await Promise.all(
+        prefixedKeys.slice(offset, offset + MAX_EXPIRATION_CONCURRENCY).map((prefixedKey) =>
+          this.request("DELETE", entryPath(prefixedKey), undefined, {
+            operation: ENTRY_OPERATION,
+          })
+        ),
+      );
+    }
   }
 
   async del(key: string): Promise<void> {
+    const prefixedKey = await this.prefixKey(key);
+    if (prefixedKey === null) return;
     await this.request(
-      "POST",
-      "/del",
-      { key: await this.prefixKey(key) },
-      { failOnError: true },
+      "DELETE",
+      entryPath(prefixedKey),
+      undefined,
+      { failOnError: true, operation: ENTRY_OPERATION },
     );
   }
 
@@ -506,14 +647,18 @@ export class ApiCacheBackend implements CacheBackend {
     // execute, agents/list) depends on, nor stop other projects' invalidations.
     const invalidationCircuitBreaker = this.invalidationCircuitBreaker(projectRef ?? "");
     const deletePattern = async () => {
-      const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
-        pattern: prefixed,
-      }, {
-        failOnError: true,
-        circuitBreaker: invalidationCircuitBreaker,
-        credentialRejectionIsNeutral: true,
-      });
-      return result?.deleted ?? 0;
+      const result = await this.request<{ deleted_count?: number }>(
+        "DELETE",
+        `${ENTRIES_OPERATION}?pattern=${encodeURIComponent(prefixed)}`,
+        undefined,
+        {
+          failOnError: true,
+          circuitBreaker: invalidationCircuitBreaker,
+          credentialRejectionIsNeutral: true,
+          operation: ENTRIES_OPERATION,
+        },
+      );
+      return result?.deleted_count ?? 0;
     };
 
     if (!token || !projectRef) return await deletePattern();

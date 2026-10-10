@@ -1,4 +1,4 @@
-import type { Agent, AgentSystem as AgentSystemValue } from "../types.ts";
+import type { Agent, AgentConfig, AgentSystem as AgentSystemValue } from "../types.ts";
 
 const EFFECTIVE_AGENT_SYSTEM = Symbol("veryfront.effectiveAgentSystem");
 const providerAwareResolvers = new WeakMap<
@@ -19,10 +19,10 @@ export type ResolveAgentSystemFromResolvedBaseOptions = {
 };
 
 type AgentSystemResolver = Extract<AgentSystemConfig, (...args: never[]) => unknown>;
-type AgentSystemConfig = Agent["config"]["system"];
+type AgentSystemConfig = AgentConfig["system"];
 
-type EffectiveSystemAgent = Agent & {
-  config: Agent["config"] & {
+type EffectiveSystemAgent<TOutput> = Agent<TOutput> & {
+  config: Agent<TOutput>["config"] & {
     [EFFECTIVE_AGENT_SYSTEM]?: AgentSystemConfig;
   };
 };
@@ -75,11 +75,15 @@ export function resolveAgentSystemFromResolvedBase(
 }
 
 /** Records the system resolver used by an agent's private runtime. */
-export function setEffectiveAgentSystem(agent: Agent, system: AgentSystemConfig): void {
-  (agent as EffectiveSystemAgent).config[EFFECTIVE_AGENT_SYSTEM] = system;
+export function setEffectiveAgentSystem<TOutput>(
+  agent: Agent<TOutput>,
+  system: AgentSystemConfig,
+): void {
+  (agent as EffectiveSystemAgent<TOutput>).config[EFFECTIVE_AGENT_SYSTEM] = system;
 }
 
 /** Returns the effective runtime system resolver, including through config-preserving wrappers. */
-export function getEffectiveAgentSystem(agent: Agent): AgentSystemConfig {
-  return (agent as EffectiveSystemAgent).config[EFFECTIVE_AGENT_SYSTEM] ?? agent.config.system;
+export function getEffectiveAgentSystem<TOutput>(agent: Agent<TOutput>): AgentSystemConfig {
+  return (agent as EffectiveSystemAgent<TOutput>).config[EFFECTIVE_AGENT_SYSTEM] ??
+    agent.config.system;
 }

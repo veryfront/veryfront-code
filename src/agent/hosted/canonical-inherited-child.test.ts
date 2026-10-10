@@ -1,6 +1,5 @@
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -179,6 +178,7 @@ for (
     const admit = hostedInheritedRunAdmitter(request, {
       apiUrl: "https://api.example.test",
       fetch: (input, init) => {
+        assert(init && "headers" in init, "fetch must receive request options");
         calls++;
         if (calls === 1) {
           return Promise.resolve(
@@ -205,10 +205,7 @@ for (
           );
         }
         assertEquals(String(input), `https://api.example.test/runs/${childId}/heartbeats`);
-        assertEquals(
-          new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
-          "Bearer child-renewal",
-        );
+        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer child-renewal");
         if (hangs) return new Promise<Response>(() => {});
         if (mode === "retry-expired") return Promise.resolve(Response.json({}, { status: 503 }));
         return Promise.resolve(Response.json({ detail: "generation fenced" }, { status: 403 }));

@@ -1684,7 +1684,7 @@ describe("eval/agent-service", () => {
     const body = requestBody as {
       target: unknown;
       config: unknown;
-      input: { forwarded_props: unknown; durable_root_run?: unknown; messages: unknown[] };
+      input: { forwardedProps: unknown; durable_root_run?: unknown; messages: unknown[] };
     };
     assertEquals(body.target, { type: "agent", id: "veryfront" });
     assertEquals(body.config, {
@@ -1695,7 +1695,7 @@ describe("eval/agent-service", () => {
       },
     });
     assertEquals(body.input.durable_root_run, undefined);
-    assertEquals(body.input.forwarded_props, {
+    assertEquals(body.input.forwardedProps, {
       model: "anthropic/claude-sonnet-4-6",
       veryfront: { client: { id: "veryfront-studio", type: "web", platform: "durable-canary" } },
     });

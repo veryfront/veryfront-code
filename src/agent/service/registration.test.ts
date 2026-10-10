@@ -391,8 +391,9 @@ describe("agent/agent-service-registration", () => {
     let attempts = 0;
     const bodies: string[] = [];
     const fetch: typeof globalThis.fetch = (_input, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
       attempts++;
-      bodies.push(String(observeFetchRequestInit(init).body));
+      bodies.push(String(init?.body));
       return attempts === 1
         ? Promise.reject(new TypeError("synthetic disconnected transport"))
         : Promise.resolve(jsonResponse(serviceResponse));
@@ -410,8 +411,9 @@ describe("agent/agent-service-registration", () => {
     let attempts = 0;
     let aborts = 0;
     const fetch: typeof globalThis.fetch = (_input, init) => {
+      assert(init && "signal" in init, "fetch must receive request options");
       attempts++;
-      const signal = observeFetchRequestInit(init).signal;
+      const signal = init?.signal;
       assert(signal, "startup requests must carry a deadline signal");
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {

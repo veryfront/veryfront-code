@@ -23,6 +23,15 @@ export const knowledgeHelp: CommandHelp = {
       description: "Recurse into subdirectories for local directory ingestion",
     },
     {
+      flag: "--branch, -b <name-or-id>",
+      description: "Write generated knowledge files to an existing project branch",
+    },
+    {
+      flag: "--okf-bundle",
+      description:
+        "Preserve an OKF bundle byte-for-byte while retaining bundle-relative Markdown paths",
+    },
+    {
       flag: "--json, -j",
       description: "Output machine-readable JSON",
     },
@@ -32,6 +41,7 @@ export const knowledgeHelp: CommandHelp = {
     "veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploads/contracts/c.pdf --json",
     "veryfront knowledge ingest /workspace/uploads/q1.pdf --json",
     "veryfront knowledge ingest --path uploads/ --all --json",
+    "veryfront knowledge ingest --path uploads/ga4 --all --okf-bundle --branch feature/docs --json",
   ],
   notes: [
     "Primary subcommand: ingest",

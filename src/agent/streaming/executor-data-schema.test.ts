@@ -4,6 +4,22 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseExecutorDataEvent } from "./executor-data-schema.ts";
 
 describe("agent/streaming/executor-data-schema", () => {
+  it("reconstructs fixed protocol failure wording without forwarding provider text", () => {
+    assertEquals(
+      parseExecutorDataEvent({
+        type: "error",
+        code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+        error: "Private provider diagnostic <TOKEN>",
+      }),
+      {
+        type: "error",
+        code: "PROVIDER_STREAM_PROTOCOL_ERROR",
+        error:
+          "The model provider returned a response stream that does not follow its protocol. Run the agent again, or choose a different model.",
+      },
+    );
+  });
+
   it("reconstructs fixed authentication wording across the hosted event stream", () => {
     assertEquals(
       parseExecutorDataEvent({

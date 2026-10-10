@@ -645,7 +645,7 @@ describe("default hosted invoke agent", () => {
     );
 
     assertEquals("success" in result && result.success, true);
-    assertEquals(capturedForkToolNames, ["lookup_job", "sleep"]);
+    assertEquals(capturedForkToolNames, ["lookup_job", "sleep", "veryfront__sleep"]);
   });
 });
 
@@ -1090,6 +1090,24 @@ it("child denials apply to both platform spellings without denying a colliding p
       denied === "update_file" ? "veryfront__update_file" : "update_file",
     ]);
   }
+});
+
+it("child denials preserve an explicitly selected platform loader alias", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        load_skill: platform,
+        veryfront__load_skill: platform,
+      },
+    },
+    ["load_skill"],
+    ["veryfront__load_skill"],
+  );
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["veryfront__load_skill"]);
 });
 
 it("child platform denials respect owner-qualified project short names", () => {

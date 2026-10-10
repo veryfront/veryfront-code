@@ -1,3 +1,4 @@
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
@@ -660,6 +661,47 @@ function createStyleArtifactFetchRecorder(): {
         : input instanceof Request
         ? input.url
         : input.toString();
+      if (url.includes("/releases/release-1/files?")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "config",
+                  version_id: "v-config",
+                  path: "veryfront.config.ts",
+                  type: "file",
+                  content: 'export default { tailwind: { stylesheet: "src/styles.css" } };',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "page",
+                  version_id: "v-page",
+                  path: "pages/index.tsx",
+                  type: "page",
+                  content: 'export default () => <main className="px-4 text-red-500">Hi</main>;',
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+                {
+                  id: "css",
+                  version_id: "v-css",
+                  path: "src/styles.css",
+                  type: "file",
+                  content: "@tailwind utilities; .from-css { color: red; }",
+                  size: 60,
+                  updated_at: "2026-10-10T00:00:00Z",
+                },
+              ],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
       if (url.endsWith("/projects/demo-project/style-artifacts/current")) {
         const body = requestJsonBody(init) ?? {};
         upserts.push(body);
@@ -2228,61 +2270,267 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
-  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+  for (const runtimeTargetKind of [undefined, "main_branch", "preview_branch"] as const) {
+    it(`uploads knowledge to the admitted writable runtime destination (${runtimeTargetKind ?? "omitted"})`, async () => {
+      const body = {
+        runId: "run_knowledge_default",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
+        ...(runtimeTargetKind === "preview_branch"
+          ? { runtimeTargetBranchId: "branch-proof" }
+          : {}),
+        config: {
+          paths: ["uploads/guide.md"],
+          slug: "guide",
+          branch_id: "untrusted-config-branch",
+        },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_default/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+      const result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("Accept"),
+              "application/octet-stream",
+            );
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              status: 200,
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true, JSON.stringify(payload));
+      assertEquals(payload.result.summary.ingested_count, 1);
+      assertEquals(uploads.length, 1);
+      assertEquals(
+        new URL(uploads[0]!.url).searchParams.get("branch_id"),
+        runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
+      );
+      assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    });
+  }
+
+  it("rejects knowledge ingest environment targets without an explicit writable branch", async () => {
     const body = {
-      runId: "run_knowledge_default",
+      runId: "run_knowledge_environment",
       kind: "task",
       target: "task:knowledge-ingest",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "environment-proof",
       config: { paths: ["uploads/guide.md"], slug: "guide" },
     };
     const signed = await signedRequest(
-      "/api/control-plane/runs/run_knowledge_default/execute",
+      "/api/control-plane/runs/run_knowledge_environment/execute",
       body,
       { "x-token": "test-token" },
     );
+
+    const originalSplit = String.prototype.split;
+    const originalTrim = String.prototype.trim;
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let interceptedMime = false;
     const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
-
-    const result = await withMockFetch(
-      (async (input, init) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof Request
-          ? input.url
-          : input.toString();
-        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
-          return new Response(
-            JSON.stringify({
-              signed_url: "https://signed.example.test/guide.md",
-              expires_at: "2026-09-30T23:00:00.000Z",
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
-        }
-        if (url === "https://signed.example.test/guide.md") {
-          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
-        }
-        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
-        uploads.push({ url, body: requestJsonBody(init) ?? {} });
-        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch,
-      async () =>
-        await new ProjectRunExecuteHandler().handle(
-          signed.request,
-          createCtx(signed.publicKeyPem),
-        ),
-    );
-
+    let result;
+    try {
+      result = await withMockFetch(
+        (async (input, init) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+            ? input.url
+            : input.toString();
+          if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
+            const observed = observeFetchRequestInit(init);
+            assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+            assertEquals(new Headers(observed.headers).get("accept"), "application/octet-stream");
+            assertEquals(
+              observed.redirect,
+              "manual",
+              "the guard inspects redirects before following",
+            );
+            String.prototype.split = function (...args) {
+              if (String(this) === "Application/Octet-Stream ; charset=binary") {
+                interceptedMime = true;
+                throw new Error("tenant MIME hook");
+              }
+              return Reflect.apply(originalSplit, this, args);
+            };
+            String.prototype.trim = function () {
+              if (String(this) === "Application/Octet-Stream ") {
+                interceptedMime = true;
+                throw new Error("tenant MIME trim hook");
+              }
+              return Reflect.apply(originalTrim, this, []);
+            };
+            String.prototype.toLowerCase = function () {
+              if (String(this) === "Application/Octet-Stream") {
+                interceptedMime = true;
+                throw new Error("tenant MIME case hook");
+              }
+              return Reflect.apply(originalToLowerCase, this, []);
+            };
+            return new Response("# Guide\n\nCancellation-safe knowledge.", {
+              headers: { "Content-Type": "Application/Octet-Stream ; charset=binary" },
+            });
+          }
+          assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+          uploads.push({ url, body: requestJsonBody(init) ?? {} });
+          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }) as typeof fetch,
+        async () =>
+          await new ProjectRunExecuteHandler().handle(
+            signed.request,
+            createCtx(signed.publicKeyPem),
+          ),
+      );
+    } finally {
+      String.prototype.split = originalSplit;
+      String.prototype.trim = originalTrim;
+      String.prototype.toLowerCase = originalToLowerCase;
+    }
+    assertEquals(interceptedMime, false);
     assertExists(result.response);
     const payload = await result.response.json();
-    assertEquals(payload.success, true, JSON.stringify(payload));
-    assertEquals(payload.result.summary.ingested_count, 1);
-    assertEquals(uploads.length, 1);
-    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "explicit writable main_branch or preview_branch target");
   });
+
+  // The default executor/parser are real; this publisher models logical output
+  // persistence at the HTTP seam, not API database or staging persistence.
+  for (const cancel of [false, true]) {
+    it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
+      const sources = ["first", "second", "third"];
+      const outputs = new Map<string, string>();
+      const attempts: string[] = [];
+      const held = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let firstAttempt = true;
+      let stoppedAcknowledgements = 0;
+      const execute = async (runId: string, signal?: AbortSignal) => {
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+          runId,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "branch-retained",
+          config: { paths: sources.map((name) => `uploads/${name}.md`) },
+        }, { "x-token": "test-token", "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        const response = await new ProjectRunExecuteHandler().handle(
+          signal ? new Request(signed.request, { signal }) : signed.request,
+          createCtx(signed.publicKeyPem),
+        );
+        assertExists(response.response);
+        return await response.response.json();
+      };
+      await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/cancellation-ack")) {
+          stoppedAcknowledgements++;
+          return Response.json({ acknowledged: true });
+        }
+        const download = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md/url`));
+        if (download) {
+          return Response.json({ signed_url: `https://signed.example.test/${download}.md` });
+        }
+        const source = sources.find((name) => url.endsWith(`/uploads/uploads%2F${name}.md`));
+        if (source) {
+          return new Response(`# ${source}\n\nRetained source ${source}.`, {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        const destination = new URL(url);
+        assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
+        const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
+        assertStringIncludes(path, "knowledge/");
+        attempts.push(path);
+        if (firstAttempt && path.endsWith("second.md")) {
+          if (cancel) {
+            const signal = observeFetchRequestInit(init).signal;
+            assertExists(signal);
+            held.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          }
+          return Response.json({ error: "synthetic publication failure" }, { status: 500 });
+        }
+        const content = String(requestJsonBody(init)?.content);
+        outputs.set(path, content);
+        return Response.json({ path });
+      }, async () => {
+        const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
+        if (cancel) {
+          await Promise.race([
+            held.promise,
+            pending.then((result) => {
+              throw new Error(JSON.stringify(result));
+            }),
+          ]);
+          controller.abort(new Error("Run cancelled"));
+        }
+        const failed = await pending;
+        assertEquals(failed.success, false);
+        if (cancel) {
+          assertStringIncludes(failed.error, "Run cancelled");
+          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          assertEquals(outputs.size, 1);
+          assertEquals(stoppedAcknowledgements, 1);
+        } else {
+          assertExists(failed.result, JSON.stringify(failed));
+          assertEquals(failed.result.summary.failed_count, 1);
+          assertEquals(failed.result.summary.ingested_count, 2);
+          assertEquals(outputs.size, 2);
+        }
+        const previous = new Map(outputs);
+        firstAttempt = false;
+        const retried = await execute(`run_retained_retry_${cancel}`);
+        assertEquals(retried.success, true, JSON.stringify(retried));
+        assertEquals(retried.result.summary.ingested_count, 3);
+        assertEquals(outputs.size, 3);
+        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        for (const name of sources) {
+          assertStringIncludes(
+            outputs.get(`knowledge/${name}.md`) ?? "",
+            `Retained source ${name}.`,
+          );
+        }
+        assertStringIncludes(retried.logs, "file_completed");
+      });
+    });
+  }
 
   it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
     const controller = new AbortController();
@@ -2296,6 +2544,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { path_prefix: "uploads", recursive: true },
       },
       { "x-token": "test-token" },
@@ -2811,6 +3060,204 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
 
+  it("fails release style sources closed on authorization, missing release, and partial content", async () => {
+    for (const status of [401, 403, 404, 200]) {
+      const body = {
+        runId: "run_release_denied",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", style_profile_hash: "queued-release-profile" },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_release_denied/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+        stylesheet: "@tailwind utilities;",
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+      const result = await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.includes("/releases/release-1/files?")) {
+          if (status === 200) {
+            return new Response(
+              JSON.stringify({
+                data: [{
+                  id: "missing",
+                  version_id: "v-missing",
+                  path: "pages/index.tsx",
+                  type: "page",
+                  size: 1,
+                  updated_at: "2026-10-10T00:00:00Z",
+                }],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return new Response("Unavailable", { status });
+        }
+        return await recorder.fetch(input, init);
+      }, () => new ProjectRunExecuteHandler().handle(request, ctx));
+      assertExists(result.response);
+      const json = await result.response.json();
+      assertEquals(json.success, false);
+      assertEquals(typeof json.error, "string");
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(readCalls, []);
+      assertEquals(recorder.upserts.filter((upsert) => upsert.status === "ready"), []);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.status, "failed");
+      assertEquals(recorder.upserts[0]?.style_profile_hash, "queued-release-profile");
+    }
+  });
+
+  it("owns release style sources independently of ambient main", async () => {
+    const { createStyleScopeProfile } = await import(
+      "#veryfront/html/styles-builder/style-scope-profile.ts"
+    );
+    const { runWithProjectEnv } = await import("#veryfront/server/project-env/storage.ts");
+    const releaseConfig =
+      'import { defineConfigWithEnv, getEnv } from "veryfront"; export default defineConfigWithEnv((env) => ({ tailwind: { stylesheet: env === "release" && (getEnv("STYLE_OVERRIDE") ?? "missing") === "missing" ? "release.css" : "ambient.css" } }));';
+    const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
+    const expectedConfig = await evaluateHostedConfigSource({
+      cacheKey: "release-style-exact-context-reference",
+      source: { fileName: "veryfront.config.ts", source: releaseConfig },
+      environmentName: "release",
+      environment: {},
+    });
+    assertEquals(expectedConfig.tailwind?.stylesheet, "release.css");
+    const expectedProfile = createStyleScopeProfile(expectedConfig);
+    const hashes: unknown[] = [];
+    for (const ambient of ['@import "tw-animate-css";', ".changed-main { color: blue; }"]) {
+      const body = {
+        runId: "run_release_snapshot",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", style_profile_hash: expectedProfile.hash },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_release_snapshot/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+        stylesheet: ambient,
+        stylesheetPath: "main.css",
+        contentContext: { sourceType: "branch", projectSlug: "demo-project", branch: "main" },
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+      let releaseReads = 0;
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : input.toString();
+          if (url.includes("/releases/release-1/files?")) {
+            releaseReads++;
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
+              "Bearer test-token",
+            );
+            return new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "config",
+                    version_id: "config-version",
+                    path: "veryfront.config.ts",
+                    type: "file",
+                    content: releaseConfig,
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                  {
+                    id: "css",
+                    version_id: "css-version",
+                    path: "release.css",
+                    type: "file",
+                    content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                  {
+                    id: "page",
+                    version_id: "page-version",
+                    path: "pages/index.tsx",
+                    type: "page",
+                    content: 'export default () => <div className="text-red-500" />;',
+                    size: 60,
+                    updated_at: "2026-10-10T00:00:00Z",
+                  },
+                ],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return await recorder.fetch(input, init);
+        },
+        () =>
+          runWithProjectEnv(
+            { STYLE_OVERRIDE: ambient },
+            () => new ProjectRunExecuteHandler().handle(request, ctx),
+          ),
+      );
+      assertExists(result.response);
+      const json = await result.response.json();
+      assertEquals(json.success, true, json.error);
+      assertEquals(releaseReads, 1);
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(readCalls, []);
+      assertEquals(recorder.upserts[0]?.release_id, "release-1");
+      assertEquals(recorder.upserts[0]?.style_profile_hash, expectedProfile.hash);
+      const { acquireCSSGenerationSession, extractCandidatesFromFiles } = await import(
+        "#veryfront/html/styles-builder/tailwind-compiler.ts"
+      );
+      const { hashCandidates } = await import("#veryfront/html/styles-builder/css-identity.ts");
+      const { createPreparedProjectCSSContext, tryGetPreparedProjectCSS } = await import(
+        "#veryfront/html/styles-builder/prepared-project-css-cache.ts"
+      );
+      const candidates = extractCandidatesFromFiles([{
+        path: "veryfront.config.ts",
+        content: releaseConfig,
+      }, {
+        path: "release.css",
+        content: '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+      }, {
+        path: "pages/index.tsx",
+        content: 'export default () => <div className="text-red-500" />;',
+      }], { projectDir: ctx.projectDir, styleProfile: expectedProfile });
+      const prepared = await tryGetPreparedProjectCSS(
+        createPreparedProjectCSSContext(
+          "demo-project",
+          "release:release-1",
+          '@import "tailwindcss"; @plugin "tailwindcss-animate";',
+          expectedProfile.hash,
+          {
+            cssPipelineIdentity: acquireCSSGenerationSession(true).cacheIdentity,
+            candidatesHash: hashCandidates(candidates),
+            minify: true,
+            environment: "preview",
+            buildMode: "production",
+          },
+        ),
+      );
+      assertExists(prepared);
+      assertEquals(prepared.hash, recorder.upserts[0]?.artifact_hash);
+      hashes.push(recorder.upserts[0]?.artifact_hash);
+    }
+    assertEquals(typeof hashes[0], "string");
+    assertEquals(hashes[0], hashes[1]);
+  });
+
   it("uses an explicit release selector instead of the preview request context", async () => {
     const body = {
       runId: "run_style_artifact_explicit_release",
@@ -2849,14 +3296,128 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const json = await result.response.json();
     assertEquals(json.success, true);
-    assertEquals(sourceFileCalls.count, 1);
-    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
     assertEquals(recorder.upserts.length, 1);
     assertEquals(recorder.upserts[0]?.release_id, "release-1");
     assertEquals(recorder.upserts[0]?.environment_name, undefined);
     assertEquals(recorder.upserts[0]?.status, "ready");
     assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
   });
+
+  for (const poisonMode of ["map", "find", "push", "iterator"]) {
+    it(`keeps release bytes and config selection after tenant ${poisonMode} replacement`, async () => {
+      const map = Array.prototype.map;
+      const find = Array.prototype.find;
+      const push = Array.prototype.push;
+      const iterator = Array.prototype[Symbol.iterator];
+      const apply = Reflect.apply;
+      let baselineHash: unknown;
+      let baselineProfile: unknown;
+      for (const poison of ["none", poisonMode]) {
+        const body = {
+          runId: `run_style_${poison}`,
+          kind: "task",
+          target: "task:style-artifact-build",
+          projectId: "proj-1",
+          config: { release_id: "release-1" },
+        };
+        const { request, publicKeyPem } = await signedRequest(
+          `/api/control-plane/runs/run_style_${poison}/execute`,
+          body,
+          { "x-token": "test-token" },
+        );
+        const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+          files: [],
+          stylesheet: '@import "tw-animate-css";',
+        });
+        const recorder = createStyleArtifactFetchRecorder();
+        let replacements = 0;
+        let result;
+        try {
+          result = await withMockFetch(
+            recorder.fetch,
+            () => {
+              if (poison === "map") {
+                Array.prototype.map = function <T, U>(
+                  this: T[],
+                  callback: (value: T, index: number, array: T[]) => U,
+                  thisArg?: unknown,
+                ): U[] {
+                  const source: unknown = this[0];
+                  if (
+                    typeof source === "object" && source !== null && "path" in source &&
+                    source.path === "veryfront.config.ts" && "content" in source
+                  ) {
+                    replacements++;
+                    throw new Error("Tenant replaced release snapshot map");
+                  }
+                  return apply(map, this, [callback, thisArg]) as U[];
+                };
+              }
+              if (poison === "push") {
+                Array.prototype.push = function <T>(this: T[], ...items: T[]): number {
+                  for (let index = 0; index < items.length; index++) {
+                    const source: unknown = items[index];
+                    if (
+                      typeof source === "object" && source !== null && "path" in source &&
+                      source.path === "veryfront.config.ts" && "content" in source
+                    ) {
+                      replacements++;
+                      throw new Error("Tenant replaced release snapshot push");
+                    }
+                  }
+                  return apply(push, this, items);
+                };
+              }
+              if (poison === "iterator") {
+                Array.prototype[Symbol.iterator] = function (this: readonly unknown[]) {
+                  if (this === VERYFRONT_CONFIG_FILES) {
+                    replacements++;
+                    return apply(iterator, [], []);
+                  }
+                  return apply(iterator, this, []);
+                };
+              }
+              if (poison === "find") {
+                Array.prototype.find = function (...args: Parameters<typeof find>) {
+                  if (
+                    this[0]?.path === "veryfront.config.ts" && this[0]?.version_id === undefined
+                  ) {
+                    replacements++;
+                    throw new Error("Tenant replaced release config find");
+                  }
+                  return apply(find, this, args);
+                };
+              }
+              return new ProjectRunExecuteHandler().handle(request, ctx);
+            },
+          );
+        } finally {
+          Array.prototype.map = map;
+          Array.prototype.find = find;
+          Array.prototype.push = push;
+          Array.prototype[Symbol.iterator] = iterator;
+        }
+        assertExists(result.response);
+        const json = await result.response.json();
+        assertEquals(json.success, true, json.error);
+        assertEquals(replacements, 0);
+        assertEquals(sourceFileCalls.count, 0);
+        assertEquals(readCalls, []);
+        assertEquals(recorder.upserts.length, 1);
+        assertEquals(recorder.upserts[0]?.status, "ready");
+        if (poison === "none") {
+          baselineHash = recorder.upserts[0]?.artifact_hash;
+          baselineProfile = recorder.upserts[0]?.style_profile_hash;
+          assertEquals(typeof baselineHash, "string");
+        } else {
+          assertEquals(recorder.upserts[0]?.artifact_hash, baselineHash);
+          assertEquals(recorder.upserts[0]?.style_profile_hash, baselineProfile);
+        }
+      }
+    });
+  }
 
   it("uses captured intrinsics for explicit style selectors", async () => {
     const body = {
@@ -2915,8 +3476,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const json = await result.response.json();
     assertEquals(json.success, true);
-    assertEquals(sourceFileCalls.count, 1);
-    assertEquals(readCalls, ["src/styles.css"]);
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(readCalls, []);
     assertEquals(recorder.upserts.length, 1);
     assertEquals(recorder.upserts[0]?.release_id, "release-1");
     assertEquals(recorder.upserts[0]?.environment_name, undefined);
@@ -8739,13 +9300,17 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     return { request: new Request(request, { signal: controller.signal }), controller };
   }
 
-  async function waitForBarrier<T>(promise: Promise<T>, message: string): Promise<T> {
+  async function waitForBarrier<T>(
+    promise: Promise<T>,
+    message: string,
+    timeoutMs = 1_000,
+  ): Promise<T> {
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         promise,
         new Promise<never>((_resolve, reject) => {
-          watchdog = setTimeout(() => reject(new Error(message)), 1_000);
+          watchdog = setTimeout(() => reject(new Error(message)), timeoutMs);
         }),
       ]);
     } finally {
@@ -9098,7 +9663,6 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         headers: result.response.headers,
       });
     }, { hostname: "127.0.0.1", port: 0 });
-    let clientResponse: Response | undefined;
 
     try {
       await withMockFetch(async (_input, init) => {
@@ -9119,39 +9683,51 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
             signal: clientController.signal,
           },
         );
-        await waitForBarrier(
-          responseBodyHeld.promise,
-          "native response stream did not reach its delivery barrier",
-        );
-        clientResponse = await waitForBarrier(
-          responsePending,
-          "native client did not receive response headers while the body was held",
-        );
-        assertEquals(clientResponse.status, 200);
-        assertEquals(taskSettled, true);
-        assertEquals(serialized, true);
-        assertExists(ingressSignal);
-        assertEquals(ingressSignal.aborted, false);
-        assertEquals(acknowledgements, []);
+        // Observe rejection before waiting for the server-side delivery barrier.
+        void responsePending.catch(() => undefined);
+        try {
+          await waitForBarrier(
+            responseBodyHeld.promise,
+            "native response stream did not reach its delivery barrier",
+            5_000,
+          );
+          const clientResponse = await waitForBarrier(
+            responsePending,
+            "native client did not receive response headers while the body was held",
+            5_000,
+          );
+          assertEquals(clientResponse.status, 200);
+          assertEquals(taskSettled, true);
+          assertEquals(serialized, true);
+          assertExists(ingressSignal);
+          assertEquals(ingressSignal.aborted, false);
+          assertEquals(acknowledgements, []);
 
-        clientController.abort(new Error("Client disconnected during response delivery"));
-        await waitForBarrier(
-          ingressAborted.promise,
-          "Deno did not abort the native ingress signal after the client disconnected",
-        );
-        await waitForBarrier(
-          acknowledged.promise,
-          "native late cancellation did not send a stop acknowledgement",
-        );
-        assertEquals(ingressSignal.aborted, true);
-        assertEquals(acknowledgements, [{
-          authorization: "Bearer native-stop-capability",
-          signalAborted: false,
-        }]);
+          clientController.abort(new Error("Client disconnected during response delivery"));
+          await waitForBarrier(
+            ingressAborted.promise,
+            "Deno did not abort the native ingress signal after the client disconnected",
+            5_000,
+          );
+          await waitForBarrier(
+            acknowledged.promise,
+            "native late cancellation did not send a stop acknowledgement",
+            5_000,
+          );
+          assertEquals(ingressSignal.aborted, true);
+          assertEquals(acknowledgements, [{
+            authorization: "Bearer native-stop-capability",
+            signalAborted: false,
+          }]);
+        } finally {
+          clientController.abort();
+          releaseResponseBody.resolve();
+          const response = await responsePending.catch(() => undefined);
+          if (response?.body) await response.body.cancel().catch(() => undefined);
+        }
       });
     } finally {
       releaseResponseBody.resolve();
-      if (clientResponse?.body) await clientResponse.body.cancel().catch(() => undefined);
       await server.stop();
     }
   });
@@ -9992,6 +10568,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         kind: "task",
         target: "task:knowledge-ingest",
         projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
         config: { paths: ["uploads/first.md", "uploads/sibling.md"] },
       }, {
         "x-token": "test-token",
@@ -10003,15 +10580,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
           acknowledgements.push(siblingSettled);
           return Response.json({ acknowledged: true });
         }
-        for (const name of ["first", "sibling"]) {
-          if (url.endsWith(`/uploads/uploads%2F${name}.md/url`)) {
-            return Response.json({ signed_url: `https://signed.example.test/${name}.md` });
-          }
-        }
-        assertStringIncludes(url, "https://signed.example.test/");
+        assertStringIncludes(url, "/uploads/uploads%2F");
+        assertEquals(url.endsWith("/url"), false, "downloads use authenticated API content");
         downloads++;
         if (downloads === 2) started.resolve();
-        if (url.endsWith("/first.md")) return await first.promise;
+        if (url.endsWith("%2Ffirst.md")) return await first.promise;
         try {
           return await sibling.promise;
         } finally {

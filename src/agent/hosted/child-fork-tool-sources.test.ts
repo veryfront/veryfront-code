@@ -89,6 +89,7 @@ function createRemoteSourceFixtures() {
 function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
   return {
     id: "command-1",
+    command: "echo sandbox-command",
     status,
     exitCode: null,
     signal: null,
@@ -122,7 +123,7 @@ function createSandboxToolsResult(input: {
     sandbox: {
       ensure: () => Promise.resolve(),
       close: () => Promise.resolve(),
-      executeCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
+      runCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
       startBackgroundCommand: () => Promise.resolve(commandPayload("running")),
       getBackgroundCommand: () => Promise.resolve(commandPayload("completed")),
       getBackgroundCommandOutput: () => Promise.resolve(commandPayloadOutput()),

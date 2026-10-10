@@ -6,6 +6,7 @@ import {
   ProviderOverloadedError,
   ProviderRateLimitError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
@@ -118,8 +119,8 @@ function invalidAnthropicStream(
   providerLabel: string,
   issue: string,
   cause?: unknown,
-): ProviderRequestError {
-  return new ProviderRequestError({
+): ProviderStreamProtocolError {
+  return new ProviderStreamProtocolError({
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,

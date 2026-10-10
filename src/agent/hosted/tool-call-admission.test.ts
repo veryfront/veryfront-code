@@ -1,4 +1,3 @@
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -237,9 +236,8 @@ describe("private tool-call admission", () => {
       }> = [];
       let sequence = 0;
       const fetch: HostedRequestFetch = async (_url, init) => {
-        const body = getAppendBodySchema().parse(
-          JSON.parse(String(observeFetchRequestInit(init).body)),
-        );
+        assert(init && "body" in init, "fetch must receive request options");
+        const body = getAppendBodySchema().parse(JSON.parse(String(init?.body)));
         assertEquals(body.tool_call_starts, undefined);
         assert(!JSON.stringify(body).includes("privateObservedToolResult"));
         storedStarts.push(...body.events.filter((event) => event.type === "TOOL_CALL_START"));
@@ -389,7 +387,8 @@ describe("private tool-call admission", () => {
     const privateRequests: Request[] = [];
     const configuredRequests: Request[] = [];
     const responseFor: HostedRequestFetch = async (_url, init) => {
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      assert(init && "body" in init, "fetch must receive request options");
+      const body = JSON.parse(String(init?.body));
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -683,11 +682,12 @@ describe("private tool-call admission", () => {
     let appendCount = 0;
     let mcpCalls = 0;
     const fetch: HostedRequestFetch = async (url, init) => {
-      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      assert(init && "body" in init, "fetch must receive request options");
+      const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;
-        assertEquals(observeFetchRequestInit(init).redirect, "error");
-        const headers = new Headers(observeFetchRequestInit(init).headers);
+        assertEquals(init?.redirect, "error");
+        const headers = new Headers(init?.headers);
         assertEquals(headers.get("Authorization"), "Bearer synthetic-application-token");
         assertEquals(headers.get("X-Veryfront-Run-Event-Writer-Token"), "synthetic-append-token");
         assertEquals(body.params._meta, {

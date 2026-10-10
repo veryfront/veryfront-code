@@ -47,6 +47,18 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   }
 }
 
+/** The cache key a cache entry route names, decoded from its path. */
+function cacheEntryKey(url: URL): string {
+  return decodeURIComponent(url.pathname.split("/cache/entries/")[1] ?? "");
+}
+
+/** A get_cache_entry response: a hit, or a miss with found=false. */
+function cacheEntryResponse(key: string, value: string | undefined) {
+  return value === undefined
+    ? { project_id: "project-id", key, found: false, value: null, expires_at: null }
+    : { project_id: "project-id", key, found: true, value, expires_at: null };
+}
+
 describe("rendering/cache/stores/api-store", () => {
   describe("APICacheStore constructor", () => {
     it("should create with default options", () => {
@@ -225,9 +237,9 @@ describe("rendering/cache/stores/api-store", () => {
             const request = input instanceof Request ? input : new Request(input, init);
             const url = new URL(request.url);
             if (
-              request.method !== "POST" ||
+              request.method !== "PUT" ||
               url.origin !== TEST_PUBLIC_API_ORIGIN ||
-              url.pathname !== "/projects/api-store-test-project/cache/set"
+              !url.pathname.startsWith("/projects/api-store-test-project/cache/entries/")
             ) {
               return Response.json({ error: "not found" }, { status: 404 });
             }
@@ -310,22 +322,22 @@ describe("rendering/cache/stores/api-store", () => {
             const request = input instanceof Request ? input : new Request(input, init);
             const url = new URL(request.url);
             if (
-              request.method === "POST" &&
+              request.method === "PUT" &&
               url.origin === TEST_PUBLIC_API_ORIGIN &&
-              url.pathname === "/projects/api-store-date-project/cache/set"
+              url.pathname.startsWith("/projects/api-store-date-project/cache/entries/")
             ) {
-              const body = await request.json() as { key: string; value: string };
-              values.set(body.key, body.value);
+              const body = await request.json() as { value: string };
+              values.set(cacheEntryKey(url), body.value);
               return Response.json({ success: true });
             }
             if (
               request.method === "GET" &&
               url.origin === TEST_PUBLIC_API_ORIGIN &&
-              url.pathname === "/projects/api-store-date-project/cache/get"
+              url.pathname.startsWith("/projects/api-store-date-project/cache/entries/")
             ) {
-              return Response.json({
-                value: values.get(url.searchParams.get("key") ?? "") ?? null,
-              });
+              return Response.json(
+                cacheEntryResponse(cacheEntryKey(url), values.get(cacheEntryKey(url))),
+              );
             }
             return Response.json({ error: "not found" }, { status: 404 });
           },
@@ -374,12 +386,11 @@ describe("rendering/cache/stores/api-store", () => {
             const request = input instanceof Request ? input : new Request(input, init);
             const url = new URL(request.url);
             if (
-              request.method === "POST" &&
+              request.method === "PUT" &&
               url.origin === TEST_PUBLIC_API_ORIGIN &&
-              url.pathname === "/projects/api-store-prefix-project/cache/set"
+              url.pathname.startsWith("/projects/api-store-prefix-project/cache/entries/")
             ) {
-              const body = await request.json() as { key: string };
-              receivedKey = body.key;
+              receivedKey = cacheEntryKey(url);
               return Response.json({ success: true });
             }
             return Response.json({ error: "not found" }, { status: 404 });
@@ -434,23 +445,23 @@ describe("rendering/cache/stores/api-store", () => {
             const request = input instanceof Request ? input : new Request(input, init);
             const url = new URL(request.url);
             if (
-              request.method === "POST" &&
+              request.method === "PUT" &&
               url.origin === TEST_PUBLIC_API_ORIGIN &&
-              url.pathname === "/projects/api-store-writethrough-project/cache/set"
+              url.pathname.startsWith("/projects/api-store-writethrough-project/cache/entries/")
             ) {
-              const body = await request.json() as { key: string; value: string };
-              values.set(body.key, body.value);
+              const body = await request.json() as { value: string };
+              values.set(cacheEntryKey(url), body.value);
               return Response.json({ success: true });
             }
             if (
               request.method === "GET" &&
               url.origin === TEST_PUBLIC_API_ORIGIN &&
-              url.pathname === "/projects/api-store-writethrough-project/cache/get"
+              url.pathname.startsWith("/projects/api-store-writethrough-project/cache/entries/")
             ) {
               backendGets += 1;
-              return Response.json({
-                value: values.get(url.searchParams.get("key") ?? "") ?? null,
-              });
+              return Response.json(
+                cacheEntryResponse(cacheEntryKey(url), values.get(cacheEntryKey(url))),
+              );
             }
             return Response.json({ error: "not found" }, { status: 404 });
           },
@@ -524,15 +535,15 @@ describe("rendering/cache/stores/api-store", () => {
             const request = input instanceof Request ? input : new Request(input, init);
             const url = new URL(request.url);
             if (
-              request.method !== "POST" ||
+              request.method !== "PUT" ||
               url.origin !== TEST_PUBLIC_API_ORIGIN ||
-              url.pathname !== "/projects/api-store-test-project/cache/set"
+              !url.pathname.startsWith("/projects/api-store-test-project/cache/entries/")
             ) {
               return Response.json({ error: "not found" }, { status: 404 });
             }
 
-            const body = await request.json() as { ttl?: number; value?: string };
-            receivedTtl = body.ttl;
+            const body = await request.json() as { ttl_seconds?: number; value?: string };
+            receivedTtl = body.ttl_seconds;
             receivedValue = body.value ?? "";
             return Response.json({ success: true });
           },
