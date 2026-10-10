@@ -85,11 +85,14 @@ describe("agent runtime tool result context message adapter", () => {
         throw new Error("unexpected getter");
       },
     };
+    let proxyTrapCalls = 0;
     const proxy = new Proxy({}, {
       has() {
+        proxyTrapCalls++;
         throw new Error("unexpected has trap");
       },
       getOwnPropertyDescriptor() {
+        proxyTrapCalls++;
         throw new Error("unexpected descriptor trap");
       },
     });
@@ -102,6 +105,7 @@ describe("agent runtime tool result context message adapter", () => {
       assertStrictEquals(transformed[0], message);
     }
     assertEquals(reads, 0);
+    assertEquals(proxyTrapCalls, 0);
   });
 
   it("bounds skill reference files while preserving root instructions and raw results", () => {

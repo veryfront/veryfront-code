@@ -1,4 +1,4 @@
-import { getToolResultError } from "#veryfront/tool/result.ts";
+import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
 import type { ToolResultContext } from "./tool-result-context.ts";
 
@@ -24,22 +24,12 @@ function shouldSkipToolResult(
 ): boolean {
   if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
     const result = part.result;
-    if (typeof result === "object" && result !== null) {
-      try {
-        const referenceFields = ["skillId", "file", "content"].map((key) =>
-          Object.getOwnPropertyDescriptor(result, key)
-        );
-        if (
-          referenceFields.every((field) =>
-            field && "value" in field && typeof field.value === "string"
-          )
-        ) {
-          return false;
-        }
-      } catch {
-        // A project tool can own this spelling and return a proxy. Keep the
-        // existing skip behavior when safe data inspection is unavailable.
-      }
+    if (
+      typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
+      typeof readToolResultOwnDataProperty(result, "file") === "string" &&
+      typeof readToolResultOwnDataProperty(result, "content") === "string"
+    ) {
+      return false;
     }
   }
   return skippedToolNames.has(part.toolName);
