@@ -372,6 +372,7 @@ import {
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { isAbortSignalAborted } from "#veryfront/platform/compat/abort-signal.ts";
 import {
   summarizeErrorCausesForLog,
   telemetryErrorType,
@@ -1074,7 +1075,7 @@ function shouldRetryRuntimeProviderStreamFailure(input: {
   hasEmittedStreamEvent: boolean;
 }): boolean {
   return input.attempts < MAX_RUNTIME_PROVIDER_STREAM_RETRIES &&
-    input.abortSignal?.aborted !== true &&
+    (input.abortSignal === undefined || !isAbortSignalAborted(input.abortSignal)) &&
     hasRetryableProviderCause(input.error) &&
     !input.hasUsageProgress &&
     !input.hasEmittedStreamEvent &&
@@ -1492,7 +1493,7 @@ function withOutputSchemaObservationObject<
 >(
   turn: TTurn,
 ): TTurn {
-  if (!("object" in turn) || turn.object === undefined) return turn;
+  if (!("object" in turn)) return turn;
   return {
     ...turn,
     object: createOutputSchemaObservationObject(turn.object),
