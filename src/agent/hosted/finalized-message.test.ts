@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "@std/assert";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
 import {
   createMirroredToolChunkState,
   recordMirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
+import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -1905,4 +1907,58 @@ Deno.test("ownership metadata appends serialize three contenders without duplica
   }
   assertEquals(appended, [...correction("x"), ...correction("y")]);
   assertEquals([...state.ownershipCorrectedToolCallIds!].sort(), ["x", "y"]);
+});
+
+Deno.test("closed framework reasoning keeps end metadata so finalization does not duplicate it", async () => {
+  for (
+    const end of [
+      { text: "Thinking", signature: "sig-1" },
+      { text: "", redactedData: "redacted-1" },
+    ]
+  ) {
+    const { text, ...metadata } = end;
+    const events = [
+      { type: "message-start", messageId: "m" },
+      { type: "reasoning-start", id: "r" },
+      ...(text ? [{ type: "reasoning-delta", id: "r", delta: text }] : []),
+      { type: "reasoning-end", id: "r", ...metadata },
+      { type: "message-finish" },
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    });
+    let responseMessage: ChatUiMessage | undefined;
+    const emitted: unknown[] = [];
+    for await (
+      const chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+        sendReasoning: true,
+        generateMessageId: () => "m",
+        onFinish: (finish) => {
+          responseMessage = finish.responseMessage;
+        },
+      })
+    ) emitted.push(chunk);
+    if (!responseMessage) throw new Error("Expected a framework response message");
+    // End metadata stays out of the client chunks, as before.
+    assertEquals(JSON.stringify(emitted).includes(Object.values(metadata)[0]!), false);
+    const reasoning = { type: "reasoning" as const, text, ...metadata };
+    assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [reasoning]);
+
+    const state = buildFinalizedMessageState({
+      responseMessage,
+      finalStep: { response: { messages: [{ role: "assistant", content: [reasoning] }] } },
+      isAborted: false,
+      incompleteToolCallsPartErrorText: "tool error",
+    });
+    assertEquals(
+      state.sanitizedFinalizedMessage.parts.filter((part) => part.type === "reasoning"),
+      [reasoning],
+    );
+    assertEquals(state.recoveredFallbackParts, []);
+  }
 });

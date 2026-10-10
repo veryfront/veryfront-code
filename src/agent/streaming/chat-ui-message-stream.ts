@@ -101,6 +101,11 @@ type OrderedTextBlock = {
   text: string;
 };
 
+type OrderedReasoningBlock = OrderedTextBlock & {
+  signature?: string;
+  redactedData?: string;
+};
+
 type ToolPart = {
   toolCallId: string;
   toolName: string;
@@ -140,7 +145,7 @@ type PendingToolDelta = {
 
 type FrameworkUiMessageState = {
   textBlocks: Map<string, OrderedTextBlock>;
-  reasoningBlocks: Map<string, OrderedTextBlock>;
+  reasoningBlocks: Map<string, OrderedReasoningBlock>;
   toolParts: Map<string, ToolPart>;
   sourceDocumentParts: Map<string, OrderedSourceDocumentPart>;
   sourceUrlParts: Map<string, OrderedSourceUrlPart>;
@@ -282,7 +287,10 @@ function observeChatStreamEvent(input: {
     }
     case "reasoning-end": {
       const block = state.reasoningBlocks.get(event.id);
-      if (block) block.isComplete = true;
+      if (!block) return;
+      block.isComplete = true;
+      if (event.signature !== undefined) block.signature = event.signature;
+      if (event.redactedData !== undefined) block.redactedData = event.redactedData;
       return;
     }
     case "tool-input-start": {
@@ -501,7 +509,8 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
   }
 
   for (const reasoningBlock of state.reasoningBlocks.values()) {
-    if (reasoningBlock.text.length === 0) {
+    const { signature, redactedData } = reasoningBlock;
+    if (reasoningBlock.text.length === 0 && !signature && !redactedData) {
       continue;
     }
 
@@ -511,6 +520,8 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
         {
           type: "reasoning",
           text: reasoningBlock.text,
+          ...(signature === undefined ? {} : { signature }),
+          ...(redactedData === undefined ? {} : { redactedData }),
         },
         reasoningBlock.id,
         !reasoningBlock.isComplete,
@@ -752,8 +763,18 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
             !replacesDerivedSourceDocument;
           const isDuplicateSourceUrl = chatEvent.type === "source-url" &&
             state.sourceUrlParts.has(chatEvent.sourceId);
+          // The wire encoding omits private end metadata; keep it for the response message only.
+          const observedEvent = chatEvent.type === "reasoning-end" && event.type === "reasoning-end"
+            ? {
+              ...chatEvent,
+              ...(typeof event.signature === "string" ? { signature: event.signature } : {}),
+              ...(typeof event.redactedData === "string"
+                ? { redactedData: event.redactedData }
+                : {}),
+            }
+            : chatEvent;
           observeChatStreamEvent({
-            event: chatEvent,
+            event: observedEvent,
             responseMessageId,
             state,
             replaceExistingSourceDocument: replacesDerivedSourceDocument,
