@@ -78,8 +78,8 @@ failed and cancelled runs return `output: null`, including evals. Input validati
 can fail before an evaluation creates any report.
 
 When the run has a retained report, its `artifacts` array includes an entry with
-`type: "eval-report"`. Read that entry's authorized `href`, equivalently
-`GET /runs/{run_id}/artifacts/{artifact_id}`, using the run's normal API access.
+`type: "eval-report"`. Read the exact authorized `href` from that entry to fetch
+the retained report using your normal API client.
 A failure before report creation may have no such artifact.
 
 Historical or internal run-summary interfaces may retain a failed eval report in
