@@ -30,6 +30,7 @@ const hostEnv: Record<string, string> = {
   VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN: "https://source-api.veryfront.test",
   VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY: "ghcr.io/veryfront/tenant-source",
   VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID: "service-account-renderer",
+  VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE: "/etc/veryfront/configuration-key",
   VERYFRONT_API_BASE_URL: "https://api.veryfront.test",
 };
 
@@ -72,8 +73,10 @@ async function writeHostFiles(dir: string, records: unknown = [{
   await Deno.writeTextFile(`${dir}/token`, "broker-token-1\n");
   await Deno.writeTextFile(`${dir}/ca.pem`, "-----BEGIN CERTIFICATE-----\nAA==\n");
   await Deno.writeTextFile(`${dir}/records.json`, JSON.stringify(records));
+  await Deno.writeTextFile(`${dir}/configuration-key`, "k".repeat(32));
   return readHostedHttpCompositionConfig(read({
     ...hostEnv,
+    VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE: `${dir}/configuration-key`,
     VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE: `${dir}/token`,
     VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE: `${dir}/ca.pem`,
     VERYFRONT_HOSTED_HTTP_SOURCE_RECORDS_FILE: `${dir}/records.json`,

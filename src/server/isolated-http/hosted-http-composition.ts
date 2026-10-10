@@ -59,6 +59,11 @@ export interface HostedHttpCompositionConfig {
   sourceImageRepository: string;
   /** `VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID`: service account named by edge source credentials. */
   serviceAccountId: string;
+  /**
+   * `VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE`: deployment-wide secret, at least 32 bytes,
+   * so every replica derives the same configuration identity.
+   */
+  configurationKeyFile: string;
   /** `VERYFRONT_API_BASE_URL`: API that authorizes each request's source token. */
   apiBaseUrl: string;
   /** `VERYFRONT_HOSTED_HTTP_MAX_ACTIVE`: executor admission limit. Default 16, maximum 256. */
@@ -174,6 +179,10 @@ export function readHostedHttpCompositionConfig(
     sourceApiOrigin: required("VERYFRONT_HOSTED_HTTP_SOURCE_API_ORIGIN"),
     sourceImageRepository: required("VERYFRONT_HOSTED_HTTP_SOURCE_IMAGE_REPOSITORY"),
     serviceAccountId: required("VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID"),
+    configurationKeyFile: absolutePath(
+      required("VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE"),
+      "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+    ),
     apiBaseUrl,
     maxActive,
   });
@@ -360,18 +369,11 @@ export async function createHostedHttpComposition(
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }
   const read = dependencies.readFile ?? readHostFilePrefix;
-  let ca: string | undefined;
-  if (config.allocatorCaFile) {
+  const readStartupFile = async (setting: string, path: string, maxBytes: number) => {
     const startup = new AbortController();
     try {
-      ca = await settleWithin(
-        readBoundedText(
-          read,
-          "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
-          config.allocatorCaFile,
-          MAX_CA_BYTES,
-          startup.signal,
-        ),
+      return await settleWithin(
+        readBoundedText(read, setting, path, maxBytes, startup.signal),
         startup.signal,
         dependencies.hostFileReadTimeoutMs ?? HOST_FILE_READ_TIMEOUT_MS,
       );
@@ -379,12 +381,31 @@ export async function createHostedHttpComposition(
       startup.abort();
       if (error instanceof DOMException && error.name === "TimeoutError") {
         throw CONFIG_INVALID.create({
-          detail:
-            "The file named by VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE could not be read in time",
+          detail: `The file named by ${setting} could not be read in time`,
         });
       }
       throw error;
     }
+  };
+  const ca = config.allocatorCaFile
+    ? await readStartupFile(
+      "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
+      config.allocatorCaFile,
+      MAX_CA_BYTES,
+    )
+    : undefined;
+  const configurationKey = new TextEncoder().encode(
+    (await readStartupFile(
+      "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+      config.configurationKeyFile,
+      MAX_TOKEN_BYTES,
+    )).trim(),
+  );
+  if (configurationKey.byteLength < 32) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
+    });
   }
   const lookupSourceImage = await createRefreshingSourceRecordLookup({
     readText: (signal) =>
@@ -426,6 +447,7 @@ export async function createHostedHttpComposition(
     sourceApiOrigin: config.sourceApiOrigin,
     sourceImageRepository: config.sourceImageRepository,
     serviceAccountId: config.serviceAccountId,
+    configurationKey,
     lookupSourceImage,
     session: {
       expectedBrokerInstanceId: config.brokerInstanceId,
