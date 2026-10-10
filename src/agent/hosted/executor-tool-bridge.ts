@@ -254,7 +254,6 @@ export function createExecutorToolBroker(options: {
                 : execute(),
             );
             remoteRetirement = undefined;
-            if (call) skillObservation?.recordToolResult(call.toolName, call.toolCallId, result);
             return result;
           } catch (error) {
             // A live caller signal says nothing about remote work after a
@@ -286,10 +285,13 @@ export function createExecutorToolBroker(options: {
       });
       assertCall();
       if (mode === "execute") {
-        yield executorToolJson({
-          type: "result",
-          result: executorToolJson(result === undefined ? null : result, limits.maxResultBytes),
-        });
+        const delivered = executorToolJson(
+          result === undefined ? null : result,
+          limits.maxResultBytes,
+        );
+        yield executorToolJson({ type: "result", result: delivered });
+        // Resuming after yield means the channel drained the validated result frame.
+        if (call) skillObservation?.recordToolResult(call.toolName, call.toolCallId, delivered);
       } else {
         if (
           !isArray(result) || result.length > limits.maxToolsPerSource ||

@@ -31,30 +31,62 @@ const objectKeys = Object.keys;
 const stringify = JSON.stringify;
 const MAX_CANONICAL_DEPTH = 64;
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
+}
+
 /** Key-sorted JSON so the host and the prompt compare the same value, not its spelling. */
 function canonicalJson(value: unknown, depth = 0): string | undefined {
   if (depth > MAX_CANONICAL_DEPTH) return undefined;
   if (value === null || typeof value !== "object") {
     return typeof value === "number" && !Number.isFinite(value) ? undefined : stringify(value);
   }
-  if (isArray(value)) {
-    const items: string[] = [];
-    for (let index = 0; index < value.length; index++) {
-      const item = canonicalJson(hasOwn(value, index) ? value[index] : null, depth + 1);
-      if (item === undefined) return undefined;
-      items.push(item);
-    }
-    return `[${items.join(",")}]`;
+  return isArray(value)
+    ? canonicalArray(value, depth)
+    : canonicalRecord(value as Record<string, unknown>, depth);
+}
+
+function canonicalArray(value: readonly unknown[], depth: number): string | undefined {
+  const items: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const item = canonicalJson(hasOwn(value, index) ? value[index] : null, depth + 1);
+    if (item === undefined) return undefined;
+    items.push(item);
   }
-  const record = value as Record<string, unknown>;
+  return `[${items.join(",")}]`;
+}
+
+function canonicalRecord(record: Record<string, unknown>, depth: number): string | undefined {
   const entries: string[] = [];
-  for (const key of objectKeys(record).sort()) {
+  for (const key of objectKeys(record).sort(compareCodeUnits)) {
     if (record[key] === undefined) continue;
     const item = canonicalJson(record[key], depth + 1);
     if (item === undefined) return undefined;
     entries.push(`${stringify(key)}:${item}`);
   }
   return `{${entries.join(",")}}`;
+}
+
+/** The recorded body when this prompt part carries exactly the result the host delivered. */
+function matchRecordedBody(
+  part: unknown,
+  recorded: ReadonlyMap<string, RecordedBody | null>,
+): RecordedBody | undefined {
+  const candidate = part as {
+    type?: unknown;
+    toolCallId?: unknown;
+    toolName?: unknown;
+    output?: { type?: unknown; value?: unknown };
+  } | null;
+  if (candidate?.type !== "tool-result" || typeof candidate.toolCallId !== "string") {
+    return undefined;
+  }
+  const entry = recorded.get(candidate.toolCallId);
+  if (!entry || candidate.toolName !== entry.toolName) return undefined;
+  const output = candidate.output;
+  if (output?.type !== "json" || canonicalJson(output.value) !== entry.content) return undefined;
+  return entry;
 }
 
 export function createExecutorSkillObservation(): ExecutorSkillObservation {
@@ -84,12 +116,8 @@ export function createExecutorSkillObservation(): ExecutorSkillObservation {
         const message = prompt[index]!;
         if (message.role !== "tool" || !isArray(message.content)) continue;
         for (const part of message.content) {
-          if (part?.type !== "tool-result" || typeof part.toolCallId !== "string") continue;
-          const entry = recorded.get(part.toolCallId);
-          if (!entry || part.toolName !== entry.toolName) continue;
-          const output = part.output as { type?: unknown; value?: unknown } | undefined;
-          if (output?.type !== "json" || canonicalJson(output.value) !== entry.content) continue;
-          observed.set(part.toolCallId, entry.body);
+          const entry = matchRecordedBody(part, recorded);
+          if (entry) observed.set(part.toolCallId, entry.body);
         }
       }
     },

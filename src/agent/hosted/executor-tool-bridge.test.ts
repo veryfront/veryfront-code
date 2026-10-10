@@ -111,35 +111,93 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
   };
 }
 
+function createReviewLoadSkill(instructions = "# Review") {
+  return createRuntimeLoadSkillTool({
+    context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
+      loadProjectSkill: (_context, skillId) =>
+        Promise.resolve(
+          skillId === "review" ? { instructions, references: ["references/checklist.md"] } : null,
+        ),
+      loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
+    },
+    builtinStore: {
+      readSkill: () => Promise.resolve(null),
+      readReferenceFile: () => Promise.resolve(null),
+      listReferences: () => Promise.resolve([]),
+    },
+  });
+}
+
+function createReviewSkillSource(
+  loadSkill: ReturnType<typeof createRuntimeLoadSkillTool>,
+): RemoteToolSource {
+  return {
+    id: "skills",
+    async listTools() {
+      return [{ name: "load_skill", description: "Load a skill", parameters: {} }];
+    },
+    executeTool: (_name, args, context) => loadSkill.execute!(args as never, context),
+  };
+}
+
+function toolResultPrompt(toolCallId: string, value: unknown, toolName = "load_skill") {
+  return [{
+    role: "tool" as const,
+    content: [{
+      type: "tool-result" as const,
+      toolCallId,
+      toolName,
+      output: { type: "json" as const, value },
+    }],
+  }];
+}
+
+const reviewReference = { reference: { skillId: "review", file: "references/checklist.md" } };
+
 describe("executor tool bridge", () => {
+  it("does not count a host load_skill body the result frame failed to deliver", async () => {
+    const skillObservation = createExecutorSkillObservation();
+    const longInstructions = `# Review\n${"x".repeat(4096)}`;
+    const source = createReviewSkillSource(createReviewLoadSkill(longInstructions));
+    const f = fixture({}, {
+      sources: new Map([[source.id, {
+        source,
+        allowedToolNames: new Set(["load_skill"]),
+        context: {},
+      }]]),
+      skillObservation,
+      limits: { maxResultBytes: 1024 },
+    });
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      await assertRejects(() =>
+        facade.executeTool("load_skill", { load: { skillId: "review" } }, {
+          toolCallId: "oversized-body",
+        })
+      );
+      // The executor reproduces the undelivered body in a brokered prompt.
+      const reproduced = await createReviewLoadSkill(longInstructions).execute!(
+        { load: { skillId: "review" } } as never,
+      );
+      skillObservation.observePrompt(toolResultPrompt("oversized-body", reproduced));
+      assertEquals(skillObservation.observedSkillBodies(), []);
+      const reference = await facade.executeTool("load_skill", reviewReference, {
+        toolCallId: "reference-after-oversized-body",
+      }) as { error?: string; content?: string };
+      assertEquals(reference.content, undefined);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("gates host facade skill reference reads on host-observed provider requests", async () => {
     const skillObservation = createExecutorSkillObservation();
-    const loadSkill = createRuntimeLoadSkillTool({
-      context: { projectId: "project-test", authToken: "test-token", branchId: "branch-test" },
-      skillsDir: "/skills",
-      projectSkillLoader: {
-        listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
-        loadProjectSkill: (_context, skillId) =>
-          Promise.resolve(
-            skillId === "review"
-              ? { instructions: "# Review", references: ["references/checklist.md"] }
-              : null,
-          ),
-        loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
-      },
-      builtinStore: {
-        readSkill: () => Promise.resolve(null),
-        readReferenceFile: () => Promise.resolve(null),
-        listReferences: () => Promise.resolve([]),
-      },
-    });
-    const source: RemoteToolSource = {
-      id: "skills",
-      async listTools() {
-        return [{ name: "load_skill", description: "Load a skill", parameters: {} }];
-      },
-      executeTool: (_name, args, context) => loadSkill.execute!(args as never, context),
-    };
+    const source = createReviewSkillSource(createReviewLoadSkill());
     const f = fixture({}, {
       sources: new Map([[source.id, {
         source,
@@ -163,18 +221,9 @@ describe("executor tool bridge", () => {
       const readReference = async (toolCallId: string) =>
         await facade.executeTool(
           "load_skill",
-          { reference: { skillId: "review", file: "references/checklist.md" } },
+          reviewReference,
           context(toolCallId),
         ) as { error?: string; content?: string };
-      const toolResultPrompt = (toolCallId: string, value: unknown, toolName = "load_skill") => [{
-        role: "tool" as const,
-        content: [{
-          type: "tool-result" as const,
-          toolCallId,
-          toolName,
-          output: { type: "json" as const, value },
-        }],
-      }];
       const body = await facade.executeTool(
         "load_skill",
         { load: { skillId: "review" } },

@@ -14,9 +14,14 @@ const providerObservedSkillBodies = createPrivateWeakStore<
   ReadonlyMap<string, ReadonlySet<string>>
 >();
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
+}
+
 function referenceListKey(references: readonly string[]): string {
   // Reference paths are strict relative paths and never contain NUL.
-  return [...references].sort().join("\u0000");
+  return [...references].sort(compareCodeUnits).join("\u0000");
 }
 
 export function setProviderObservedSkillBodies(
