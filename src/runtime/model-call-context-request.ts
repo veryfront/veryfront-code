@@ -166,10 +166,10 @@ function readProviderControl(
   options: ModelCallRequestSource,
   key: string,
 ): PropertyDescriptor | undefined {
-  const provider = resolveModelCallProvider(model);
+  const provider = model.provider ?? resolveModelCallProvider(model);
   let selected: PropertyDescriptor | undefined;
-  // The protocol's bucket first, so a provider-named bucket still takes precedence.
-  const bucketNames = [resolveModelCallProtocol(model), provider, model.provider ?? provider];
+  // The protocol's bucket first, so the dispatched provider bucket still takes precedence.
+  const bucketNames = [resolveModelCallProtocol(model), provider];
   forEachPrivateArray(bucketNames, (name) => {
     if (!name) return;
     const bucket = readOwnDataDescriptor(options.providerOptions, name)?.value;
@@ -255,9 +255,9 @@ function readGoogleProviderControl(
   options: ModelCallRequestSource,
   key: string,
 ): PropertyDescriptor | undefined {
-  const provider = resolveModelCallProvider(model);
+  const provider = model.provider ?? resolveModelCallProvider(model);
   let selected: PropertyDescriptor | undefined;
-  const bucketNames = [resolveModelCallProtocol(model), provider, model.provider ?? provider];
+  const bucketNames = [resolveModelCallProtocol(model), provider];
   forEachPrivateArray(bucketNames, (name) => {
     if (!name) return;
     const bucket = readRequiredProviderDataBucket(options.providerOptions, name);
@@ -629,7 +629,7 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
   const output: Record<string, unknown> = {};
   const consumedBuckets: Record<string, unknown> = {};
   const bucketNames = protocol === "google" || protocol === "anthropic"
-    ? [protocol, resolveModelCallProvider(model), model.provider]
+    ? [protocol, model.provider ?? resolveModelCallProvider(model)]
     : openAIProviderBucketNames(model);
   forEachPrivateArray(bucketNames, (providerName) => {
     if (!providerName || ObjectHasOwn(consumedBuckets, providerName)) return;

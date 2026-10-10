@@ -415,6 +415,64 @@ describe("model call request projection", () => {
     assertEquals((body.output_config as Record<string, unknown>).effort, undefined);
   });
 
+  it("ignores undispatched underlying buckets for served Anthropic and Google models", () => {
+    const anthropicModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m1" };
+    registerVeryfrontCloudModelFacts(anthropicModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "anthropic",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const anthropicOptions = snapshotModelCallProviderOptions(anthropicModel, {
+      prompt,
+      providerOptions: {
+        anthropic: { max_tokens: 111, thinking: { type: "enabled", budget_tokens: 1000 } },
+        "veryfront-cloud": { max_tokens: 222, thinking: { type: "enabled", budget_tokens: 2000 } },
+        acme: { max_tokens: 999, thinking: { type: "enabled", budget_tokens: 9000 } },
+      },
+    });
+    const anthropicProjected = buildModelCallContextRequest(anthropicModel, anthropicOptions);
+    const anthropicBody = buildAnthropicMessagesRequest(
+      "m1",
+      "veryfront-cloud",
+      anthropicOptions,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(anthropicProjected?.maxOutputTokens, 222);
+    assertEquals(anthropicProjected?.reasoning, { enabled: true, budgetTokens: 2000 });
+    assertEquals(anthropicBody.max_tokens, 222);
+    assertEquals(anthropicBody.thinking, { type: "enabled", budget_tokens: 2000 });
+
+    const googleModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m2" };
+    registerVeryfrontCloudModelFacts(googleModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "google",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const googleOptions = snapshotModelCallProviderOptions(googleModel, {
+      prompt,
+      providerOptions: {
+        google: { generationConfig: { maxOutputTokens: 111 } },
+        "veryfront-cloud": { generationConfig: { maxOutputTokens: 222 } },
+        acme: { generationConfig: { maxOutputTokens: 999 } },
+      },
+    });
+    const googleProjected = buildModelCallContextRequest(googleModel, googleOptions);
+    const googleBody = buildGoogleGenerateContentRequest(
+      "veryfront-cloud",
+      googleOptions,
+      createWarningCollector(),
+    );
+
+    assertEquals(googleProjected?.maxOutputTokens, 222);
+    assertEquals(googleBody.generationConfig?.maxOutputTokens, 222);
+  });
+
   it("records native controls by served surface for a newly served provider", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
