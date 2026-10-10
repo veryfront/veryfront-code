@@ -10,6 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
 import { getExecutorHttpInstallSchema } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import { snapshotExecutorHttpApplicationConfiguration } from "./application-configuration.ts";
+import { createHostedHttpIngress } from "./hosted-http-ingress.ts";
 import {
   buildHostedHttpGenerationBindingInput,
   createHostedHttpResolver,
@@ -80,9 +81,9 @@ function fakeApi(overrides: Partial<HostedHttpResolverApi> = {}) {
       return overrides.authorizeEnvironment?.(value, signal) ??
         Promise.resolve(value.environmentId);
     },
-    readEnvironment(value) {
+    readEnvironment(value, signal) {
       calls.push(`variables:${value.sourceToken}`);
-      return Promise.resolve(variables);
+      return overrides.readEnvironment?.(value, signal) ?? Promise.resolve(variables);
     },
   };
   return {
@@ -188,6 +189,50 @@ describe("hosted HTTP resolver", () => {
     assertEquals(new Set(ids).size, 3);
     assertEquals(renamedSlug.configuration?.projectSlug, "project-renamed");
     assertEquals(renamedEnvironment.configuration?.environmentName, "staging-renamed");
+  });
+
+  it("refuses a resolution that outlives its deadline and releases the ingress permit", async () => {
+    let stalled = 0;
+    let stall = true;
+    const fake = fakeApi({
+      // A variables endpoint that never answers; only an abort ends the read.
+      readEnvironment: (_value, readSignal) =>
+        stall
+          ? new Promise((_resolve, reject) => {
+            stalled++;
+            readSignal.addEventListener("abort", () => reject(readSignal.reason), { once: true });
+          })
+          : Promise.resolve({ APP_MESSAGE: "hello" }),
+    });
+    const resolve = createHostedHttpResolver(options({ api: fake.api, resolutionTimeoutMs: 20 }));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    assertEquals(stalled, 1);
+
+    let dispatches = 0;
+    const ingress = createHostedHttpIngress({
+      maxPreparing: 1,
+      broker: {
+        fetch() {
+          dispatches++;
+          return Promise.resolve(new Response("isolated"));
+        },
+      },
+      resolve,
+    });
+    const selection = {
+      ...authority,
+      mode: "production" as const,
+      hostMode: "production" as const,
+      proxyTrusted: true,
+    };
+    const first = await ingress(new Request("https://app.example/page"), selection);
+    assertEquals(first.status, 503);
+    assertEquals(first.headers.get("cache-control"), "no-store");
+    await first.body?.cancel();
+    stall = false;
+    const second = await ingress(new Request("https://app.example/page"), selection);
+    assertEquals(await second.text(), "isolated");
+    assertEquals(dispatches, 1);
   });
 
   it("refuses a missing or oversized source token without any read", async () => {
@@ -334,6 +379,8 @@ describe("hosted HTTP resolver", () => {
         { session: { ...options().session, expectedBrokerInstanceId: "" } },
         { serviceAccountId: "" },
         { serviceAccountId: undefined as never },
+        { resolutionTimeoutMs: 0 },
+        { resolutionTimeoutMs: 60_001 },
         { prepareTimeoutMs: 0 },
         { hardTimeoutMs: 10 },
         { prepareTimeoutMs: 120_000, hardTimeoutMs: 60_000 },

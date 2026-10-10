@@ -19,6 +19,7 @@ const PROJECT_RESPONSE_MAX_BYTES = 64 * 1024;
 const MAX_SOURCE_TOKEN_CHARS = 8192;
 const MAX_SOURCE_RECORDS = 4096;
 const DEFAULT_PREPARE_TIMEOUT_MS = 60_000;
+const DEFAULT_RESOLUTION_TIMEOUT_MS = 10_000;
 const DEFAULT_HARD_TIMEOUT_MS = 5 * 60_000;
 // The isolated application has no host config evaluator, so the authorized
 // project environment alone decides whether its own trace exporter is enabled.
@@ -76,6 +77,12 @@ export interface HostedHttpResolverOptions {
     | "requestTimeoutMs"
     | "cleanupTimeoutMs"
   >;
+  /**
+   * Bound on one whole resolution: credential, project, environment, image and variable
+   * reads. A resolution still running at the deadline is aborted and refused, so a stalled
+   * API read cannot hold an ingress preparation permit. Default 10 seconds, maximum 60.
+   */
+  resolutionTimeoutMs?: number;
   /** Default 60 seconds, maximum 10 minutes. */
   prepareTimeoutMs?: number;
   /** Default 5 minutes, maximum 1 hour, and not shorter than preparation. */
@@ -354,7 +361,12 @@ export function createHostedHttpResolver(
     return parsed.data.image;
   }
 
-  return async (authority, signal) => {
+  const resolutionMs = options.resolutionTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS;
+  if (!Number.isSafeInteger(resolutionMs) || resolutionMs < 1 || resolutionMs > 60_000) {
+    throw new TypeError("Hosted HTTP resolver requires a bounded resolution timeout");
+  }
+
+  async function resolveWithin(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     signal.throwIfAborted();
     const token = authority.sourceToken;
     if (typeof token !== "string" || !token || token.length > MAX_SOURCE_TOKEN_CHARS) {
@@ -434,6 +446,20 @@ export function createHostedHttpResolver(
       configuration: { ...identity, configurationId, variables },
       projectTracing,
     };
+  }
+
+  return async (authority, requestSignal) => {
+    requestSignal.throwIfAborted();
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new DOMException("Hosted HTTP resolution timed out", "TimeoutError")),
+      resolutionMs,
+    );
+    try {
+      return await resolveWithin(authority, AbortSignal.any([requestSignal, deadline.signal]));
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 
