@@ -421,4 +421,21 @@ describe("hosted HTTP host composition", () => {
       "timed out",
     );
   });
+
+  it("refuses to start when the CA file read stalls", async () => {
+    const host = defaultFiles();
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
+          isOverrideEnabled: () => false,
+          hostFileReadTimeoutMs: 10,
+          readFile: (path) => path === "/host/ca.pem" ? new Promise(() => {}) : host.readFile(path),
+          createAllocatorClient: () => allocator,
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      Error,
+      "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE could not be read in time",
+    );
+  });
 });
