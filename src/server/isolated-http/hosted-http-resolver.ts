@@ -225,12 +225,21 @@ function refuse(detail: string): Error {
   return PERMISSION_DENIED.create({ detail });
 }
 
+/**
+ * Locale-independent total order by UTF-16 code units, so canonical forms are the same
+ * on every host and canonically equivalent but distinct strings never compare equal.
+ */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /** Key-sorted JSON, so equal records compare equal regardless of key order. */
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => compareCodeUnits(a, b))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
     return `{${entries.join(",")}}`;
   }
@@ -306,7 +315,7 @@ async function deriveConfigurationId(
   let canonical = "veryfront-hosted-http-configuration:v3:" + frame(identity.projectId) +
     frame(identity.projectSlug) + frame(identity.releaseId) + frame(identity.environmentId) +
     frame(identity.environmentName);
-  for (const name of Object.keys(variables).sort((a, b) => a.localeCompare(b))) {
+  for (const name of Object.keys(variables).sort(compareCodeUnits)) {
     canonical += frame(name) + frame(variables[name]!);
   }
   const digest = new Uint8Array(
