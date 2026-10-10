@@ -30,7 +30,12 @@ import {
   isNonPlainBuiltinWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import type { ModelCallRequest, ModelCallResponseFormat } from "./model-call-context.ts";
+import type {
+  ModelCallMessage,
+  ModelCallRequest,
+  ModelCallResponseFormat,
+  ModelCallTool,
+} from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
@@ -58,11 +63,13 @@ const MathMin = Math.min;
 const NativeWeakSet = WeakSet;
 const NativeDate = Date;
 const NativeNumber = Number;
+const NativeURL = URL;
 const NativeString = String;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeDelete = WeakSet.prototype.delete;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
 const DatePrototypeGetTime = Date.prototype.getTime;
+const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsSafeInteger = Number.isSafeInteger;
@@ -155,6 +162,16 @@ function cloneDate(value: unknown): Date | undefined {
   try {
     const time = ReflectApply(DatePrototypeGetTime, value, []) as number;
     return new NativeDate(time);
+  } catch {
+    return undefined;
+  }
+}
+
+function readUrlHref(value: unknown): string | undefined {
+  if (!URLHrefGetter) return undefined;
+  try {
+    const href = ReflectApply(URLHrefGetter, value, []) as unknown;
+    return typeof href === "string" ? new NativeURL(href).href : undefined;
   } catch {
     return undefined;
   }
@@ -710,6 +727,7 @@ const MaxModelCallInputSnapshotNodes = 65_536;
 type ModelCallInputSnapshotState = {
   ancestors: WeakSet<SnapshotContainer>;
   nodes: number;
+  urlRepresentation: "instance" | "href";
   valuesAreOwned: boolean;
 };
 
@@ -945,7 +963,12 @@ function snapshotModelCallSemanticInput(
   return snapshotModelCallInputValue(
     label,
     value,
-    { ancestors: state.ancestors, nodes: 0, valuesAreOwned: state.valuesAreOwned },
+    {
+      ancestors: state.ancestors,
+      nodes: 0,
+      urlRepresentation: state.urlRepresentation,
+      valuesAreOwned: state.valuesAreOwned,
+    },
     0,
     "semantic",
   );
@@ -980,6 +1003,10 @@ function snapshotModelCallInputValue(
   if (value === null || typeof value !== "object") return value;
   const date = cloneDate(value);
   if (date) return date;
+  const urlHref = readUrlHref(value);
+  if (urlHref !== undefined) {
+    return state.urlRepresentation === "href" ? urlHref : new NativeURL(urlHref);
+  }
   assertInspectableModelCallInput(label, value, state.valuesAreOwned);
   const container = value as SnapshotContainer;
   assertSupportedModelCallInputPrototype(label, container);
@@ -1058,16 +1085,49 @@ function snapshotModelCallInputValue(
   }
 }
 
-function snapshotModelCallInput(label: string, value: unknown): unknown {
+function snapshotModelCallInput(
+  label: string,
+  value: unknown,
+  urlRepresentation: "instance" | "href" = "instance",
+): unknown {
   const valuesAreOwned = !canIdentifyProxyWithoutHooks;
   const source = valuesAreOwned ? structuredCloneModelCallInput(label, value) : value;
   return snapshotModelCallInputValue(
     label,
     source,
-    { ancestors: new NativeWeakSet<SnapshotContainer>(), nodes: 0, valuesAreOwned },
+    {
+      ancestors: new NativeWeakSet<SnapshotContainer>(),
+      nodes: 0,
+      urlRepresentation,
+      valuesAreOwned,
+    },
     0,
     label === "tools" ? "toolsArray" : "promptArray",
   );
+}
+
+function snapshotModelCallMutableArray(
+  label: "prompt" | "tools",
+  value: ModelCallMessage[] | ModelCallTool[],
+  urlRepresentation: "instance" | "href",
+): ModelCallMessage[] | ModelCallTool[] {
+  const snapshot = snapshotModelCallInput(label, value, urlRepresentation);
+  if (!ArrayIsArray(snapshot)) {
+    throw new TypeError(`Model call ${label} could not be inspected`);
+  }
+  return snapshot as ModelCallMessage[] | ModelCallTool[];
+}
+
+export function snapshotModelCallContextMessages(
+  value: ModelCallMessage[],
+): ModelCallMessage[] {
+  return snapshotModelCallMutableArray("prompt", value, "href") as ModelCallMessage[];
+}
+
+export function snapshotModelCallContextTools(
+  value: ModelCallTool[],
+): ModelCallTool[] {
+  return snapshotModelCallMutableArray("tools", value, "href") as ModelCallTool[];
 }
 
 function snapshotNeutralReasoning(reasoning: RuntimeReasoningOption): RuntimeReasoningOption {

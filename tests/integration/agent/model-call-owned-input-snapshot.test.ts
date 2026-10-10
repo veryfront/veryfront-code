@@ -29,6 +29,8 @@ for (const cloud of [false, true]) {
         "toJSON-data",
         "snapshot-array",
         "prepare-model",
+        "url",
+        "url-accessor",
       ] as const
     ) {
       if (mutation === "prepare-model" && !cloud) continue;
@@ -38,10 +40,24 @@ for (const cloud of [false, true]) {
           mediaType: "image/png",
           url: "https://example.com/before.png",
         } satisfies { type: "image"; mediaType: string; url: string };
+        const originalUrl = new URL("https://example.com/resource");
+        let hrefGetterCalls = 0;
+        if (mutation === "url-accessor") {
+          Object.defineProperty(originalUrl, "href", {
+            get() {
+              hrefGetterCalls++;
+              throw new Error("Caller URL href getter must not run");
+            },
+          });
+        }
         const originalDate = new Date("2026-10-10T12:00:00.000Z");
         const value = {
           ...(mutation === "toJSON-data" ? { toJSON: "before" } : {}),
-          nested: { answer: "before", ...(mutation === "date" ? { at: originalDate } : {}) },
+          nested: {
+            answer: "before",
+            ...(mutation === "date" ? { at: originalDate } : {}),
+            ...(mutation === "url" || mutation === "url-accessor" ? { url: originalUrl } : {}),
+          },
         };
         const toolValue = mutation === "snapshot-array"
           ? snapshotJsonValue({ items: [1, 2] })
@@ -155,6 +171,10 @@ for (const cloud of [false, true]) {
               assert(inputSchema.properties.toJSON);
               inputSchema.properties.toJSON.type = "number";
               break;
+            case "url":
+            case "url-accessor":
+              originalUrl.pathname = "/mutated";
+              break;
             case "date":
               originalDate.setTime(Date.parse("2026-10-11T12:00:00.000Z"));
               break;
@@ -195,7 +215,22 @@ for (const cloud of [false, true]) {
         assert(dispatched);
         assertEquals(recorded.model?.id, "original");
         assertEquals(dispatchOwner, "original");
-        assertEquals(dispatched.prompt, recorded.messages);
+        if (mutation === "url" || mutation === "url-accessor") {
+          const recordedTool = recorded.messages?.[1];
+          assert(recordedTool?.role === "tool");
+          const capturedValue = recordedTool.content[0]?.output.value;
+          assert(
+            typeof capturedValue === "object" && capturedValue !== null &&
+              "nested" in capturedValue,
+          );
+          const capturedNested = capturedValue.nested;
+          assert(
+            typeof capturedNested === "object" && capturedNested !== null &&
+              "url" in capturedNested,
+          );
+          assertEquals(capturedNested.url, "https://example.com/resource");
+          assertEquals(JSON.stringify(recorded.messages), JSON.stringify(dispatched.prompt));
+        } else assertEquals(dispatched.prompt, recorded.messages);
         assertEquals(dispatched.tools, recorded.tools);
         assertEquals(dispatched.tools, [
           {
@@ -236,6 +271,21 @@ for (const cloud of [false, true]) {
           assert(result?.type === "tool-result");
           assertEquals(stringifyToolResultValue(result.output.value), '{"items":[1,2]}');
         }
+        if (mutation === "url" || mutation === "url-accessor") {
+          const message = dispatched.prompt[1];
+          assert(message?.role === "tool");
+          const payload = message.content[0]?.output.value;
+          assert(typeof payload === "object" && payload !== null && "nested" in payload);
+          const nested = payload.nested;
+          assert(typeof nested === "object" && nested !== null && "url" in nested);
+          assert(nested.url instanceof URL);
+          assert(nested.url !== originalUrl);
+          assertEquals(nested.url.href, "https://example.com/resource");
+          assert(
+            JSON.stringify(dispatched.prompt).includes('"url":"https://example.com/resource"'),
+          );
+          assertEquals(hrefGetterCalls, 0);
+        }
         assertEquals(dispatched.prompt[1], {
           role: "tool",
           content: [{
@@ -249,6 +299,9 @@ for (const cloud of [false, true]) {
                 nested: {
                   answer: "before",
                   ...(mutation === "date" ? { at: new Date("2026-10-10T12:00:00.000Z") } : {}),
+                  ...(mutation === "url" || mutation === "url-accessor"
+                    ? { url: new URL("https://example.com/resource") }
+                    : {}),
                 },
               },
             },

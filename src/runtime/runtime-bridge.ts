@@ -69,6 +69,8 @@ import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-recei
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallContextMessages,
+  snapshotModelCallContextTools,
   snapshotModelCallProviderOptions,
 } from "./model-call-context-request.ts";
 
@@ -964,8 +966,10 @@ async function emitModelCallContextEvent(
       }
       : {}),
     ...(request ? { request } : {}),
-    messages: sanitizeModelCallContextMessages(directOptions.prompt),
-    ...(directOptions.tools ? { tools: directOptions.tools } : {}),
+    messages: snapshotModelCallContextMessages(sanitizeModelCallContextMessages(directOptions.prompt)),
+    ...(directOptions.tools
+      ? { tools: snapshotModelCallContextTools(directOptions.tools) }
+      : {}),
   };
 
   const assertActive = () => {
