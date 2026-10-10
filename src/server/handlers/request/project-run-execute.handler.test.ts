@@ -33,6 +33,10 @@ import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
@@ -2332,6 +2336,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         },
       );
       const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const indexUrls: string[] = [];
 
       const result = await withMockFetch(
         (async (input, init) => {
@@ -2347,6 +2352,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               ? "knowledge-attempt-writer"
               : null,
           );
+          if (url.endsWith("/index")) indexUrls.push(url);
           const indexed = canonicalKnowledgeIndexResponse(url, init);
           if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
@@ -2386,6 +2392,101 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
       );
       assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+      assertEquals(indexUrls.map((url) => new URL(url).pathname), [
+        `/projects/demo-project/branches/${
+          runtimeTargetKind === "preview_branch" ? "branch-proof" : "main"
+        }/files/knowledge%2Fguide.md/index`,
+      ]);
+    });
+  }
+
+  for (
+    const hostile of [
+      { name: "a project env file", envFile: true, base: "https://93.184.216.34" },
+      { name: "a plaintext host API", envFile: false, base: "http://api.example.test" },
+    ]
+  ) {
+    it(`never sends the knowledge writer credential to ${hostile.name} origin`, async () => {
+      const body = {
+        runId: "run_knowledge_origin",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
+        config: { paths: ["uploads/guide.md"], slug: "guide" },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_origin/execute",
+        body,
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": "knowledge-attempt-writer",
+        },
+      );
+      const calls: Array<{ url: string; writer: string | null }> = [];
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: hostile.base, VERYFRONT_API_URL: "" },
+        async () => {
+          if (hostile.envFile) markEnvFileValue("VERYFRONT_API_BASE_URL");
+          try {
+            return await withMockFetch(
+              (async (input, init) => {
+                const url = typeof input === "string"
+                  ? input
+                  : input instanceof Request
+                  ? input.url
+                  : input.toString();
+                calls.push({
+                  url,
+                  writer: new Headers(observeFetchRequestInit(init).headers).get(
+                    "X-Veryfront-Run-Event-Token",
+                  ),
+                });
+                const indexed = canonicalKnowledgeIndexResponse(url, init);
+                if (indexed) return indexed;
+                if (url.endsWith("/uploads/uploads%2Fguide.md")) {
+                  return new Response("# Guide\n\nOrigin-bound knowledge.", {
+                    status: 200,
+                    headers: { "Content-Type": "application/octet-stream" },
+                  });
+                }
+                return Response.json({
+                  ...canonicalKnowledgeFixtureReceipt,
+                  path: "knowledge/guide.md",
+                });
+              }) as typeof fetch,
+              async () =>
+                await new ProjectRunExecuteHandler().handle(
+                  signed.request,
+                  createCtx(signed.publicKeyPem),
+                ),
+            );
+          } finally {
+            if (hostile.envFile) clearEnvFileValueSource("VERYFRONT_API_BASE_URL");
+          }
+        },
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      const hostileOrigin = new URL(hostile.base).origin;
+      assertEquals(
+        calls.filter((call) => new URL(call.url).origin === hostileOrigin),
+        [],
+        "the API client must not use the steerable or plaintext origin",
+      );
+      for (const call of calls.filter((call) => call.writer !== null)) {
+        assertEquals(new URL(call.url).origin, "https://api.veryfront.com");
+      }
+      if (hostile.envFile) {
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(calls.filter((call) => call.writer !== null).length, 2);
+      } else {
+        assertEquals(payload.success, false, JSON.stringify(payload));
+        assertStringIncludes(payload.error, "HTTPS");
+      }
     });
   }
 

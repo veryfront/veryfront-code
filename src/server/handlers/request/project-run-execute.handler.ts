@@ -2953,7 +2953,11 @@ function createRuntimeApiClient(
   defaultSignal?: AbortSignal,
   canonicalWriterAuthority = false,
 ): RuntimeApiClient {
-  const apiUrl = getEnvironmentConfig().apiBaseUrl;
+  // A client that may carry the current-attempt writer credential uses the
+  // host-owned HTTPS origin; project env files cannot select it.
+  const apiUrl = canonicalWriterAuthority
+    ? requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl())
+    : getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   const writerToken = canonicalWriterAuthority
     ? readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER)
