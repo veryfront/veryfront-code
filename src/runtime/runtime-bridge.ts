@@ -2,6 +2,7 @@ import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
+  forEachPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
@@ -823,17 +824,18 @@ function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
   const unsupportedControls: string[] = [];
-  for (
-    const field of [
+  forEachPrivateArray(
+    [
       "toolChoice",
       "headers",
       "providerOptions",
       "responseFormat",
       "includeRawChunks",
-    ] as const
-  ) {
-    if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
-  }
+    ] as const,
+    (field) => {
+      if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
+    },
+  );
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
     pushPrivateArray(unsupportedControls, "system.providerOptions");
   }
