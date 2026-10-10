@@ -1,4 +1,5 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import type { CommandOptions } from "./types.ts";
 
 const applyIntrinsic = Reflect.apply;
 const stringReplace = String.prototype.replace;
@@ -37,4 +38,24 @@ export async function readSandboxFileContent(res: Response): Promise<string> {
   }
 
   return content;
+}
+
+/** @internal Allow synchronous execution plus transport slack without disabling the default bound. */
+export function sandboxCommandRequestTimeoutMs(options?: CommandOptions): number {
+  return options?.timeoutSeconds === undefined ? 60_000 : (options.timeoutSeconds + 5) * 1000;
+}
+
+/** @internal Keep a deadline active until the complete asynchronous operation has settled. */
+export async function withSandboxRequestDeadline<T>(
+  timeoutMs: number,
+  action: (signal: AbortSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (timeoutMs <= 0) return await action(undefined);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await action(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
 }

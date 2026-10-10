@@ -27,7 +27,12 @@ import {
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
-import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
+import {
+  readSandboxFileContent,
+  sandboxCommandRequestTimeoutMs,
+  sandboxSessionRoute,
+  withSandboxRequestDeadline,
+} from "./proxy-routes.ts";
 import { readCommandStreamEvents } from "./exec-stream.ts";
 import type {
   BackgroundCommand,
@@ -317,11 +322,16 @@ export class Sandbox {
 
   /** Execute a bash command in the sandbox and return buffered result. */
   async runCommand(command: string, options?: CommandOptions): Promise<CommandResult> {
-    return parseSandboxCommandResult(
-      await this.#requestControlPlane("/commands/run", {
-        method: "POST",
-        body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
-      }),
+    return await withSandboxRequestDeadline(
+      sandboxCommandRequestTimeoutMs(options),
+      async (signal) =>
+        parseSandboxCommandResult(
+          await this.#requestControlPlane("/commands/run", {
+            method: "POST",
+            signal,
+            body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+          }),
+        ),
     );
   }
 
@@ -553,11 +563,18 @@ export class Sandbox {
       updates = state.lifetimeUpdates;
       await updates;
     } while (updates !== state.lifetimeUpdates);
-    if (state.deleteOnClose) await this.delete(options);
+    if (state.deleteOnClose) await this.#deleteWorkspace(options, true);
   }
 
   /** Delete the sandbox and its workspace files. */
   async delete(options: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.#deleteWorkspace(options, false);
+  }
+
+  async #deleteWorkspace(
+    options: { signal?: AbortSignal },
+    allowUnavailable: boolean,
+  ): Promise<void> {
     const res = await fetchSandboxUrl(
       `${getSandboxPrivateState(this).apiUrl}/sandboxes/${
         encodeURIComponent(getSandboxPrivateState(this).sessionId)
@@ -569,7 +586,7 @@ export class Sandbox {
       },
     );
 
-    if (!res.ok) {
+    if (!res.ok && !(allowUnavailable && res.status === 404)) {
       throw REQUEST_ERROR.create({
         detail: `Delete sandbox failed: ${res.status} ${await res.text()}`,
       });

@@ -138,6 +138,106 @@ describe("Sandbox", () => {
     }
   }
 
+  for (const lazy of [false, true]) {
+    it(`keeps the command deadline active while its JSON body stalls, lazy=${lazy}`, async () => {
+      using time = new FakeTime();
+      let reportRead!: () => void;
+      const reading = new Promise<void>((resolve) => reportRead = resolve);
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      let bodySettled = false;
+      let signal: AbortSignal | null | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+        pull() {
+          reportRead();
+        },
+      }, { highWaterMark: 0 });
+      mockFetch([
+        ...(lazy ? [jsonResponse({ ok: true })] : []),
+        (_input, init) => {
+          signal = init?.signal;
+          signal?.addEventListener("abort", () => {
+            bodySettled = true;
+            controller.error(new DOMException("aborted", "AbortError"));
+          }, { once: true });
+          return new Response(body, { headers: { "Content-Type": "application/json" } });
+        },
+      ]);
+      const options = { authToken: "token", apiUrl: "https://api.test.com" };
+      const sandbox = lazy
+        ? Sandbox.createLazy({
+          ...options,
+          sandboxId: "body-stall",
+          sandboxEndpoint: "https://sb.test",
+          heartbeatIntervalMs: 120_000,
+        })
+        : Sandbox.attach({ ...options, id: "body-stall", endpoint: "https://sb.test" });
+      const execution = sandbox.runCommand("echo bounded");
+      try {
+        await reading;
+        assertEquals(signal instanceof AbortSignal, true);
+        time.tick(61_000);
+        assertEquals(signal?.aborted, true);
+        await assertRejects(() => execution, Error);
+      } finally {
+        if (!bodySettled) {
+          controller.enqueue(
+            new TextEncoder().encode(JSON.stringify({ stdout: "ok", stderr: "", exit_code: 0 })),
+          );
+          controller.close();
+        }
+        await execution.catch(() => {});
+        await sandbox.close();
+      }
+    });
+  }
+
+  for (const lostResponse of [false, true]) {
+    it(`eager automatic cleanup accepts an unavailable temporary workspace, lostResponse=${lostResponse}`, async () => {
+      mockFetch([
+        jsonResponse({
+          id: "missing-owned",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        ...(lostResponse
+          ? [() => {
+            throw new TypeError("delete response lost");
+          }]
+          : []),
+        textResponse("Sandbox not found", 404),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      try {
+        if (lostResponse) await assertRejects(() => sandbox.close(), Error);
+        await sandbox.close();
+        await sandbox.close();
+        assertEquals(
+          fetchCalls.filter((call) => call.init?.method === "DELETE").length,
+          lostResponse ? 2 : 1,
+        );
+      } finally {
+        mockFetch([jsonResponse({ ok: true })]);
+        await sandbox.close();
+      }
+    });
+  }
+
+  it("preserves explicit delete not-found errors", async () => {
+    mockFetch([textResponse("Sandbox not found", 404)]);
+    const sandbox = Sandbox.attach({
+      id: "explicit-missing",
+      endpoint: "https://sb.test",
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+    });
+    await assertRejects(() => sandbox.delete(), Error, "Delete sandbox failed: 404");
+  });
+
   for (const storage of [undefined, "persistant", "persistent", "ephemeral"]) {
     for (const lazy of [false, true]) {
       for (const policy of [{ ttl_mode: "default" }, { ttl_mode: "duration", ttl_hours: 4 }]) {

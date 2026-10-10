@@ -22,7 +22,12 @@ import {
   resolveSandboxApiUrl,
   resolveSandboxAuthToken,
 } from "./config.ts";
-import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
+import {
+  readSandboxFileContent,
+  sandboxCommandRequestTimeoutMs,
+  sandboxSessionRoute,
+  withSandboxRequestDeadline,
+} from "./proxy-routes.ts";
 import { readCommandStreamEvents } from "./exec-stream.ts";
 import {
   type BackgroundCommand,
@@ -82,8 +87,6 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_HEARTBEAT_GRACE_MS = 5_000;
 const DEFAULT_CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
-// Maximum synchronous execution time plus transport slack.
-const DEFAULT_PROXY_COMMAND_TIMEOUT_MS = 60_000;
 const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
 const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
 const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
@@ -259,21 +262,23 @@ export class LazySandbox {
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
         try {
-          const response = await fetchWithTimeout(
-            `${route.baseUrl}/commands/run`,
-            options?.timeoutSeconds === undefined
-              ? DEFAULT_PROXY_COMMAND_TIMEOUT_MS
-              : (options.timeoutSeconds + 5) * 1000,
-            {
-              method: "POST",
-              headers: this.#jsonHeaders(),
-              body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+          return await withSandboxRequestDeadline(
+            sandboxCommandRequestTimeoutMs(options),
+            async (signal) => {
+              const response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, {
+                method: "POST",
+                headers: this.#jsonHeaders(),
+                signal,
+                body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+              });
+              if (!response.ok) {
+                throw REQUEST_ERROR.create({
+                  detail: `Sandbox command failed: ${response.status}`,
+                });
+              }
+              return parseSandboxCommandResult(await response.json());
             },
           );
-          if (!response.ok) {
-            throw REQUEST_ERROR.create({ detail: `Sandbox command failed: ${response.status}` });
-          }
-          return parseSandboxCommandResult(await response.json());
         } catch (error) {
           const cause = error instanceof Error ? error.cause : undefined;
           const code = cause && typeof cause === "object" && "code" in cause
@@ -1179,18 +1184,10 @@ async function fetchWithTimeout(
   allowInternalRuntime = false,
 ): Promise<Response> {
   const fetchUrl = allowInternalRuntime ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
-  if (timeoutMs <= 0) {
-    return await fetchUrl(url, init);
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetchUrl(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return await withSandboxRequestDeadline(
+    timeoutMs,
+    (signal) => fetchUrl(url, signal ? { ...init, signal } : init),
+  );
 }
 
 function mapBackgroundCommand(
