@@ -14,6 +14,7 @@ import {
   headerValue,
   installMockFetch as createSandboxFetchMock,
   jsonBody,
+  jsonFixtureBody,
   jsonResponse,
   type MockResponseEntry,
   mockTimers,
@@ -49,7 +50,30 @@ function clearSandboxEnvironment(): void {
 function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
   fetchCalls = [];
-  installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
+  const queuedFetch = createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses });
+  const sessions = new Map<string, Record<string, unknown>>();
+  installHostMockFetch(
+    (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      // Lifecycle fixtures model the server's latest POST/PATCH/poll metadata.
+      // Fresh cleanup reads are additional visible requests, not queued DELETE responses.
+      if (init?.method === "GET" && init.cache === "no-store" && sessions.has(url)) {
+        fetchCalls.push({ url, init });
+        return jsonResponse(sessions.get(url));
+      }
+      const response = await queuedFetch(input, init);
+      if (response.ok && response.headers.get("Content-Type")?.includes("application/json")) {
+        const record = jsonFixtureBody(response);
+        if (
+          record && typeof record === "object" && "id" in record && typeof record.id === "string" &&
+          "endpoint" in record
+        ) {
+          sessions.set(`${new URL(url).origin}/sandboxes/${encodeURIComponent(record.id)}`, record);
+        }
+      }
+      return response;
+    }) as typeof fetch,
+  );
 }
 
 async function countTextDecoderFlushes(action: () => Promise<void>): Promise<number> {
@@ -113,7 +137,7 @@ describe("Sandbox", () => {
     ) {
       it(`retains an ephemeral creation without confirmed temporary lifetime: lazy=${lazy}, ${JSON.stringify(policy)}`, async () => {
         mockFetch([
-          Response.json({
+          jsonResponse({
             id: "lifetime-policy",
             endpoint: "https://sb.test",
             status: "running",
@@ -193,6 +217,131 @@ describe("Sandbox", () => {
       }
     });
   }
+
+  for (const lazy of [false, true]) {
+    for (
+      const policy of [
+        { workspace_storage: "ephemeral", ttl_mode: "always_on" },
+        { workspace_storage: "persistent", ttl_mode: "default" },
+        { workspace_storage: "ephemeral" },
+        { workspace_storage: "ephemeral", ttl_mode: "default" },
+      ]
+    ) {
+      it(`rechecks external policy before automatic cleanup: lazy=${lazy}, ${JSON.stringify(policy)}`, async () => {
+        const calls: FetchCall[] = [];
+        const initial = {
+          id: "external-policy",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+          access_scope: "private",
+          short_id: "external",
+          created_at: "2026-10-10T00:00:00Z",
+        };
+        let current: Record<string, unknown> = initial;
+        installHostMockFetch(
+          (async (input: string | URL | Request, init?: RequestInit) => {
+            const url = String(input);
+            calls.push({ url, init });
+            if (init?.method === "POST" && url.endsWith("/sandboxes")) return jsonResponse(initial);
+            if (init?.method === "PATCH") {
+              current = { ...initial, ...policy };
+              return jsonResponse(current);
+            }
+            if (url.endsWith("/heartbeat")) return jsonResponse({ ok: true });
+            if (init?.method === "DELETE") return jsonResponse({ ok: true });
+            return jsonResponse({
+              id: current.id,
+              endpoint: current.endpoint,
+              status: current.status,
+              ...policy,
+            });
+          }) as typeof fetch,
+        );
+        const options = { authToken: "token", apiUrl: "https://api.test.com" };
+        const sandbox = lazy ? Sandbox.createLazy(options) : await Sandbox.create(options);
+        if (sandbox instanceof LazySandbox) await sandbox.ensure();
+        if (policy.ttl_mode === "always_on") {
+          const second = await Sandbox.get("external-policy", options);
+          await second.updateLifetime({ ttlMode: "always_on" });
+        }
+        await sandbox.close();
+        assertEquals(
+          calls.filter((c) => c.init?.method === "DELETE").length,
+          policy.ttl_mode === "default" && policy.workspace_storage === "ephemeral" ? 1 : 0,
+        );
+      });
+    }
+  }
+
+  for (const lazy of [false, true]) {
+    for (const status of [403, 503, 404]) {
+      it(`fails closed on cleanup policy lookup: lazy=${lazy}, status=${status}`, async () => {
+        const calls: FetchCall[] = [];
+        const session = {
+          id: "cleanup-denial",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        };
+        let denied = true;
+        installHostMockFetch(
+          (async (input: string | URL | Request, init?: RequestInit) => {
+            calls.push({ url: String(input), init });
+            if (init?.method === "GET") {
+              return denied ? textResponse("denied", status) : jsonResponse(session);
+            }
+            return jsonResponse(session);
+          }) as typeof fetch,
+        );
+        const options = { authToken: "token", apiUrl: "https://api.test.com" };
+        const sandbox = lazy ? Sandbox.createLazy(options) : await Sandbox.create(options);
+        if (sandbox instanceof LazySandbox) await sandbox.ensure();
+        if (status === 404) await sandbox.close();
+        else {
+          await assertRejects(
+            () => sandbox.close(),
+            Error,
+            `Sandbox cleanup policy failed: ${status}`,
+          );
+          assertEquals(sandbox.id, session.id);
+        }
+        assertEquals(calls.some((call) => call.init?.method === "DELETE"), false);
+        if (status !== 404) {
+          denied = false;
+          await sandbox.close();
+          assertEquals(calls.filter((call) => call.init?.method === "DELETE").length, 1);
+        }
+      });
+    }
+  }
+
+  it("honors an explicit lazy deletion override despite external always-on policy", async () => {
+    const calls: FetchCall[] = [];
+    installHostMockFetch(
+      (async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), init });
+        return jsonResponse({
+          id: "explicit-cleanup",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "persistent",
+          ttl_mode: "always_on",
+        });
+      }) as typeof fetch,
+    );
+    const sandbox = Sandbox.createLazy({
+      authToken: "token",
+      apiUrl: "https://api.test.com",
+      deleteOnClose: true,
+    });
+    await sandbox.ensure();
+    await sandbox.close();
+    assertEquals(calls.filter((call) => call.init?.method === "DELETE").length, 1);
+    assertEquals(calls.some((call) => call.init?.method === "GET"), false);
+  });
 
   for (const lostResponse of [false, true]) {
     it(`eager automatic cleanup accepts an unavailable temporary workspace, lostResponse=${lostResponse}`, async () => {
@@ -337,7 +486,7 @@ describe("Sandbox", () => {
       for (const policy of [{ ttl_mode: "default" }, { ttl_mode: "duration", ttl_hours: 4 }]) {
         it(`enables close deletion only for explicit ephemeral creation storage: ${storage}, lazy=${lazy}, lifetime=${policy.ttl_mode}`, async () => {
           mockFetch([
-            Response.json({
+            jsonResponse({
               id: "policy-check",
               endpoint: "https://sb.test",
               status: "running",
@@ -374,9 +523,9 @@ describe("Sandbox", () => {
         ...(storage === undefined ? {} : { workspace_storage: storage }),
       };
       mockFetch([
-        Response.json(session),
+        jsonResponse(session),
         textResponse("heartbeat failed", 503),
-        Response.json(session),
+        jsonResponse(session),
         jsonResponse({ ok: true }),
       ]);
       const sandbox = Sandbox.createLazy({
@@ -407,8 +556,8 @@ describe("Sandbox", () => {
     it(`retains unknown creation storage while readiness polling completes: lazy=${lazy}`, async () => {
       const session = { id: "pending-unknown", endpoint: "https://sb.test", status: "pending" };
       mockFetch([
-        Response.json(session),
-        Response.json({ ...session, status: "running", workspace_storage: "persistent" }),
+        jsonResponse(session),
+        jsonResponse({ ...session, status: "running", workspace_storage: "persistent" }),
         ...(lazy ? [jsonResponse({ ok: true })] : []),
         jsonResponse({ ok: true }),
       ]);
@@ -1191,7 +1340,7 @@ describe("Sandbox", () => {
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
       installHostMockFetch((input) => {
         requests.push(String(input));
-        return Promise.resolve(Response.json({
+        return Promise.resolve(jsonResponse({
           id: "session-native-url",
           endpoint: "https://sandbox.example.com",
           status: "running",
@@ -2133,8 +2282,9 @@ describe("Sandbox", () => {
       await sandbox.close();
 
       assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/s7");
-      assertEquals(fetchCalls[1]!.init?.method, "DELETE");
-      assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+      assertEquals(fetchCalls[1]!.init?.method, "GET");
+      assertEquals(fetchCalls[2]!.init?.method, "DELETE");
+      assertEquals(headerValue(fetchCalls, 2, "Authorization"), "Bearer token");
     });
 
     it("should throw on close failure", async () => {
@@ -2452,8 +2602,15 @@ describe("Sandbox", () => {
           }
 
           if (fetchCalls.length === 3) {
-            return Promise.resolve(jsonResponse({ ok: true }));
+            return Promise.resolve(
+              jsonResponse({
+                id: "sandbox-1",
+                workspace_storage: "ephemeral",
+                ttl_mode: "default",
+              }),
+            );
           }
+          if (fetchCalls.length === 4) return Promise.resolve(jsonResponse({ ok: true }));
 
           throw new Error(`Unexpected fetch call: ${url}`);
         }) as typeof fetch,
@@ -2490,7 +2647,8 @@ describe("Sandbox", () => {
       await closePromise;
 
       assertStringIncludes(fetchCalls[2]!.url, "/sandboxes/sandbox-1");
-      assertEquals(fetchCalls[2]!.init?.method, "DELETE");
+      assertEquals(fetchCalls[2]!.init?.method, "GET");
+      assertEquals(fetchCalls[3]!.init?.method, "DELETE");
       assertEquals(sandbox.isActive, false);
     });
 
@@ -3334,12 +3492,14 @@ describe("Sandbox", () => {
           "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
           "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
           "https://api.test.com/sandboxes/stale",
+          "https://api.test.com/sandboxes/stale",
           "https://api.test.com/sandboxes",
           "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/readyz",
           "https://api.test.com/sandboxes/fresh/heartbeat",
           "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/exec",
         ]);
-        assertEquals(fetchCalls[3]!.init?.method, "DELETE");
+        assertEquals(fetchCalls[3]!.init?.method, "GET");
+        assertEquals(fetchCalls[4]!.init?.method, "DELETE");
       } finally {
         await sandbox.close();
       }
@@ -4185,6 +4345,7 @@ describe("Sandbox", () => {
           "https://api.test.com/sandboxes/sandbox-1/commands/command-1/cancel",
           "POST",
         ],
+        ["https://api.test.com/sandboxes/sandbox-1", "GET"],
         ["https://api.test.com/sandboxes/sandbox-1", "DELETE"],
       ]);
     });
@@ -4278,6 +4439,7 @@ describe("Sandbox", () => {
         [`${internalCommandsUrl}/command-1`, "GET"],
         [`${internalCommandsUrl}/command-1/output`, "GET"],
         [`${internalCommandsUrl}/command-1/cancel`, "POST"],
+        ["https://api.test.com/sandboxes/sandbox-1", "GET"],
         ["https://api.test.com/sandboxes/sandbox-1", "DELETE"],
       ]);
     });

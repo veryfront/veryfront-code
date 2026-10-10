@@ -1,4 +1,6 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { fetchSandboxUrl } from "./config.ts";
+import { hasTemporarySandboxPolicy } from "./response.ts";
 import type { CommandOptions } from "./types.ts";
 
 const applyIntrinsic = Reflect.apply;
@@ -58,4 +60,32 @@ export async function withSandboxRequestDeadline<T>(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** @internal Recheck mutable policy before automatic cleanup; unknown policy never authorizes deletion. */
+export async function currentSandboxCleanupPolicy(input: {
+  apiUrl: string;
+  sessionId: string;
+  authToken: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<"temporary" | "retain" | "unavailable"> {
+  return await withSandboxRequestDeadline(input.timeoutMs ?? 15_000, async (deadline) => {
+    const response = await fetchSandboxUrl(sandboxSessionRoute(input.apiUrl, input.sessionId), {
+      method: "GET",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${input.authToken}` },
+      signal: input.signal && deadline
+        ? AbortSignal.any([input.signal, deadline])
+        : input.signal ?? deadline,
+    });
+    if (response.status === 404) return "unavailable";
+    if (!response.ok) {
+      throw REQUEST_ERROR.create({ detail: `Sandbox cleanup policy failed: ${response.status}` });
+    }
+    const record = await response.json();
+    return record?.id === input.sessionId && hasTemporarySandboxPolicy(record)
+      ? "temporary"
+      : "retain";
+  });
 }

@@ -23,6 +23,7 @@ import {
   resolveSandboxAuthToken,
 } from "./config.ts";
 import {
+  currentSandboxCleanupPolicy,
   readSandboxFileContent,
   sandboxCommandRequestTimeoutMs,
   sandboxSessionRoute,
@@ -649,6 +650,10 @@ export class LazySandbox {
     const pendingCleanupId = this.sessionId;
     if (pendingCleanupId && this.deleteOnClose) {
       await this.deleteSession(pendingCleanupId);
+      if (!this.deleteOnClose) {
+        await this.attachExistingSession(pendingCleanupId);
+        return;
+      }
       this.resetSessionState(pendingCleanupId);
     }
 
@@ -879,6 +884,20 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
+    if (this.requestedDeleteOnClose !== true) {
+      const policy = await currentSandboxCleanupPolicy({
+        apiUrl: getLazySandboxPrivateState(this).apiUrl,
+        sessionId,
+        authToken: getLazySandboxPrivateState(this).authToken,
+        timeoutMs: this.controlRequestTimeoutMs,
+      });
+      if (policy === "unavailable") return;
+      if (policy === "retain") {
+        this.deleteOnClose = false;
+        this.retainedSessions.set(this.sessionProjectId, sessionId);
+        return;
+      }
+    }
     const response = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
       {

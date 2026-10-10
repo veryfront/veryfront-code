@@ -28,6 +28,7 @@ import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/e
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
+  currentSandboxCleanupPolicy,
   readSandboxFileContent,
   sandboxCommandRequestTimeoutMs,
   sandboxSessionRoute,
@@ -561,6 +562,19 @@ export class Sandbox {
       updates = state.lifetimeUpdates;
       await updates;
     } while (updates !== state.lifetimeUpdates);
+    if (!state.deleteOnClose) return;
+    const policy = await currentSandboxCleanupPolicy({
+      apiUrl: state.apiUrl,
+      sessionId: state.sessionId,
+      authToken: getSandboxAuthToken(this),
+      signal: options.signal,
+    });
+    if (policy !== "temporary") {
+      state.deleteOnClose = false;
+      if (policy === "unavailable") state.createdByClient = false;
+      return;
+    }
+    // A local always-on update may have started while the policy request was pending.
     if (state.deleteOnClose) await this.#deleteWorkspace(options, true);
   }
 
