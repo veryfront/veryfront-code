@@ -32,7 +32,7 @@ it("live eval input listing normalizes canonical and legacy IDs without ambiguit
   const records = await listOpenLiveEvalInputRequests(
     contextFor([
       { input_request_id: requestId, status: "open" },
-      { id: "legacy-request", status: "open" },
+      { id: "64fb6029-c081-4f3b-8612-770371e9fab8", status: "open" },
       { id: requestId, input_request_id: requestId, status: "open" },
       { id: "different", input_request_id: requestId, status: "open" },
       { input_request_id: "", status: "open" },
@@ -46,7 +46,7 @@ it("live eval input listing normalizes canonical and legacy IDs without ambiguit
   );
   assertEquals(records, [
     { id: requestId, status: "open" },
-    { id: "legacy-request", status: "open" },
+    { id: "64fb6029-c081-4f3b-8612-770371e9fab8", status: "open" },
     { id: requestId, status: "open" },
   ]);
 });

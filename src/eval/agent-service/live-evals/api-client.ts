@@ -113,9 +113,17 @@ const getProjectFileResponseSchema = defineSchema((v) =>
 
 const getInputRequestRecordSchema = defineSchema((v) =>
   v.object({
-    id: v.string(),
+    id: v.string().uuid(),
     status: v.string(),
   })
+);
+
+const getInputRequestApiRecordSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid().optional(),
+    input_request_id: v.string().uuid().optional(),
+    status: v.string(),
+  }).passthrough()
 );
 
 const getInputRequestListResponseSchema = defineSchema((v) =>
@@ -141,6 +149,24 @@ export interface LiveEvalApiClient {
   waitForOpenInputRequest(input: LiveEvalWaitForOpenInputRequestInput): Promise<string>;
   submitInputResponse(input: LiveEvalSubmitInputResponseInput): Promise<void>;
   cancelInputRequest(input: LiveEvalInputRequestInput): Promise<void>;
+}
+
+function normalizeLiveEvalInputRequestRecord(
+  item: unknown,
+): LiveEvalInputRequestRecord | null {
+  const parsed = getInputRequestApiRecordSchema().safeParse(item);
+  if (!parsed.success || parsed.data.status !== "open") {
+    return null;
+  }
+
+  const legacyId = parsed.data.id;
+  const canonicalId = parsed.data.input_request_id;
+  if (legacyId && canonicalId && legacyId !== canonicalId) {
+    return null;
+  }
+
+  const id = canonicalId ?? legacyId;
+  return id ? getInputRequestRecordSchema().parse({ id, status: parsed.data.status }) : null;
 }
 
 function createLiveEvalAuthHeaders(context: LiveEvalApiContext): Headers {
@@ -674,17 +700,8 @@ async function listOpenLiveEvalInputRequestsWithSignal(
 
     const payload = getInputRequestListResponseSchema().parse(await response.json());
     return (payload.data ?? []).flatMap((item) => {
-      if (!isEvalRecord(item)) return [];
-      // The API uses input_request_id; older eval transports used id.
-      // Reject conflicting representations rather than approving the wrong request.
-      if (
-        item.input_request_id !== undefined && item.id !== undefined &&
-        item.input_request_id !== item.id
-      ) return [];
-      const id = item.input_request_id ?? item.id;
-      if (typeof id !== "string" || id.length === 0 || id.trim() !== id) return [];
-      const parsed = getInputRequestRecordSchema().safeParse({ id, status: item.status });
-      return parsed.success && parsed.data.status === "open" ? [parsed.data] : [];
+      const normalized = normalizeLiveEvalInputRequestRecord(item);
+      return normalized ? [normalized] : [];
     });
   } finally {
     signalScope.dispose();

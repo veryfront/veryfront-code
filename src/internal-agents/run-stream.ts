@@ -1,3 +1,4 @@
+import { bindHostedAgentPauseLifetime } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import {
   invalidateHostedAgentPauseSettlement,
   isHostedAgentPauseAcknowledged,
@@ -1319,6 +1320,7 @@ export async function createRuntimeAgentStreamResponse(
   const manualPause = runtimeManualPauseCapabilities.get(input);
   let settledStop: (outcome?: RunStopSettlement) => void;
   try {
+    if (manualPause) bindHostedAgentPauseLifetime(manualPause, abortSignal);
     settledStop = deps.sessionManager.stopRegistry.register(input.runId, () => {
       if (manualPause) {
         invalidateHostedAgentPauseSettlement(
