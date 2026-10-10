@@ -26,13 +26,26 @@ const RELEASE_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_RELEASE_ID = "33333333-3333-4333-8333-333333333333";
 const IMAGE = `${REPOSITORY}@sha256:${"b".repeat(64)}`;
 
+const SERVICE_ACCOUNT_ID = "service-account-renderer";
+
+/** Unsigned JWT with the given payload; the resolver reads claims, the API verifies. */
+function jwt(claims: Record<string, unknown>): string {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return `${encode({ alg: "RS256", typ: "JWT" })}.${encode(claims)}.signature`;
+}
+
+function serviceToken(projectId: string): string {
+  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+}
+
 const authority = Object.freeze({
   projectId: PROJECT_ID,
   projectSlug: "project-a",
   releaseId: RELEASE_ID,
   environmentId: "environment-a",
   environmentName: "staging",
-  sourceToken: "source-token",
+  sourceToken: serviceToken(PROJECT_ID),
 });
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -93,6 +106,7 @@ function options(overrides: Partial<HostedHttpResolverOptions> = {}): HostedHttp
     apiBaseUrl: "https://api.veryfront.test/api/",
     sourceApiOrigin: SOURCE_API,
     sourceImageRepository: REPOSITORY,
+    serviceAccountId: SERVICE_ACCOUNT_ID,
     lookupSourceImage: createHostedHttpSourceRecordLookup([record()]),
     session: {
       expectedBrokerInstanceId: "broker-pod-uid",
@@ -113,10 +127,10 @@ describe("hosted HTTP resolver", () => {
     const resolved = await resolve(authority, signal());
 
     assertEquals(fake.calls.slice(0, 2).toSorted(), [
-      "environment:source-token",
-      "project:source-token",
+      `environment:${authority.sourceToken}`,
+      `project:${authority.sourceToken}`,
     ]);
-    assertEquals(fake.calls[2], "variables:source-token");
+    assertEquals(fake.calls[2], `variables:${authority.sourceToken}`);
     assertEquals(resolved.session.expectedImage, IMAGE);
     assertEquals(resolved.session.expectedBrokerInstanceId, "broker-pod-uid");
     assertEquals(resolved.session.request.owner, { scopeKind: "project", projectId: PROJECT_ID });
@@ -158,6 +172,43 @@ describe("hosted HTTP resolver", () => {
     await assertRejects(() => resolve({ ...authority, sourceToken: "" }, signal()));
     await assertRejects(() => resolve({ ...authority, sourceToken: "x".repeat(8193) }, signal()));
     assertEquals(fake.calls, []);
+  });
+
+  it("refuses credentials that are not bound to the requested project before any read", async () => {
+    for (
+      const [name, sourceToken] of [
+        ["service credential for another project", serviceToken(FOREIGN_PROJECT_ID)],
+        ["service credential without a project", jwt({ userId: SERVICE_ACCOUNT_ID, scope: [] })],
+        ["user session", jwt({ userId: "user-1", scope: ["projects:read"] })],
+        [
+          "user session naming the project",
+          jwt({ userId: "user-1", scope: ["projects:read"], projectId: PROJECT_ID }),
+        ],
+        [
+          "user-scoped service credential",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read", "user_read_id_user-1"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        ["credential without scopes", jwt({ userId: SERVICE_ACCOUNT_ID, projectId: PROJECT_ID })],
+        ["opaque API key", "vf_api_key_0123456789abcdef"],
+        ["malformed payload", "header.not-base64!.signature"],
+      ] as const
+    ) {
+      const fake = fakeApi();
+      const lookups: unknown[] = [];
+      const resolve = createHostedHttpResolver(options({
+        api: fake.api,
+        lookupSourceImage: (request) => {
+          lookups.push(request);
+          return Promise.resolve(record());
+        },
+      }));
+      await assertRejects(() => resolve({ ...authority, sourceToken }, signal()), Error, "", name);
+      assertEquals([fake.calls, lookups], [[], []], name);
+    }
   });
 
   it("refuses a rejected token or a foreign slug before reading project variables", async () => {
@@ -257,6 +308,8 @@ describe("hosted HTTP resolver", () => {
         { sourceImageRepository: "" },
         { lookupSourceImage: undefined as never },
         { session: { ...options().session, expectedBrokerInstanceId: "" } },
+        { serviceAccountId: "" },
+        { serviceAccountId: undefined as never },
         { prepareTimeoutMs: 0 },
         { hardTimeoutMs: 10 },
         { prepareTimeoutMs: 120_000, hardTimeoutMs: 60_000 },
