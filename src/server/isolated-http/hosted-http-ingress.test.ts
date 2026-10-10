@@ -179,7 +179,6 @@ describe("hosted HTTP ingress", () => {
     });
     for (
       const input of [
-        new Request("https://app.example/docs/readme.md"),
         new Request("https://app.example/@/components/card.snippet.mdx"),
         new Request("https://app.example/@components/card"),
         new Request("https://app.example/_ws", { headers: { upgrade: "websocket" } }),
@@ -195,6 +194,19 @@ describe("hosted HTTP ingress", () => {
       503,
     );
     assertEquals(resolutions, 0);
+  });
+  it("serves production Markdown paths through the isolated application", async () => {
+    let resolutions = 0;
+    const fetch = createHostedHttpIngress({
+      broker: { fetch: () => Promise.resolve(new Response("isolated")) },
+      resolve() {
+        resolutions++;
+        return Promise.resolve(resolvedInput());
+      },
+    });
+    const response = await fetch(new Request("https://app.example/docs/readme.md"), selection);
+    assertEquals(await response.text(), "isolated");
+    assertEquals(resolutions, 1);
   });
   it("redacts failed source resolution and never falls back", async () => {
     const fetch = createHostedHttpIngress({
