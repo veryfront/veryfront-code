@@ -2439,6 +2439,41 @@ describe("agent/hosted-chat-execution-runtime", () => {
     }]);
   });
 
+  it("canonicalizes timeout-shaped internal abort reasons before terminal dispatch", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const internalController = new AbortController();
+    internalController.abort(new Error("stream timeout token=secret"));
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog({ signal: internalController.signal }),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{
+      status: "failed",
+      terminalErrorCode: "STREAM_TIMEOUT",
+      terminalErrorMessage:
+        "This run timed out before the agent finished. Try again to continue, or narrow the request.",
+    }]);
+  });
+
   it("keeps confirmed manual pause nonterminal when the internal watchdog aborts", async () => {
     const terminalStates: HostedLifecycleTerminalState[] = [];
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
