@@ -22,6 +22,18 @@
     {
       "before": "        var _a;\n        const sources = [];\n        // resolve any globs\n        const processedOptions = [];\n        for (const option of cssOptions) {\n            if (typeof option === \"string\") {\n                processedOptions.push(...glob.sync(option, {\n                    onlyFiles: true,\n                    ignore: this.options.skippedContentGlobs,\n                }));\n            }\n            else {\n                processedOptions.push(option);\n            }\n        }\n        for (const option of processedOptions) {\n            const cssContent = typeof option === \"string\"\n                ? this.options.stdin\n                    ? option\n                    : await asyncFs.readFile(option, \"utf-8\")\n                : option.raw;\n            const isFromFile = typeof option === \"string\" && !this.options.stdin;\n            const root = postcss.parse(cssContent, {\n                from: isFromFile ? option : undefined,\n",
       "after": "        var _a;\n        const sources = [];\n        if (cssOptions.some(option => typeof option === \"string\")) {\n            throw new TypeError(\"File-backed PurgeCSS stylesheets are unsupported\");\n        }\n        for (const option of cssOptions) {\n            const cssContent = option.raw;\n            const isFromFile = false;\n            const root = postcss.parse(cssContent, {\n                from: isFromFile ? option : undefined,\n"
+    },
+    {
+      "before": "const CONFIG_FILENAME = \"purgecss.config.js\";\n// Error Message\nconst ERROR_CONFIG_FILE_LOADING = \"Error loading the config file\";\n\nfunction mergeSets(into, from) {",
+      "after": "// Error Message\n\nfunction mergeSets(into, from) {"
+    },
+    {
+      "before": "function isPseudoClassAtRootLevel(selector) {\n    var _a;",
+      "after": "function isPseudoClassAtRootLevel(selector) {\n    let _a;"
+    },
+    {
+      "before": "    async getPurgedCSS(cssOptions, selectors) {\n        var _a;",
+      "after": "    async getPurgedCSS(cssOptions, selectors) {\n        let _a;"
     }
   ]
 }

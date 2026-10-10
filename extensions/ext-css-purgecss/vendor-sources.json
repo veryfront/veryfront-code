@@ -4,7 +4,7 @@
       "name": "purgecss-in-memory",
       "version": "8.0.0-memory.1",
       "source": "vendor/purgecss-memory.js",
-      "sha256": "deff6de76c050358377851c77e94854eef78444a5a5e63ca3a7031f388699fb6",
+      "sha256": "d2774b1b9f41f3845b6bf4445ba6aa26402d0830f20f500e355d61da4cc94a7f",
       "license": "MIT",
       "upstream": {
         "name": "purgecss",

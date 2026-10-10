@@ -30,9 +30,7 @@ const IGNORE_ANNOTATION_CURRENT = "purgecss ignore current";
 const IGNORE_ANNOTATION_NEXT = "purgecss ignore";
 const IGNORE_ANNOTATION_START = "purgecss start ignore";
 const IGNORE_ANNOTATION_END = "purgecss end ignore";
-const CONFIG_FILENAME = "purgecss.config.js";
 // Error Message
-const ERROR_CONFIG_FILE_LOADING = "Error loading the config file";
 
 function mergeSets(into, from) {
     if (from) {
@@ -452,7 +450,7 @@ function isInPseudoClassWhereOrIs(selector) {
  * @param selector - selector
  */
 function isPseudoClassAtRootLevel(selector) {
-    var _a;
+    let _a;
     let result = false;
     if (selector.type === "selector" &&
         ((_a = selector.parent) === null || _a === void 0 ? void 0 : _a.type) === "root" &&
@@ -710,7 +708,7 @@ class PurgeCSS {
      * @param selectors - set of extracted css selectors
      */
     async getPurgedCSS(cssOptions, selectors) {
-        var _a;
+        let _a;
         const sources = [];
         if (cssOptions.some(option => typeof option === "string")) {
             throw new TypeError("File-backed PurgeCSS stylesheets are unsupported");

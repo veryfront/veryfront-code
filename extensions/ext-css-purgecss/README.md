@@ -41,8 +41,9 @@ the upstream CSS algorithm and MIT attribution. Config-file, content-file and
 stylesheet-file paths throw explicitly; those inputs are already outside the
 provider-neutral in-memory contract.
 
-Five reversible source edits remove the unused filesystem/glob imports and
-replace file operations with explicit rejection. Verify the bundled algorithm
+Eight reversible source edits remove unused filesystem/glob imports and constants,
+replace file operations with explicit rejection, and use block-scoped temporaries
+in their original function scopes. Verify the bundled algorithm
 against the pinned upstream source, offline, with:
 
 ```sh
