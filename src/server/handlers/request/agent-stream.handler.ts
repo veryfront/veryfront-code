@@ -1210,7 +1210,6 @@ export class AgentStreamHandler extends BaseHandler {
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
-      const pauseSignal = req.signal;
       if (
         payload.sourceProject && (
           payload.sourceProject.projectId !== ctx.projectId ||
@@ -1472,7 +1471,8 @@ export class AgentStreamHandler extends BaseHandler {
                             createHostOwnedAgentManualPause({
                               runId: payload.runId,
                               token: pauseToken,
-                              signal: pauseSignal,
+                              // The runtime binds its own lifetime when execution starts.
+                              signal: undefined,
                             }),
                           );
                         }

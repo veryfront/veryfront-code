@@ -83,6 +83,8 @@ mechanism.
 - Deterministic, case-insensitive matching. Underscores are treated as spaces.
   A literal exact name loads only that authorized tool. Capability phrases retain
   broad matching ranked by name, then description and parameter descriptions.
+  An already-visible tool wins when it matches more strongly. Equally relevant
+  deferred tools still load, so a visible catalog reader does not hide actions.
 - Bounded on every axis: query bytes, candidate count, per-schema depth, node
   count and byte size, and total loaded schema budget. See the `TOOL_SEARCH_*`
   constants in `tool-exposure.ts`.

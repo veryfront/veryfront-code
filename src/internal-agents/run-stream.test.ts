@@ -1,3 +1,4 @@
+import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
@@ -33,7 +34,7 @@ import type {
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { ProviderOutputTruncatedError, ProviderRequestError } from "veryfront/provider/shared";
 import {
   createToolsFromHostDefinitions,
   type RemoteToolSource,
@@ -54,6 +55,7 @@ import {
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
   PROVIDER_REPLAY_PROTOCOL_HEADER,
   PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+  registerRuntimeManualPause,
 } from "./run-stream.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
@@ -1243,6 +1245,73 @@ describe("internal-agents/run-stream", () => {
 
     assertStringIncludes(body, "event: RunError");
     assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("binds a deferred pause lifetime before reporting a provider rejection", async () => {
+    const unregister = registerModelProvider("provider-rejection-repro", () => ({
+      provider: "anthropic",
+      modelId: "provider-rejection-repro/test",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () =>
+        Promise.reject(
+          new ProviderRequestError({
+            provider: "anthropic",
+            status: 401,
+            message: "Anthropic request failed with status 401",
+            retryable: false,
+          }),
+        ),
+    }));
+    try {
+      const input = {
+        threadId: crypto.randomUUID(),
+        runId: "run_provider_rejection_repro",
+        messageId: crypto.randomUUID(),
+        messages: [{ id: "message-1", role: "user" as const, content: "Hello" }],
+        tools: [],
+        context: [],
+      };
+      registerRuntimeManualPause(
+        input,
+        createRunBoundAgentManualPause({
+          apiUrl: "https://api.example.com",
+          runId: input.runId,
+          token: "synthetic-pause-token",
+          signal: undefined,
+          fetch: () =>
+            Promise.resolve(
+              Response.json({ stop: false, pauseRequested: false, checkpoint: null }),
+            ),
+        }),
+      );
+      const response = await createRuntimeAgentStreamResponse(
+        input,
+        createAgent({
+          id: "provider-rejection-repro",
+          model: "provider-rejection-repro/test",
+          system: "Reply to the user.",
+          skills: false,
+          maxSteps: 1,
+        }),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          providerReplayCheckpointEmissionEnabled: true,
+          persistProviderReplayCheckpoint: () => Promise.resolve(),
+        },
+      );
+      const frames = parseSseFrames(await response.text());
+      const terminal = frames.filter((frame) =>
+        frame.event === "RunError" || frame.event === "RunFinished"
+      );
+      assertEquals(terminal.length, 1);
+      assertEquals(terminal[0]?.event, "RunError");
+      assertEquals(
+        (terminal[0]?.data as Record<string, unknown>)?.code,
+        "agent-provider-auth-error",
+      );
+    } finally {
+      unregister();
+    }
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {

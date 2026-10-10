@@ -677,7 +677,7 @@ Use form_input once, then produce the plan.`,
   );
   assertStringIncludes(
     secondResult.instructions,
-    'To read a listed reference file, use load_skill with {"reference":{"skillId":"write","file":"<listed-relative-path>"}}.',
+    'To read a listed reference file, use this same exposed skill-loader tool with {"reference":{"skillId":"write","file":"<listed-relative-path>"}}.',
   );
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
   assertEquals(secondResult.maxSteps, 8);
