@@ -45,6 +45,7 @@ function record(overrides: Record<string, unknown> = {}) {
 
 interface ApiState {
   project?: Response;
+  projectError?: unknown;
   environments?: Response;
   variables?: Response;
 }
@@ -59,6 +60,7 @@ function apiFetch(state: ApiState = {}) {
     const url = urlOf(input);
     calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
     if (url === `${API}/projects/${PROJECT_ID}`) {
+      if (state.projectError !== undefined) return Promise.reject(state.projectError);
       return Promise.resolve(
         state.project ?? Response.json({ id: PROJECT_ID, name: "A", slug: "project-a" }),
       );
@@ -74,7 +76,7 @@ function apiFetch(state: ApiState = {}) {
         }),
       );
     }
-    if (url.startsWith(`${API}/projects/project-a/environment-variables?`)) {
+    if (url.startsWith(`${API}/projects/${PROJECT_ID}/environment-variables?`)) {
       return Promise.resolve(
         state.variables ?? Response.json({
           data: [
@@ -214,5 +216,45 @@ describe("hosted HTTP resolver", () => {
     await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
     assertEquals(lookups, [{ projectId: PROJECT_ID, releaseId: RELEASE_ID }]);
     assertEquals(api.calls.some((call) => call.url.includes("environment-variables")), false);
+  });
+
+  it("fails closed on an API timeout, a server error or a malformed response", async () => {
+    const cases: Array<{ name: string; state: ApiState; readsVariables: boolean }> = [
+      {
+        name: "project timeout",
+        state: { projectError: new DOMException("timed out", "TimeoutError") },
+        readsVariables: false,
+      },
+      {
+        name: "environment server error",
+        state: { environments: new Response("{}", { status: 503 }) },
+        readsVariables: false,
+      },
+      {
+        name: "malformed environment list",
+        state: { environments: Response.json({ data: "not-a-list" }) },
+        readsVariables: false,
+      },
+      {
+        name: "variables server error",
+        state: { variables: new Response("{}", { status: 500 }) },
+        readsVariables: true,
+      },
+      {
+        name: "malformed variables",
+        state: { variables: Response.json({ data: [{ key: "APP", value: 1 }] }) },
+        readsVariables: true,
+      },
+    ];
+    for (const { name, state, readsVariables } of cases) {
+      const api = apiFetch(state);
+      const resolve = createHostedHttpResolver(options());
+      await withMockFetch(api.fetch, () => assertRejects(() => resolve(authority, signal())));
+      assertEquals(
+        api.calls.some((call) => call.url.includes("environment-variables")),
+        readsVariables,
+        name,
+      );
+    }
   });
 });

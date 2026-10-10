@@ -127,9 +127,10 @@ function createVeryfrontApi(apiBaseUrl: string): HostedHttpResolverApi {
       }, signal);
     },
     readEnvironment(authority, signal) {
+      // The exact project ID addresses every read, so all of them target one project.
       return fetchProjectEnvVars(
         apiBaseUrl,
-        authority.projectSlug,
+        authority.projectId,
         authority.environmentId,
         authority.sourceToken,
         signal,
@@ -170,9 +171,23 @@ function refuse(detail: string): Error {
   return PERMISSION_DENIED.create({ detail });
 }
 
+/** Key-sorted JSON, so equal records compare equal regardless of key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 /**
  * Serve publication records produced by the tenant-source lookup from a host-owned snapshot.
- * Records are indexed by exact project and release; conflicting images for one release are refused.
+ * Records are indexed by exact project and release; differing records for one release are
+ * refused. The resolver binds `image` to the authorized project release, and the executor
+ * session refuses an allocation whose running image differs from that digest.
  */
 export function createHostedHttpSourceRecordLookup(
   records: readonly unknown[],
@@ -180,7 +195,7 @@ export function createHostedHttpSourceRecordLookup(
   if (!Array.isArray(records) || records.length > MAX_SOURCE_RECORDS) {
     throw new TypeError("Hosted HTTP source records must be a bounded list");
   }
-  const index = new Map<string, Readonly<Record<string, unknown>>>();
+  const index = new Map<string, { record: Readonly<Record<string, unknown>>; text: string }>();
   for (const value of records) {
     const snapshot = snapshotBoundedJsonValue(value);
     const parsed = snapshot.success
@@ -188,15 +203,16 @@ export function createHostedHttpSourceRecordLookup(
       : { success: false as const };
     if (!parsed.success) throw new TypeError("Hosted HTTP source record is invalid");
     const key = `${parsed.data.project_id}/${parsed.data.release_id}`;
+    const text = canonicalJson(parsed.data);
     const existing = index.get(key);
-    if (existing && existing.image !== parsed.data.image) {
+    if (existing && existing.text !== text) {
       throw new TypeError("Hosted HTTP source records conflict for one release");
     }
-    index.set(key, freeze({ ...parsed.data }));
+    index.set(key, { record: freeze({ ...parsed.data }), text });
   }
   return ({ projectId, releaseId }, signal) => {
     signal.throwIfAborted();
-    const found = index.get(`${projectId}/${releaseId}`);
+    const found = index.get(`${projectId}/${releaseId}`)?.record;
     if (!found) {
       return Promise.reject(
         PROJECT_EXECUTION_UNAVAILABLE.create({ detail: "No published source for this release" }),

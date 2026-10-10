@@ -97,17 +97,17 @@ function sources(): Promise<Map<string, string>> {
   return cachedSources;
 }
 
-/** Rows of the README register: file path, consumer, removal prerequisite. */
-async function readRegister(): Promise<Map<string, { consumer: string; removal: string }>> {
+/** Rows of the README register: file path, consumer, grant basis. */
+async function readRegister(): Promise<Map<string, { consumer: string; basis: string }>> {
   const text = await Deno.readTextFile(`${REPO_ROOT}${README}`);
   const start = text.indexOf(REGISTER_HEADING);
   if (start < 0) throw new Error(`${README} is missing "${REGISTER_HEADING}"`);
   const section = text.slice(start + REGISTER_HEADING.length).split(/\n#{1,3} /)[0]!;
-  const rows = new Map<string, { consumer: string; removal: string }>();
+  const rows = new Map<string, { consumer: string; basis: string }>();
   for (const line of section.split("\n")) {
     const match = /^\|\s*`([^`]+)`\s*\|([^|]*)\|([^|]*)\|\s*$/.exec(line.trim());
     if (match) {
-      rows.set(match[1]!, { consumer: match[2]!.trim(), removal: match[3]!.trim() });
+      rows.set(match[1]!, { consumer: match[2]!.trim(), basis: match[3]!.trim() });
     }
   }
   return rows;
@@ -147,7 +147,7 @@ describe("execution surface inventory", () => {
     );
   });
 
-  it("registers every literal host execution grant with its consumer and removal prerequisite", async () => {
+  it("registers every literal host execution grant with its consumer and grant basis", async () => {
     const all = await sources();
     const register = await readRegister();
     const grants = [...all.entries()]
@@ -167,10 +167,10 @@ describe("execution surface inventory", () => {
     );
     assertEquals(
       [...register.entries()]
-        .filter(([, row]) => !row.consumer || !row.removal)
+        .filter(([, row]) => !row.consumer || !row.basis)
         .map(([path]) => path),
       [],
-      "Each registered grant needs a consumer and a removal prerequisite.",
+      "Each registered grant needs a consumer and a grant basis.",
     );
   });
 });

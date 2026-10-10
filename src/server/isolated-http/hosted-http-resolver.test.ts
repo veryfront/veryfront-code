@@ -278,7 +278,17 @@ describe("hosted HTTP resolver", () => {
     );
     assertThrows(() => createHostedHttpSourceRecordLookup([{ project_id: PROJECT_ID }]), TypeError);
     assertThrows(() => createHostedHttpSourceRecordLookup({} as never), TypeError);
-    // An identical duplicate is accepted.
+    assertThrows(
+      () =>
+        createHostedHttpSourceRecordLookup([
+          record(),
+          record({ api_origin: "https://other-api.veryfront.test" }),
+        ]),
+      TypeError,
+      "conflict",
+    );
+    // An identical duplicate, in any key order, is accepted.
+    createHostedHttpSourceRecordLookup([record(), { ...record(), schema_version: 1 }]);
     createHostedHttpSourceRecordLookup([record(), record()]);
   });
 
