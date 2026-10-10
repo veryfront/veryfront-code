@@ -229,6 +229,13 @@ function containsBodyCanary(value: unknown, canary: string, depth = 0): boolean 
     const text = BodyApply(BodyDecode, BodyDecoder, [value]) as string;
     return BodyApply(BodyIncludes, text, [canary]) as boolean;
   }
+  if (value instanceof ArrayBuffer) return containsBodyCanary(new Uint8Array(value), canary);
+  if (value instanceof DataView) {
+    return containsBodyCanary(
+      new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
+      canary,
+    );
+  }
   if (depth > 6 || typeof value !== "object" || value === null) return false;
   const values = BodyObjectValues(value);
   for (let index = 0; index < values.length; index++) {
@@ -484,16 +491,18 @@ const bodyMutations: readonly BodyMutation[] = [
       return () => Object.defineProperty(Uint8Array.prototype, "constructor", descriptor);
     },
   },
-  {
-    name: "array index setter during a multi-block body read",
+  ...([["array", Array.prototype], ["object", Object.prototype]] as const).map((
+    [label, owner],
+  ): BodyMutation => ({
+    name: `${label} index setter during a multi-block body read`,
     nodeOnly: false,
     phase: "authentication",
-    rejects: "never",
+    rejects: "always",
     padding: 70 * 1024,
     install: (observe) => {
-      Object.defineProperty(Array.prototype, "0", {
+      Object.defineProperty(owner, "0", {
         configurable: true,
-        set(this: unknown[], value: unknown) {
+        set(this: object, value: unknown) {
           observe(value);
           Object.defineProperty(this, "0", {
             configurable: true,
@@ -503,9 +512,9 @@ const bodyMutations: readonly BodyMutation[] = [
           });
         },
       });
-      return () => Reflect.deleteProperty(Array.prototype, "0");
+      return () => Reflect.deleteProperty(owner, "0");
     },
-  },
+  })),
   {
     name: "Buffer concat after verification",
     nodeOnly: true,

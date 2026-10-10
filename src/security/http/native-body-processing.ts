@@ -4,6 +4,22 @@ const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HasOwn = Object.hasOwn;
 const NativeTypeError = TypeError;
 const ObjectPrototype = Object.prototype;
+const ArrayPrototype = Array.prototype;
+const GetOwnPropertyNames = Object.getOwnPropertyNames;
+
+/** True when `owner` has an own property whose name is made only of decimal digits. */
+function hasOwnIndexProperty(owner: typeof ArrayPrototype | typeof ObjectPrototype): boolean {
+  const names = GetOwnPropertyNames(owner);
+  for (let index = 0; index < names.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
+    const name = names[index]!;
+    let digits = name.length > 0;
+    for (let offset = 0; digits && offset < name.length; offset++) {
+      digits = name[offset]! >= "0" && name[offset]! <= "9";
+    }
+    if (digits) return true;
+  }
+  return false;
+}
 
 /** Shared prototypes and namespaces whose members native body processing reads. */
 type BodyDependencyOwner =
@@ -76,12 +92,16 @@ const NodeBodyDependencies: readonly BodyDependency[] = isNode
  * Validate native body processing before a runtime invocation body is cloned,
  * read or rebuilt.
  *
- * Every runtime requires that `Object.prototype` has no own `then`. On Node the
- * native body members must also match the values captured at load.
+ * Every runtime requires that `Object.prototype` has no own `then` and that
+ * `Array.prototype` and `Object.prototype` have no own index properties. On Node
+ * the native body members must also match the values captured at load.
  */
 export function assertNativeBodyProcessing(): void {
   if (GetOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {
     throw new NativeTypeError("Cannot process a request body with an inherited then");
+  }
+  if (hasOwnIndexProperty(ArrayPrototype) || hasOwnIndexProperty(ObjectPrototype)) {
+    throw new NativeTypeError("Cannot process a request body with inherited index properties");
   }
   for (let index = 0; index < NodeBodyDependencies.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
     const dependency = NodeBodyDependencies[index]!;

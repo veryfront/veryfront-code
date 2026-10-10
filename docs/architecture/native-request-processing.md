@@ -8,11 +8,11 @@ Framework-invoked option conversion is followed by another check before native c
 
 ## Runtime invocation bodies
 
-Hosted invocation preparation validates native body processing before it clones the invocation request, before and after the hosted parser reads the body, and before and after it reads the retained copy to build the application request. On Node, the check compares the stream, reader, controller, typed array, text codec, JSON parse, array push and promise members with the values captured at framework initialization. On every runtime, it requires that `Object.prototype` has no own `then`. A failed check throws a TypeError before the step runs, and the route does not start detached execution.
+Hosted invocation preparation validates native body processing before it clones the invocation request, before and after the hosted parser reads the body, and before and after it reads the retained copy to build the application request. On Node, the check compares the stream, reader, controller, typed array, text codec, JSON parse, array push and promise members with the values captured at framework initialization. On every runtime, it requires that `Object.prototype` has no own `then` and that `Array.prototype` and `Object.prototype` have no own index properties. A failed check throws a TypeError before the step runs, and the route does not start detached execution.
 
 The bounded body reader copies, measures and decodes body bytes with captured methods and returns them in null-prototype records. The retained invocation copy is read with the same reader and is released on every exit.
 
-The framework captures the compared values when its modules load, so it must load before project code. The checks run at fixed points and detect changes present at those points. They do not prevent a change that is made and reverted between two checks.
+The framework captures the compared values when its modules load, so it must load before project code.
 
 ## Ownership and limits
 
