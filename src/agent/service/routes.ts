@@ -38,6 +38,8 @@ import {
 import { assertNativeBodyProcessing } from "#veryfront/security/http/native-body-processing.ts";
 import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
 import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
+import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { isResponseLike } from "./response-like.ts";
 import { isSafeHostedJwtVerificationEnvironment } from "./jwt-verification-environment.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
@@ -59,16 +61,16 @@ const NativeObjectPrototype = Object.prototype;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const RequestClone = Request.prototype.clone;
-const RequestJson = Request.prototype.json;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
 const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
 const HeadersDelete = NativeHeaders.prototype.delete;
-const ObjectEntries = Object.entries;
-const ObjectFromEntries = Object.fromEntries;
-const ArrayFilter = Array.prototype.filter;
+const ObjectCreate = Object.create;
+const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
+const JsonParse = JSON.parse;
+const JsonStringify = JSON.stringify;
 
 function createVersionResponse(deploymentArtifact: string | null): Response {
   const init = buildResponseInit(NativeObjectPrototype, 200, "");
@@ -92,13 +94,13 @@ function isCredentialRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function withoutInferenceCredential(credentials: Record<string, unknown>): Record<string, unknown> {
-  const entries = IntrinsicReflectApply(ObjectEntries, Object, [credentials]);
-  const retained = IntrinsicReflectApply(
-    ArrayFilter,
-    entries,
-    [([key]: [string, unknown]) => key !== "inferenceAuthToken"],
-  );
-  return IntrinsicReflectApply(ObjectFromEntries, Object, [retained]) as Record<string, unknown>;
+  const keys = IntrinsicReflectApply(ObjectKeys, Object, [credentials]) as string[];
+  const retained = ObjectCreate(null) as Record<string, unknown>;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (key !== "inferenceAuthToken") retained[key] = credentials[key];
+  }
+  return retained;
 }
 
 /** Public API contract for hosted agent service routes logger. */
@@ -260,8 +262,9 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   // retained clone must therefore be materialized and sanitized separately before
   // the detached callback receives an application-facing request.
   assertNativeBodyProcessing();
-  const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
+  const text = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   assertNativeBodyProcessing();
+  const payload = IntrinsicReflectApply(JsonParse, JSON, [text]) as Record<string, unknown>;
   const credentials = payload.credentials;
   const sanitizedPayload = isCredentialRecord(credentials)
     ? {
@@ -274,7 +277,7 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
     readRequestValue<Headers>(request, RequestHeadersGet),
   );
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
-  const body = JSON.stringify(sanitizedPayload);
+  const body = IntrinsicReflectApply(JsonStringify, JSON, [sanitizedPayload]) as string;
   assertNativeHeaderProcessing();
   assertNativeRequestDefaults();
   return createApplicationRequest(
@@ -513,33 +516,41 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         input.request,
         [],
       ) as Request;
-      const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
-        authenticate: options.authenticateRequest,
-        verifyProjectAccess: ({ projectId, authToken }) =>
-          options.verifyProjectAccess(projectId, authToken),
-        verifyRunEventAppendToken: options.verifyRunEventAppendToken,
-        runtimeSource,
-      });
-      if (isResponseLike(req)) {
-        return req;
+      try {
+        const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+          input.request,
+          {
+            authenticate: options.authenticateRequest,
+            verifyProjectAccess: ({ projectId, authToken }) =>
+              options.verifyProjectAccess(projectId, authToken),
+            verifyRunEventAppendToken: options.verifyRunEventAppendToken,
+            runtimeSource,
+          },
+        );
+        if (isResponseLike(req)) {
+          return req;
+        }
+
+        if (input.runId && req.durableRootRun?.runId !== input.runId) {
+          return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
+        }
+
+        assertNativeHeaderProcessing();
+        assertNativeRequestDefaults();
+        assertNativeBodyProcessing();
+        const applicationRequest = await createRuntimeInvocationApplicationRequest(
+          applicationRequestSource,
+        );
+
+        return executeParsedDurableChatRun({
+          req,
+          request: applicationRequest,
+          requestOrCtx: input.requestOrCtx,
+        });
+      } finally {
+        // Release the retained branch on every exit; a read branch is already closed.
+        cancelUnusedRequestBody(applicationRequestSource);
       }
-
-      if (input.runId && req.durableRootRun?.runId !== input.runId) {
-        return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
-      }
-
-      assertNativeHeaderProcessing();
-      assertNativeRequestDefaults();
-      assertNativeBodyProcessing();
-      const applicationRequest = await createRuntimeInvocationApplicationRequest(
-        applicationRequestSource,
-      );
-
-      return executeParsedDurableChatRun({
-        req,
-        request: applicationRequest,
-        requestOrCtx: input.requestOrCtx,
-      });
     });
   }
 

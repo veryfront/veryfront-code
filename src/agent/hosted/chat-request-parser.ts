@@ -63,6 +63,7 @@ import {
 } from "../service/auth.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectCreate = Object.create;
 const JsonParse = JSON.parse;
 const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
@@ -227,10 +228,24 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
       | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
+/**
+ * A parsed body in a null-prototype record. Resolving a promise with the record
+ * reads `then` from the record only, not from the parsed value's prototypes.
+ */
+interface ParsedRequestJson {
+  readonly value: unknown;
+}
+
+function parsedRequestJson(value: unknown): ParsedRequestJson {
+  const record = ObjectCreate(null) as { value: unknown };
+  record.value = value;
+  return record;
+}
+
 async function parseRequestJson(
   request: Request,
   maxBodySizeBytes: number,
-): Promise<unknown | Response> {
+): Promise<ParsedRequestJson | Response> {
   let body: string;
   try {
     body = await readBodyWithLimit(request, maxBodySizeBytes);
@@ -244,18 +259,21 @@ async function parseRequestJson(
         { status: 413 },
       );
     }
-    return null;
+    return parsedRequestJson(null);
   }
   try {
-    return IntrinsicReflectApply(JsonParse, JSON, [body, (_key: string, value: unknown) => {
+    return parsedRequestJson(IntrinsicReflectApply(JsonParse, JSON, [body, (
+      _key: string,
+      value: unknown,
+    ) => {
       // JSON overflow must not authenticate as null when the replay digest is serialized.
       if (typeof value === "number" && !NumberIsFinite(value)) {
         throw new TypeError("JSON numbers must be finite");
       }
       return value;
-    }]);
+    }]));
   } catch {
-    return null;
+    return parsedRequestJson(null);
   }
 }
 
@@ -817,7 +835,7 @@ export async function parseHostedChatRequestFromRequest(
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
-  const parsed = hostedChatRequestSchema.safeParse(requestBody);
+  const parsed = hostedChatRequestSchema.safeParse(requestBody.value);
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
@@ -861,7 +879,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   assertNativeBodyProcessing();
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody);
+  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody.value);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",

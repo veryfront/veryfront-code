@@ -60,6 +60,11 @@ const NodeBodyDependencies: readonly BodyDependency[] = isNode
     ...captureMembers(TextDecoder.prototype, ["decode"]),
     ...captureMembers(TextEncoder.prototype, ["encode"]),
     ...captureMembers(JSON, ["parse"]),
+    ...captureMembers(Uint8Array.prototype, ["constructor"]),
+    ...captureMembers(
+      (Reflect.get(globalThis, "Buffer") as { prototype: Uint8Array }).prototype,
+      ["constructor"],
+    ),
     ...captureMembers(Object.getPrototypeOf(Uint8Array.prototype) as Uint8Array, [
       "byteLength",
       "length",
@@ -78,7 +83,7 @@ export function assertNativeBodyProcessing(): void {
   if (GetOwnPropertyDescriptor(ObjectPrototype, "then") !== undefined) {
     throw new NativeTypeError("Cannot process a request body with an inherited then");
   }
-  for (let index = 0; index < NodeBodyDependencies.length; index++) {
+  for (let index = 0; index < NodeBodyDependencies.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
     const dependency = NodeBodyDependencies[index]!;
     const descriptor = GetOwnPropertyDescriptor(dependency[0], dependency[1]);
     if (

@@ -9,7 +9,47 @@ import { it } from "#veryfront/testing/bdd.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
-function createRuntimeInvocationRequest(canary: string): Request {
+function createRuntimeInvocationBody(canary: string, padding = 0): string {
+  const credentials = JSON.stringify({
+    authToken: "control-plane-auth-token",
+    inferenceAuthToken: canary,
+  });
+  // JSON whitespace after the credentials places them in a full leading body block.
+  return `{"credentials":${credentials},${" ".repeat(padding)}${
+    JSON.stringify({
+      run: {
+        agentServiceId: "test-agent-service",
+        agentId: "builder",
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        runId: "run-1",
+        messageId: "00000000-0000-4000-8000-000000000002",
+        inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
+        requestedByUserId: "00000000-0000-4000-8000-000000000004",
+        project: {
+          projectId: "00000000-0000-4000-8000-000000000005",
+          projectSlug: "demo",
+        },
+      },
+      messages: [],
+      tools: [],
+      context: [],
+      agentSource: runtimeSource,
+    }).slice(1)
+  }`;
+}
+
+function createRuntimeInvocationRequest(canary: string, padding?: number): Request {
+  if (padding !== undefined) {
+    return new Request("https://agent.example.test/api/control-plane/runs/run-1/stream", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer authenticated-user-token",
+        "content-type": "application/json",
+        "X-Veryfront-Run-Event-Token": "verified-event-token",
+      },
+      body: createRuntimeInvocationBody(canary, padding),
+    });
+  }
   return new Request("https://agent.example.test/api/control-plane/runs/run-1/stream", {
     method: "POST",
     headers: {
@@ -215,6 +255,8 @@ type BodyMutation = {
   readonly phase: "before" | "authentication" | "verification";
   /** Whether the route must reject: always, only where Node's native body checks apply, or never. */
   readonly rejects: "always" | "node" | "never";
+  /** Body whitespace that fills at least one complete body block. */
+  readonly padding?: number;
   install(observe: (value: unknown) => void, pending: Promise<unknown>[]): () => void;
 };
 
@@ -400,7 +442,123 @@ const bodyMutations: readonly BodyMutation[] = [
           },
       ),
   },
+  {
+    name: "typed array then during the body read",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "never",
+    install: (observe) => {
+      // Restores itself on first use, so only a read that never resolves a
+      // typed array through a promise leaves the observation count at zero.
+      let restored = false;
+      const restore = () => {
+        if (restored) return;
+        restored = true;
+        Reflect.deleteProperty(Uint8Array.prototype, "then");
+      };
+      Object.defineProperty(Uint8Array.prototype, "then", {
+        configurable: true,
+        get(this: Uint8Array) {
+          observe(this);
+          restore();
+          return undefined;
+        },
+      });
+      return restore;
+    },
+  },
+  {
+    name: "typed array constructor during the body read",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "node",
+    install: (observe) => {
+      const descriptor = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "constructor")!;
+      Object.defineProperty(Uint8Array.prototype, "constructor", {
+        configurable: true,
+        get(this: Uint8Array) {
+          observe(this);
+          return descriptor.value;
+        },
+      });
+      return () => Object.defineProperty(Uint8Array.prototype, "constructor", descriptor);
+    },
+  },
+  {
+    name: "array index setter during a multi-block body read",
+    nodeOnly: false,
+    phase: "authentication",
+    rejects: "never",
+    padding: 70 * 1024,
+    install: (observe) => {
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(this: unknown[], value: unknown) {
+          observe(value);
+          Object.defineProperty(this, "0", {
+            configurable: true,
+            enumerable: true,
+            value,
+            writable: true,
+          });
+        },
+      });
+      return () => Reflect.deleteProperty(Array.prototype, "0");
+    },
+  },
+  {
+    name: "Buffer concat after verification",
+    nodeOnly: true,
+    phase: "verification",
+    rejects: "never",
+    install: (observe) => {
+      const NodeBuffer = (globalThis as unknown as { Buffer: { concat: unknown } }).Buffer;
+      return replaceMethod(
+        NodeBuffer,
+        "concat",
+        (original) =>
+          function (this: unknown, ...args: unknown[]) {
+            observe(args[0]);
+            return BodyApply(original, this, args);
+          },
+      );
+    },
+  },
+  {
+    name: "array iterator during credential removal",
+    nodeOnly: false,
+    phase: "verification",
+    rejects: "never",
+    install: (observe) =>
+      replaceMethod(Array.prototype, Symbol.iterator, (original) =>
+        function (this: unknown[]) {
+          observe(this);
+          return BodyApply(original, this, []);
+        }),
+  },
+  {
+    name: "array constructor during credential removal",
+    nodeOnly: false,
+    phase: "verification",
+    rejects: "never",
+    install: (observe) => {
+      const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor")!;
+      Object.defineProperty(Array.prototype, "constructor", {
+        configurable: true,
+        get(this: unknown[]) {
+          observe(this);
+          return descriptor.value;
+        },
+      });
+      return () => Object.defineProperty(Array.prototype, "constructor", descriptor);
+    },
+  },
 ];
+
+function isNativeProcessingError(error: unknown): boolean {
+  return error instanceof TypeError &&
+    /^Cannot (process|construct) (a request body|headers|a request) with /.test(error.message);
+}
 
 for (const mutation of bodyMutations) {
   it(`keeps the invocation body credential out of a replaced ${mutation.name}`, async () => {
@@ -440,7 +598,7 @@ for (const mutation of bodyMutations) {
       },
     });
 
-    const request = createRuntimeInvocationRequest(canary);
+    const request = createRuntimeInvocationRequest(canary, mutation.padding);
     if (mutation.phase === "before") installOnce();
     try {
       response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
@@ -458,9 +616,9 @@ for (const mutation of bodyMutations) {
     assertEquals(observations, 0, "the replaced operation never observes the body credential");
     if (mutation.rejects === "always" || (mutation.rejects === "node" && isNode)) {
       assertEquals(
-        failure instanceof TypeError,
+        isNativeProcessingError(failure),
         true,
-        "the compromised operation fails explicitly",
+        "the native processing check fails explicitly",
       );
       assertEquals(response, undefined, "the route never substitutes a success response");
       assertEquals(detachedDispatches, 0, "the route never starts detached execution");
@@ -537,4 +695,56 @@ it("propagates host authentication error identity on the invocation route", asyn
   }
   assertStrictEquals(failure, hostFailure);
   assertEquals(detachedDispatches, 0);
+});
+
+it("releases the retained invocation body when authentication rejects", async () => {
+  let sourceCancelled = false;
+  const encoded = new TextEncoder().encode(createRuntimeInvocationBody("synthetic-cancel-value"));
+  // The source stays open, so it is cancelled only after both branches are.
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoded);
+    },
+    cancel() {
+      sourceCancelled = true;
+    },
+  });
+  const request = new Request(
+    "https://agent.example.test/api/control-plane/runs/run-1/stream",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: source,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" },
+  );
+  let detachedDispatches = 0;
+  const routeSet = createHostedAgentServiceRouteSet({
+    runtimeSource,
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async (authenticationRequest) => {
+      // A tee branch's cancel settles only after both branches are cancelled.
+      void authenticationRequest.body?.cancel();
+      return Response.json({ errorCode: "UNAUTHORIZED" }, { status: 401 });
+    },
+    verifyProjectAccess: async () => ({ success: true }),
+    verifyRunEventAppendToken: async () => true,
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {
+      detachedDispatches++;
+    },
+  });
+
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request,
+    runId: "run-1",
+  });
+  for (let turn = 0; turn < 10 && !sourceCancelled; turn++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  assertEquals(response.status, 401);
+  assertEquals(detachedDispatches, 0);
+  assertEquals(sourceCancelled, true, "both request body branches are released");
 });

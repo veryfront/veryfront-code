@@ -120,7 +120,7 @@ assert.equal(dispatches, 0);
 let thenActive = false;
 try {
   await createRoutes(() => {
-    Object.defineProperty(Object.prototype, "then", {
+    Object.defineProperty(Object.prototype, "then", { // NOSONAR S7739: synthetic promise-resolution probe.
       configurable: true,
       get() {
         if (!thenActive) {
