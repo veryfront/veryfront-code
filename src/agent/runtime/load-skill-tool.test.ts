@@ -2151,6 +2151,56 @@ it("createRuntimeLoadSkillTool repeats a referenced body without reading it agai
   });
 });
 
+it("createRuntimeLoadSkillTool returns a compact marker for a repeated no-reference skill beside other skills", async () => {
+  const scenarios: Array<{ availableSkillIds: string[]; preload: string[] }> = [
+    { availableSkillIds: ["notes", "plan"], preload: ["notes", "plan"] },
+    { availableSkillIds: ["notes", "other"], preload: ["notes"] },
+    { availableSkillIds: ["notes", "other", "plan"], preload: ["notes", "plan"] },
+  ];
+  for (const scenario of scenarios) {
+    const bodyReads = new Map<string, number>();
+    const tool = createRuntimeLoadSkillTool({
+      context: createProjectContext({ availableSkillIds: scenario.availableSkillIds }),
+      skillsDir: "/skills",
+      projectSkillLoader: {
+        listProjectSkillReferences: (_context, skillId) =>
+          Promise.resolve(skillId === "plan" ? ["references/guide.md"] : []),
+        loadProjectSkill: (_context, skillId) => {
+          bodyReads.set(skillId, (bodyReads.get(skillId) ?? 0) + 1);
+          return Promise.resolve({
+            skillId,
+            instructions: `private ${skillId} body`,
+            references: skillId === "plan" ? ["references/guide.md"] : [],
+          });
+        },
+        loadProjectSkillReference: () => Promise.resolve("reference content"),
+      },
+      builtinStore: createBuiltinStore({}),
+    });
+    for (const skillId of scenario.preload) {
+      await tool.execute({ load: { skillId } });
+    }
+
+    const repeated = expectLoadedSkillResponse(
+      await tool.execute({ load: { skillId: "notes" } }),
+    );
+    assertStringIncludes(repeated.instructions, 'Skill "notes" is already loaded');
+    assertEquals(repeated.instructions.includes("private notes body"), false);
+    assertEquals(bodyReads.get("notes"), 1);
+
+    let rejectedFile = false;
+    try {
+      const result = await tool.execute({
+        load: { skillId: "notes", file: "references/guide.md" },
+      });
+      rejectedFile = "error" in result;
+    } catch {
+      rejectedFile = true;
+    }
+    assertEquals(rejectedFile, true);
+  }
+});
+
 it("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],

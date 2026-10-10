@@ -1479,39 +1479,23 @@ function buildRuntimeLoadSkillInputSchema(
     )();
   }
 
-  if (referenceableLoadedIds.length > 0 && unloadedIds.length === 0) {
-    const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = getRuntimeSkillIdInputValues(
-      [firstLoaded, ...restLoaded],
-      knownIds,
-    );
-    return defineSchema((v) =>
-      v.object({
-        skillId: v.enum(loadedEnumValues).describe(
-          `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
-            loadedEnumValues.join(", ")
-          }`,
-        ),
-        file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-          "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
-        ),
-      })
-    )();
-  }
-
-  if (referenceableLoadedIds.length > 0) {
-    const [firstUnloaded, ...restUnloaded] = unloadedIds as [string, ...string[]];
-    const unloadedEnumValues = getRuntimeSkillIdInputValues(
-      [firstUnloaded, ...restUnloaded],
-      knownIds,
-    );
-    const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = getRuntimeSkillIdInputValues(
-      [firstLoaded, ...restLoaded],
-      knownIds,
-    );
-    return defineSchema((v) =>
-      v.union([
+  const referenceableLoadedIdSet = new Set(referenceableLoadedIds);
+  const unreferenceableLoadedIds = loadedIds.filter((skillId) =>
+    !referenceableLoadedIdSet.has(skillId)
+  );
+  const toEnumValues = (skillIds: readonly string[]): [string, ...string[]] | null => {
+    if (skillIds.length === 0) return null;
+    const [firstId, ...restIds] = skillIds as [string, ...string[]];
+    return getRuntimeSkillIdInputValues([firstId, ...restIds], knownIds);
+  };
+  const unloadedEnumValues = toEnumValues(unloadedIds);
+  const loadedEnumValues = toEnumValues(referenceableLoadedIds);
+  // Loaded skills without references still accept a repeated body load (compact
+  // marker) but never a file, whichever other skills share the catalog.
+  const unreferenceableEnumValues = toEnumValues(unreferenceableLoadedIds);
+  return defineSchema((v) => {
+    const alternatives = [
+      ...(unloadedEnumValues === null ? [] : [
         v.object({
           skillId: v.enum(unloadedEnumValues).describe(
             `Unloaded skill ID to load. Available unloaded skill IDs: ${
@@ -1522,6 +1506,8 @@ function buildRuntimeLoadSkillInputSchema(
             "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
           ),
         }),
+      ]),
+      ...(loadedEnumValues === null ? [] : [
         v.object({
           skillId: v.enum(loadedEnumValues).describe(
             `Already-loaded skill ID. Repeated body loads return a compact marker. Add file only for listed references. Loaded skill IDs: ${
@@ -1532,22 +1518,25 @@ function buildRuntimeLoadSkillInputSchema(
             "Optional listed reference file. Omit file to receive an already-loaded skill marker.",
           ),
         }),
-      ])
-    )();
-  }
-
-  const [first, ...rest] = unloadedIds as [string, ...string[]];
-  const enumValues = getRuntimeSkillIdInputValues([first, ...rest], knownIds);
-  return defineSchema((v) =>
-    v.object({
-      skillId: v.enum(enumValues).describe(
-        `Unloaded skill ID to load. Available unloaded skill IDs: ${enumValues.join(", ")}`,
-      ),
-      file: getRuntimeLoadSkillReferenceFileInputSchema().optional().describe(
-        "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
-      ),
-    })
-  )();
+      ]),
+      ...(unreferenceableEnumValues === null ? [] : [
+        v.object({
+          skillId: v.enum(unreferenceableEnumValues).describe(
+            `Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: ${
+              unreferenceableEnumValues.join(", ")
+            }`,
+          ),
+        }).strict(),
+      ]),
+    ];
+    const [firstAlternative, secondAlternative, ...restAlternatives] = alternatives;
+    if (firstAlternative === undefined) {
+      throw new TypeError("Runtime load skill schema requires at least one skill alternative");
+    }
+    return secondAlternative === undefined
+      ? firstAlternative
+      : v.union([firstAlternative, secondAlternative, ...restAlternatives]);
+  })();
 }
 
 async function loadRuntimeSkillReferenceFile(
