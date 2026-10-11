@@ -45,7 +45,7 @@
     {
       "id": "zoom__list_meetings",
       "name": "List Meetings",
-      "description": "List scheduled or upcoming Zoom meetings for the authenticated user",
+      "description": "List meetings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "zoom__get_meeting",
       "name": "Get Meeting",
-      "description": "Get details of a Zoom meeting by ID",
+      "description": "Get meeting",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -121,7 +121,7 @@
     {
       "id": "zoom__create_meeting",
       "name": "Create Meeting",
-      "description": "Schedule a new Zoom meeting for the authenticated user",
+      "description": "Create meeting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -171,7 +171,7 @@
     {
       "id": "zoom__list_recordings",
       "name": "List Recordings",
-      "description": "List cloud recordings for the authenticated user",
+      "description": "List recordings",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -210,7 +210,7 @@
     {
       "id": "zoom__get_me",
       "name": "Get My Profile",
-      "description": "Get the authenticated Zoom user's profile",
+      "description": "Get my profile",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

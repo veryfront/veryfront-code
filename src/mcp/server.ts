@@ -2,7 +2,7 @@ import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool/types.ts";
-import { resolve } from "#veryfront/extensions/contracts.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type {
   JsonSchema,
   JsonSchemaValidationFunction,
@@ -64,9 +64,10 @@ function compileOutputContract(
   tool: Tool,
   contract: JsonSchema | null | undefined,
 ): JsonSchemaValidationFunction | null | undefined {
-  const validator = resolve<SchemaValidator>("SchemaValidator");
-  if (!validator.compileJsonSchema || contract === undefined) return undefined;
+  if (contract === undefined) return undefined;
   if (contract === null) return null;
+  const validator = tryResolve<SchemaValidator>("SchemaValidator");
+  if (!validator?.compileJsonSchema) return undefined;
   const content = JSON.stringify(contract);
   const cached = compiledOutputContracts.get(tool);
   if (cached?.validator === validator && cached.content === content) return cached.check;

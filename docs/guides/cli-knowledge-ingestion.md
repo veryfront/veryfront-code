@@ -6,7 +6,22 @@ order: 37
 
 `veryfront knowledge ingest` is the primary CLI workflow for getting documents
 into a project's knowledge base. It finds a source file, parses it, and writes
-generated markdown back into the project.
+generated Markdown back into the project. Generated and imported concept documents
+are indexed automatically with searchable chunks and embeddings tied to the
+published canonical file version. Imported bytes, metadata, and authored links
+remain intact. Reserved index/log documents and referenced companion artifacts
+are preserved without becoming searchable concepts.
+
+Indexing uses the existing Cloud embedding default, including
+`VERYFRONT_DEFAULT_EMBEDDING_MODEL` overrides. A missing provider credential,
+provider failure, or stale-version conflict fails that source instead of reporting
+it ready. Failed-source results retain the canonical publication receipt so you
+can inspect the persisted document and retry. A source is successful only after
+its complete index commits on the destination branch.
+
+Atomic indexing accepts at most 500 chunks and a 10 MiB request. Larger indexes
+fail with a useful error; split the source into smaller documents and retry.
+Content is never truncated to fit the limit.
 
 Ingest one uploaded file:
 

@@ -28,7 +28,7 @@
     {
       "id": "shortcut__search_stories",
       "name": "Search Stories",
-      "description": "Search Shortcut stories with the Shortcut search syntax",
+      "description": "Search stories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "shortcut__get_story",
       "name": "Get Story",
-      "description": "Get a Shortcut story by its public ID",
+      "description": "Get story",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -128,7 +128,7 @@
     {
       "id": "shortcut__create_story",
       "name": "Create Story",
-      "description": "Create a new story in Shortcut",
+      "description": "Create story",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -170,7 +170,7 @@
     {
       "id": "shortcut__update_story",
       "name": "Update Story",
-      "description": "Update an existing Shortcut story",
+      "description": "Update story",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -218,7 +218,7 @@
     {
       "id": "shortcut__list_epics",
       "name": "List Epics",
-      "description": "List epics in the Shortcut workspace",
+      "description": "List epics",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -270,7 +270,7 @@
     {
       "id": "shortcut__list_members",
       "name": "List Members",
-      "description": "List members of the Shortcut workspace (use member UUIDs as owner_ids)",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -280,7 +280,7 @@
     {
       "id": "shortcut__list_workflows",
       "name": "List Workflows",
-      "description": "List workflows and their states (use state IDs as workflow_state_id)",
+      "description": "List workflows",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
