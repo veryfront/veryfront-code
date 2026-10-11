@@ -444,6 +444,57 @@ describe("coverage source paths", () => {
     );
   });
 
+  it("rejects checkout escapes before classifying generated cache records", () => {
+    for (
+      const source of [
+        "/checkout/../.cache/veryfront/hidden.mjs",
+        "/checkout/.cache/veryfront/../../../.cache/veryfront/hidden.mjs",
+        "C:\\checkout\\..\\.cache\\veryfront\\hidden.mjs",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:1,4\nend_of_record`, [
+            "/checkout",
+            "C:/checkout",
+          ], () => false),
+        Error,
+        "LCOV source path escapes the project",
+      );
+    }
+  });
+
+  it("rejects escapes in legacy checkout paths without producer provenance", () => {
+    for (
+      const source of [
+        "/home/runner/work/code/code/../.cache/veryfront/hidden.mjs",
+        "C:/a/code/code/../.cache/veryfront/hidden.mjs",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(`SF:${source}\nDA:1,4\nend_of_record`, [
+            "/aggregator",
+          ], () => false),
+        Error,
+        "LCOV source path escapes the project",
+      );
+    }
+  });
+
+  it("classifies cache paths only after resolving in-checkout dot segments", () => {
+    const report =
+      "SF:/checkout/.cache/veryfront/../../src/main.mjs\nDA:1,4\nend_of_record";
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/checkout"],
+        (path) => path === "src/main.mjs",
+      ),
+      "SF:src/main.mjs\nDA:1,4\nend_of_record",
+    );
+  });
+
   it("uses the most-specific verified producer root regardless of root ordering", () => {
     for (
       const roots of [["/checkout", "/checkout/.cache/veryfront/producer"], [

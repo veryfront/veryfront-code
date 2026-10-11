@@ -235,8 +235,11 @@ function normalizeLcovSource(
       (!producerPrefix || candidate.length > producerPrefix.length)
     ) producerPrefix = candidate;
   }
-  const cacheCandidate = producerPrefix
-    ? `/${portable.slice(producerPrefix.length)}`
+  const producerRelative = producerPrefix
+    ? normalizeRelativeLcovPath(portable.slice(producerPrefix.length))
+    : undefined;
+  const cacheCandidate = producerRelative !== undefined
+    ? `/${producerRelative}`
     : portable;
   if (isGeneratedVeryfrontCacheSource(cacheCandidate)) {
     return { kind: "drop-generated-cache" };
@@ -252,10 +255,8 @@ function normalizeLcovSource(
     return { kind: "source", path: relative };
   }
 
-  if (producerPrefix) {
-    const relative = normalizeRelativeLcovPath(
-      portable.slice(producerPrefix.length),
-    );
+  if (producerRelative !== undefined) {
+    const relative = producerRelative;
     if (!sourceExists(relative)) {
       throw new Error(
         `LCOV source path does not exist in the project: ${relative}`,
@@ -296,6 +297,8 @@ function normalizeLcovSource(
 }
 
 function isGeneratedVeryfrontCacheSource(source: string): boolean {
+  // Dot segments must reach checkout validation rather than hide a record.
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(source)) return false;
   const cachePath = GENERATED_VERYFRONT_CACHE_SOURCE.exec(source)?.[1];
   return cachePath !== undefined &&
     (cachePath.startsWith("veryfront-mdx-esm/") || cachePath.endsWith(".mjs"));

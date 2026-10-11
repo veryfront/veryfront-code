@@ -21,7 +21,7 @@ as input. `run.output` is the final business result.
 
 | Run kind | `run.input`                                     | Execution settings                                 | `run.output` without an output schema | `run.output` with an output schema                                          |
 | -------- | ----------------------------------------------- | -------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| Agent    | The submitted prompt, or the submitted messages | The agent definition and request options           | The final text, as a string           | The parsed, validated value                                                 |
+| Agent    | The submitted prompt, or the submitted messages | The agent definition and request options           | The final text, as a string           | A JSON snapshot of the parsed value; may contain capture markers            |
 | Workflow | The submitted value                             | None on the run                                    | The workflow context without `input`  | The parsed value `output` selects                                           |
 | Task     | The submitted value, separate from `config`     | `config`, an object the task reads as `ctx.config` | The value `run()` returns             | The parsed value `run()` returns, see [Declared schemas](#declared-schemas) |
 | Eval     | The submitted value                             | `config`, an object                                | The eval report                       | Not applicable                                                              |
@@ -131,7 +131,8 @@ enforced as shown in every release.
 An agent's raw JSON Schema `outputSchema` that the registered validator fails
 to compile fails the run before the model is called. When the registered
 validator has no JSON Schema compiler, the raw schema is still sent to the
-provider, but the output is not validated locally and is stored as parsed.
+provider, but the output is not validated locally. The run stores a JSON
+snapshot of the parsed result, as described in [Agents](#agents).
 
 The task rows marked "Warns" are the warning phase for task schemas. A later
 release fails those mismatches too. A recorded mismatch has this shape. A run
@@ -147,11 +148,12 @@ keeps the first mismatch detected, with at most 20 errors:
 }
 ```
 
-When a checked output is valid, the run stores the parsed value: schema
-defaults and transforms apply, and a schema that strips unknown keys strips
-them from the stored output. This applies to a task's return value on a
-runtime with task schema validation, to a workflow's `output` selection, and to
-an agent's structured result. A workflow without `output` stores its default
+For a valid checked task or selected workflow output, the run stores the
+parsed value: schema defaults and transforms apply, and a schema that strips
+unknown keys strips them from the stored output. Task schema validation must
+be available in the runtime. An agent's structured result is stored as a JSON
+snapshot of the parsed value and can contain capture markers, as described in
+[Agents](#agents). A workflow without `output` stores its default
 output unchanged, even when `outputSchema` accepts it. `ctx.input` on a task run created with `input`, and the
 workflow's steps, receive the parsed input. `run.input` keeps the input as
 submitted.

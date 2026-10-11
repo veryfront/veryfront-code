@@ -1085,7 +1085,7 @@ function createMessageFinishMetadataEvent(
     value.totalUsage = usageMetadata;
   }
 
-  if (event.object !== undefined) {
+  if (objectHasOwn(event, "object")) {
     value.object = createMessageFinishObjectObservation(event.object);
     if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
       const { object: _object, ...baseValue } = value;

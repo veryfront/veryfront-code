@@ -1186,6 +1186,28 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("distinguishes an explicit undefined finish object from absent structured output", () => {
+    for (
+      const event of [{ type: "message-finish", object: undefined }, { type: "message-finish" }]
+    ) {
+      const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+      mapRuntimeStreamEventToAgUiEvents(state, event);
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "done" });
+      const finished = finalizeAgUiEvents(state, null).find((entry) =>
+        entry.event === "RunFinished"
+      );
+      if (Object.hasOwn(event, "object")) {
+        assertEquals(finished?.payload.result, {
+          captureStatus: "unsupported",
+          reasons: ["unsupported_undefined"],
+          value: "[unsupported undefined]",
+        });
+      } else {
+        assertEquals(Object.hasOwn(finished?.payload ?? {}, "result"), false);
+      }
+    }
+  });
+
   it("reports the message-finish object snapshot as the RunFinished result", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
