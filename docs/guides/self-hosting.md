@@ -324,3 +324,10 @@ not require Veryfront Cloud.
 
 For production server options, see the
 [Server reference](../api-reference/veryfront/server.md).
+
+
+## Isolated HTTP broker composition
+
+For a deployment that supplies isolated HTTP executors, compose `createInstalledHttpBroker` and `createRuntimeSourceAuthorizer` from `veryfront/server/http-broker`. The host-owned registry binds each project, named environment and immutable release to its independently admitted source-built image digest and project configuration snapshot. The authorizer checks that exact binding through the HTTPS API on every request before allocation. Source credentials remain on the broker. They are never copied into executor configuration.
+
+Pass the returned `hostedHttp` option to `startProductionServer` in proxy mode with host project execution disabled. Retire the production server and await the broker's shutdown and settlement when stopping the process. The deployment must supply the authenticated broker Pod identity, the existing scoped allocator client and authenticated executor transport. It must independently qualify image provenance and the selected runtime's isolation. Configuration or library tests alone do not establish deployed isolation.
