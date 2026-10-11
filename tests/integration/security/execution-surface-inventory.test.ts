@@ -24,7 +24,8 @@ import { parse } from "npm:@babel/parser@7.29.2";
  * - every runtime use of `allowHostProjectCodeExecution`, including negation and
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
  * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
- *   `as` / `satisfies` assertion types and class fields initialized to `true`.
+ *   `as` / `satisfies` assertion types, class fields and constructor parameter properties
+ *   initialized to `true`, and `true` wrapped in `as const`, `<const>` or parentheses.
  *
  * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
  * other modules) is out of scope: the runtime guards, not this test, enforce
@@ -316,8 +317,21 @@ function propertyName(key: unknown, computed: unknown): string | undefined {
   return undefined;
 }
 
+/** The expression inside parentheses and type-only wrappers such as `as const` or `!`. */
+function unwrapExpression(node: unknown): unknown {
+  while (
+    isNode(node) &&
+    (node.type === "ParenthesizedExpression" || node.type === "TSAsExpression" ||
+      node.type === "TSSatisfiesExpression" || node.type === "TSTypeAssertion" ||
+      node.type === "TSNonNullExpression")
+  ) node = node.expression;
+  return node;
+}
+
+/** A literal `true`, also through `true as const`, `<const>true` or parentheses. */
 function isTrue(node: unknown): boolean {
-  return isNode(node) && node.type === "BooleanLiteral" && node.value === true;
+  const value = unwrapExpression(node);
+  return isNode(value) && value.type === "BooleanLiteral" && value.value === true;
 }
 
 /**
@@ -487,6 +501,25 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
           return;
         }
         break;
+      case "TSParameterProperty": {
+        // `constructor(public allowHostProjectCodeExecution = true)` declares a field like
+        // a class property: a literal `true` default is a grant, a declaration is not a use.
+        const parameter = node.parameter;
+        const declared = isNode(parameter) && parameter.type === "AssignmentPattern"
+          ? parameter.left
+          : parameter;
+        if (nameOf(declared) === FLAG) {
+          if (isNode(parameter) && parameter.type === "AssignmentPattern") {
+            if (isTrue(parameter.right)) {
+              result.grants++;
+              return;
+            }
+            if (isNode(parameter.right)) visit(parameter.right, false);
+          }
+          return;
+        }
+        break;
+      }
       case "ClassProperty":
       case "ClassAccessorProperty":
         if (propertyName(node.key, node.computed) === FLAG) {
@@ -747,14 +780,20 @@ describe("execution surface inventory", () => {
         "class Granting { allowHostProjectCodeExecution = true; }",
         "class Accessor { accessor allowHostProjectCodeExecution = true; }",
         "class Denying { allowHostProjectCodeExecution = false; }",
+        "class AsConst { allowHostProjectCodeExecution = true as const; }",
+        "class Angle { allowHostProjectCodeExecution = <const> true; }",
+        "class Parameter { constructor(public allowHostProjectCodeExecution = true) {} }",
+        "class ParameterOff { constructor(readonly allowHostProjectCodeExecution = false) {} }",
+        "const constGrant = { allowHostProjectCodeExecution: true as const };",
       ].join("\n"),
       false,
     );
     // Destructuring (1), propagation key and read (2), negation (1), comparison (1),
     // computed read (1), read through an assertion (1).
     assertEquals(analysis.guards, 7);
-    // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, and
-    // class and accessor fields initialized to `true`.
-    assertEquals(analysis.grants, 8);
+    // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, class
+    // and accessor fields initialized to `true` (also `as const` and `<const>`), a
+    // constructor parameter property defaulting to `true`, and `true as const` in a value.
+    assertEquals(analysis.grants, 12);
   });
 });
