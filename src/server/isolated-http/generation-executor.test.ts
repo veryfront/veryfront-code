@@ -154,6 +154,35 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("errors an unfinished response body when its request aborts", async () => {
+    const f = fixture(() =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("prefix"));
+          },
+        }, { highWaterMark: 0 }),
+      )
+    );
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    const abort = new AbortController();
+    try {
+      const response = await broker.fetch(
+        new Request("https://app.example", { signal: abort.signal }),
+        f.input,
+      );
+      const reader = response.body!.getReader();
+      assertEquals(new TextDecoder().decode((await reader.read()).value), "prefix");
+      const pending = reader.read();
+      abort.abort(new Error("Client disconnected"));
+      await assertRejects(() => pending, Error, "Client disconnected");
+    } finally {
+      abort.abort();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("fails an aborted request without retiring its executor", async () => {
     const entered = Promise.withResolvers<void>();
     const f = fixture(async (request) => {

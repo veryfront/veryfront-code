@@ -13,6 +13,7 @@ import {
   type HostedExecutorSessionPoolOptions,
 } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { RenderGenerationPool } from "#veryfront/rendering/render-generation-pool.ts";
 import { resolveRenderGenerationIdentity } from "#veryfront/rendering/render-generation-binding.ts";
@@ -159,7 +160,15 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const admitted = new Request(request, { signal: request.signal });
     contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
     try {
-      return await generations.render(admitted, key, create);
+      const response = await generations.render(admitted, key, create);
+      // An abort must fail an unfinished body rather than end it as if complete.
+      return completeOnResponseBodyConsumption(
+        response,
+        () => {},
+        request.signal,
+        { highWaterMark: 0 },
+        { errorOnAbort: true },
+      );
     } catch (error) {
       // A generation that was never constructed has no executor to retire it later.
       if (
