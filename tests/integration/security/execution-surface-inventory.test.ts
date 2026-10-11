@@ -56,6 +56,43 @@ const PREDICATES = new Set([
 const FLAG = "allowHostProjectCodeExecution";
 
 /**
+ * The operator-owned override that grants host execution. A file that names it reads the
+ * grant directly instead of calling a predicate, so each one is listed here by hand.
+ */
+const OPERATOR_GATE_NAMES = [
+  "HOST_PROJECT_EXECUTION_OVERRIDE_ENV",
+  "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
+];
+const OPERATOR_GATE_READERS = [
+  "src/security/host-execution-policy.ts",
+  "src/security/sandbox/worker-pool.ts",
+  "src/server/handlers/request/api/project-discovery.ts",
+  "src/server/production-server.ts",
+];
+
+async function operatorGateReaders(): Promise<string[]> {
+  const readers: string[] = [];
+  async function walk(relativeDir: string): Promise<void> {
+    for await (const entry of Deno.readDir(`${REPO_ROOT}${relativeDir}`)) {
+      const relativePath = `${relativeDir}${entry.name}`;
+      if (entry.isDirectory) {
+        await walk(`${relativePath}/`);
+        continue;
+      }
+      if (
+        !/\.[cm]?[jt]sx?$/.test(entry.name) ||
+        /\.(?:test|test-helpers)\.[cm]?[jt]sx?$/.test(entry.name) ||
+        entry.name.endsWith(".d.ts")
+      ) continue;
+      const text = await Deno.readTextFile(`${REPO_ROOT}${relativePath}`);
+      if (OPERATOR_GATE_NAMES.some((name) => text.includes(name))) readers.push(relativePath);
+    }
+  }
+  for (const root of SCANNED_ROOTS) await walk(root);
+  return readers.toSorted();
+}
+
+/**
  * Files that decide whether tenant code may run on the host, the surface each one guards,
  * and how many guards the file holds. Counting guards per file, not lines, keeps the
  * inventory valid when code moves inside a file, while removing any one guard fails.
@@ -946,5 +983,15 @@ describe("execution surface inventory", () => {
     assertEquals(analysis.guards, 4);
     // Object property, bare JSX prop, and JSX prop set to `true`.
     assertEquals(analysis.grants, 3);
+  });
+
+  it("lists every file that reads the operator execution override", async () => {
+    assertEquals(
+      await operatorGateReaders(),
+      OPERATOR_GATE_READERS.toSorted(),
+      "A file names the operator execution override that is not listed in " +
+        "OPERATOR_GATE_READERS, or a listed file no longer names it. Review the read, then " +
+        "update the list.",
+    );
   });
 });
