@@ -560,6 +560,37 @@ describe("VeryfrontApiClient", () => {
       assertEquals(calls, [[null, controller.signal]]);
       assertEquals(Object.isFrozen(client.dependencies), true);
     });
+
+    it("keeps the previous dependency artifact method names as aliases", async () => {
+      const client = createClient({ ...baseConfig, projectId: PROJECT_ID });
+      const calls: unknown[][] = [];
+      client.writeDependencyArtifactAsset = (...args) => {
+        calls.push(["write", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      client.createDependencyArtifactBuildResult = (...args) => {
+        calls.push(["create", ...args]);
+        return Promise.resolve(undefined as never);
+      };
+      const bytes = new Uint8Array(new ArrayBuffer(1));
+      const result = { status: "failed" } as never;
+      const controller = new AbortController();
+
+      await client.uploadDependencyArtifactAsset(
+        "artifact",
+        1,
+        "hash",
+        "application/javascript" as never,
+        bytes,
+        controller.signal,
+      );
+      await client.reportDependencyArtifactBuildResult("artifact", 2, result, controller.signal);
+
+      assertEquals(calls, [
+        ["write", "artifact", 1, "hash", "application/javascript", bytes, controller.signal],
+        ["create", "artifact", 2, result, controller.signal],
+      ]);
+    });
   });
 
   describe("initialize with projectId in config", () => {

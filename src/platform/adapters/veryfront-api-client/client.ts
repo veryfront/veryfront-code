@@ -632,6 +632,35 @@ export class VeryfrontApiClient {
     );
   }
 
+  /** @deprecated Use `client.writeDependencyArtifactAsset(...)`. */
+  uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["writeDependencyArtifactAsset"]> {
+    return this.writeDependencyArtifactAsset(
+      artifactId,
+      attemptCount,
+      contentHash,
+      contentType,
+      bytes,
+      signal,
+    );
+  }
+
+  /** @deprecated Use `client.createDependencyArtifactBuildResult(...)`. */
+  reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+    signal?: AbortSignal,
+  ): ReturnType<VeryfrontApiClient["createDependencyArtifactBuildResult"]> {
+    return this.createDependencyArtifactBuildResult(artifactId, attemptCount, result, signal);
+  }
+
   // =============================================================================
   // Release Asset Manifest Operations
   // =============================================================================
