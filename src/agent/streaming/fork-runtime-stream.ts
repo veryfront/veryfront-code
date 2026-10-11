@@ -129,6 +129,7 @@ export type StartAgentRuntimeForkInput = {
   projectId: string | null;
   model: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps: number;
   prompt?: string;
   maxContinuationSteps?: number;
@@ -216,6 +217,9 @@ export function startAgentRuntimeForkWithHostTools<
       projectId: input.projectId,
       model: input.forkModel,
       temperature: input.temperature,
+      ...(input.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: input.parallelToolCalls }),
       maxSteps: input.maxSteps,
       prompt: input.prompt,
       maxContinuationSteps: input.maxContinuationSteps,
@@ -286,6 +290,7 @@ export type RunAgentRuntimeForkStepInput = {
   projectId: string | null;
   model: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   messages: AgentMessage[];
   system: AgentSystem;
   abortSignal?: AbortSignal;
@@ -351,6 +356,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     const runtimeConfig = {
       model: input.model,
       ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+      ...(input.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: input.parallelToolCalls }),
       system: input.system,
       tools: input.runtimeTools,
       providerTools: input.providerToolNames ?? [],
@@ -565,6 +573,9 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             model: input.model,
             resolveModelRuntime: input.createModelRuntimeResolver?.(),
             ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+            ...(input.parallelToolCalls === undefined
+              ? {}
+              : { parallelToolCalls: input.parallelToolCalls }),
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
