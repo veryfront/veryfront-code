@@ -6,12 +6,14 @@ import {
   RuntimeAgentRunInvocationSchema,
 } from "#veryfront/agent";
 import { createLiveEvalCaseSupport, type LiveEvalCase } from "./runner.ts";
+import { isEvalRecord } from "../../validation.ts";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
 const RUN_ID = "44444444-4444-4444-8444-444444444444";
-const USER_ID = "55555555-5555-4555-8555-555555555555";
+const USER_MESSAGE_ID = "55555555-5555-4555-8555-555555555555";
+const USER_ID = "66666666-6666-4666-8666-666666666666";
 
 type CapturedRequest = {
   url: string;
@@ -22,6 +24,18 @@ type CapturedRequest = {
 
 function parseBody(init: RequestInit | undefined): unknown {
   return init?.body === undefined ? undefined : JSON.parse(String(init.body));
+}
+
+function conversationMessagesUrl(conversationId: string): string {
+  return `https://api.example.test/conversations/${encodeURIComponent(conversationId)}/messages`;
+}
+
+function persistedUserMessageResponse(messageId = USER_MESSAGE_ID): Response {
+  return Response.json({
+    id: messageId,
+    role: "user",
+    parts: [],
+  }, { status: 201 });
 }
 
 function canonicalFrame(
@@ -49,11 +63,8 @@ function canonicalStreamResponse(events: string[]): Response {
 }
 
 function readCanonicalInput(body: unknown): Record<string, unknown> {
-  if (typeof body !== "object" || body === null || !("input" in body)) return {};
-  const input = body.input;
-  return typeof input === "object" && input !== null && !Array.isArray(input)
-    ? input as Record<string, unknown>
-    : {};
+  if (!isEvalRecord(body)) return {};
+  return isEvalRecord(body.input) ? body.input : {};
 }
 
 function readCanonicalRequestMessageId(body: unknown): string {
@@ -120,13 +131,13 @@ function directCompletedResponse(): Response {
 
 function createSupport(
   fetchImpl: (input: string | URL | Request, init?: RequestInit) => Response | Promise<Response>,
-  options: { branchId?: string | null } = {},
+  options: { branchId?: string | null; projectId?: string | null } = {},
 ) {
   return createLiveEvalCaseSupport({
     endpoint: "http://127.0.0.1:4311/api/ag-ui",
     apiUrl: "https://api.example.test",
     authToken: "fixture-token",
-    projectId: PROJECT_ID,
+    projectId: options.projectId === undefined ? PROJECT_ID : options.projectId,
     branchId: options.branchId === undefined ? BRANCH_ID : options.branchId,
     model: "openai:gpt-test",
     requestTimeoutMs: 1_000,
@@ -176,6 +187,9 @@ describe("conversation-backed live eval canonical routing", () => {
       if (request.url === "http://127.0.0.1:4311/api/ag-ui") {
         return new Response("old direct route should not be used", { status: 500 });
       }
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return persistedUserMessageResponse();
+      }
       if (request.url === "https://api.example.test/runs") {
         return Response.json({ id: RUN_ID, status: "running" }, { status: 202 });
       }
@@ -202,11 +216,19 @@ describe("conversation-backed live eval canonical routing", () => {
     const testCase: LiveEvalCase = {
       id: "delegation-root-voice-synthesis",
       label: "Delegation root voice",
-      prompt: "Use invoke_agent exactly once.",
+      prompt: "Fallback prompt must not be used.",
       allowedTools: ["invoke_agent"],
       forceRuntimeOverrides: true,
       maxSteps: 5,
-      prepare: () => Promise.resolve({ metadata: { conversationId: CONVERSATION_ID } }),
+      prepare: () =>
+        Promise.resolve({
+          prompt: "Use invoke_agent exactly once.",
+          metadata: {
+            conversationId: CONVERSATION_ID,
+            customTag: "retained",
+            evalCase: "spoofed",
+          },
+        }),
       verify: (run) => {
         verifierSawText = run.text;
         verifierSawTools = run.toolStarts;
@@ -220,19 +242,27 @@ describe("conversation-backed live eval canonical routing", () => {
     assertEquals(verifierSawText, "Done");
     assertEquals(verifierSawTools, ["invoke_agent"]);
     assertEquals(requests.map((request) => request.url), [
+      conversationMessagesUrl(CONVERSATION_ID),
       "https://api.example.test/runs",
       `https://api.example.test/runs/${RUN_ID}/stream`,
     ]);
     assertStringIncludes(
-      requests[0]?.headers.get("Idempotency-Key") ?? "",
+      requests[1]?.headers.get("Idempotency-Key") ?? "",
       "live-eval:delegation-root-voice-synthesis:",
     );
+    assertEquals(requests[0]?.method, "POST");
     assertEquals(requests[0]?.headers.get("Authorization"), "Bearer fixture-token");
-    const userMessageId = readCanonicalRequestMessageId(requests[0]?.body);
-    const clientRunId = readCanonicalClientRunId(requests[0]?.body);
-    const canonicalInput = readCanonicalInput(requests[0]?.body);
-    assertStringIncludes(clientRunId, "run_");
     assertEquals(requests[0]?.body, {
+      role: "user",
+      parts: [{ type: "text", text: "Use invoke_agent exactly once." }],
+    });
+    assertEquals(requests[1]?.headers.get("Authorization"), "Bearer fixture-token");
+    const userMessageId = readCanonicalRequestMessageId(requests[1]?.body);
+    const clientRunId = readCanonicalClientRunId(requests[1]?.body);
+    const canonicalInput = readCanonicalInput(requests[1]?.body);
+    assertEquals(userMessageId, USER_MESSAGE_ID);
+    assertStringIncludes(clientRunId, "run_");
+    assertEquals(requests[1]?.body, {
       project_id: PROJECT_ID,
       title: "Delegation root voice",
       target: { type: "agent", id: "veryfront" },
@@ -241,11 +271,16 @@ describe("conversation-backed live eval canonical routing", () => {
       input: {
         messages: [
           {
-            id: userMessageId,
+            id: USER_MESSAGE_ID,
             role: "user",
             parts: [{ type: "text", text: "Use invoke_agent exactly once." }],
           },
         ],
+        state: {
+          conversationId: CONVERSATION_ID,
+          customTag: "retained",
+          evalCase: "delegation-root-voice-synthesis",
+        },
         context: {
           conversationId: CONVERSATION_ID,
           projectId: PROJECT_ID,
@@ -266,7 +301,7 @@ describe("conversation-backed live eval canonical routing", () => {
       config: {
         agent_admission: {
           mode: "hosted",
-          input_message_id: userMessageId,
+          input_message_id: USER_MESSAGE_ID,
           client_run_id: clientRunId,
         },
       },
@@ -298,6 +333,9 @@ describe("conversation-backed live eval canonical routing", () => {
         body: parseBody(init),
       };
       requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return persistedUserMessageResponse();
+      }
       if (request.url === "https://api.example.test/runs") {
         return Response.json({ id: RUN_ID, status: "running" }, { status: 202 });
       }
@@ -319,12 +357,13 @@ describe("conversation-backed live eval canonical routing", () => {
     }, "framework");
 
     assertEquals(result.status, "pass");
-    const body = requests[0]?.body;
+    const body = requests[1]?.body;
     assertEquals(
       typeof body === "object" && body !== null && "execution" in body ? body.execution : null,
       { runtime: { type: "main_branch" } },
     );
   });
+
   it("cancels admitted canonical runs on stream failure and still runs prepared cleanup", async () => {
     const requests: CapturedRequest[] = [];
     const lifecycle: string[] = [];
@@ -336,6 +375,9 @@ describe("conversation-backed live eval canonical routing", () => {
         body: parseBody(init),
       };
       requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return persistedUserMessageResponse();
+      }
       if (request.url === "https://api.example.test/runs") {
         return Response.json({ id: RUN_ID, status: "running" }, { status: 202 });
       }
@@ -367,12 +409,13 @@ describe("conversation-backed live eval canonical routing", () => {
     assertStringIncludes(result.details, "stream exploded");
     assertEquals(lifecycle, ["prepared:cleanup"]);
     assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", conversationMessagesUrl(CONVERSATION_ID)],
       ["POST", "https://api.example.test/runs"],
       ["GET", `https://api.example.test/runs/${RUN_ID}/stream`],
       ["POST", `https://api.example.test/runs/${RUN_ID}/cancel`],
     ]);
     assertStringIncludes(
-      requests[2]?.headers.get("Idempotency-Key") ?? "",
+      requests[3]?.headers.get("Idempotency-Key") ?? "",
       `live-eval-cancel:${RUN_ID}`,
     );
   });
@@ -387,6 +430,9 @@ describe("conversation-backed live eval canonical routing", () => {
         body: parseBody(init),
       };
       requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return persistedUserMessageResponse();
+      }
       if (request.url === "https://api.example.test/runs") {
         return Response.json({ id: RUN_ID, status: "running" }, { status: 202 });
       }
@@ -439,10 +485,157 @@ describe("conversation-backed live eval canonical routing", () => {
       "RUN_FINISHED",
     ]);
     assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", conversationMessagesUrl(CONVERSATION_ID)],
       ["POST", "https://api.example.test/runs"],
       ["GET", `https://api.example.test/runs/${RUN_ID}/stream`],
     ]);
   });
+
+  it("rejects missing project binding before persisting a message", async () => {
+    const requests: string[] = [];
+    let cleanupCalled = false;
+    const support = createSupport((input) => {
+      requests.push(String(input));
+      return persistedUserMessageResponse();
+    }, { projectId: null });
+
+    const result = await support.runEval({
+      id: "canonical-missing-project",
+      label: "Canonical missing project",
+      prompt: "Do not persist without a project binding",
+      prepare: () =>
+        Promise.resolve({
+          metadata: { conversationId: CONVERSATION_ID },
+          cleanup: () => {
+            cleanupCalled = true;
+            return Promise.resolve();
+          },
+        }),
+      verify: () => null,
+    }, "framework");
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "require AG_UI_EVAL_PROJECT_ID");
+    assertEquals(requests, []);
+    assertEquals(cleanupCalled, true);
+  });
+
+  it("fails before run admission when message persistence fails", async () => {
+    const requests: CapturedRequest[] = [];
+    const lifecycle: string[] = [];
+    const support = createSupport((input, init) => {
+      const request = {
+        url: String(input),
+        method: init?.method,
+        headers: new Headers(init?.headers),
+        body: parseBody(init),
+      };
+      requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return new Response("Bearer fixture-token; private customer prompt", { status: 503 });
+      }
+      throw new Error(`unexpected request ${request.url}`);
+    });
+
+    const result = await support.runEval({
+      id: "canonical-message-persist-failure",
+      label: "Canonical message persist failure",
+      prompt: "Persist me",
+      prepare: () =>
+        Promise.resolve({
+          metadata: { conversationId: CONVERSATION_ID },
+          cleanup: () => {
+            lifecycle.push("prepared:cleanup");
+            return Promise.resolve();
+          },
+        }),
+      verify: () => null,
+    }, "framework");
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "Failed to persist canonical live eval user message");
+    assertStringIncludes(result.details, "503");
+    assertEquals(result.details.includes("fixture-token"), false);
+    assertEquals(result.details.includes("private customer prompt"), false);
+    assertEquals(lifecycle, ["prepared:cleanup"]);
+    assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", conversationMessagesUrl(CONVERSATION_ID)],
+    ]);
+  });
+
+  it("sanitizes malformed message response JSON before reporting failure", async () => {
+    const requests: string[] = [];
+    let cleanupCalled = false;
+    const support = createSupport((input) => {
+      requests.push(String(input));
+      return new Response("LEAK_THIS_HEADER_CUSTOMER_DATA", { status: 201 });
+    });
+
+    const result = await support.runEval({
+      id: "canonical-message-invalid-json",
+      label: "Canonical message invalid JSON",
+      prompt: "Persist me",
+      prepare: () =>
+        Promise.resolve({
+          metadata: { conversationId: CONVERSATION_ID },
+          cleanup: () => {
+            cleanupCalled = true;
+            return Promise.resolve();
+          },
+        }),
+      verify: () => null,
+    }, "framework");
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "message persistence returned invalid JSON");
+    assertEquals(result.details.includes("LEAK"), false);
+    assertEquals(requests, [conversationMessagesUrl(CONVERSATION_ID)]);
+    assertEquals(cleanupCalled, true);
+  });
+
+  it("fails before run admission when message persistence response is malformed", async () => {
+    const requests: CapturedRequest[] = [];
+    const lifecycle: string[] = [];
+    const support = createSupport((input, init) => {
+      const request = {
+        url: String(input),
+        method: init?.method,
+        headers: new Headers(init?.headers),
+        body: parseBody(init),
+      };
+      requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return Response.json({ role: "user", parts: [] }, { status: 201 });
+      }
+      throw new Error(`unexpected request ${request.url}`);
+    });
+
+    const result = await support.runEval({
+      id: "canonical-message-persist-malformed",
+      label: "Canonical message persist malformed",
+      prompt: "Persist me",
+      prepare: () =>
+        Promise.resolve({
+          metadata: { conversationId: CONVERSATION_ID },
+          cleanup: () => {
+            lifecycle.push("prepared:cleanup");
+            return Promise.resolve();
+          },
+        }),
+      verify: () => null,
+    }, "framework");
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(
+      result.details,
+      "Canonical live eval message persistence did not return a message id",
+    );
+    assertEquals(lifecycle, ["prepared:cleanup"]);
+    assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", conversationMessagesUrl(CONVERSATION_ID)],
+    ]);
+  });
+
   it("rejects prepared custom bodies on canonical conversation admission", async () => {
     const requests: CapturedRequest[] = [];
     const support = createSupport((input, init) => {
@@ -484,6 +677,9 @@ describe("conversation-backed live eval canonical routing", () => {
         body: parseBody(init),
       };
       requests.push(request);
+      if (request.url === conversationMessagesUrl(CONVERSATION_ID)) {
+        return persistedUserMessageResponse();
+      }
       if (request.url === "https://api.example.test/runs") {
         return Response.json({ id: RUN_ID, status: "running" }, { status: 202 });
       }
@@ -522,6 +718,7 @@ describe("conversation-backed live eval canonical routing", () => {
       "Canonical live eval stream ended before terminal RUN_FINISHED/RUN_ERROR",
     );
     assertEquals(requests.map((request) => [request.method, request.url]), [
+      ["POST", conversationMessagesUrl(CONVERSATION_ID)],
       ["POST", "https://api.example.test/runs"],
       ["GET", `https://api.example.test/runs/${RUN_ID}/stream`],
       ["POST", `https://api.example.test/runs/${RUN_ID}/cancel`],

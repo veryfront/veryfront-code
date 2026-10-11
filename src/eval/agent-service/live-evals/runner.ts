@@ -14,7 +14,7 @@ import {
 } from "#veryfront/runs/target/index.ts";
 import { buildFailureSuffix, buildProgressLine, containsOrderedSubsequence } from "./formatting.ts";
 import { type LiveEvalRuntime } from "./performance.ts";
-import { buildLiveEvalRequestBody } from "./request.ts";
+import { buildLiveEvalRequestBody, type LiveEvalRequestBody } from "./request.ts";
 import { type LiveEvalCaseMetadata } from "./report.ts";
 import {
   createFailedEvalResult,
@@ -506,32 +506,42 @@ function createLiveEvalRunsSdk(input: {
   });
 }
 
+function buildCanonicalLiveEvalDirectBody(input: {
+  config: LiveEvalRunnerConfig;
+  testCase: LiveEvalCase;
+  prepared: PreparedLiveEvalInput | null;
+  conversationId: string;
+}): LiveEvalRequestBody {
+  return buildLiveEvalRequestBody({
+    testCaseId: input.testCase.id,
+    prompt: input.prepared?.prompt ?? input.testCase.prompt ?? "",
+    metadata: input.prepared?.metadata,
+    projectId: input.config.projectId,
+    ...(input.config.branchId ? { branchId: input.config.branchId } : {}),
+    ...(input.config.model ? { model: input.config.model } : {}),
+    conversationId: input.conversationId,
+    allowedTools: input.testCase.allowedTools,
+    forceRuntimeOverrides: input.testCase.forceRuntimeOverrides,
+    maxSteps: input.testCase.maxSteps,
+  });
+}
+
 function buildCanonicalLiveEvalInput(input: {
   config: LiveEvalRunnerConfig;
   testCase: LiveEvalCase;
   prepared: PreparedLiveEvalInput | null;
   conversationId: string;
   userMessageId: string;
+  directBody: LiveEvalRequestBody;
 }): Record<string, unknown> {
-  const runtimeOverrides = input.testCase.allowedTools !== undefined ||
-      input.testCase.forceRuntimeOverrides ||
-      input.testCase.maxSteps !== undefined
-    ? {
-      ...(input.testCase.allowedTools !== undefined
-        ? { allowedTools: input.testCase.allowedTools }
-        : input.testCase.forceRuntimeOverrides
-        ? { allowedTools: [] }
-        : {}),
-      ...(input.testCase.maxSteps !== undefined ? { maxSteps: input.testCase.maxSteps } : {}),
-    }
-    : undefined;
-  const veryfront = {
+  const veryfront = input.directBody.forwardedProps?.veryfront ?? {
     projectId: input.config.projectId,
     conversationId: input.conversationId,
     branchId: input.config.branchId ?? null,
-    ...(input.config.model ? { model: input.config.model } : {}),
-    ...(runtimeOverrides ? { runtimeOverrides } : {}),
   };
+  const runtimeOverrides = isRecord(veryfront.runtimeOverrides)
+    ? veryfront.runtimeOverrides
+    : undefined;
   const forwardedProps = {
     ...(input.config.model ? { model: input.config.model } : {}),
     ...(runtimeOverrides ? { runtimeOverrides } : {}),
@@ -546,6 +556,7 @@ function buildCanonicalLiveEvalInput(input: {
         parts: [{ type: "text", text: input.prepared?.prompt ?? input.testCase.prompt ?? "" }],
       },
     ],
+    state: input.directBody.state,
     context: {
       conversationId: input.conversationId,
       projectId: input.config.projectId,
@@ -555,14 +566,21 @@ function buildCanonicalLiveEvalInput(input: {
   };
 }
 
-function assertCanonicalConversationInputSupported(input: {
+function validateCanonicalConversationInput(input: {
+  config: Pick<LiveEvalRunnerConfig, "projectId">;
   prepared: PreparedLiveEvalInput | null;
-}): void {
+}): string {
+  if (!input.config.projectId) {
+    throw createEvalValidationError(
+      "Conversation-backed live evals require AG_UI_EVAL_PROJECT_ID for canonical run admission",
+    );
+  }
   if (typeof input.prepared?.metadata?.customBody === "string") {
     throw createEvalValidationError(
       "Conversation-backed live evals do not support metadata.customBody; canonical run admission owns the request body",
     );
   }
+  return input.config.projectId;
 }
 
 function buildCanonicalLiveEvalCreateRunBody(input: {
@@ -572,17 +590,12 @@ function buildCanonicalLiveEvalCreateRunBody(input: {
   conversationId: string;
   userMessageId: string;
   clientRunId: string;
+  directBody: LiveEvalRequestBody;
 }): RunsInput<"createRun">["body"] {
-  if (!input.config.projectId) {
-    throw createEvalValidationError(
-      "Conversation-backed live evals require AG_UI_EVAL_PROJECT_ID for canonical run admission",
-    );
-  }
-
-  assertCanonicalConversationInputSupported(input);
+  const projectId = validateCanonicalConversationInput(input);
 
   const body = {
-    project_id: input.config.projectId,
+    project_id: projectId,
     title: input.testCase.label,
     target: { type: "agent", id: "veryfront" },
     conversation_id: input.conversationId,
@@ -601,6 +614,64 @@ function buildCanonicalLiveEvalCreateRunBody(input: {
     },
   } satisfies RunsInput<"createRun">["body"];
   return body;
+}
+
+function encodeLiveEvalPathSegment(value: string, label: string): string {
+  assertCanonicalEvalString(value, label);
+  return encodeURIComponent(value);
+}
+
+function readPersistedMessageId(result: unknown): string {
+  if (isRecord(result) && typeof result.id === "string" && result.id.length > 0) {
+    return result.id;
+  }
+  throw createEvalValidationError(
+    "Canonical live eval message persistence did not return a message id",
+  );
+}
+
+async function persistCanonicalLiveEvalUserMessage(input: {
+  config: LiveEvalRunnerConfig;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  conversationId: string;
+  prompt: string;
+  signal: AbortSignal;
+}): Promise<string> {
+  const baseUrl = normalizeLiveEvalApiUrl(input.config.apiUrl);
+  const conversationId = encodeLiveEvalPathSegment(
+    input.conversationId,
+    "Live eval conversation id",
+  );
+  const response = await input.fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.config.authToken}`,
+    },
+    body: JSON.stringify({
+      role: "user",
+      parts: [{ type: "text", text: input.prompt }],
+    }),
+    signal: input.signal,
+    redirect: "error",
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw createEvalValidationError(
+      `Failed to persist canonical live eval user message: HTTP ${response.status}`,
+    );
+  }
+
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch {
+    throw createEvalValidationError(
+      "Canonical live eval message persistence returned invalid JSON",
+    );
+  }
+  return readPersistedMessageId(result);
 }
 
 function readCreatedRunId(result: unknown): string {
@@ -686,7 +757,21 @@ async function runCanonicalConversationLiveEval(input: {
     },
   });
   const signal = AbortSignal.timeout(input.config.requestTimeoutMs);
-  const userMessageId = crypto.randomUUID();
+  const prompt = input.prepared?.prompt ?? input.testCase.prompt ?? "";
+  validateCanonicalConversationInput(input);
+  const directBody = buildCanonicalLiveEvalDirectBody({
+    config: input.config,
+    testCase: input.testCase,
+    prepared: input.prepared,
+    conversationId: input.conversationId,
+  });
+  const userMessageId = await persistCanonicalLiveEvalUserMessage({
+    config: input.config,
+    fetch: input.fetch,
+    conversationId: input.conversationId,
+    prompt,
+    signal,
+  });
   const clientRunId = `run_${crypto.randomUUID()}`;
   let admittedRunId: string | null = null;
   let terminal = false;
@@ -698,6 +783,7 @@ async function runCanonicalConversationLiveEval(input: {
         ...input,
         userMessageId,
         clientRunId,
+        directBody,
       }),
     }, { signal });
     admittedRunId = readCreatedRunId(created);
