@@ -424,6 +424,36 @@ describe("coverage source paths", () => {
     );
   });
 
+  it("drops generated cache records across runner homes and path separators", () => {
+    for (
+      const cacheRoot of [
+        "/home/veryfront/.cache/veryfront",
+        "/Users/developer/.cache/veryfront",
+        "C:\\Users\\runner\\.cache\\veryfront",
+      ]
+    ) {
+      const report = [
+        `SF:${cacheRoot}/veryfront-mdx-esm/build/page.tsx.mjs`,
+        "DA:1,99",
+        "end_of_record",
+        `SF:${cacheRoot}/src/app/page.tsx.mjs`,
+        "DA:2,7",
+        "end_of_record",
+        "SF:src/task.ts",
+        "DA:3,3",
+        "end_of_record",
+      ].join("\n");
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          ["/local/checkout"],
+          (path) => path === "src/task.ts",
+        ),
+        "SF:src/task.ts\nDA:3,3\nend_of_record",
+      );
+    }
+  });
+
   it("preserves verified relative paths and rejects foreign or nonexistent sources", () => {
     const root = "/home/runner/_work/veryfront-code/veryfront-code";
     const exists = (path: string) => path === "src/task.ts";
@@ -435,6 +465,9 @@ describe("coverage source paths", () => {
         "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
         "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
         "/foreign/src/task.ts",
+        "/home/veryfront/.cache/veryfront/src/task.ts",
+        "/home/veryfront/.cache/veryfront-other/src/task.mjs",
+        "src/.cache/veryfront/task.mjs",
         `${root}-other/src/task.ts`,
         `${root}/src/missing.ts`,
         `${root}/../outside.ts`,

@@ -22,6 +22,7 @@ const discardReportSchema = defineSchema((v) =>
 const dateReportSchema = defineSchema((v) =>
   v.object({ city: v.string() }).transform(() => new Date("2026-01-01T00:00:00.000Z"))
 );
+const bigintReportSchema = defineSchema((v) => v.object({ city: v.string() }).transform(() => 12n));
 const deepReportSchema = defineSchema((v) =>
   v.object({ city: v.string() }).transform(() => {
     let output: Record<string, unknown> = { city: "Berlin" };
@@ -972,6 +973,79 @@ describe("agent max steps output schema", () => {
     assertEquals(metadata?.outputSchemaError, undefined);
     assertEquals(finished?.object, { city: "Berlin", tempC: 12 });
   });
+
+  for (
+    const fixture of [
+      {
+        name: "Date",
+        schema: dateReportSchema(),
+        expected: new Date("2026-01-01T00:00:00.000Z"),
+        reason: "unsupported_object",
+        value: "[unsupported object]",
+      },
+      {
+        name: "bigint",
+        schema: bigintReportSchema(),
+        expected: 12n,
+        reason: "unsupported_bigint",
+        value: "[unsupported bigint]",
+      },
+      {
+        name: "undefined",
+        schema: discardReportSchema(),
+        expected: undefined,
+        reason: "unsupported_undefined",
+        value: "[unsupported undefined]",
+      },
+    ]
+  ) {
+    it(`snapshots ${fixture.name} structured output before streaming serialization`, async () => {
+      const model = createMaxStepsModel('{"city":"Berlin"}');
+      const assistant = agent({
+        id: `stream-output-snapshot-${fixture.name}`,
+        system: "You report weather.",
+        tools: { max_steps_noop_tool: noopTool },
+        maxSteps: 1,
+        outputSchema: fixture.schema,
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+      let finished: Record<string, unknown> | undefined;
+      const observed: Array<Record<string, unknown>> = [];
+      const body = await withLocalChildExecution(
+        (input) => input.execute(),
+        async () => {
+          const result = await assistant.stream({
+            input: "Berlin?",
+            onFinish: (response) => {
+              finished = response as unknown as Record<string, unknown>;
+            },
+          });
+          return await result.toDataStreamResponse().text();
+        },
+        (event) => {
+          observed.push(event as Record<string, unknown>);
+          return Promise.resolve();
+        },
+      );
+      const events = body.split("\n")
+        .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+      const finishEvents = events.filter((event) => event.type === "message-finish");
+      const snapshot = {
+        captureStatus: "unsupported",
+        reasons: [fixture.reason],
+        value: fixture.value,
+      };
+      assertEquals(finished !== undefined && "object" in finished, true);
+      assertEquals(finished?.object, fixture.expected);
+      assertEquals(events.some((event) => event.type === "error"), false);
+      assertEquals(finishEvents.length, 1);
+      assertEquals(finishEvents[0].object, snapshot);
+      assertEquals(
+        observed.filter((event) => event.type === "message-finish").map((event) => event.object),
+        [snapshot],
+      );
+    });
+  }
 
   it("streams object presence when a successful schema transform returns undefined", async () => {
     const model = createMaxStepsModel('{"city":"Berlin"}');

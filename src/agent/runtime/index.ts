@@ -3706,8 +3706,8 @@ export class AgentRuntime {
               type: "message-finish",
               ...(finishReason ? { finishReason } : {}),
               ...(finishUsage ? { totalUsage: finishUsage } : {}),
-              ...("object" in response && response.object !== undefined
-                ? { object: response.object }
+              ...("object" in response
+                ? { object: createOutputSchemaObservationObject(response.object) }
                 : {}),
             });
             closeSSEStream(controller);
