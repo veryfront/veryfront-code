@@ -11,7 +11,11 @@ import { Sandbox } from "../../../src/sandbox/sandbox.ts";
 describe("Sandbox command dispatch uncertainty", () => {
   afterEach(restoreMockFetch);
 
-  for (const method of ["proxy-command", "proxy-stream", "runtime-command"]) {
+  for (
+    const [method, errorShape] of ["proxy-command", "proxy-stream", "runtime-command"].flatMap(
+      (method) => ["native-wrapper", "direct-pinned"].map((shape) => [method, shape] as const),
+    )
+  ) {
     const commandPath = method === "proxy-command"
       ? "/commands/run"
       : method === "proxy-stream"
@@ -27,15 +31,23 @@ describe("Sandbox command dispatch uncertainty", () => {
         "EHOSTUNREACH",
         "ACCESSOR-CODE",
         "ACCESSOR-SYSCALL",
+        "CONFLICTING-CAUSE",
       ]
     ) {
-      it(`${method} does not replay a dispatched command after ${code ?? "an unclassified fetch failure"}`, async () => {
+      it(`${method} ${errorShape} does not replay a dispatched command after ${code ?? "an unclassified fetch failure"}`, async () => {
         let executions = 0;
         let reconnects = 0;
         let getterCalls = 0;
         const cause = code
           ? {
-            code: code === "ACCESSOR-SYSCALL" ? "ECONNREFUSED" : code,
+            code: code === "ACCESSOR-SYSCALL"
+              ? "ECONNREFUSED"
+              : code === "CONFLICTING-CAUSE"
+              ? "ECONNRESET"
+              : code,
+            ...(code === "CONFLICTING-CAUSE"
+              ? { cause: { code: "ECONNREFUSED", syscall: "connect" } }
+              : {}),
             ...(code === "EHOSTUNREACH" ? { syscall: "write" } : {}),
             ...(code === "ECONNREFUSED" ? { syscall: "read" } : {}),
             ...(code === "ACCESSOR-CODE" ? { syscall: "connect" } : {}),
@@ -49,7 +61,12 @@ describe("Sandbox command dispatch uncertainty", () => {
             },
           });
         }
-        const failure = new TypeError("fetch failed", cause ? { cause } : undefined);
+        const failure = errorShape === "direct-pinned"
+          ? Object.defineProperties(
+            new Error("fetch failed"),
+            cause ? Object.getOwnPropertyDescriptors(cause) : {},
+          )
+          : new TypeError("fetch failed", cause ? { cause } : undefined);
         const endpoint = "http://127.0.0.1:43210";
         const session = {
           id: "retry-fixture",
@@ -92,7 +109,7 @@ describe("Sandbox command dispatch uncertainty", () => {
               method === "proxy-stream"
                 ? Array.fromAsync(sandbox.streamCommand("fixture side effect"))
                 : sandbox.runCommand("fixture side effect"),
-            TypeError,
+            errorShape === "direct-pinned" ? Error : TypeError,
             "fetch failed",
           );
           assertEquals(error === failure, true, "Preserve the original uncertain failure");
@@ -121,7 +138,7 @@ describe("Sandbox command dispatch uncertainty", () => {
         ["EAI_AGAIN", undefined],
       ]
     ) {
-      it(`${method} retries ${code} during ${syscall} before execution`, async () => {
+      it(`${method} ${errorShape} retries ${code} during ${syscall} before execution`, async () => {
         let requests = 0;
         let executions = 0;
         let reconnects = 0;
@@ -138,7 +155,9 @@ describe("Sandbox command dispatch uncertainty", () => {
           if (path.endsWith(commandPath)) {
             requests++;
             if (requests === 1) {
-              throw new TypeError("connection setup failed", { cause: { code, syscall } });
+              throw errorShape === "direct-pinned"
+                ? Object.assign(new Error("connection setup failed"), { code, syscall })
+                : new TypeError("connection setup failed", { cause: { code, syscall } });
             }
             executions++;
             return method === "proxy-command"

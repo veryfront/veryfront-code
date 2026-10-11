@@ -1222,10 +1222,17 @@ function isPreDispatchExecStartFailure(error: unknown): boolean {
   try {
     if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
     if (!(error instanceof Error)) return false;
-    const cause = ownTransportData(error, "cause");
-    if (typeof cause !== "object" || cause === null) return false;
-    const code = ownTransportData(cause, "code");
-    const syscall = ownTransportData(cause, "syscall");
+    let code = ownTransportData(error, "code");
+    let syscall = ownTransportData(error, "syscall");
+    // Pinned Node/Bun transports preserve the native error directly. Native
+    // fetch instead wraps it in cause. Direct metadata must not be overridden
+    // by an inner cause that claims a different phase.
+    if (code === undefined && syscall === undefined) {
+      const cause = ownTransportData(error, "cause");
+      if (typeof cause !== "object" || cause === null) return false;
+      code = ownTransportData(cause, "code");
+      syscall = ownTransportData(cause, "syscall");
+    }
     if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
       return syscall === undefined || syscall === "getaddrinfo";
     }
