@@ -27,6 +27,7 @@ import { getEffectiveRequestHost, getEffectiveRequestOrigin } from "../utils/req
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { installedProjectDomain, type InstalledProjectHttpBinding } from "./installed-project.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
@@ -228,7 +229,7 @@ export async function prepareProjectRequest(
     proxyTrust: { proxyTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
-      environment: headers.environment ??
+      environment: parseProxyEnvironment(headers.environment ?? null) ??
         (identityHeadersTrusted ? requestContext.mode : undefined),
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,

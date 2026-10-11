@@ -803,7 +803,12 @@ export function createVeryfrontHandler(
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
-          setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
+          setProjectAttributes(
+            spanInfo.span,
+            projectRes.projectSlug,
+            projectRes.proxyEnv,
+            preparedRequest.loggerFacts.environment,
+          );
 
           // Handle projects discovery UI
           if (

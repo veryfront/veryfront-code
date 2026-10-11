@@ -69,12 +69,13 @@ export function setProjectAttributes(
   span: unknown,
   projectSlug: string | undefined,
   environment: string | undefined,
+  requestEnvironment?: string,
 ): void {
   if (!span || !projectSlug) return;
 
   setSpanAttributes(span, {
     "veryfront.project_slug": projectSlug,
-    "veryfront.environment": environment || "unknown",
+    "veryfront.environment": environment || requestEnvironment || "unknown",
   });
 }
 

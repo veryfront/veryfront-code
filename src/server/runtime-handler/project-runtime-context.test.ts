@@ -27,6 +27,7 @@ import {
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
+import { setProjectAttributes, setRequestAttributes } from "./tracing.ts";
 import { preparePreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const defaultParsedDomain: ParsedDomain = {
@@ -235,25 +236,28 @@ describe("prepareProjectRequest", () => {
     }
   });
 
-  it("derives a trusted host-routed log environment when the header is absent", async () => {
-    for (const environment of ["preview", "production"]) {
-      const req = new Request("http://runtime.internal/page", {
-        headers: {
-          host: "runtime.internal",
-          "x-forwarded-host": `demo.${environment}.example.com`,
-          "x-project-slug": "demo",
-          "x-token": "test-token",
-        },
-      });
-      const prepared = await prepareProjectRequest({
-        req,
-        url: new URL(req.url),
-        isProxyMode: true,
-        trustProxy: () => Promise.resolve(true),
-      });
-      assertEquals(prepared.proxyGuard, undefined);
-      assertEquals(prepared.requestContext.mode, environment);
-      assertEquals(prepared.loggerFacts.environment, environment);
+  it("derives a trusted host-routed log environment when the header is absent, empty, or invalid", async () => {
+    for (const headerValue of [undefined, "", "staging"]) {
+      for (const environment of ["preview", "production"]) {
+        const req = new Request("http://runtime.internal/page", {
+          headers: {
+            host: "runtime.internal",
+            "x-forwarded-host": `demo.${environment}.example.com`,
+            "x-project-slug": "demo",
+            "x-token": "test-token",
+            ...(headerValue === undefined ? {} : { "x-environment": headerValue }),
+          },
+        });
+        const prepared = await prepareProjectRequest({
+          req,
+          url: new URL(req.url),
+          isProxyMode: true,
+          trustProxy: () => Promise.resolve(true),
+        });
+        assertEquals(prepared.proxyGuard, undefined);
+        assertEquals(prepared.requestContext.mode, environment);
+        assertEquals(prepared.loggerFacts.environment, environment);
+      }
     }
   });
 
@@ -663,6 +667,51 @@ describe("resolveProjectIdentity", () => {
     assertEquals(trusted.projectSlug, "forwarded-project");
     assertEquals(trusted.parsedDomain.slug, "forwarded-project");
     assertEquals(trusted.parsedDomain.environment, "preview");
+  });
+
+  it("keeps host, project, and environment together on a host-routed preview span", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: {
+        "x-forwarded-host": "demo.preview.localhost",
+        "x-project-slug": "demo",
+        "x-token": "test-token",
+      },
+    });
+    const url = new URL(req.url);
+    const prepared = await prepareProjectRequest({
+      req,
+      url,
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(true),
+    });
+    const project = await resolveProjectIdentity({
+      req,
+      url,
+      headers: prepared.headers,
+      requestContext: prepared.requestContext,
+      config: undefined,
+      defaultProjectSlug: undefined,
+      defaultProjectId: undefined,
+      defaultReleaseId: undefined,
+      wsSlugOverride: undefined,
+      proxyTrust: prepared.proxyTrust,
+    });
+    const attributes: Record<string, unknown> = {};
+    const span = {
+      setAttribute: (key: string, value: unknown) => {
+        attributes[key] = value;
+      },
+    };
+    setRequestAttributes(span, req, url, prepared.proxyTrust.proxyTrusted === true);
+    setProjectAttributes(
+      span,
+      project.projectSlug,
+      project.proxyEnv,
+      prepared.loggerFacts.environment,
+    );
+    assertEquals(attributes["http.host"], "demo.preview.localhost");
+    assertEquals(attributes["veryfront.project_slug"], "demo");
+    assertEquals(attributes["veryfront.environment"], "preview");
   });
 
   it("preserves the trusted canonical environment name when release identity is complete", async () => {
