@@ -860,6 +860,84 @@ describe("mcp/server", () => {
     assertEquals((await call(3)).isError, true);
   });
 
+  it("snapshots output contracts without invoking schema accessors", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let accessorReads = 0;
+    const hooked = tool({
+      id: "test:accessor-output",
+      description: "Has an accessor in its output contract",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      outputSchema: { type: "object", properties: { value: { type: "string" } } },
+      execute: async () => ({ value: "saved" }),
+    });
+    Object.defineProperty(hooked.outputSchemaJson!, "type", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("schema accessor ran");
+      },
+    });
+    registerTool("test:accessor-output", hooked);
+    registerTool(
+      "test:plain-output",
+      tool({
+        id: "test:plain-output",
+        description: "Has a plain output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { value: { type: "string" } } },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (listed.result as { tools: ToolListEntry[] }).tools;
+    const accessorEntry = tools.find((entry) => entry.name === "test:accessor-output");
+    assertExists(accessorEntry);
+    assertEquals(Object.hasOwn(accessorEntry, "outputSchema"), false);
+    assertExists(tools.find((entry) => entry.name === "test:plain-output")?.outputSchema);
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:accessor-output", arguments: {} },
+    });
+    const result = called.result as { isError: boolean; content: Array<{ text: string }> };
+    assertEquals(result.isError, true);
+    assertEquals(
+      result.content[0]?.text,
+      'Tool "test:accessor-output" has an invalid output contract',
+    );
+    assertEquals(accessorReads, 0);
+  });
+
+  it("rejects contract results that do not serialize to JSON text", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:undefined-output",
+      tool({
+        id: "test:undefined-output",
+        description: "Transforms its result to undefined",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.string().transform(() => undefined))(),
+        execute: async () => "saved",
+      }),
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:undefined-output", arguments: {} },
+    });
+    const result = called.result as { isError: boolean; content: Array<{ text?: unknown }> };
+    assertEquals(result.isError, true);
+    assertEquals(typeof result.content[0]?.text, "string");
+  });
+
   it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {
     const server = createMCPServer({
       enabled: true,
