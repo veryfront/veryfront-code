@@ -1056,11 +1056,7 @@ export class LazySandbox {
           return res;
         }
 
-        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
-          await this.waitForExecStartRetry();
-          continue;
-        }
-
+        // HTTP failures may follow command dispatch; replay requires a pre-response failure.
         throw await createSandboxHttpError(res, "Exec failed");
       } catch (error) {
         if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
@@ -1190,10 +1186,6 @@ export class LazySandbox {
       "Content-Type": "application/json",
     };
   }
-}
-
-function isRetryableExecStartStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504;
 }
 
 function commandStreamUrl(route: DataPlaneRoute): string {

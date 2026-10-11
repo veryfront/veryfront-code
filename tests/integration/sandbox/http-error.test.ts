@@ -205,59 +205,61 @@ describe("Sandbox HTTP error projection", () => {
       else Reflect.deleteProperty(Object.prototype, "status");
     }
   });
-  it("does not replay an HTTP command failure whose problem text says fetch failed", async () => {
-    let commands = 0;
-    const session = {
-      id: "command-fixture",
-      endpoint: options.apiUrl,
-      status: "running",
-      workspace_storage: "ephemeral",
-      ttl_mode: "default",
-    };
-    const failure = {
-      ...problem,
-      status: 403,
-      detail: "fetch failed after the command response began",
-    };
-    installMockFetch(async (input) => {
-      const path = new URL(String(input)).pathname;
-      if (path.endsWith("/commands/stream")) {
-        commands++;
-        return new Response(JSON.stringify(failure), { status: 403 });
+  for (const status of [403, 502, 503, 504]) {
+    it(`does not replay HTTP ${status} even when problem text says fetch failed`, async () => {
+      let commands = 0;
+      const session = {
+        id: "command-fixture",
+        endpoint: options.apiUrl,
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      };
+      const failure = {
+        ...problem,
+        status,
+        detail: "fetch failed after the command response began",
+      };
+      installMockFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/commands/stream")) {
+          commands++;
+          return new Response(JSON.stringify(failure), { status });
+        }
+        if (path.endsWith("/heartbeat") || path.endsWith("/readyz")) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        if (path === "/sandboxes" || path === "/sandboxes/command-fixture") {
+          return new Response(JSON.stringify(session), { status: 200 });
+        }
+        throw new Error(`Unexpected fixture request ${path}`);
+      });
+      const sandbox = Sandbox.createLazy({
+        ...options,
+        projectReference: "fixture-project",
+        deleteOnClose: false,
+        execStartMaxAttempts: 2,
+        execStartRetryDelayMs: 0,
+      });
+      try {
+        const error = await rejected(() =>
+          (async () => {
+            for await (const _event of sandbox.streamCommand("fixture command")) {
+              /* exhaust stream */
+            }
+          })()
+        );
+        assertEquals(error.status, status);
+        assertEquals(
+          commands,
+          1,
+          "An HTTP response must not be treated as a pre-response network failure",
+        );
+      } finally {
+        await sandbox.close();
       }
-      if (path.endsWith("/heartbeat") || path.endsWith("/readyz")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
-      }
-      if (path === "/sandboxes" || path === "/sandboxes/command-fixture") {
-        return new Response(JSON.stringify(session), { status: 200 });
-      }
-      throw new Error(`Unexpected fixture request ${path}`);
     });
-    const sandbox = Sandbox.createLazy({
-      ...options,
-      projectReference: "fixture-project",
-      deleteOnClose: false,
-      execStartMaxAttempts: 2,
-      execStartRetryDelayMs: 0,
-    });
-    try {
-      const error = await rejected(() =>
-        (async () => {
-          for await (const _event of sandbox.streamCommand("fixture command")) {
-            /* exhaust stream */
-          }
-        })()
-      );
-      assertEquals(error.status, 403);
-      assertEquals(
-        commands,
-        1,
-        "An HTTP response must not be treated as a pre-response network failure",
-      );
-    } finally {
-      await sandbox.close();
-    }
-  });
+  }
   it("does not reprovision or replay after an HTTP error body connection reset", async () => {
     let commands = 0;
     const session = {
