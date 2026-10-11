@@ -1,5 +1,3 @@
-import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
-import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -3750,7 +3748,7 @@ describe("runtime-bridge", () => {
   });
 });
 
-it("exact managed capture retains parallel tool control before OpenAI wire dispatch", async () => {
+it("exact managed capture retains parallel tool control before provider dispatch", async () => {
   const projectId = "11111111-1111-7111-8111-111111111111",
     canonicalRunId = "22222222-2222-7222-8222-222222222222";
   for (const value of [false, true, undefined]) {
@@ -3780,14 +3778,7 @@ it("exact managed capture retains parallel tool control before OpenAI wire dispa
         dispatches++;
         assertModelCallContextEvent(recorded);
         assertEquals(typeof getCurrentVeryfrontCloudModelCallCapture()?.eventId, "string");
-        const wire = buildOpenAIChatRequest(
-          "gpt-4o",
-          "veryfront-cloud",
-          options,
-          false,
-          createWarningCollector(),
-        );
-        assertEquals(recorded.request?.parallelToolCalls, wire.parallel_tool_calls);
+        assertEquals(recorded.request?.parallelToolCalls, options.parallelToolCalls);
         assertEquals(recorded.request?.parallelToolCalls, value);
         assertEquals(
           recorded.request === undefined

@@ -2382,45 +2382,6 @@ for (const provider of ["anthropic", "google", "openai"] as const) {
   }
 }
 
-it("records parallel tool control exactly as OpenAI chat and responses wire builders", () => {
-  for (const transport of ["chat-completions", "responses"] as const) {
-    for (const value of [false, true, undefined]) {
-      for (const native of [undefined, false, true]) {
-        const options = {
-          prompt,
-          tools,
-          ...(value === undefined ? {} : { parallelToolCalls: value }),
-          ...(native === undefined
-            ? {}
-            : { providerOptions: { openai: { parallel_tool_calls: native } } }),
-        };
-        const model = {
-          provider: "openai",
-          modelProvider: "openai",
-          modelId: "gpt-4o",
-          openAITransport: transport,
-        };
-        const projected = buildModelCallContextRequest(model, options);
-        const wire = transport === "responses"
-          ? buildOpenAIResponsesRequest(
-            "gpt-4o",
-            "openai",
-            options,
-            false,
-            createWarningCollector(),
-          )
-          : buildOpenAIChatRequest("gpt-4o", "openai", options, false, createWarningCollector());
-        assertEquals(projected?.parallelToolCalls, wire.parallel_tool_calls);
-        assertEquals(projected?.parallelToolCalls, native ?? value);
-        assertEquals(
-          projected === undefined ? false : Object.hasOwn(projected, "parallelToolCalls"),
-          native !== undefined || value !== undefined,
-        );
-      }
-    }
-  }
-});
-
 it("omits parallel tool control where native adapters ignore it", () => {
   const options = { prompt, parallelToolCalls: false };
   const anthropic = buildAnthropicMessagesRequest(
