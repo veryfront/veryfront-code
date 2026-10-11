@@ -1257,6 +1257,23 @@ describe("guide content contracts", () => {
       assertStringIncludes(guide, httpBundle);
     }
   });
+
+  it("links the runs guide to the webhook concept page for manual webhook runs", async () => {
+    const guide = (await Deno.readTextFile(
+      new URL("docs/guides/runs.md", repoRoot),
+    )).replace(/\s+/g, " ");
+
+    assertStringIncludes(
+      guide,
+      "To run a webhook manually, use `create` with `source.type` set to `webhook`.",
+    );
+    assertStringIncludes(
+      guide,
+      "[Webhooks](https://veryfront.com/docs/cloud/webhooks)",
+    );
+    // The runs-owned webhook run list keeps its released operation name.
+    assertStringIncludes(guide, "| `webhook-list` | `listProjectWebhookRuns` |");
+  });
 });
 
 /**
