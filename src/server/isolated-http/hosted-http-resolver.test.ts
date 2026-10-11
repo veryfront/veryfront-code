@@ -666,6 +666,8 @@ describe("hosted HTTP resolver", () => {
         { apiBaseUrl: "not a url" },
         { apiBaseUrl: "https://api.veryfront.test/api?" },
         { apiBaseUrl: "https://api.veryfront.test/api#" },
+        { apiBaseUrl: "https://api.veryfront.test:0/api" },
+        { sourceApiOrigin: "https://source.test:0" },
         { sourceApiOrigin: "https://source.test?" },
         { sourceApiOrigin: "https://source.test/path" },
         { sourceImageRepository: "" },
