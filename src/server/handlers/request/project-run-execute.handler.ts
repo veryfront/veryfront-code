@@ -3279,7 +3279,13 @@ function createRunPauseAcknowledger(
           ) {
             // Only the actual successful server acknowledgement may trigger the probe.
             // Conservative stop decisions after rejection or cancellation are not pause evidence.
-            if (body.stop) await afterPauseAcknowledged?.();
+            if (body.stop) {
+              try {
+                await afterPauseAcknowledged?.();
+              } catch {
+                // Diagnostic probe failures must not change the server acknowledgement decision.
+              }
+            }
             return body.stop;
           }
         }

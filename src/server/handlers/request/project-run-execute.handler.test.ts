@@ -16955,7 +16955,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     backend: MemoryBackend,
     definition: WorkflowDefinition,
     options: {
-      onPauseProbe?: () => void;
+      onPauseProbe?: () => void | Promise<void>;
       statePersistence?: "durable" | "ephemeral";
       now?: () => number;
       onDiscover?: () => void;
@@ -16973,9 +16973,8 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
             createSession: () => ({
               beforeExecute: () => Promise.resolve(),
               afterStopAcknowledged: () => Promise.resolve(),
-              afterPauseAcknowledged: () => {
-                options.onPauseProbe?.();
-                return Promise.resolve();
+              afterPauseAcknowledged: async () => {
+                await options.onPauseProbe?.();
               },
             }),
           }),
@@ -17066,6 +17065,29 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
       assertEquals(probes, status === 200 ? 1 : 0);
     });
   }
+
+  it("preserves a successful pause acknowledgement when the diagnostic probe throws", async () => {
+    const backend = new SharedMemoryBackend();
+    let probes = 0;
+    let acknowledgements = 0;
+    await withMockFetch(
+      () => {
+        acknowledgements++;
+        return Promise.resolve(Response.json({ stop: true }, { status: 200 }));
+      },
+      async () => {
+        const result = await dispatch(createHandler(backend, threeSteps([]), {
+          onPauseProbe: () => {
+            probes++;
+            throw new Error("diagnostic probe failed");
+          },
+        }));
+        assertEquals(result.status, "waiting");
+      },
+    );
+    assertEquals(acknowledgements, 1);
+    assertEquals(probes, 1);
+  });
 
   it("pauses at a batch boundary and resumes manually under the same run id", async () => {
     const backend = new SharedMemoryBackend();
