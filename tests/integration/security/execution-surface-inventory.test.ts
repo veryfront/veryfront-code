@@ -24,7 +24,7 @@ import { parse } from "npm:@babel/parser@7.29.2";
  * - every runtime use of `allowHostProjectCodeExecution`, including negation and
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
  * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
- *   `as` / `satisfies` assertion types.
+ *   `as` / `satisfies` assertion types and class fields initialized to `true`.
  *
  * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
  * other modules) is out of scope: the runtime guards, not this test, enforce
@@ -423,8 +423,8 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
     allowReturnOutsideFunction: true,
     errorRecovery: false,
     plugins: tsx
-      ? ["typescript", "jsx", "decorators-legacy", "importAttributes"]
-      : ["typescript", "decorators-legacy", "importAttributes"],
+      ? ["typescript", "jsx", "decorators-legacy", "decoratorAutoAccessors", "importAttributes"]
+      : ["typescript", "decorators-legacy", "decoratorAutoAccessors", "importAttributes"],
   });
   const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0 };
   const predicates = predicateAliases(ast.program as unknown as SyntaxNode);
@@ -489,7 +489,13 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
         break;
       case "ClassProperty":
       case "ClassAccessorProperty":
-        if (nameOf(node.key) === FLAG) {
+        if (propertyName(node.key, node.computed) === FLAG) {
+          // `allowHostProjectCodeExecution = true` on a class is a literal grant; any
+          // other declaration is not a use, but its initializer is still code.
+          if (isTrue(node.value)) {
+            result.grants++;
+            return;
+          }
           visitChildren(node, false, node.key);
           return;
         }
@@ -738,13 +744,17 @@ describe("execution surface inventory", () => {
         'const asserted = value as { "allowHostProjectCodeExecution": true };',
         "const satisfied = value satisfies { allowHostProjectCodeExecution: true };",
         "const read = (options as Options).allowHostProjectCodeExecution;",
+        "class Granting { allowHostProjectCodeExecution = true; }",
+        "class Accessor { accessor allowHostProjectCodeExecution = true; }",
+        "class Denying { allowHostProjectCodeExecution = false; }",
       ].join("\n"),
       false,
     );
     // Destructuring (1), propagation key and read (2), negation (1), comparison (1),
     // computed read (1), read through an assertion (1).
     assertEquals(analysis.guards, 7);
-    // Identifier, type, quoted and computed keys, and `as` / `satisfies` assertion types.
-    assertEquals(analysis.grants, 6);
+    // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, and
+    // class and accessor fields initialized to `true`.
+    assertEquals(analysis.grants, 8);
   });
 });
