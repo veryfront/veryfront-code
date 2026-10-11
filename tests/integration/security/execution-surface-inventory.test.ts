@@ -29,6 +29,7 @@ const PREDICATES = new Set([
   "isExplicitHostProjectCodeExecutionAllowed",
   "isHostRealmApiExecution",
   "isHostProjectExecutionOverrideEnabled",
+  "isWorkerIsolationEnabled",
 ]);
 const FLAG = "allowHostProjectCodeExecution";
 
@@ -87,7 +88,7 @@ const GUARDED_SURFACES: Record<
   },
   "src/routing/api/handler.ts": {
     surface: "API route ownership and host-realm selection",
-    guards: 10,
+    guards: 11,
   },
   "src/routing/api/module-loader/loader.ts": {
     surface: "API route module loading",
@@ -221,19 +222,24 @@ const GUARDED_SURFACES: Record<
     surface: "Workflow discovery capability",
     guards: 2,
   },
+  "src/security/project-locality.ts": {
+    surface: "Host execution capability predicates",
+    guards: 3,
+  },
+  "src/security/sandbox/worker-pool.ts": {
+    surface: "Worker realm selection",
+    guards: 4,
+  },
+  "src/server/runtime-handler/project-isolation.ts": {
+    surface: "Isolated project runtime selection",
+    guards: 2,
+  },
   "src/server/handlers/request/openapi.handler.ts": {
     surface: "Runtime OpenAPI generation",
     guards: 1,
     countLocalProjectChecks: true,
   },
 };
-
-/** Definitions of the predicates themselves are not surfaces. */
-const PREDICATE_DEFINITIONS = new Set([
-  "src/security/host-execution-policy.ts",
-  "src/security/project-locality.ts",
-  "src/security/sandbox/worker-pool.ts",
-]);
 
 interface SourceAnalysis {
   /** Predicate calls and uses of the capability flag in runtime code. */
@@ -299,6 +305,57 @@ function isTrue(node: unknown): boolean {
 }
 
 /**
+ * The predicate names plus every local alias of one in this file: `import { p as q }`,
+ * `const q = p` and `const { p: q } = module`. Aliases of aliases resolve too.
+ */
+function predicateAliases(program: SyntaxNode): Set<string> {
+  const names = new Set(PREDICATES);
+  const links: Array<[from: string, to: string]> = [];
+  const collect = (node: SyntaxNode): void => {
+    if (node.type === "ImportSpecifier") {
+      const imported = nameOf(node.imported);
+      const local = nameOf(node.local);
+      if (imported !== undefined && local !== undefined) links.push([imported, local]);
+    } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
+      if (node.id.type === "Identifier" && isNode(node.init) && node.init.type === "Identifier") {
+        links.push([node.init.name as string, node.id.name as string]);
+      } else if (node.id.type === "ObjectPattern" && Array.isArray(node.id.properties)) {
+        for (const property of node.id.properties) {
+          if (!isNode(property) || property.type !== "ObjectProperty") continue;
+          const key = propertyName(property.key, property.computed);
+          const value = isNode(property.value) && property.value.type === "AssignmentPattern"
+            ? property.value.left
+            : property.value;
+          const local = isNode(value) && value.type === "Identifier"
+            ? value.name as string
+            : undefined;
+          if (key !== undefined && local !== undefined) links.push([key, local]);
+        }
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (SKIPPED_KEYS.has(key)) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) if (isNode(item)) collect(item);
+      } else if (isNode(value)) {
+        collect(value);
+      }
+    }
+  };
+  collect(program);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [from, to] of links) {
+      if (names.has(from) && !names.has(to)) {
+        names.add(to);
+        changed = true;
+      }
+    }
+  }
+  return names;
+}
+
+/**
  * Count guards and grants in one source file from its syntax tree. Runtime code counts
  * every call of a predicate and every use of the flag: reads on any receiver, negations,
  * comparisons, conditions, destructuring and propagation keys. Class property
@@ -316,6 +373,7 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
       : ["typescript", "decorators-legacy", "importAttributes"],
   });
   const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0 };
+  const predicates = predicateAliases(ast.program as unknown as SyntaxNode);
 
   const visitChildren = (node: SyntaxNode, inType: boolean, skip?: unknown) => {
     for (const [key, value] of Object.entries(node)) {
@@ -349,7 +407,7 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
             !callee.computed
           ? nameOf(callee.property)
           : nameOf(callee);
-        if (name !== undefined && PREDICATES.has(name)) result.guards++;
+        if (name !== undefined && predicates.has(name)) result.guards++;
         break;
       }
       case "Identifier":
@@ -465,10 +523,7 @@ describe("execution surface inventory", () => {
   it("lists every file that decides host execution", async () => {
     const all = await sources();
     const unlisted = [...all.entries()]
-      .filter(([path, analysis]) =>
-        analysis.guards > 0 && !(path in GUARDED_SURFACES) &&
-        !PREDICATE_DEFINITIONS.has(path)
-      )
+      .filter(([path, analysis]) => analysis.guards > 0 && !(path in GUARDED_SURFACES))
       .map(([path]) => path)
       .toSorted();
     assertEquals(
@@ -570,6 +625,26 @@ describe("execution surface inventory", () => {
       guards("const r = count(items) / 2; isSharedProjectRuntime(ctx); const q = a / b;"),
       1,
     );
+  });
+
+  it("counts calls of a predicate through an import or local alias", () => {
+    const guards = (source: string) => analyzeSource(source, false).guards;
+    assertEquals(
+      guards(
+        [
+          'import { requiresIsolatedProjectRuntime as needsIsolation } from "./policy.ts";',
+          "if (needsIsolation(ctx)) stop();",
+          "const check = needsIsolation;",
+          "check(ctx);",
+          "const { isSharedProjectRuntime: shared = fallback } = policy;",
+          "shared(ctx);",
+          "policy.isHostRealmApiExecution(ctx);",
+        ].join("\n"),
+      ),
+      4,
+    );
+    // An unrelated local with an unrelated name stays uncounted.
+    assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
   });
 
   it("counts every runtime use of the flag, not type annotations or class declarations", () => {

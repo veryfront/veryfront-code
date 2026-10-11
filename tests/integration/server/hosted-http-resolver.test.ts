@@ -30,7 +30,13 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 function serviceToken(projectId: string): string {
-  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+  return jwt({
+    userId: SERVICE_ACCOUNT_ID,
+    scope: ["projects:read", "files:read"],
+    projectId,
+    iat: 1_700_000_000,
+    exp: 1_700_604_800,
+  });
 }
 
 const authority = Object.freeze({

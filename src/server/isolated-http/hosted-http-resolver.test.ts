@@ -37,7 +37,13 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 function serviceToken(projectId: string): string {
-  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+  return jwt({
+    userId: SERVICE_ACCOUNT_ID,
+    scope: ["projects:read", "files:read"],
+    projectId,
+    iat: 1_700_000_000,
+    exp: 1_700_604_800,
+  });
 }
 
 const authority = Object.freeze({
@@ -366,6 +372,55 @@ describe("hosted HTTP resolver", () => {
           jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["files:read"], projectId: PROJECT_ID }),
         ],
         ["malformed payload", "header.not-base64!.signature"],
+        [
+          "credential without iat",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            exp: 1_700_604_800,
+          }),
+        ],
+        [
+          "credential without exp",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_000_000,
+          }),
+        ],
+        [
+          "credential with non-numeric iat and exp",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: "1700000000",
+            exp: "1700604800",
+          }),
+        ],
+        [
+          "credential expiring before issue",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_604_800,
+            exp: 1_700_000_000,
+          }),
+        ],
+        [
+          "credential with an additional claim",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_000_000,
+            exp: 1_700_604_800,
+            aud: "veryfront",
+          }),
+        ],
       ] as const
     ) {
       const fake = fakeApi();

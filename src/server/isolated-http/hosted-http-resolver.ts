@@ -198,7 +198,8 @@ const SOURCE_CREDENTIAL_SCOPES = new Set([
 /**
  * Accept only the edge proxy's project source credential for exactly `projectId`: a JWT
  * whose claims are exactly `userId` (the configured service account), `scope` (a subset of
- * the client's default scopes that includes `projects:read`), `projectId`, `iat` and `exp`.
+ * the client's default scopes that includes `projects:read`), `projectId`, and integer
+ * `iat` and `exp` with `exp` after `iat`. A missing or additional claim is refused.
  * Credentials with any other claim, such as `tokenUse`, `actorType` or `serviceAccountId`,
  * or any other scope, such as `runs:write` or a user-scoped grant, are refused. This reads
  * the payload without verifying the signature; the API verifies every credential.
@@ -224,9 +225,16 @@ function isProjectBoundServiceCredential(
   }
   if (claims === null || typeof claims !== "object" || Array.isArray(claims)) return false;
   const record = claims as Record<string, unknown>;
-  if (!Object.keys(record).every((key) => SOURCE_CREDENTIAL_CLAIMS.has(key))) return false;
-  const { projectId: claimedProject, userId, scope } = record;
-  return typeof claimedProject === "string" && claimedProject === projectId &&
+  // Exactly the expected claim set: no missing and no additional claims.
+  const keys = Object.keys(record);
+  if (
+    keys.length !== SOURCE_CREDENTIAL_CLAIMS.size ||
+    !keys.every((key) => SOURCE_CREDENTIAL_CLAIMS.has(key))
+  ) return false;
+  const { projectId: claimedProject, userId, scope, iat, exp } = record;
+  return typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 &&
+    typeof exp === "number" && Number.isSafeInteger(exp) && exp > iat &&
+    typeof claimedProject === "string" && claimedProject === projectId &&
     typeof userId === "string" && userId === serviceAccountId &&
     Array.isArray(scope) && scope.includes("projects:read") &&
     scope.every((entry) => typeof entry === "string" && SOURCE_CREDENTIAL_SCOPES.has(entry));
