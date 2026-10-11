@@ -261,7 +261,60 @@ describe("prepareProjectRequest", () => {
     }
   });
 
+  it("uses configured standalone proxy trust consistently for routing, logs, and traces", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: { "x-forwarded-host": "demo.preview.localhost", "x-project-slug": "demo" },
+    });
+    for (const trustForwarded of [false, true]) {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", trustForwarded ? "1" : "0");
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: false,
+      });
+      const attributes: Record<string, unknown> = {};
+      const span = {
+        setAttribute: (key: string, value: unknown) => {
+          attributes[key] = value;
+        },
+      };
+      setRequestAttributes(
+        span,
+        req,
+        new URL(req.url),
+        prepared.proxyTrust.forwardedHeadersTrusted,
+      );
+      assertEquals(prepared.requestContext.mode, trustForwarded ? "preview" : "production");
+      assertEquals(
+        prepared.loggerFacts.domain,
+        trustForwarded ? "demo.preview.localhost" : "runtime.internal",
+      );
+      const project = await resolveProjectIdentity({
+        req,
+        url: new URL(req.url),
+        headers: prepared.headers,
+        requestContext: prepared.requestContext,
+        config: undefined,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrust: prepared.proxyTrust,
+      });
+      setProjectAttributes(
+        span,
+        project.projectSlug,
+        project.proxyEnv,
+        prepared.loggerFacts.environment,
+      );
+      assertEquals(attributes["http.host"], prepared.loggerFacts.domain);
+      assertEquals(attributes["veryfront.project_slug"], "demo");
+      assertEquals(attributes["veryfront.environment"], trustForwarded ? "preview" : "production");
+    }
+  });
+
   it("reuses explicit false proxy trust for headers and request context", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     let trustChecks = 0;
     const req = new Request("http://localhost/page", {
       headers: {
@@ -702,7 +755,7 @@ describe("resolveProjectIdentity", () => {
         attributes[key] = value;
       },
     };
-    setRequestAttributes(span, req, url, prepared.proxyTrust.proxyTrusted === true);
+    setRequestAttributes(span, req, url, prepared.proxyTrust.forwardedHeadersTrusted);
     setProjectAttributes(
       span,
       project.projectSlug,

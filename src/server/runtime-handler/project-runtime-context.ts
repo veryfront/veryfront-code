@@ -73,6 +73,7 @@ export interface PreparedProjectRequest {
   requestContext: ProjectRequestContext;
   proxyTrust: {
     proxyTrusted: boolean | undefined;
+    forwardedHeadersTrusted: boolean;
     identityHeadersTrusted: boolean;
   };
   loggerFacts: RequestContextFacts;
@@ -186,7 +187,11 @@ export async function prepareProjectRequest(
         token: undefined,
       },
       requestContext: { slug: binding.projectSlug, branch: null, mode: "production", token: "" },
-      proxyTrust: { proxyTrusted: false, identityHeadersTrusted: false },
+      proxyTrust: {
+        proxyTrusted: false,
+        forwardedHeadersTrusted: false,
+        identityHeadersTrusted: false,
+      },
       loggerFacts: {
         // Installed identity comes from host configuration, never request headers.
         environment: "production",
@@ -213,20 +218,22 @@ export async function prepareProjectRequest(
   // the request may authorize canonical cache and secret-fetch identity.
   // Standalone runtimes retain their existing direct-header contract.
   const identityHeadersTrusted = !isProxyMode || proxyTrusted === true;
-  const headers = extractRequestHeaders(req, url, proxyTrusted, identityHeadersTrusted);
+  const forwardedHeadersTrusted = proxyTrusted ??
+    (getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1");
+  const headers = extractRequestHeaders(req, url, forwardedHeadersTrusted, identityHeadersTrusted);
   const requestContext = createRequestContext(req, {
-    proxyTrusted,
+    proxyTrusted: forwardedHeadersTrusted,
     allowHostTokenFallback: !isProxyMode,
   });
 
-  const hostHeader = getEffectiveRequestHost(req, url, proxyTrusted === true);
+  const hostHeader = getEffectiveRequestHost(req, url, forwardedHeadersTrusted);
   const domain = hostHeader.replace(/:\d+$/, "");
 
   return {
     url,
     headers,
     requestContext,
-    proxyTrust: { proxyTrusted, identityHeadersTrusted },
+    proxyTrust: { proxyTrusted, forwardedHeadersTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
       environment: parseProxyEnvironment(headers.environment ?? null) ??
