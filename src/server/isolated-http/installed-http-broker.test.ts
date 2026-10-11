@@ -34,6 +34,35 @@ function fixture(
 }
 
 describe("installed HTTP broker", () => {
+  it("uses the configured bounded lifetime for long requests and streams", async () => {
+    const f = createHostedHttpFixture(() => new Response("A"));
+    const options = {
+      installations: [{ image: f.input.session.expectedImage, configuration }],
+      expectedBrokerInstanceId: "broker-a",
+      allocator: f.input.session.allocator,
+      connectTransport: f.input.session.connectTransport,
+      maxActive: 1,
+      authorize: async () => {},
+      requestLifetimeMs: 180_000,
+    };
+    const b = createInstalledHttpBroker(options);
+    try {
+      const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
+      assertEquals(
+        input.session.request.hardDeadlineAt - input.session.request.requestedAt,
+        180_000,
+      );
+      assertEquals(
+        input.session.request.prepareDeadlineAt - input.session.request.requestedAt,
+        30_000,
+      );
+    } finally {
+      await b.shutdown();
+    }
+    for (const requestLifetimeMs of [0, -1, NaN, Infinity, 1.5, 86_400_001]) {
+      assertThrows(() => createInstalledHttpBroker({ ...options, requestLifetimeMs }), TypeError);
+    }
+  });
   it("refuses each foreign identity before authorization or allocation", async () => {
     let calls = 0;
     const b = fixture(async () => {

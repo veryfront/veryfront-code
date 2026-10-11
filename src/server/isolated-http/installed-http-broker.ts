@@ -28,6 +28,8 @@ export interface InstalledHttpBrokerOptions {
   /** Check current project/environment/release authority against the source API on every request. */
   authorize(authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
   maxActive: number;
+  /** Executor lifetime after authorization, including preparation and streamed response; 1ms–24h, default 75s. Align with the host request timeout and allocator policy. */
+  requestLifetimeMs?: number;
 }
 
 function identityKey(value: HostedHttpRequestAuthority | ExecutorHttpApplicationConfiguration) {
@@ -45,6 +47,13 @@ function identityKey(value: HostedHttpRequestAuthority | ExecutorHttpApplication
 export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
   if (typeof options.authorize !== "function") {
     throw new TypeError("Installed HTTP broker requires source authorization");
+  }
+  const requestLifetimeMs = options.requestLifetimeMs ?? 75_000;
+  if (
+    !Number.isSafeInteger(requestLifetimeMs) || requestLifetimeMs < 1 ||
+    requestLifetimeMs > 86_400_000
+  ) {
+    throw new TypeError("Invalid installed HTTP request lifetime");
   }
   const expectedBrokerInstanceId = options.expectedBrokerInstanceId;
   if (
@@ -140,8 +149,8 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
           source,
           executionProfile: "http",
           requestedAt: now,
-          prepareDeadlineAt: now + 30_000,
-          hardDeadlineAt: now + 60_000,
+          prepareDeadlineAt: now + Math.min(30_000, requestLifetimeMs),
+          hardDeadlineAt: now + requestLifetimeMs,
         },
         expectedBrokerInstanceId,
         expectedImage: selected.image,
