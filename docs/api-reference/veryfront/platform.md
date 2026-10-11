@@ -27,6 +27,28 @@ import { getOsType, getRuntimeVersion } from "veryfront/platform";
 console.log(`${getOsType()} ${getRuntimeVersion()}`);
 ```
 
+### Pin project dependencies
+
+```ts
+import { VeryfrontApiClient } from "veryfront/platform";
+
+const client = new VeryfrontApiClient({
+  apiBaseUrl: "https://api.veryfront.com",
+  apiToken: "<API_KEY>",
+  projectSlug: "<PROJECT_SLUG>",
+});
+
+const { pins, persisted, skipped } = await client.dependencies.resolve({
+  specifiers: ["react@^19", "zod"],
+  branch: "main",
+});
+console.log(pins, persisted, skipped);
+
+await client.initialize();
+const history = await client.dependencies.getHistory({ branch: "main" });
+console.log(history.entries.length);
+```
+
 ## Exports
 
 ### Functions
@@ -72,12 +94,12 @@ console.log(`${getOsType()} ${getRuntimeVersion()}`);
 
 ### Classes
 
-| Name                 | Description                                                                                                                            | Source                                                                                                               |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `HostExit`           | Thrown by an in-memory host's `exit` so the calling code stops where the real process would have ended. Identify it with `isHostExit`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts)          |
-| `MemoryKv`           |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/kv/memory-adapter.ts)             |
-| `VeryfrontApiClient` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-client/client.ts) |
-| `VeryfrontFSAdapter` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts)        |
+| Name                 | Description                                                                                                                                                                                                                     | Source                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `HostExit`           | Thrown by an in-memory host's `exit` so the calling code stops where the real process would have ended. Identify it with `isHostExit`.                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts)          |
+| `MemoryKv`           |                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/kv/memory-adapter.ts)             |
+| `VeryfrontApiClient` | Typed client for the Veryfront API. `dependencies.getHistory()` and `dependencies.resolve()` read and pin a project's npm dependencies; `readDependencyMetadataHistory()` is a deprecated alias of `dependencies.getHistory()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-client/client.ts) |
+| `VeryfrontFSAdapter` |                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts)        |
 
 ### Types
 

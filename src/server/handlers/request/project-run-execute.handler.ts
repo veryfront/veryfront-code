@@ -4576,9 +4576,9 @@ async function executeDependencyArtifactBuildRun(input: {
       projectId: input.ctx.projectId,
     });
     const result = await runDependencyArtifactBuild(taskInput, {
-      uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
+      writeAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
         runWhileActive(input.signal, () =>
-          apiClient.uploadDependencyArtifactAsset(
+          apiClient.writeDependencyArtifactAsset(
             artifactId,
             attemptCount,
             contentHash,
@@ -4586,9 +4586,9 @@ async function executeDependencyArtifactBuildRun(input: {
             bytes,
             input.signal,
           )),
-      reportResult: ({ artifactId, attemptCount, result }) =>
+      createResult: ({ artifactId, attemptCount, result }) =>
         runWhileActive(input.signal, () =>
-          apiClient.reportDependencyArtifactBuildResult(
+          apiClient.createDependencyArtifactBuildResult(
             artifactId,
             attemptCount,
             result,

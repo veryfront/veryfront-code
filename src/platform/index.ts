@@ -10,6 +10,27 @@
  *
  * console.log(`${getOsType()} ${getRuntimeVersion()}`);
  * ```
+ *
+ * @example Pin project dependencies
+ * ```ts
+ * import { VeryfrontApiClient } from "veryfront/platform";
+ *
+ * const client = new VeryfrontApiClient({
+ *   apiBaseUrl: "https://api.veryfront.com",
+ *   apiToken: "<API_KEY>",
+ *   projectSlug: "<PROJECT_SLUG>",
+ * });
+ *
+ * const { pins, persisted, skipped } = await client.dependencies.resolve({
+ *   specifiers: ["react@^19", "zod"],
+ *   branch: "main",
+ * });
+ * console.log(pins, persisted, skipped);
+ *
+ * await client.initialize();
+ * const history = await client.dependencies.getHistory({ branch: "main" });
+ * console.log(history.entries.length);
+ * ```
  */
 
 // Adapters

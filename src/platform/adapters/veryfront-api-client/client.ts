@@ -10,12 +10,14 @@ import {
   startSharedInitialization,
 } from "../shared-initialization.ts";
 import {
+  type DependencyResolution,
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type GetFileOptions,
   type ListFilesOptions,
   type ProjectStyleArtifactResolution,
+  type ResolveDependenciesInput,
   type ResolveStyleArtifactInput,
   type TokenProvider,
   type UpsertStyleArtifactInput,
@@ -75,6 +77,27 @@ export type FileContext =
   | { type: "environment"; name: string }
   | { type: "release"; version: string };
 
+/** Input for `client.dependencies.getHistory()`. */
+export interface GetDependencyHistoryInput {
+  /** Branch name or ID. Omit, or pass `null` or `"main"`, for the main branch. */
+  branch?: string | null;
+  /** Caller-owned cancellation signal for the API request. */
+  signal?: AbortSignal;
+}
+
+/** Dependency operations of a {@linkcode VeryfrontApiClient}. */
+export interface VeryfrontApiDependencies {
+  /** Read up to 16 recent package.json dependency snapshots for a branch. */
+  getHistory(input?: GetDependencyHistoryInput): Promise<DependencyMetadataHistory>;
+  /** Pin npm specifiers to exact versions in the branch's package.json. */
+  resolve(input: ResolveDependenciesInput): Promise<DependencyResolution>;
+}
+
+/**
+ * Typed client for the Veryfront API. `dependencies.getHistory()` and
+ * `dependencies.resolve()` read and pin a project's npm dependencies;
+ * `readDependencyMetadataHistory()` is a deprecated alias of `dependencies.getHistory()`.
+ */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {
     retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
@@ -90,6 +113,7 @@ export class VeryfrontApiClient {
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
   /** Kept off `config`: a plain property is readable by any code holding the client. */
   readonly #apiToken: string | undefined;
+  #dependencies?: VeryfrontApiDependencies;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -349,6 +373,30 @@ export class VeryfrontApiClient {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug(), signal);
   }
 
+  /**
+   * Dependencies: the npm packages in the project's package.json.
+   *
+   * - `getHistory({ branch })` reads up to 16 recent dependency snapshots. The
+   *   client must be initialized, because the response is checked against the
+   *   project ID and the requested branch.
+   * - `resolve({ specifiers, branch, expectedDeclarations })` pins npm
+   *   specifiers to exact versions in the branch's package.json.
+   */
+  get dependencies(): VeryfrontApiDependencies {
+    if (!this.#dependencies) {
+      this.#dependencies = IntrinsicObjectFreeze({
+        getHistory: (input: GetDependencyHistoryInput = {}) =>
+          // Dispatch through the instance method so a reader installed on this
+          // client applies to both names.
+          this.readDependencyMetadataHistory(input.branch ?? null, input.signal),
+        resolve: (input: ResolveDependenciesInput) =>
+          this.operations.resolveDependencies(this.requireProjectSlug(), input),
+      });
+    }
+    return this.#dependencies;
+  }
+
+  /** @deprecated Use `client.dependencies.getHistory({ branch, signal })`. */
   readDependencyMetadataHistory(
     branch: string | null,
     signal?: AbortSignal,
@@ -552,7 +600,7 @@ export class VeryfrontApiClient {
   // Dependency Artifact Build Operations
   // =============================================================================
 
-  uploadDependencyArtifactAsset(
+  writeDependencyArtifactAsset(
     artifactId: string,
     attemptCount: number,
     contentHash: string,
@@ -560,7 +608,7 @@ export class VeryfrontApiClient {
     bytes: Uint8Array<ArrayBuffer>,
     signal?: AbortSignal,
   ) {
-    return this.operations.uploadDependencyArtifactAsset(
+    return this.operations.writeDependencyArtifactAsset(
       artifactId,
       attemptCount,
       contentHash,
@@ -570,13 +618,13 @@ export class VeryfrontApiClient {
     );
   }
 
-  reportDependencyArtifactBuildResult(
+  createDependencyArtifactBuildResult(
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
     signal?: AbortSignal,
   ) {
-    return this.operations.reportDependencyArtifactBuildResult(
+    return this.operations.createDependencyArtifactBuildResult(
       artifactId,
       attemptCount,
       result,

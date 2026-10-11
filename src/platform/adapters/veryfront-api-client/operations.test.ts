@@ -1599,7 +1599,7 @@ describe("VeryfrontAPIOperations", () => {
         [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
       );
 
-      const result = await createOps().uploadDependencyArtifactAsset(
+      const result = await createOps().writeDependencyArtifactAsset(
         "11111111-1111-4111-8111-111111111111",
         2,
         contentHash,
@@ -1628,7 +1628,7 @@ describe("VeryfrontAPIOperations", () => {
 
       await assertRejects(
         () =>
-          createOps().uploadDependencyArtifactAsset(
+          createOps().writeDependencyArtifactAsset(
             "11111111-1111-4111-8111-111111111111",
             2,
             "a".repeat(64),
@@ -1653,7 +1653,7 @@ describe("VeryfrontAPIOperations", () => {
       });
       const hash = "b".repeat(64);
 
-      const result = await createOps().reportDependencyArtifactBuildResult(
+      const result = await createOps().createDependencyArtifactBuildResult(
         "11111111-1111-4111-8111-111111111111",
         2,
         {
