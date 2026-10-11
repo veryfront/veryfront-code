@@ -378,7 +378,7 @@ describe("server/runtime-handler/index", () => {
     _resetShimForTests();
   });
 
-  it("labels standalone logs and spans with the environment used for execution", async () => {
+  it("labels execution diagnostics for standalone and hosted requests", async () => {
     const originalHandle = SSRHandler.prototype.handle;
     const { entries, restore } = captureDebugLogs();
     const spans: Array<{ name: string; attributes: Record<string, unknown> }> = [];
@@ -447,6 +447,40 @@ describe("server/runtime-handler/index", () => {
         assertEquals(requestSpan?.attributes["veryfront.project_slug"], "diagnostics");
         assertEquals(requestSpan?.attributes["veryfront.environment"], expected);
       }
+
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      spans.length = 0;
+      let resolvedHostedProject: string | undefined;
+      const hostedHandler = createVeryfrontHandler("/tmp/test-project", createRouteMockAdapter(), {
+        projectDir: "/tmp/test-project",
+        config: { fs: { veryfront: { proxyMode: true } } } as VeryfrontConfig,
+        hostedHttp: {
+          resolve(authority) {
+            resolvedHostedProject = authority.projectSlug;
+            return Promise.reject(new Error("Hosted execution unavailable"));
+          },
+          broker: { fetch: () => Promise.reject(new Error("Unexpected broker call")) },
+        },
+      });
+      const hostedResponse = await hostedHandler(
+        new Request("http://renderer/diagnostics", {
+          headers: {
+            "x-forwarded-host": "diagnostics.production.example.com",
+            "x-project-slug": "diagnostics",
+            "x-project-id": "project-diagnostics",
+            "x-release-id": "release-diagnostics",
+            "x-environment-id": "environment-diagnostics",
+            "x-environment-name": "Production",
+            "x-environment": "production",
+            "x-token": "source-token",
+          },
+        }),
+      );
+      assertEquals(hostedResponse.status, 503);
+      assertEquals(resolvedHostedProject, "diagnostics");
+      const hostedSpan = spans.find((span) => span.name === "GET /diagnostics");
+      assertEquals(hostedSpan?.attributes["veryfront.project_slug"], "diagnostics");
+      assertEquals(hostedSpan?.attributes["veryfront.environment"], "production");
     } finally {
       SSRHandler.prototype.handle = originalHandle;
       restore();

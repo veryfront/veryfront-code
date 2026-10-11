@@ -772,6 +772,12 @@ export function createVeryfrontHandler(
           // release lookup. Missing release/environment identity is an ingress
           // refusal, not permission to resolve a mutable release on the host.
           if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            setProjectAttributes(
+              spanInfo.span,
+              headers.projectSlug,
+              parseProxyEnvironment(headers.environment ?? null),
+              preparedRequest.loggerFacts.environment,
+            );
             if (!requestMetricsIncremented) {
               await incrementRequestMetrics();
               requestMetricsIncremented = true;
