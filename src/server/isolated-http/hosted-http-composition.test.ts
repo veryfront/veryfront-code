@@ -623,6 +623,29 @@ describe("hosted HTTP host composition", () => {
     assertEquals(typeof composition.ingress.resolve, "function");
   });
 
+  it("wipes a configuration key that arrives after the startup deadline", async () => {
+    const host = defaultFiles();
+    const late = Promise.withResolvers<Uint8Array>();
+    const key = new Uint8Array(32).fill(9);
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
+          isOverrideEnabled: () => false,
+          hostFileReadTimeoutMs: 10,
+          readFile: (path) =>
+            path === "/host/configuration-key" ? late.promise : host.readFile(path),
+          createAllocatorClient: () => allocator,
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      Error,
+      "in time",
+    );
+    late.resolve(key);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(key.every((byte) => byte === 0), true);
+  });
+
   it("wipes the configuration key buffer after startup succeeds or fails", async () => {
     for (const startup of [config, { ...config, sourceImageRepository: "registry/source:tag" }]) {
       const host = defaultFiles();

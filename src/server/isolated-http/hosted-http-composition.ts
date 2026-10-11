@@ -467,14 +467,21 @@ export async function createHostedHttpComposition(
   // The key is raw bytes: it is neither decoded as text nor trimmed.
   const configurationKey = await readStartupFile(
     "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-    (signal) =>
-      readBoundedBytes(
+    (signal) => {
+      const reading = readBoundedBytes(
         read,
         "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
         config.configurationKeyFile,
         MAX_TOKEN_BYTES,
         signal,
-      ),
+      );
+      // A read that outlives the startup deadline still returns the key to nobody;
+      // wipe it as soon as it arrives.
+      reading.then((bytes) => {
+        if (signal.aborted) bytes.fill(0);
+      }, () => {});
+      return reading;
+    },
   );
   // The resolver snapshots the key; this buffer is wiped once that is done or startup
   // fails, so no second copy of the secret outlives startup. The key is read last so
