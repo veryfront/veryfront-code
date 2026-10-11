@@ -383,6 +383,40 @@ describe("hosted HTTP host composition", () => {
     assertEquals(reads, 3);
   });
 
+  it("never uses the result of a read that outlived its timeout", async () => {
+    let clock = 0;
+    let reads = 0;
+    const stalled = Promise.withResolvers<string>();
+    const stale = { ...record, image: `${record.image.split("@")[0]}@sha256:${"0".repeat(64)}` };
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: () => {
+        reads++;
+        return reads === 1
+          ? Promise.resolve(JSON.stringify([record]))
+          : reads === 2
+          ? stalled.promise
+          : Promise.resolve(JSON.stringify([record]));
+      },
+      now: () => clock,
+      refreshMs: 1_000,
+      readTimeoutMs: 10,
+    });
+    const signal = new AbortController().signal;
+    const request = { projectId: record.project_id, releaseId: record.release_id };
+    clock = 1_000;
+    await assertRejects(() => lookup(request, signal), Error, "Source records are unavailable");
+    // The stalled read settles with a pre-rotation snapshot while the next refresh runs.
+    clock = 2_000;
+    const refreshing = lookup(request, signal);
+    stalled.resolve(JSON.stringify([stale]));
+    await assertRejects(() => refreshing, Error, "Source records are unavailable");
+    assertEquals(reads, 2);
+    // The first refresh after it settled reads the file again.
+    clock = 3_000;
+    assertEquals(((await lookup(request, signal)) as { image: string }).image, record.image);
+    assertEquals(reads, 3);
+  });
+
   it("refuses releases while a source records read stalls, then retries", async () => {
     let clock = 0;
     let stall = false;

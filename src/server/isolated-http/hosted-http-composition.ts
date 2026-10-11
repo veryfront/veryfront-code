@@ -302,10 +302,13 @@ export async function createRefreshingSourceRecordLookup(options: {
   let lookup: Lookup | undefined;
   let loadedAt = 0;
   let loading: Promise<void> | undefined;
-  // One raw read at a time: a stalled read is shared until it settles, so a
-  // prolonged mount failure cannot accumulate open reads across refreshes.
-  let rawRead: Promise<string> | undefined;
+  // One raw read at a time. A read that outlives its timeout stays here until it
+  // settles only to block a second concurrent read, so a prolonged mount failure
+  // cannot accumulate open reads; its result is never used, because the file may
+  // have rotated while it stalled. The first refresh after it settles reads again.
+  let pendingRead: Promise<string> | undefined;
   const readWithin = async (): Promise<string> => {
+    if (pendingRead) throw new Error("A timed-out source records read is still pending");
     const deadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_resolve, reject) => {
@@ -314,10 +317,10 @@ export async function createRefreshingSourceRecordLookup(options: {
         reject(new Error("Source records read timed out"));
       }, options.readTimeoutMs);
     });
-    rawRead ??= options.readText(deadline.signal).finally(() => {
-      rawRead = undefined;
+    const reading: Promise<string> = options.readText(deadline.signal).finally(() => {
+      if (pendingRead === reading) pendingRead = undefined;
     });
-    const reading = rawRead;
+    pendingRead = reading;
     reading.catch(() => {});
     try {
       return await Promise.race([reading, timedOut]);
