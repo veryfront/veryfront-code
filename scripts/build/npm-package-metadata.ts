@@ -121,6 +121,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"micromark-util-combine-extensions",
 	"micromark-util-types",
 	"parse5",
+	"postcss",
+	"postcss-selector-parser",
 	"protobufjs",
 	"purgecss",
 	"rehype-highlight",

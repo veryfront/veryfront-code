@@ -111,7 +111,12 @@ describe("putRemoteFileFromLocal", () => {
         put: (path, body) => {
           capturedPath = path;
           capturedBody = body;
-          return Promise.resolve({ path: "knowledge/q1-report.md" });
+          return Promise.resolve({
+            path: "knowledge/q1-report.md",
+            file_id: "file-1",
+            version_id: "version-1",
+            checksum: "checksum-1",
+          });
         },
       });
 
@@ -124,7 +129,12 @@ describe("putRemoteFileFromLocal", () => {
 
       assertEquals(capturedPath, "/projects/my-project/files/knowledge%2Fq1-report.md");
       assertEquals(capturedBody, { content: "# Q1 Report\n" });
-      assertEquals(result.path, "knowledge/q1-report.md");
+      assertEquals(result, {
+        path: "knowledge/q1-report.md",
+        file_id: "file-1",
+        version_id: "version-1",
+        checksum: "checksum-1",
+      });
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
@@ -150,6 +160,38 @@ describe("putRemoteFileFromLocal", () => {
       VeryfrontError,
     );
     assertEquals(writes, 0);
+  });
+
+  it("uploads durable metadata when provided", async () => {
+    let capturedBody: unknown = null;
+    const tempDir = await makeTempDir();
+    const localPath = `${tempDir}/proof.md`;
+    await Deno.writeTextFile(localPath, "# Proof\n");
+    try {
+      const client = createMockClient({
+        put: (_path, body) => {
+          capturedBody = body;
+          return Promise.resolve({ path: "knowledge/proof.md" });
+        },
+      });
+
+      await putRemoteFileFromLocal(
+        client,
+        "my-project",
+        "knowledge/proof.md",
+        localPath,
+        undefined,
+        undefined,
+        { _veryfront: { okf: { bundle_root_path: "knowledge/imports/acme" } } },
+      );
+
+      assertEquals(capturedBody, {
+        content: "# Proof\n",
+        metadata: { _veryfront: { okf: { bundle_root_path: "knowledge/imports/acme" } } },
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 
   it("encodes branch names as canonical ref selectors", async () => {

@@ -25,6 +25,8 @@ export interface ToolListEntry {
   name: string;
   description: string;
   inputSchema: unknown;
+  /** Optional declared JSON Schema for the tool's structured output. */
+  outputSchema?: unknown;
   title?: string;
   annotations?: ToolAnnotations;
 }

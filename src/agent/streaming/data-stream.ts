@@ -1,4 +1,19 @@
-import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
+import {
+  primordialArrayFilter,
+  primordialArrayFlatMap,
+  primordialArrayJoin,
+  primordialArrayMap,
+  primordialArrayPop,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  createPrivateTextDecoder,
+  privateTextSlice,
+  privateTextSplit,
+  privateTextStartsWith,
+  privateTextTrim,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -18,19 +33,23 @@ export function parseDataStreamSseEvents(chunk: string): {
   events: AgUiRuntimeStreamEvent[];
   remainder: string;
 } {
-  const blocks = chunk.split("\n\n");
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
+  const blocks = privateTextSplit(chunk, "\n\n");
+  const remainder = primordialArrayPop(blocks) ?? "";
+  const events = primordialArrayFlatMap(blocks, (block) => {
+    const dataLines = primordialArrayMap(
+      primordialArrayFilter(
+        privateTextSplit(block, "\n"),
+        (line) => privateTextStartsWith(line, "data:"),
+      ),
+      (line) => privateTextTrimStart(privateTextSlice(line, 5)),
+    );
 
     if (!dataLines.length) {
       return [];
     }
 
-    const payload = dataLines.join("\n");
-    if (payload.trim() === "[DONE]") {
+    const payload = primordialArrayJoin(dataLines, "\n");
+    if (privateTextTrim(payload) === "[DONE]") {
       return [];
     }
 
@@ -69,14 +88,14 @@ export async function* streamDataStreamEvents(
       const parsed = parseDataStreamSseEvents(remainder);
       remainder = parsed.remainder;
 
-      for (const event of parsed.events) {
+      for (const event of primordialArrayValues(parsed.events)) {
         yield event;
       }
     }
 
     remainder += decoder.decode();
     const parsed = parseDataStreamSseEvents(`${remainder}\n\n`);
-    for (const event of parsed.events) {
+    for (const event of primordialArrayValues(parsed.events)) {
       yield event;
     }
   } finally {

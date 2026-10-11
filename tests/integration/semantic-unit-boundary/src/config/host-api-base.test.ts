@@ -68,7 +68,7 @@ describe("host API base", () => {
       );
     }
   });
-  it("rejects cleartext host API endpoints even with internal egress enabled", () => {
+  it("allows configured HTTP APIs without allowing other HTTP origins", () => {
     const keys = [
       "VERYFRONT_API_URL",
       "VERYFRONT_API_BASE_URL",
@@ -81,8 +81,12 @@ describe("host API base", () => {
         deleteEnv("VERYFRONT_API_URL");
         deleteEnv("VERYFRONT_API_BASE_URL");
         setEnv(key, "http://api.example.test/api");
+        assertEquals(
+          requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+          "http://api.example.test/api",
+        );
         assertThrows(
-          () => requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+          () => requireHostPrivateApiHttps("http://other.example.test/api"),
           Error,
           "HTTPS",
         );

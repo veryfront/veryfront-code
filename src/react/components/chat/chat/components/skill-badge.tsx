@@ -19,10 +19,25 @@ export interface SkillBadgeProps {
   icon?: React.ReactNode;
 }
 
+function readOwnDataField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return descriptor.value;
+}
+
+/** Read the skill ID from the flat legacy input or the provider-facing `load` wrapper. */
+function readSkillId(input: unknown): string | undefined {
+  const skillId = readOwnDataField(input, "skillId");
+  if (typeof skillId === "string") return skillId;
+  const nestedSkillId = readOwnDataField(readOwnDataField(input, "load"), "skillId");
+  return typeof nestedSkillId === "string" ? nestedSkillId : undefined;
+}
+
 /** Render skill badge. */
 export function SkillBadge({ tool, className, icon }: SkillBadgeProps): React.JSX.Element {
   const input = tool.input as Record<string, unknown> | undefined;
-  const skillId = input?.skillId as string | undefined;
+  const skillId = readSkillId(tool.input);
   const isComplete = tool.state === "output-available";
   const isError = tool.state === "output-error";
 

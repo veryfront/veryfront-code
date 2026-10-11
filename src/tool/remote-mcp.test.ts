@@ -23,6 +23,16 @@ import {
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
 
+function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (
+    headers === undefined || typeof headers !== "object" || Array.isArray(headers) ||
+    headers instanceof Headers || !Object.hasOwn(headers, name)
+  ) {
+    return undefined;
+  }
+  return headers[name];
+}
+
 describe("tool/remote-mcp", () => {
   it("preserves discovery metadata on every page without adding it to calls", async () => {
     const config = {
@@ -225,17 +235,10 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       // Stands in for the native send: it reads the null-prototype record.
       requestFetch: (_input, init) => {
-        const headers = observeFetchRequestInit(init).headers;
-        const headerRecord = headers && !(headers instanceof Headers) && !Array.isArray(headers)
-          ? headers
-          : undefined;
-        authorizations.push(
-          headerRecord && Object.hasOwn(headerRecord, "authorization")
-            ? headerRecord.authorization
-            : undefined,
-        );
-        writerTokens.push(headerRecord?.["x-veryfront-run-event-writer-token"]);
-        const body = JSON.parse(String(observeFetchRequestInit(init).body)) as { id: string };
+        const observed = observeFetchRequestInit(init);
+        authorizations.push(ownHeaderValue(observed.headers, "authorization"));
+        writerTokens.push(ownHeaderValue(observed.headers, "x-veryfront-run-event-writer-token"));
+        const body = JSON.parse(String(observed.body)) as { id: string };
         return Promise.resolve(
           Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
         );

@@ -20,6 +20,7 @@ const PERSISTED_REQUEST_FIELDS = new Set([
   "functions",
   "toolconfig",
   "toolchoice",
+  "paralleltoolcalls",
   "functioncall",
   "mcpservers",
   "maxtokens",

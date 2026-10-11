@@ -6,6 +6,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { VeryfrontError } from "#veryfront/errors";
+import { projectKnowledge } from "#veryfront/knowledge/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { withLocalJsonStoreLock } from "./local-json-store-lock.ts";
@@ -1781,6 +1782,150 @@ describe("ragStore", () => {
         assertEquals(await store.listDocuments(), []);
       },
     );
+  });
+
+  it("sends cloud semantic scope before ranking and requires acknowledgement", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      const observedBodies: Record<string, unknown>[] = [];
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (
+            request.method === "POST" &&
+            url.pathname === "/projects/cloud-project/branches/preview/search"
+          ) {
+            const observedBody = await request.json() as Record<string, unknown>;
+            observedBodies.push(observedBody);
+            const scope = observedBody.document_scope as Record<string, unknown> | undefined;
+            if (!scope) {
+              return Response.json({
+                data: [
+                  ...Array.from({ length: 50 }, (_, index) => ({
+                    chunk: {
+                      file_path: `knowledge/private/secret-${index}.md`,
+                      content: "denied higher-ranked content",
+                      metadata: {
+                        document_id: `denied-${index}`,
+                        source: `knowledge/private/secret-${index}.md`,
+                        title: "Denied",
+                        type: "md",
+                      },
+                    },
+                    score: 0.99 - index / 1000,
+                  })),
+                  {
+                    chunk: {
+                      file_path: "knowledge/allowed/topic.md",
+                      content: "allowed scoped content",
+                      metadata: {
+                        document_id: "allowed",
+                        source: "knowledge/allowed/topic.md",
+                        title: "Allowed",
+                        type: "md",
+                      },
+                    },
+                    score: 0.5,
+                  },
+                ],
+              });
+            }
+
+            return Response.json({
+              document_scope_version: 1,
+              data: [{
+                chunk: {
+                  file_path: "knowledge/allowed/topic.md",
+                  content: "allowed scoped content",
+                  metadata: {
+                    document_id: "allowed",
+                    source: "knowledge/allowed/topic.md",
+                    title: "Allowed",
+                    type: "md",
+                  },
+                },
+                score: 0.5,
+              }],
+            });
+          }
+          return new Response(`Unexpected ${request.method} ${url.pathname}`, { status: 500 });
+        },
+        async () => {
+          const knowledge = projectKnowledge({
+            backend: "veryfront-cloud",
+            branch: "preview",
+            contentDir: "knowledge",
+            projectDir,
+            model: "test/demo",
+            scope: {
+              "knowledge/allowed/**": true,
+              "knowledge/private/**": false,
+            },
+          });
+
+          const result = await knowledge.retrieve("secret", { topK: 1, threshold: 0 });
+          assertEquals(result.matches.map((match) => match.source), ["knowledge/allowed/topic.md"]);
+        },
+      );
+
+      const observedBody = observedBodies.at(-1);
+      assert(observedBody !== undefined);
+      assertEquals(observedBody.limit, 75);
+      const documentScope = observedBody.document_scope as Record<string, unknown> | undefined;
+      assertEquals(documentScope?.version, 1);
+      assertEquals(documentScope?.path_flavor, "posix");
+      assertEquals(documentScope?.include_all, false);
+      assertEquals(documentScope?.includes, ["knowledge/allowed/**"]);
+      assertEquals(documentScope?.excludes, ["knowledge/private/**"]);
+      assertEquals(documentScope?.content_dir, "knowledge");
+      assertEquals(documentScope?.project_dir, projectDir);
+      assertEquals(documentScope?.resolved_content_dir, `${projectDir}/knowledge`);
+      assertEquals(documentScope?.resolved_project_dir, projectDir);
+    });
+  });
+
+  it("fails closed when cloud semantic scope acknowledgement is missing", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (
+            request.method === "POST" &&
+            url.pathname === "/projects/cloud-project/branches/preview/search"
+          ) {
+            return Response.json({ data: [] });
+          }
+          return new Response(`Unexpected ${request.method} ${url.pathname}`, { status: 500 });
+        },
+        async () => {
+          const knowledge = projectKnowledge({
+            backend: "veryfront-cloud",
+            branch: "preview",
+            contentDir: "knowledge",
+            projectDir,
+            model: "test/demo",
+            scope: "knowledge/allowed/**",
+          });
+
+          const error = await assertRejects(
+            () => knowledge.retrieve("secret", { topK: 1, threshold: 0 }),
+            VeryfrontError,
+            "did not acknowledge document scope",
+          );
+          assert(error instanceof VeryfrontError);
+          assertEquals(error.slug, "invalid-argument");
+        },
+      );
+    });
   });
 
   it("keeps auto RAG local when service-layer cloud has a token but no project slug", async () => {

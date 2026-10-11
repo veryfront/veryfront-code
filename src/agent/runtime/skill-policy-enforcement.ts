@@ -1,7 +1,8 @@
+import type { ProviderObservedSkillBody } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { getToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { slicePrivateArray } from "#veryfront/security/private-array.ts";
+import { pushPrivateArray, slicePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   JSON_VALUE_MAX_SERIALIZED_BYTES,
   JSON_VALUE_MAX_STRING_BYTES,
@@ -309,7 +310,7 @@ function getActiveSkillReferenceSnapshot(
     }
     if (!seen.has(reference)) {
       seen.add(reference);
-      snapshot.push(reference);
+      pushPrivateArray(snapshot, reference);
     }
   }
   return snapshot;
@@ -352,6 +353,141 @@ export type ActiveSkillState = {
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
 
+function forEachTrustedSkillLoadResult(
+  messages: readonly Message[],
+  visit: (result: unknown, part: ToolResultPart) => void,
+): void {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
+      if (
+        !isToolResultPart(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName)
+      ) continue;
+      visit(part.result, part);
+    }
+  }
+}
+
+export type TrustedSkillLoadResultSnapshot = Readonly<{
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+}>;
+
+export type TrustedSkillLoadHistoryMessage = Readonly<{
+  parts: readonly unknown[];
+}>;
+
+function countHistoryAnyToolResultIds(
+  messages: readonly TrustedSkillLoadHistoryMessage[],
+): Map<string, number> {
+  const counts = createPrivateMap<string, number>();
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex];
+      if (readToolResultOwnDataProperty(part, "type") !== "tool-result") continue;
+      const id = readToolResultOwnDataProperty(part, "toolCallId");
+      if (typeof id === "string") counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Snapshot trusted successful load_skill results from host-owned history.
+ *
+ * This does not restore WeakStore provenance or mark a body as provider-observed.
+ * Consumers must still require the exact body to appear in a later brokered
+ * provider prompt before granting reference reads.
+ */
+export function snapshotTrustedSkillLoadResults(
+  messages: readonly TrustedSkillLoadHistoryMessage[],
+): readonly TrustedSkillLoadResultSnapshot[] {
+  const resultCounts = countHistoryAnyToolResultIds(messages);
+  const results: TrustedSkillLoadResultSnapshot[] = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
+      if (
+        !isOwnHistoryToolResult(part) ||
+        !hasTrustedPlatformPolicyToolResultPart(part) ||
+        !isLoadSkillToolName(part.toolName) ||
+        resultCounts.get(part.toolCallId) !== 1 ||
+        !isSkillActivationResult(part.result)
+      ) continue;
+      pushPrivateArray(
+        results,
+        Object.freeze({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: part.result,
+        }),
+      );
+    }
+  }
+  return results;
+}
+
+/** List trusted skill load results so a pause checkpoint can restore their provenance. */
+export function getTrustedSkillLoadResultIds(messages: readonly Message[]): string[] {
+  const toolCallIds: string[] = [];
+  forEachTrustedSkillLoadResult(messages, (_result, part) => {
+    pushPrivateArray(toolCallIds, part.toolCallId);
+  });
+  return toolCallIds;
+}
+
+/** Re-mark unique successful skill load results recorded by a runtime-written pause checkpoint. */
+export function restoreTrustedSkillLoadResultsFromPauseCheckpoint(
+  messages: readonly Message[],
+  toolCallIds: readonly string[] | undefined,
+): void {
+  if (toolCallIds === undefined || toolCallIds.length === 0) return;
+  const trustedToolCallIds = createPrivateSet(toolCallIds);
+  const resultCounts = countHistoryToolResultIds(messages, messages.length, () => true);
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const parts = messages[messageIndex]!.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) && trustedToolCallIds.has(part.toolCallId) &&
+        resultCounts.get(part.toolCallId) === 1 && isLoadSkillToolName(part.toolName) &&
+        isSkillActivationResult(part.result)
+      ) {
+        markTrustedPlatformPolicyToolResultPart(part);
+      }
+    }
+  }
+}
+
+/** Snapshot successful skill bodies from trusted results already in provider history. */
+export function getProviderObservedSkillBodies(
+  messages: readonly Message[],
+): readonly ProviderObservedSkillBody[] {
+  const bodies: ProviderObservedSkillBody[] = [];
+  forEachTrustedSkillLoadResult(messages, (result) => {
+    const skillId = extractSkillId(result);
+    const references = extractSkillToolAvailability(result)?.references;
+    if (skillId !== undefined && references !== undefined) {
+      pushPrivateArray(bodies, Object.freeze({ skillId, references }));
+    }
+  });
+  return bodies;
+}
+
 /**
  * Rebuild the active skill from replayed load_skill results.
  *
@@ -371,20 +507,9 @@ export function hydrateActiveSkillStateFromMessages(
     activeSkillDelegationOverrides: undefined,
   };
 
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    if (!objectHasOwn(messages, messageIndex)) continue;
-    const message = messages[messageIndex]!;
-    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
-      if (!objectHasOwn(message.parts, partIndex)) continue;
-      const part = message.parts[partIndex]!;
-      if (
-        !isToolResultPart(part) ||
-        !hasTrustedPlatformPolicyToolResultPart(part) ||
-        !isLoadSkillToolName(part.toolName)
-      ) continue;
-      state = applySkillActivationResult(state, part.result);
-    }
-  }
+  forEachTrustedSkillLoadResult(messages, (result) => {
+    state = applySkillActivationResult(state, result);
+  });
 
   return state;
 }
@@ -421,7 +546,7 @@ function extractStringArrayField(
     }
     if (!seen.has(value)) {
       seen.add(value);
-      snapshot.push(value);
+      pushPrivateArray(snapshot, value);
     }
   }
   return Object.freeze(snapshot);
@@ -992,17 +1117,35 @@ export type SkillPolicyOptions = {
   toolDefinition?: ToolDefinition;
 };
 
+/**
+ * Resolve the load arguments the loader will execute: the provider-facing
+ * `{ load: { skillId, file? } }` wrapper or the legacy flat shape. A `load` key
+ * that is not an own data record resolves to nothing, so policy never reads
+ * different arguments than the loader runs.
+ */
+function readSkillLoadArguments(input: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(input)) return undefined;
+  try {
+    if (!("load" in input)) return input;
+  } catch {
+    return undefined;
+  }
+  const load = readToolResultOwnDataProperty(input, "load");
+  return isRecord(load) ? load : undefined;
+}
+
 function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
+  const loadArguments = readSkillLoadArguments(options.toolInput);
   if (
     !options.activeSkillId ||
-    !isRecord(options.toolInput) ||
+    !loadArguments ||
     !isRecord(options.skillToolAvailability) ||
     readToolResultOwnDataProperty(options.skillToolAvailability, "hasActiveSkill") !== true
   ) {
     return false;
   }
-  const skillId = readToolResultOwnDataProperty(options.toolInput, "skillId");
-  const file = readToolResultOwnDataProperty(options.toolInput, "file");
+  const skillId = readToolResultOwnDataProperty(loadArguments, "skillId");
+  const file = readToolResultOwnDataProperty(loadArguments, "file");
   if (
     skillId !== options.activeSkillId ||
     typeof file !== "string" ||
@@ -1019,9 +1162,10 @@ function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
 
 /** Identify a valid skill-body activation call without confusing reference reads for activation. */
 export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolean {
-  if (!isLoadSkillToolName(toolName) || !isRecord(input)) return false;
-  const skillId = readToolResultOwnDataProperty(input, "skillId");
-  const file = readToolResultOwnDataProperty(input, "file");
+  const loadArguments = readSkillLoadArguments(input);
+  if (!isLoadSkillToolName(toolName) || !loadArguments) return false;
+  const skillId = readToolResultOwnDataProperty(loadArguments, "skillId");
+  const file = readToolResultOwnDataProperty(loadArguments, "file");
   return typeof skillId === "string" && skillId.length > 0 && file === undefined;
 }
 

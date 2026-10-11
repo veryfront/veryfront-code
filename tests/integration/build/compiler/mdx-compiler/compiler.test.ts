@@ -16,7 +16,44 @@ import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts"
 import { assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import childProcess from "node:child_process";
 import { compileMDXFile } from "../../../../../src/build/compiler/mdx-compiler/compiler.ts";
+
+/** Preserve the asynchronous OS spawn error masked by Deno's synchronous unref failure. */
+async function withEsbuildSpawnDiagnostics<T>(operation: () => Promise<T>): Promise<T> {
+  const prototype = childProcess.ChildProcess.prototype;
+  const originalEmit = prototype.emit;
+  let spawnError: Error | undefined;
+  const trackedEmit: typeof originalEmit = function (
+    this: InstanceType<typeof childProcess.ChildProcess>,
+    event: string | symbol,
+    ...args: unknown[]
+  ): boolean {
+    if (
+      event === "error" && this.pid === undefined && args[0] instanceof Error &&
+      this.spawnargs.some((arg) => arg.startsWith("--service="))
+    ) {
+      spawnError ??= args[0];
+    }
+    return Reflect.apply(originalEmit, this, [event, ...args]);
+  };
+  prototype.emit = trackedEmit;
+  try {
+    return await operation();
+  } catch (error) {
+    // Node-compatible spawn errors arrive on the next tick, after esbuild calls unref().
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (spawnError) {
+      const code = "code" in spawnError ? String(spawnError.code) : "unknown";
+      throw new Error(`esbuild service OS spawn failed (${code}): ${spawnError.message}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  } finally {
+    if (prototype.emit === trackedEmit) prototype.emit = originalEmit;
+  }
+}
 
 describe(
   "build/compiler/mdx-compiler/compiler (emitted module)",
@@ -43,11 +80,13 @@ This is content.`;
       await Deno.writeTextFile(filePath, content);
 
       try {
-        const result = await compileMDXFile(filePath, content, {
-          projectDir: tmpDir,
-          outputDir: outDir,
-          mode: "production",
-        });
+        const result = await withEsbuildSpawnDiagnostics(() =>
+          compileMDXFile(filePath, content, {
+            projectDir: tmpDir,
+            outputDir: outDir,
+            mode: "production",
+          })
+        );
 
         const written = await Deno.readTextFile(result.outputPath);
         assertStringIncludes(

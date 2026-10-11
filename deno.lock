@@ -12,9 +12,11 @@
     "jsr:@std/expect@1.0.18": "1.0.18",
     "jsr:@std/fmt@1.0.9": "1.0.9",
     "jsr:@std/fs@1.0.23": "1.0.23",
+    "jsr:@std/fs@^1.0.19": "1.0.23",
     "jsr:@std/fs@^1.0.22": "1.0.23",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/path@1.1.4": "1.1.4",
+    "jsr:@std/path@^1.0.9": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
@@ -4822,6 +4824,12 @@
       "jsr:@std/path@1.1.4",
       "jsr:@std/testing@1.0.17"
     ],
+    "packageJson": {
+      "overrides": {
+        "tldts": "7.4.16",
+        "tldts-core": "7.4.16"
+      }
+    },
     "members": {
       "extensions/ext-auth-jwt": {
         "dependencies": [

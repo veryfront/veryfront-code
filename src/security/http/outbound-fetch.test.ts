@@ -1,7 +1,9 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
+import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import {
   guardedEgressFetch,
@@ -1248,5 +1250,139 @@ describe("authenticated download transport settlement", () => {
     }
     assertEquals(descriptorTrapCalls, 0);
     assertEquals(await bound?.text(), "private");
+  });
+});
+
+// Boot-captured host variables can only be overridden through the Deno test env overlay.
+const denoDescribe = isDeno ? describe : describe.skip;
+
+denoDescribe("explicit HTTP host API transport", () => {
+  const origin = "http://127.0.0.1:4000";
+  const environment = {
+    VERYFRONT_API_URL: origin,
+    VERYFRONT_API_BASE_URL: "",
+    VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "",
+    VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "",
+  };
+
+  it("rejects malformed API targets and embedded credentials", async () => {
+    await withEnv(environment, async () => {
+      for (const value of ["not-a-url", "http://[", "/api", "http://:pass@127.0.0.1:4000"]) {
+        assertThrows(() => requireHostPrivateApiHttps(value), TypeError);
+      }
+    });
+  });
+
+  it("rejects malformed operator HTTP API configuration", async () => {
+    for (const value of ["not-a-url", "http://:pass@127.0.0.1:4000"]) {
+      await withEnv({ ...environment, VERYFRONT_API_URL: value }, async () => {
+        assertThrows(() => requireHostPrivateApiHttps(origin), TypeError);
+      });
+    }
+  });
+
+  it("allows an approved HTTP service origin without authorizing generic fetch", async () => {
+    const service = "http://api.svc.example:4000";
+    let calls = 0;
+    const fetchImpl: typeof fetch = (input, init) => {
+      calls++;
+      const request = new Request(input, init);
+      assertEquals(request.url, `${service}/runs`);
+      assertEquals(request.headers.get("authorization"), "Bearer <TOKEN>");
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    await withEnv({
+      ...environment,
+      VERYFRONT_API_URL: service,
+    }, () =>
+      __runWithOutboundFetchTransportForTests({
+        fetch: fetchImpl,
+        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        resolveHost: () => Promise.resolve(["10.0.0.8"]),
+      }, async () => {
+        const response = await createVeryfrontApiOriginBoundOutboundFetch(service)(
+          `${service}/runs`,
+          {
+            headers: { authorization: "Bearer <TOKEN>" },
+          },
+        );
+        assertEquals(await response.json(), { ok: true });
+        await assertRejects(
+          () => guardedOutboundFetch(`${service}/runs`),
+          OutboundRequestBlockedError,
+        );
+        assertEquals(calls, 1);
+      }));
+  });
+
+  it("sends credentials only to the approved API origin", async () => {
+    await withEnv(environment, () =>
+      withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        assertEquals(request.url, `${origin}/runs`);
+        assertEquals(request.headers.get("authorization"), "Bearer <TOKEN>");
+        return Response.json({ ok: true });
+      }, async () => {
+        const response = await createVeryfrontApiOriginBoundOutboundFetch(origin)(
+          `${origin}/runs`,
+          {
+            headers: { authorization: "Bearer <TOKEN>" },
+          },
+        );
+        assertEquals(await response.json(), { ok: true });
+      }));
+  });
+
+  it("rejects other origins before dispatch and does not authorize generic fetch", async () => {
+    let calls = 0;
+    await withEnv(environment, () =>
+      withMockFetch(() => {
+        calls++;
+        return Promise.resolve(new Response());
+      }, async () => {
+        const apiFetch = createVeryfrontApiOriginBoundOutboundFetch(origin);
+        for (
+          const url of [
+            "http://127.0.0.1:4001/run",
+            "http://localhost:4000/run",
+            "https://api.example/run",
+          ]
+        ) {
+          await assertRejects(
+            () => apiFetch(url, { headers: { authorization: "Bearer <TOKEN>" } }),
+            OutboundRequestBlockedError,
+          );
+        }
+        await assertRejects(
+          () => guardedOutboundFetch(`${origin}/runs`),
+          OutboundRequestBlockedError,
+        );
+        await assertRejects(
+          () => createOriginBoundOutboundFetch(origin)(`${origin}/runs`),
+          OutboundRequestBlockedError,
+        );
+        assertEquals(calls, 0);
+      }));
+  });
+
+  it("rejects redirects without sending credentials to the redirect target", async () => {
+    let calls = 0;
+    await withEnv(environment, () =>
+      withMockFetch(() => {
+        calls++;
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://attacker.example/collect" },
+          }),
+        );
+      }, async () => {
+        await assertRejects(() =>
+          createVeryfrontApiOriginBoundOutboundFetch(origin)(`${origin}/runs`, {
+            headers: { authorization: "Bearer <TOKEN>" },
+          })
+        );
+        assertEquals(calls, 1);
+      }));
   });
 });

@@ -41,6 +41,7 @@ import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
@@ -58,9 +59,27 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
           type: "integer",
           minimum: 0,
           maximum: 1_000,
-          description: "Pagination cursor from the prompt or a previous skill inventory response.",
         },
       },
+      additionalProperties: false,
+    },
+    reference: {
+      type: "object",
+      properties: {
+        skillId: {
+          type: "string",
+          maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
+          pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
+          description: "The loaded skill's ID.",
+        },
+        file: {
+          type: "string",
+          minLength: 1,
+          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
+          description: "A path from the loaded skill's references list.",
+        },
+      },
+      required: ["skillId", "file"],
       additionalProperties: false,
     },
     load: {
@@ -70,15 +89,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
           type: "string",
           maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
           pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-          description:
-            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-        },
-        file: {
-          type: "string",
-          minLength: 1,
-          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-          description:
-            "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+          description: 'A listed skill ID. A lowercase ".md" suffix is accepted.',
         },
       },
       required: ["skillId"],
@@ -199,6 +210,136 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     instructions: "# Project plan",
     references: ["references/project.md"],
   });
+});
+
+it("reads advertised references through the explicit reference operation without expanding the skill inventory", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", {
+        instructions: "# Plan",
+        references: ["references/project.md"],
+      }]]),
+      references: new Map([["plan/references/project.md", "Plan reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ load: { skillId: "plan" } });
+  const reference = { reference: { skillId: "plan", file: "references/project.md" } };
+  assertEquals(await tool.execute(reference), {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "Plan reference",
+  });
+  const schema = tool.inputSchemaJson as { properties: Record<string, unknown> };
+  assertEquals((schema.properties.reference as { required: string[] }).required, [
+    "skillId",
+    "file",
+  ]);
+  await assertRejects(() =>
+    tool.execute({ reference: { skillId: "project", file: "references/project.md" } })
+  );
+  const denied = await tool.execute({
+    reference: { skillId: "plan", file: "references/private.md" },
+  });
+  assertEquals("error" in denied, true);
+});
+
+function createReferenceFixtureTool() {
+  return createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", {
+        instructions: "# Plan",
+        references: ["references/project.md"],
+      }]]),
+      references: new Map([["plan/references/project.md", "Plan reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+}
+
+it("advertises only the reference object for reference reads", () => {
+  const tool = createReferenceFixtureTool();
+  const schema = tool.inputSchemaJson as {
+    properties: { load: { properties: Record<string, unknown> } };
+  };
+  assertEquals(Object.keys(schema.properties.load.properties), ["skillId"]);
+  assertEquals(tool.description.includes("load.file"), false);
+  assertEquals(JSON.stringify(schema).includes("load.file"), false);
+});
+
+it("still executes the legacy load.file form with the same result as reference", async () => {
+  const viaReference = createReferenceFixtureTool();
+  await viaReference.execute({ load: { skillId: "plan" } });
+  const referenceResult = await viaReference.execute({
+    reference: { skillId: "plan", file: "references/project.md" },
+  });
+
+  const viaLegacy = createReferenceFixtureTool();
+  const advertised = viaLegacy.inputSchemaJson as {
+    properties: { load: { properties: Record<string, unknown> } };
+  };
+  assertEquals("file" in advertised.properties.load.properties, false);
+  await viaLegacy.execute({ load: { skillId: "plan" } });
+  const legacyResult = await viaLegacy.execute({
+    load: { skillId: "plan", file: "references/project.md" },
+  });
+
+  assertEquals(referenceResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "Plan reference",
+  });
+  assertEquals(legacyResult, referenceResult);
+});
+
+it("still rejects invalid references in both the reference and legacy forms", async () => {
+  const tool = createReferenceFixtureTool();
+  await tool.execute({ load: { skillId: "plan" } });
+  for (
+    const input of [
+      { reference: { skillId: "plan", file: "references/private.md" } },
+      { load: { skillId: "plan", file: "references/private.md" } },
+    ]
+  ) {
+    const denied = await tool.execute(input);
+    assertEquals("error" in denied, true);
+  }
+  for (
+    const input of [
+      { reference: { skillId: "plan" } },
+      { reference: { skillId: "../plan", file: "references/project.md" } },
+      { reference: { skillId: "plan", file: "references/project.md", extra: true } },
+    ]
+  ) {
+    await assertRejects(
+      () => tool.execute(input),
+      Error,
+      "input validation failed",
+    );
+  }
+});
+
+// The load_skill definition is sent with every model request. This budget
+// covers the serialized provider definition (description plus input schema) so
+// per-request context growth needs a deliberate change here. Raise it only in
+// the same pull request that grows the definition, and state the new size there.
+const LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS = 1_900;
+
+it("keeps the advertised load_skill definition within its character budget", () => {
+  const definition = toolToProviderDefinition(createReferenceFixtureTool());
+  const serialized = JSON.stringify({
+    description: definition.description,
+    parameters: definition.parameters,
+  });
+  assertEquals(
+    serialized.length <= LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS,
+    true,
+    `load_skill definition is ${serialized.length} characters; budget is ${LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS}`,
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
@@ -516,10 +657,11 @@ it("keeps the static provider schema constraints after provider sanitization", (
     assertEquals(sanitized.dependentSchemas, undefined);
     assertEquals(sanitized.minProperties, 1);
     assertEquals(sanitized.maxProperties, 1);
-    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "load"]);
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "reference", "load"]);
     assertEquals(Object.keys(sanitized.properties?.inventory?.properties ?? {}), ["cursor"]);
-    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId", "file"]);
+    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId"]);
     assertEquals(sanitized.properties?.load?.required, ["skillId"]);
+    assertEquals(sanitized.properties?.reference?.required, ["skillId", "file"]);
   }
 });
 
@@ -622,7 +764,7 @@ Use form_input once, then produce the plan.`,
   );
   assertStringIncludes(
     secondResult.instructions,
-    'To read a listed reference file, use this same exposed skill-loader tool with skillId "write" and file.',
+    'To read a listed reference file, use this same exposed skill-loader tool with {"reference":{"skillId":"write","file":"<listed-relative-path>"}}.',
   );
   assertStringIncludes(secondResult.instructions, "do not call form_input again");
   assertEquals(secondResult.maxSteps, 8);
@@ -2096,6 +2238,56 @@ it("createRuntimeLoadSkillTool repeats a referenced body without reading it agai
   });
 });
 
+it("createRuntimeLoadSkillTool returns a compact marker for a repeated no-reference skill beside other skills", async () => {
+  const scenarios: Array<{ availableSkillIds: string[]; preload: string[] }> = [
+    { availableSkillIds: ["notes", "plan"], preload: ["notes", "plan"] },
+    { availableSkillIds: ["notes", "other"], preload: ["notes"] },
+    { availableSkillIds: ["notes", "other", "plan"], preload: ["notes", "plan"] },
+  ];
+  for (const scenario of scenarios) {
+    const bodyReads = new Map<string, number>();
+    const tool = createRuntimeLoadSkillTool({
+      context: createProjectContext({ availableSkillIds: scenario.availableSkillIds }),
+      skillsDir: "/skills",
+      projectSkillLoader: {
+        listProjectSkillReferences: (_context, skillId) =>
+          Promise.resolve(skillId === "plan" ? ["references/guide.md"] : []),
+        loadProjectSkill: (_context, skillId) => {
+          bodyReads.set(skillId, (bodyReads.get(skillId) ?? 0) + 1);
+          return Promise.resolve({
+            skillId,
+            instructions: `private ${skillId} body`,
+            references: skillId === "plan" ? ["references/guide.md"] : [],
+          });
+        },
+        loadProjectSkillReference: () => Promise.resolve("reference content"),
+      },
+      builtinStore: createBuiltinStore({}),
+    });
+    for (const skillId of scenario.preload) {
+      await tool.execute({ load: { skillId } });
+    }
+
+    const repeated = expectLoadedSkillResponse(
+      await tool.execute({ load: { skillId: "notes" } }),
+    );
+    assertStringIncludes(repeated.instructions, 'Skill "notes" is already loaded');
+    assertEquals(repeated.instructions.includes("private notes body"), false);
+    assertEquals(bodyReads.get("notes"), 1);
+
+    let rejectedFile = false;
+    try {
+      const result = await tool.execute({
+        load: { skillId: "notes", file: "references/guide.md" },
+      });
+      rejectedFile = "error" in result;
+    } catch {
+      rejectedFile = true;
+    }
+    assertEquals(rejectedFile, true);
+  }
+});
+
 it("createRuntimeLoadSkillTool advertises a static schema even when all known skills are loaded", async () => {
   const context = createProjectContext({
     availableSkillIds: ["veryfront"],
@@ -2276,6 +2468,59 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(secondResult.references, ["references/project-2.md"]);
 });
 
+Deno.test("createRuntimeLoadSkillTool binds provider observation to the current skill scope", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: (activeContext) =>
+        Promise.resolve([`references/${activeContext.projectId}.md`, "references/shared.md"]),
+      loadProjectSkill: (activeContext, skillId) =>
+        Promise.resolve({
+          instructions: `# ${activeContext.projectId} ${skillId}`,
+          references: [`references/${activeContext.projectId}.md`, "references/shared.md"],
+        }),
+      loadProjectSkillReference: (activeContext, _skillId, file) =>
+        Promise.resolve(`${activeContext.projectId} ${file}`),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+  const read = { skillId: "plan", file: "references/shared.md" };
+
+  const firstBody = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  const observedFirstScope = {};
+  setProviderObservedSkillBodies(observedFirstScope, [
+    { skillId: "plan", references: ["references/shared.md", "references/project-1.md"] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedFirstScope) as { content?: string }).content,
+    "project-1 references/shared.md",
+  );
+
+  context.projectId = "project-2";
+  context.branchId = null;
+  // Same provider step: the second scope's body load and reference read share one snapshot.
+  const secondBody = expectLoadedSkillResponse(
+    await tool.execute({ skillId: "plan" }, observedFirstScope),
+  );
+  assertEquals(secondBody.references, ["references/project-2.md", "references/shared.md"]);
+  assertEquals(await tool.execute(read, observedFirstScope), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const observedSecondScope = {};
+  setProviderObservedSkillBodies(observedSecondScope, [
+    { skillId: "plan", references: firstBody.references ?? [] },
+    { skillId: "plan", references: secondBody.references ?? [] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedSecondScope) as { content?: string }).content,
+    "project-2 references/shared.md",
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -2377,6 +2622,150 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
   );
 });
 
+Deno.test("createRuntimeLoadSkillTool authorizes cold reference reads from provider-observed body refs", async () => {
+  const projectSkillLoader = createProjectSkillLoader({
+    skills: new Map([
+      [
+        "research",
+        {
+          instructions: "# Research",
+          references: ["resources/schema.json", "assets/template.txt"],
+        },
+      ],
+    ]),
+    references: new Map([
+      ["research/resources/schema.json", '{"type":"object"}'],
+      ["research/assets/template.txt", "template"],
+    ]),
+  });
+  const initialTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+  const loaded = expectLoadedSkillResponse(await initialTool.execute({ skillId: "research" }));
+  const observed = {};
+  setProviderObservedSkillBodies(observed, [{
+    skillId: loaded.skillId,
+    references: loaded.references ?? [],
+  }]);
+
+  const resumedTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      observed,
+    ),
+    {
+      skillId: "research",
+      file: "resources/schema.json",
+      content: '{"type":"object"}',
+    },
+  );
+
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      {},
+    ),
+    {
+      error:
+        'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+    },
+  );
+
+  const wrongObservation = {};
+  setProviderObservedSkillBodies(wrongObservation, [{
+    skillId: "research",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      wrongObservation,
+    ),
+    {
+      error:
+        'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+    },
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects cold observed refs for wrong body, skill, or file", async () => {
+  const projectSkillLoader = createProjectSkillLoader({
+    skills: new Map([
+      [
+        "research",
+        {
+          instructions: "# Research",
+          references: ["resources/schema.json", "assets/template.txt"],
+        },
+      ],
+      ["other", { instructions: "# Other", references: ["resources/schema.json"] }],
+    ]),
+    references: new Map([
+      ["research/resources/schema.json", '{"type":"object"}'],
+      ["research/assets/template.txt", "template"],
+      ["other/resources/schema.json", "other schema"],
+      ["research/references/private.md", "private"],
+    ]),
+  });
+  const create = () =>
+    createRuntimeLoadSkillTool({
+      context: createProjectContext({ availableSkillIds: ["research", "other"] }),
+      skillsDir: "/skills",
+      projectSkillLoader,
+      builtinStore: createBuiltinStore({}),
+    });
+  const readResearch = { skillId: "research", file: "resources/schema.json" };
+
+  const wrongRefs = {};
+  setProviderObservedSkillBodies(wrongRefs, [{
+    skillId: "research",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(await create().execute(readResearch, wrongRefs), {
+    error:
+      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const wrongSkill = {};
+  setProviderObservedSkillBodies(wrongSkill, [{
+    skillId: "other",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(await create().execute(readResearch, wrongSkill), {
+    error:
+      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const untrusted = {};
+  assertEquals(await create().execute(readResearch, untrusted), {
+    error:
+      'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+  });
+
+  const observed = {};
+  setProviderObservedSkillBodies(observed, [{
+    skillId: "research",
+    references: ["resources/schema.json", "assets/template.txt"],
+  }]);
+  assertEquals(
+    await create().execute({ skillId: "research", file: "references/private.md" }, observed),
+    {
+      error:
+        'Reference file not advertised by loaded skill "research": references/private.md. Available references: assets/template.txt, resources/schema.json',
+    },
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files after body load", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -2447,6 +2836,89 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files 
     file: "references/empty.md",
     content: "",
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool waits until provider observes body before reference reads", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+      ]),
+      references: new Map([["plan/references/project.md", "project reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ skillId: "plan" });
+
+  const sameProviderStepContext = {};
+  setProviderObservedSkillBodies(sameProviderStepContext, []);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      sameProviderStepContext,
+    ),
+    {
+      error:
+        'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+    },
+  );
+
+  const nextProviderStepContext = {};
+  setProviderObservedSkillBodies(nextProviderStepContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      nextProviderStepContext,
+    ),
+    {
+      skillId: "plan",
+      file: "references/project.md",
+      content: "project reference",
+    },
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool can require a provider observation snapshot", async () => {
+  const create = (requireProviderObservation?: boolean) =>
+    createRuntimeLoadSkillTool({
+      context: createProjectContext(),
+      skillsDir: "/skills",
+      projectSkillLoader: createProjectSkillLoader({
+        skills: new Map([
+          ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+        ]),
+        references: new Map([["plan/references/project.md", "project reference"]]),
+      }),
+      builtinStore: createBuiltinStore({}),
+      ...(requireProviderObservation === undefined ? {} : { requireProviderObservation }),
+    });
+  const read = { skillId: "plan", file: "references/project.md" };
+
+  const required = create(true);
+  await required.execute({ skillId: "plan" });
+  assertEquals(await required.execute(read, {}), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+  const observedContext = {};
+  setProviderObservedSkillBodies(observedContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
+  assertEquals(
+    (await required.execute(read, observedContext) as { content?: string }).content,
+    "project reference",
+  );
+
+  const direct = create();
+  await direct.execute({ skillId: "plan" });
+  assertEquals(
+    (await direct.execute(read, {}) as { content?: string }).content,
+    "project reference",
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool rejects unadvertised references after body load", async () => {
@@ -2667,7 +3139,6 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
   assertStringIncludes(tool.description, "<authorized_skill_ids>");
-  assertStringIncludes(tool.description, "Direct consumers can omit skillId");
   assertStringIncludes(tool.description, "You must not invent IDs");
   assertStringIncludes(tool.description, "inventory object");
 });

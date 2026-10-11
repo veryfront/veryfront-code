@@ -2,6 +2,7 @@ import type { ApiClient } from "#cli/shared/config";
 import type { KnowledgeParserResult } from "./parser.ts";
 
 type MockClientOverrides = {
+  post?: (path: string, body?: unknown) => Promise<unknown>;
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
 };
 
@@ -16,7 +17,8 @@ export function createMockClient(overrides: MockClientOverrides = {}): ApiClient
       const result = await (overrides.get?.(path, params) ?? Promise.resolve({ data: [] }));
       return result as T;
     },
-    post: <T>(): Promise<T> => Promise.resolve({} as T),
+    post: async <T>(path: string, body?: unknown): Promise<T> =>
+      (await (overrides.post?.(path, body) ?? Promise.resolve({}))) as T,
     put: <T>(): Promise<T> => Promise.resolve({} as T),
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
     delete: <T>(): Promise<T> => Promise.resolve({} as T),
@@ -87,5 +89,17 @@ export function createParserSuccess(
     stats: { pages: 4 },
     warnings: [],
     ...overrides,
+  };
+}
+
+/** Explicit indexing fake for source/parser tests; real commit behavior is integration-covered. */
+export function createIndexReceipt(path: string) {
+  return {
+    path,
+    file_id: "11111111-1111-4111-8111-111111111111",
+    version_id: "22222222-2222-4222-8222-222222222222",
+    checksum: "fixture-checksum",
+    indexed_chunk_count: 1,
+    model: { provider: "test", name: "fixture", dimension: 1536 },
   };
 }

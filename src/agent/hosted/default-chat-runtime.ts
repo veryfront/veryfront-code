@@ -402,6 +402,9 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       input.options.requireToolExposureCheckpointPersistence === true,
     ...(liveProjectSteering === undefined ? {} : { __vfPreassembledSkillContext: true }),
     temperature: input.options.temperature,
+    ...(input.options.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: input.options.parallelToolCalls }),
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
       const thinking = input.options.thinking ??

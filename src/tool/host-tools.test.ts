@@ -11,6 +11,11 @@ import {
   markTrustedHostToolProvenance,
 } from "./host-tool-provenance.ts";
 import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts";
+import {
+  hasProviderObservedSkillBody,
+  hasProviderObservedSkillReferences,
+  setProviderObservedSkillBodies,
+} from "./provider-observed-skill-bodies.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
@@ -117,6 +122,52 @@ describe("tool/host-tools", () => {
     );
     assertEquals(await tools.search?.execute({ query: "Veryfront" }), { query: "Veryfront" });
     assertEquals(receivedContextToolCallId, "search-generated");
+  });
+
+  it("preserves private provider-observed skill body markers through host materialization", async () => {
+    const observedByCall: Array<boolean | undefined> = [];
+    const tools = createToolsFromHostDefinitions({
+      load_skill: {
+        description: "Load skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input: unknown, context?: ToolExecutionContext) => {
+          observedByCall.push(hasProviderObservedSkillBody(context, "review"));
+          return { ok: true };
+        },
+      },
+    });
+
+    const observedContext: ToolExecutionContext = {};
+    setProviderObservedSkillBodies(observedContext, [{ skillId: "review", references: [] }]);
+    await tools.load_skill?.execute({}, observedContext);
+    await tools.load_skill?.execute({}, {});
+
+    assertEquals(observedByCall, [true, undefined]);
+  });
+
+  it("ignores provider-observed body iterator hooks and canonicalizes reference order", () => {
+    const context: ToolExecutionContext = {};
+    const bodies = [{
+      skillId: "review",
+      references: ["references/one.md", "references/two.md"],
+    }];
+    Object.defineProperty(bodies, Symbol.iterator, {
+      value: function* () {
+        yield { skillId: "forged", references: [] };
+      },
+    });
+
+    setProviderObservedSkillBodies(context, bodies);
+
+    assertEquals(hasProviderObservedSkillBody(context, "review"), true);
+    assertEquals(hasProviderObservedSkillBody(context, "forged"), false);
+    assertEquals(
+      hasProviderObservedSkillReferences(context, "review", [
+        "references/two.md",
+        "references/one.md",
+      ]),
+      true,
+    );
   });
 
   it("preserves caller-provided execution context", async () => {

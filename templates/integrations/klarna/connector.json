@@ -42,7 +42,7 @@
     {
       "id": "klarna__get_order",
       "name": "Get Order",
-      "description": "Retrieve a Klarna order including status, amounts, order lines, captures, and refunds",
+      "description": "Get order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -60,7 +60,7 @@
     {
       "id": "klarna__capture_order",
       "name": "Capture Order",
-      "description": "Capture a full or partial amount of an authorized order (activates the payment after fulfillment)",
+      "description": "Capture fulfilled order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -69,7 +69,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Capture only after the corresponding goods or services have been fulfilled; capture triggers the customer charge and merchant payout.",
             "required": true
           }
         },
@@ -93,7 +93,7 @@
     {
       "id": "klarna__refund_order",
       "name": "Refund Order",
-      "description": "Refund a full or partial captured amount back to the customer",
+      "description": "Refund captured order amount",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -102,7 +102,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
             "required": true
           }
         },
@@ -122,7 +122,7 @@
     {
       "id": "klarna__cancel_order",
       "name": "Cancel Order",
-      "description": "Cancel an authorized order that has not been captured, releasing the full authorization",
+      "description": "Cancel uncaptured order",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -131,7 +131,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
             "required": true
           }
         }
@@ -140,7 +140,7 @@
     {
       "id": "klarna__release_remaining_authorization",
       "name": "Release Remaining Authorization",
-      "description": "Release the remaining (uncaptured) authorized amount of an order after the final partial capture: the standard end-of-fulfillment step that frees the customer's remaining authorization",
+      "description": "Release remaining authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -149,7 +149,7 @@
           "orderId": {
             "type": "string",
             "in": "path",
-            "description": "Klarna order ID",
+            "description": "Klarna order ID. Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
             "required": true
           }
         }
@@ -158,7 +158,7 @@
     {
       "id": "klarna__get_capture",
       "name": "Get Capture",
-      "description": "Get a single capture of an order with its status and amounts",
+      "description": "Get capture",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

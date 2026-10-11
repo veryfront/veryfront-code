@@ -38,7 +38,7 @@
     {
       "id": "gusto__get_token_info",
       "name": "Get Token Info",
-      "description": "Get the resource (company) and scope associated with the current access token",
+      "description": "Get token info",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -57,7 +57,7 @@
     {
       "id": "gusto__get_company",
       "name": "Get Company",
-      "description": "Get a company's profile, locations, and entity details",
+      "description": "Get company",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "gusto__list_employees",
       "name": "List Employees",
-      "description": "List employees of a company",
+      "description": "List employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -142,7 +142,7 @@
     {
       "id": "gusto__get_employee",
       "name": "Get Employee",
-      "description": "Get a single employee",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -167,7 +167,7 @@
     {
       "id": "gusto__list_payrolls",
       "name": "List Payrolls",
-      "description": "List payrolls for a company",
+      "description": "List payrolls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -212,7 +212,7 @@
     {
       "id": "gusto__get_payroll",
       "name": "Get Payroll",
-      "description": "Get a single payroll with totals",
+      "description": "Get payroll",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

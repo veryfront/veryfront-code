@@ -410,6 +410,7 @@ export class TestContext {
     port?: number;
     enableHMR?: boolean;
     fileWatcherDebounceMs?: number;
+    readinessCheckPath?: string;
     signal?: AbortSignal;
   } = {}): Promise<TestServer> {
     const port = options.port ?? (await this.allocatePort());
@@ -431,7 +432,7 @@ export class TestContext {
     testServer.hostname = "127.0.0.1";
     this.servers.push(testServer);
 
-    await waitForServerReady(testServer);
+    await waitForServerReady(testServer, { checkPath: options.readinessCheckPath });
     return testServer;
   }
 

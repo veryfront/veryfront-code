@@ -31,7 +31,7 @@
     {
       "id": "paddle__list_products",
       "name": "List Products",
-      "description": "List products in the Paddle catalog, optionally including their prices",
+      "description": "List products",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -67,7 +67,7 @@
     {
       "id": "paddle__list_prices",
       "name": "List Prices",
-      "description": "List prices for Paddle products to find price IDs for checkouts and subscriptions",
+      "description": "List prices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -103,7 +103,7 @@
     {
       "id": "paddle__list_customers",
       "name": "List Customers",
-      "description": "List or search Paddle customers to find customer IDs and contact details",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -139,7 +139,7 @@
     {
       "id": "paddle__list_transactions",
       "name": "List Transactions",
-      "description": "List Paddle transactions for revenue review, filtered by status, customer, or subscription",
+      "description": "List transactions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -185,7 +185,7 @@
     {
       "id": "paddle__list_subscriptions",
       "name": "List Subscriptions",
-      "description": "List Paddle subscriptions to review recurring revenue, statuses, and renewal dates",
+      "description": "List subscriptions",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -226,7 +226,7 @@
     {
       "id": "paddle__get_subscription",
       "name": "Get Subscription",
-      "description": "Retrieve a single Paddle subscription with its items, status, and billing dates",
+      "description": "Get subscription",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -252,7 +252,7 @@
     {
       "id": "paddle__create_customer",
       "name": "Create Customer",
-      "description": "Create a new Paddle customer, e.g. before creating transactions or subscriptions for a new buyer",
+      "description": "Create customer",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -281,7 +281,7 @@
     {
       "id": "paddle__create_price",
       "name": "Create Price",
-      "description": "Create a price for a Paddle product so it can be used in checkouts, transactions, and subscriptions",
+      "description": "Create price",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -324,7 +324,7 @@
     {
       "id": "paddle__create_product",
       "name": "Create Product",
-      "description": "Create a new product in the Paddle catalog",
+      "description": "Create product",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { agent as createAgent } from "#veryfront/agent";
 import {
   createProjectRunInferenceModelResolver,
@@ -29,13 +30,72 @@ import {
 const INFERENCE_TOKEN = "project-run-inference-token";
 const BROADER_TOKEN = "broader-project-runtime-token";
 const encoder = new TextEncoder();
+const ArrayIsArray = Array.isArray;
+
+function createProjectRunEventToken(input: {
+  runId: string;
+  projectId: string;
+  canonicalRunId: string;
+  attemptId?: string;
+}): string {
+  return `test.${
+    btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        runId: input.runId,
+        projectId: input.projectId,
+        projectExecutionAttempt: {
+          canonicalRunId: input.canonicalRunId,
+          workerId: "worker",
+          attemptId: input.attemptId ?? "attempt",
+        },
+      }),
+    )
+  }.signature`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
+}
 
 /** Answers every model call with one streamed completion and records its bearer. */
-function captureModelAuthorizations(): Array<string | null> {
+function captureModelAuthorizations(
+  options: {
+    projectId?: string;
+    onCapture?: (modelCallId: string) => void;
+    onReceiptResponse?: (response: Response) => void;
+  } = {},
+): Array<string | null> {
   const authorizations: Array<string | null> = [];
   installMockFetch(
     (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
+      const runEventsPath = new URL(request.url).pathname.match(/^\/runs\/([0-9a-f-]+)\/events$/i);
+      if (runEventsPath) {
+        const payload: unknown = await request.json();
+        const events = isRecord(payload) && ArrayIsArray(payload.events) ? payload.events : [];
+        const captures = events.filter(isRecord)
+          .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+          .flatMap((event, index) =>
+            typeof event.modelCallId === "string" && options.projectId
+              ? [{
+                event_id: String(index + 1),
+                project_id: options.projectId,
+                run_id: runEventsPath[1],
+                model_call_id: event.modelCallId,
+              }]
+              : []
+          );
+        for (const capture of captures) options.onCapture?.(capture.model_call_id);
+        const response = Response.json({
+          run_id: runEventsPath[1],
+          latest_event_id: 1,
+          appended_count: events.length,
+          ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+        });
+        options.onReceiptResponse?.(response);
+        return response;
+      }
       authorizations.push(request.headers.get("Authorization"));
       return new Response(
         new ReadableStream({
@@ -127,7 +187,8 @@ describe("project-run inference credential", () => {
   });
 
   it("routes a task agent's model call through the execute request's inference header", async () => {
-    const authorizations = captureModelAuthorizations();
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const authorizations = captureModelAuthorizations({ projectId });
     const managed = createManagedModelAgent("project-run-task-agent");
     const deps = {
       runTask: async () => {
@@ -146,7 +207,8 @@ describe("project-run inference credential", () => {
       runId: "run_task_smoke",
       kind: "task",
       target: "task:smoke",
-      projectId: "proj-1",
+      projectId,
+      canonicalRunId: "11111111-1111-4111-8111-111111111111",
     };
     const path = "/api/control-plane/runs/run_task_smoke/execute";
     const rawBody = JSON.stringify(body);
@@ -163,14 +225,18 @@ describe("project-run inference credential", () => {
         "x-veryfront-control-plane-jws": jws,
         "x-token": BROADER_TOKEN,
         "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: body.runId,
+          projectId: body.projectId,
+          canonicalRunId: body.canonicalRunId,
+        }),
       },
       body: rawBody,
     });
 
-    const result = await new ProjectRunExecuteHandler(deps).handle(
-      request,
-      createCtx(publicKeyPem),
-    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = body.projectId;
+    const result = await new ProjectRunExecuteHandler(deps).handle(request, ctx);
 
     assertExists(result.response);
     assertEquals(await result.response.json(), {
@@ -181,6 +247,220 @@ describe("project-run inference credential", () => {
     });
     assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
   });
+
+  for (
+    const replacement of [
+      "map",
+      "case",
+      "weak-get",
+      "weak-set",
+      "weak-delete",
+      "response-ok",
+      "array",
+      "freeze",
+      "als-run",
+      "als-get",
+    ] as const
+  ) {
+    it(`keeps host capture receipts private despite replaced ${replacement} operations`, async () => {
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const captureIds = new Set<string>();
+      const privateResponses = new WeakSet<Response>();
+      const authorizations = captureModelAuthorizations({
+        projectId,
+        onCapture: (id) => captureIds.add(id),
+        onReceiptResponse: (response) => privateResponses.add(response),
+      });
+      const managed = createManagedModelAgent("project-run-task-agent");
+      const observedReceipts: unknown[] = [];
+      const originalSet = Map.prototype.set;
+      const originalLowerCase = String.prototype.toLowerCase;
+      const originalWeakGet = WeakMap.prototype.get;
+      const originalWeakSet = WeakMap.prototype.set;
+      const originalWeakDelete = WeakMap.prototype.delete;
+      const originalOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+      const originalArrayIsArray = Array.isArray;
+      const originalFreeze = Object.freeze;
+      const originalAsyncRun = AsyncLocalStorage.prototype.run;
+      const originalAsyncGetStore = AsyncLocalStorage.prototype.getStore;
+      const deps = {
+        runTask: async () => {
+          if (replacement === "case") {
+            String.prototype.toLowerCase = function () {
+              const value = String(this);
+              if (captureIds.has(value)) {
+                observedReceipts.push(value);
+                throw new Error("project capture identifier hook");
+              }
+              return Reflect.apply(originalLowerCase, this, []);
+            };
+          }
+          if (replacement === "map") {
+            Map.prototype.set = function (key, value) {
+              if (
+                isRecord(value) && typeof value.eventId === "string" &&
+                typeof value.modelCallId === "string"
+              ) {
+                observedReceipts.push(value);
+                return this;
+              }
+              return originalSet.call(this, key, value);
+            };
+          }
+          const interceptMirror = (key: unknown) => {
+            if (
+              isRecord(key) && typeof key.appendEvents === "function" &&
+              typeof key.dispose === "function"
+            ) {
+              observedReceipts.push(key);
+              key.dispose();
+            }
+          };
+          if (replacement === "weak-get") {
+            WeakMap.prototype.get = function (key) {
+              interceptMirror(key);
+              return originalWeakGet.call(this, key);
+            };
+          }
+          if (replacement === "weak-set") {
+            WeakMap.prototype.set = function (key, value) {
+              interceptMirror(key);
+              return originalWeakSet.call(this, key, value);
+            };
+          }
+          if (replacement === "weak-delete") {
+            WeakMap.prototype.delete = function (key) {
+              interceptMirror(key);
+              return originalWeakDelete.call(this, key);
+            };
+          }
+          if (replacement === "response-ok") {
+            Object.defineProperty(Response.prototype, "ok", {
+              configurable: true,
+              get() {
+                if (privateResponses.has(this)) {
+                  observedReceipts.push(this.clone());
+                  throw new Error("project receipt response hook");
+                }
+                return Reflect.apply(originalOk.get!, this, []);
+              },
+            });
+          }
+          if (replacement === "array") {
+            Array.isArray = ((value: unknown): value is unknown[] => {
+              if (
+                value && typeof value === "object" &&
+                ("model_call_captures" in value || "model_call_id" in value)
+              ) {
+                observedReceipts.push(value);
+                throw new Error("project receipt array hook");
+              }
+              return originalArrayIsArray(value);
+            }) as typeof Array.isArray;
+          }
+          if (replacement === "freeze") {
+            Object.freeze = function <T>(value: T): Readonly<T> {
+              if (isRecord(value) && typeof value.modelCallId === "string") {
+                observedReceipts.push(value);
+                throw new Error("project receipt freeze hook");
+              }
+              return Reflect.apply(originalFreeze, Object, [value]) as Readonly<T>;
+            };
+          }
+          if (replacement === "als-run") {
+            AsyncLocalStorage.prototype.run = function (
+              this: AsyncLocalStorage<unknown>,
+              ...args: unknown[]
+            ) {
+              if ((JSON.stringify(args[0]) ?? "").includes("modelCallId")) {
+                observedReceipts.push(args[0]);
+                throw new Error("project async run receipt hook");
+              }
+              return Reflect.apply(originalAsyncRun, this, args);
+            };
+          }
+          if (replacement === "als-get") {
+            AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
+              const store = Reflect.apply(originalAsyncGetStore, this, []);
+              if ((JSON.stringify(store) ?? "").includes("modelCallId")) {
+                observedReceipts.push(store);
+                throw new Error("project async getStore receipt hook");
+              }
+              return store;
+            };
+          }
+          let answer;
+          try {
+            answer = await managed.generate({ input: "Hello" });
+          } finally {
+            Map.prototype.set = originalSet;
+            String.prototype.toLowerCase = originalLowerCase;
+            WeakMap.prototype.get = originalWeakGet;
+            WeakMap.prototype.set = originalWeakSet;
+            WeakMap.prototype.delete = originalWeakDelete;
+            Object.defineProperty(Response.prototype, "ok", originalOk);
+            Array.isArray = originalArrayIsArray;
+            Object.freeze = originalFreeze;
+            AsyncLocalStorage.prototype.run = originalAsyncRun;
+            AsyncLocalStorage.prototype.getStore = originalAsyncGetStore;
+          }
+          return { success: true, result: { text: answer.text }, durationMs: 1 };
+        },
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("smoke", { name: "Smoke", run: async () => ({ ok: true }) });
+          return discovery;
+        },
+        now: () => 0,
+        sleep: async () => {},
+      } as unknown as ProjectRunExecuteHandlerDeps;
+      const body = {
+        runId: "run_task_smoke",
+        kind: "task",
+        target: "task:smoke",
+        projectId,
+        canonicalRunId: "11111111-1111-4111-8111-111111111111",
+      };
+      const path = "/api/control-plane/runs/run_task_smoke/execute";
+      const rawBody = JSON.stringify(body);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
+        requestId: body.runId,
+        projectId: body.projectId,
+        requestMethod: "POST",
+        requestPath: path,
+      });
+      const request = new Request(`https://example.com${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+          "x-token": BROADER_TOKEN,
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId: body.runId,
+            projectId: body.projectId,
+            canonicalRunId: body.canonicalRunId,
+          }),
+        },
+        body: rawBody,
+      });
+
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = body.projectId;
+      const result = await new ProjectRunExecuteHandler(deps).handle(request, ctx);
+
+      assertExists(result.response);
+      assertEquals(await result.response.json(), {
+        success: true,
+        result: { text: "Hello" },
+        duration_ms: 1,
+        logs: null,
+      });
+      assertEquals(authorizations, [`Bearer ${INFERENCE_TOKEN}`]);
+      assertEquals(observedReceipts, []);
+      assertEquals(captureIds.size, 1);
+    });
+  }
 });
 
 describe("project-run inference credential isolation", () => {

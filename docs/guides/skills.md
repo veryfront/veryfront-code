@@ -102,8 +102,26 @@ also expose the two supporting skill tools when skill access is enabled:
 
 Hosted chat providers use nested `load_skill` input. After loading a skill,
 hosted chat can read only a reference listed by that skill through
-`load_skill({ load: { skillId, file } })`. It does not execute skill scripts
-directly.
+`load_skill({ reference: { skillId, file } })`. The `load.file` form is no
+longer advertised, but it remains accepted for existing callers. After a form
+input is submitted, the tool instead offers only the flat `{ skillId, file }`
+form, limited to the active skill's references. Hosted chat does not execute
+skill scripts directly.
+
+Read the skill's load result before selecting a reference path. Hosted chat
+rejects a reference read in the same step as the skill's first body load. Retry
+the reference in the next step using a listed path. Direct SDK calls can load a
+body and then read a reference sequentially.
+
+Use the skill ID returned by `load_skill` and an exact path from its `references`
+list. Read one reference at a time:
+
+```json
+{ "reference": { "skillId": "code-review", "file": "references/style-guide.md" } }
+```
+
+Keep the loaded skill ID when reading a reference. Reference paths belong in
+`file`; they are not separate skill IDs and are not tools to discover.
 
 When a hosted chat prompt provides a discovery cursor, call
 `load_skill({ inventory: { cursor: <CURSOR> } })`. Otherwise, call

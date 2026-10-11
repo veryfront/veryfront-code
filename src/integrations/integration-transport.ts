@@ -1,5 +1,5 @@
 /** @internal Shared bounded transport for integration APIs and legacy runtime tools. */
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { logger } from "#veryfront/utils";
 import {
@@ -164,12 +164,9 @@ export async function dispatchIntegrationApiRequest(input: {
   // loaded project code runs in this process and can replace the global, and a
   // direct call would hand its replacement the `Authorization` header to read.
   //
-  // This also puts the call under the host egress ceiling, which denies private
-  // and loopback destinations. A deployment that points `VERYFRONT_API_URL` /
-  // `VERYFRONT_API_BASE_URL` at an internal host must set
-  // `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; that is the intended disposition,
-  // since only the host process can set it and a project overlay cannot.
-  return await guardedOutboundFetch(requestUrl, {
+  // Host-configured HTTP APIs may resolve to private addresses. The API-bound
+  // transport admits only the approved origin and rejects redirects.
+  return await createVeryfrontApiOriginBoundOutboundFetch(requestUrl)(requestUrl, {
     method,
     ...(redirect ? { redirect } : {}),
     headers: {

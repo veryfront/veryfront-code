@@ -467,6 +467,9 @@ export async function resolveHostedChildAgentExecutionConfig(
     }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
+    ...(agentConfig.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: agentConfig.parallelToolCalls }),
     ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),
     ...(thinking === undefined ? {} : { thinking }),
     ...(toolNames === undefined ? {} : { toolNames }),
