@@ -1,3 +1,5 @@
+import type { OwnershipChildProof } from "./project-run-runtime-ownership-child-probe.ts";
+import type { OwnershipIndexProof } from "./project-run-runtime-ownership-index-probe.ts";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -16,7 +18,22 @@ const MAX_ACTIVATION_WINDOW_MS = 6 * 60 * 60 * 1_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROBE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const activeProbeFlights = new Set<string>();
+interface RetainedProbeAttempt {
+  attemptId: string;
+  expiresAtMs: number;
+  proveReplaced(): Promise<void>;
+}
+// Host-private closures only. Never expose retained credentials to project code or receipts.
+const retainedProbeAttempts = new Map<string, RetainedProbeAttempt>();
+const ProbeMapGet = Map.prototype.get;
+const ProbeMapSet = Map.prototype.set;
+const ProbeMapClear = Map.prototype.clear;
+const ProbeMapDelete = Map.prototype.delete;
+const ProbeMapForEach = Map.prototype.forEach;
+const ProbeMapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const MAX_RETAINED_PROBE_ATTEMPTS = 64;
 const RuntimeAbortSignalTimeout = AbortSignal.timeout;
+const ProbeSetTimeout = setTimeout;
 const RuntimeCryptoRandomUUID = crypto.randomUUID.bind(crypto);
 const RuntimeEncodeURIComponent = encodeURIComponent;
 const RuntimeArrayIsArray = Array.isArray;
@@ -55,6 +72,8 @@ export interface RuntimeOwnershipProbeRunRequest {
   projectId: string;
   canonicalRunId?: string;
   attempt?: number;
+  /** Authenticated control-plane manual resume of the same canonical workflow run. */
+  resumedManually?: boolean;
 }
 
 export interface RuntimeOwnershipProbeSessionInput {
@@ -69,18 +88,32 @@ export interface RuntimeOwnershipProbeSessionInput {
   createEventAppendClient?(signal: AbortSignal): RuntimeOwnershipProbeApiClient;
   createHeartbeatClient?(signal: AbortSignal): RuntimeOwnershipProbeApiClient;
   canonicalBranchId?: string;
+  /** Routing hint from the unchanged issuer token; each mutation is independently server-authorized. */
+  authorityAttemptId?: string;
+  childProbe?(
+    request: { sourcePath: string; staleAfterCancel: boolean; signal: AbortSignal },
+  ): Promise<OwnershipChildProof>;
+  indexProbe?(
+    request: { sourcePath: string; content: string; stale: boolean; signal: AbortSignal },
+  ): Promise<OwnershipIndexProof>;
 }
 
 export interface RuntimeOwnershipProbeSession {
   beforeExecute(): Promise<void>;
   afterStopAcknowledged(): Promise<void>;
+  afterPauseAcknowledged?(): Promise<void>;
 }
 
 export interface RuntimeOwnershipProbe {
   createSession(input: RuntimeOwnershipProbeSessionInput): RuntimeOwnershipProbeSession | undefined;
 }
 
-export type RuntimeOwnershipProbePhase = "current" | "stale-after-cancel";
+export type RuntimeOwnershipProbePhase =
+  | "current"
+  | "current-after-manual-resume"
+  | "stale-after-pause"
+  | "stale-after-replacement"
+  | "stale-after-cancel";
 export type RuntimeOwnershipProbeReceiptStatus = "ok" | "skipped" | "error";
 
 export interface RuntimeOwnershipProbeReceipt {
@@ -105,6 +138,8 @@ export interface RuntimeOwnershipProbeReceipt {
   runAfterHash?: string;
   reason?: string;
   errorType?: string;
+  indexProof?: OwnershipIndexProof;
+  childProof?: OwnershipChildProof;
 }
 
 export interface RuntimeOwnershipProbeActivation {
@@ -239,8 +274,11 @@ function canonicalSourcePath(
   activation: RuntimeOwnershipProbeActivation,
   admittedRunId: string,
   artifactIdentity: string,
+  indexed = false,
 ): string {
-  return `knowledge/context-runtime-host-owned-stage-probe-20261011/${activation.probeId}/${admittedRunId}/${artifactIdentity}/ownership.json`;
+  return `knowledge/context-runtime-host-owned-stage-probe-20261011/${activation.probeId}/${admittedRunId}/${artifactIdentity}/ownership.${
+    indexed ? "md" : "json"
+  }`;
 }
 
 function attemptLabelForRequest(request: RuntimeOwnershipProbeRunRequest): string | undefined {
@@ -502,6 +540,13 @@ export function createProjectRunRuntimeOwnershipProbe(
 ): RuntimeOwnershipProbe {
   return {
     createSession(input) {
+      RuntimeReflectApply(ProbeMapForEach, retainedProbeAttempts, [
+        (retained: RetainedProbeAttempt, key: string) => {
+          if (retained.expiresAtMs <= input.nowMs) {
+            RuntimeReflectApply(ProbeMapDelete, retainedProbeAttempts, [key]);
+          }
+        },
+      ]);
       if (input.nowMs >= activation.expiresAtMs) return undefined;
       if (input.request.projectId !== activation.projectId) return undefined;
       const admittedRunId = input.request.canonicalRunId;
@@ -510,6 +555,8 @@ export function createProjectRunRuntimeOwnershipProbe(
       if (input.request.attempt !== undefined && attemptLabel === undefined) return undefined;
       if (!isStagingContext(input.ctx, activation)) return undefined;
 
+      let currentPhaseSucceeded = false;
+      let pauseObservationStarted = false;
       let currentContentHash: string | undefined;
       let currentVersionHash: string | undefined;
       const sessionIdentity = `session-${RuntimeCryptoRandomUUID()}`;
@@ -519,8 +566,16 @@ export function createProjectRunRuntimeOwnershipProbe(
       const eventIdentity = attemptLabel === undefined
         ? sessionIdentity
         : `${attemptLabel}.${sessionIdentity}`;
-      const sourcePath = canonicalSourcePath(activation, admittedRunId, artifactIdentity);
+      const sourcePath = canonicalSourcePath(
+        activation,
+        admittedRunId,
+        artifactIdentity,
+        input.indexProbe !== undefined,
+      );
       const runPhase = async (phase: RuntimeOwnershipProbePhase): Promise<void> => {
+        const stale = phase === "stale-after-cancel" || phase === "stale-after-pause" ||
+          phase === "stale-after-replacement";
+        if (!stale) currentPhaseSucceeded = false;
         const baseReceipt = {
           probe: "project-run-runtime-ownership" as const,
           probeId: activation.probeId,
@@ -560,7 +615,9 @@ export function createProjectRunRuntimeOwnershipProbe(
           const apiPath = `/projects/${RuntimeEncodeURIComponent(activation.projectId)}/files/${
             RuntimeEncodeURIComponent(sourcePath)
           }`;
-          const content = "project-run-runtime-ownership" + "\n" + activation.probeId + "\n" +
+          const content =
+            (input.indexProbe ? "---\ntype: concept\ntitle: Runtime ownership proof\n---\n" : "") +
+            "project-run-runtime-ownership" + "\n" + activation.probeId + "\n" +
             eventIdentity +
             "\n" +
             (attemptLabel ?? "") +
@@ -628,7 +685,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               params: canonicalParams,
             });
           } catch (error) {
-            if (phase !== "stale-after-cancel") throw error;
+            if (!stale) throw error;
             if (!isAuthorizationRejection(error)) {
               sink({
                 ...baseReceipt,
@@ -723,7 +780,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
             return;
           }
-          if (phase === "current" && after.contentHash !== sourceHash) {
+          if (!stale && after.contentHash !== sourceHash) {
             sink({
               ...baseReceipt,
               status: "error",
@@ -738,7 +795,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
             return;
           }
-          if (phase === "stale-after-cancel") {
+          if (stale) {
             if (after.contentHash === sourceHash) {
               sink({
                 ...baseReceipt,
@@ -788,6 +845,16 @@ export function createProjectRunRuntimeOwnershipProbe(
             }
           }
 
+          const childProof = !stale || phase === "stale-after-cancel"
+            ? await input.childProbe?.({ sourcePath, staleAfterCancel: stale, signal })
+            : undefined;
+          const indexProof = await input.indexProbe?.({
+            sourcePath,
+            content: after.content,
+            stale,
+            signal,
+          });
+
           if (eventAppendClient.post === undefined) {
             sink({
               ...baseReceipt,
@@ -816,7 +883,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               { signal },
             );
           } catch (error) {
-            if (phase !== "stale-after-cancel" || !isAuthorizationOrConflictRejection(error)) {
+            if (!stale || !isAuthorizationOrConflictRejection(error)) {
               sink({
                 ...baseReceipt,
                 status: "error",
@@ -826,7 +893,7 @@ export function createProjectRunRuntimeOwnershipProbe(
                 versionHash: after.versionHash,
                 eventBeforeHash: eventBefore.hash,
                 runBeforeHash: runBefore.hash,
-                reason: phase === "stale-after-cancel"
+                reason: stale
                   ? "stale-event-append-failed-without-expected-rejection"
                   : "event-append-failed",
                 errorType: classifyError(error),
@@ -855,7 +922,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
             return;
           }
-          if (phase === "current" && !eventAfter.containsProbeEvent) {
+          if (!stale && !eventAfter.containsProbeEvent) {
             sink({
               ...baseReceipt,
               status: "error",
@@ -871,7 +938,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
             return;
           }
-          if (phase === "stale-after-cancel") {
+          if (stale) {
             if (eventAfter.containsProbeEvent || eventAfter.hash !== eventBefore.hash) {
               sink({
                 ...baseReceipt,
@@ -914,7 +981,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               { signal },
             );
           } catch (error) {
-            if (phase !== "stale-after-cancel" || !isAuthorizationOrConflictRejection(error)) {
+            if (!stale || !isAuthorizationOrConflictRejection(error)) {
               sink({
                 ...baseReceipt,
                 status: "error",
@@ -926,7 +993,7 @@ export function createProjectRunRuntimeOwnershipProbe(
                 eventAfterHash: eventAfter.hash,
                 eventResponseHash: await safeHash(eventResponse),
                 runBeforeHash: runBefore.hash,
-                reason: phase === "stale-after-cancel"
+                reason: stale
                   ? "stale-heartbeat-failed-without-expected-rejection"
                   : "heartbeat-failed",
                 errorType: classifyError(error),
@@ -948,12 +1015,13 @@ export function createProjectRunRuntimeOwnershipProbe(
               eventResponseHash: await safeHash(eventResponse),
               runBeforeHash: runBefore.hash,
               heartbeatResponseHash: await safeHash(heartbeatResponse),
+              indexProof,
               reason: "run-readback-after-failed",
               errorType: runAfter.errorType,
             });
             return;
           }
-          if (phase === "stale-after-cancel" && runAfter.hash !== runBefore.hash) {
+          if (stale && runAfter.hash !== runBefore.hash) {
             sink({
               ...baseReceipt,
               status: "error",
@@ -972,7 +1040,8 @@ export function createProjectRunRuntimeOwnershipProbe(
             return;
           }
 
-          if (phase === "current") {
+          if (!stale) {
+            currentPhaseSucceeded = true;
             currentContentHash = after.contentHash;
             currentVersionHash = after.versionHash;
           }
@@ -990,7 +1059,9 @@ export function createProjectRunRuntimeOwnershipProbe(
             heartbeatResponseHash: await safeHash(heartbeatResponse),
             runBeforeHash: runBefore.hash,
             runAfterHash: runAfter.hash,
-            reason: phase === "stale-after-cancel" ? "stale-current-surfaces-preserved" : undefined,
+            indexProof,
+            childProof,
+            reason: stale ? "stale-current-surfaces-preserved" : undefined,
           });
         } catch (error) {
           sink({ ...baseReceipt, status: "error", errorType: classifyError(error) });
@@ -1000,7 +1071,106 @@ export function createProjectRunRuntimeOwnershipProbe(
       };
 
       return {
-        beforeExecute: () => runPhase("current"),
+        beforeExecute: async () => {
+          await runPhase(input.request.resumedManually ? "current-after-manual-resume" : "current");
+          // A successful current source write supplies independent server acceptance of this attempt.
+          // Compare only different issuer attempt IDs; duplicate deliveries are not replacements.
+          if (
+            !currentPhaseSucceeded || currentContentHash === undefined ||
+            currentVersionHash === undefined ||
+            !input.authorityAttemptId
+          ) return;
+          const key =
+            `${activation.projectId}:${activation.environmentId}:${activation.probeId}:${admittedRunId}:${
+              input.canonicalBranchId ?? "main"
+            }`;
+          const previous = RuntimeReflectApply(ProbeMapGet, retainedProbeAttempts, [key]) as
+            | RetainedProbeAttempt
+            | undefined;
+          if (
+            previous && previous.expiresAtMs > input.nowMs &&
+            previous.attemptId !== input.authorityAttemptId
+          ) await previous.proveReplaced();
+          const size = RuntimeReflectApply(ProbeMapSize, retainedProbeAttempts, []) as number;
+          if (!previous && size >= MAX_RETAINED_PROBE_ATTEMPTS) {
+            sink({
+              probe: "project-run-runtime-ownership",
+              probeId: activation.probeId,
+              phase: "stale-after-replacement",
+              status: "skipped",
+              projectId: activation.projectId,
+              runId: admittedRunId,
+              environmentId: activation.environmentId,
+              sourcePath,
+              reason: "retained-attempt-capacity-exhausted",
+            });
+            return;
+          }
+          RuntimeReflectApply(ProbeMapSet, retainedProbeAttempts, [
+            key,
+            {
+              attemptId: input.authorityAttemptId,
+              expiresAtMs: activation.expiresAtMs,
+              proveReplaced: () => runPhase("stale-after-replacement"),
+            } satisfies RetainedProbeAttempt,
+          ]);
+        },
+        afterPauseAcknowledged: () => {
+          if (pauseObservationStarted) return Promise.resolve();
+          pauseObservationStarted = true;
+          // pause-ack keeps the claim running until this invocation returns. Never await
+          // pause commitment here: that would prevent the executor from committing it.
+          const observeCommittedPause = async () => {
+            const signal = RuntimeAbortSignalTimeout(activation.operationTimeoutMs);
+            const reader = input.createReadbackClient?.(signal) ??
+              input.createCanonicalClient(signal);
+            for (let check = 0; check * 50 < activation.operationTimeoutMs; check++) {
+              const state: unknown = await reader.get<unknown>(runPath(admittedRunId), undefined, {
+                signal,
+              });
+              if (
+                state !== null && typeof state === "object" && "id" in state &&
+                (state.id === admittedRunId || state.id === input.request.runId) &&
+                "project_id" in state && state.project_id === activation.projectId &&
+                "status" in state && state.status === "waiting" &&
+                "control" in state && state.control !== null && typeof state.control === "object" &&
+                "waiting" in state.control && state.control.waiting !== null &&
+                typeof state.control.waiting === "object" && "reason" in state.control.waiting &&
+                state.control.waiting.reason === "manual_pause"
+              ) {
+                await runPhase("stale-after-pause");
+                return;
+              }
+              await new Promise<void>((resolve) => ProbeSetTimeout(resolve, 50));
+            }
+            sink({
+              probe: "project-run-runtime-ownership",
+              probeId: activation.probeId,
+              phase: "stale-after-pause",
+              status: "error",
+              projectId: activation.projectId,
+              runId: admittedRunId,
+              environmentId: activation.environmentId,
+              sourcePath,
+              reason: "committed-manual-pause-not-observed",
+            });
+          };
+          void observeCommittedPause().catch((error) =>
+            sink({
+              probe: "project-run-runtime-ownership",
+              probeId: activation.probeId,
+              phase: "stale-after-pause",
+              status: "error",
+              projectId: activation.projectId,
+              runId: admittedRunId,
+              environmentId: activation.environmentId,
+              sourcePath,
+              reason: "committed-manual-pause-observation-failed",
+              errorType: classifyError(error),
+            })
+          );
+          return Promise.resolve();
+        },
         afterStopAcknowledged: () => runPhase("stale-after-cancel"),
       };
     },
@@ -1018,4 +1188,5 @@ export function createProjectRunRuntimeOwnershipProbeFromHostEnv(
 
 export function __resetProjectRunRuntimeOwnershipProbeFlightsForTests(): void {
   activeProbeFlights.clear();
+  RuntimeReflectApply(ProbeMapClear, retainedProbeAttempts, []);
 }

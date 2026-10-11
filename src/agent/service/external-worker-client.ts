@@ -4,6 +4,12 @@ import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import {
+  type AgentWorkerRuntimeOwnershipProbe,
+  type AgentWorkerRuntimeOwnershipProbeCredentials,
+  type AgentWorkerRuntimeOwnershipProbeRun,
+  createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
+} from "./agent-worker-runtime-ownership-probe.ts";
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
@@ -204,6 +210,7 @@ export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
   authToken: string;
   fetch?: typeof fetch;
+  ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 }
 
 /** Input payload for register external agent worker. */
@@ -268,12 +275,16 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #authToken: string;
   readonly #fetch: typeof fetch;
   readonly #runCredentials = new NativeMap<string, RunCredentials>();
+  readonly #runClaims = new NativeMap<string, { workerId: string; run: ExternalAgentWorkerRun }>();
   readonly #workerTokensByWorkerId = new Map<string, string>();
+  readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
     this.#apiUrl = options.apiUrl.replace(/\/$/, "");
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;
+    this.#ownershipProbe = options.ownershipProbe ??
+      createAgentWorkerRuntimeOwnershipProbeFromHostEnv();
   }
 
   async #request<T>(
@@ -340,6 +351,43 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     return response.worker;
   }
 
+  #probeCredentials(credentials: RunCredentials): AgentWorkerRuntimeOwnershipProbeCredentials {
+    return {
+      authToken: credentials.auth_token,
+      runEventToken: credentials.run_event_token,
+      runTerminalToken: credentials.run_terminal_token,
+    };
+  }
+
+  #probeRun(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): AgentWorkerRuntimeOwnershipProbeRun {
+    const route = terminalRoute(credentials.run_terminal_token, run.run_id);
+    const leaseExpiresAtMs = run.lease_expires_at === null
+      ? undefined
+      : Date.parse(run.lease_expires_at);
+    return {
+      runId: run.run_id,
+      canonicalRunId: route.id,
+      projectId: run.project_id,
+      agentId: run.agent_id,
+      latestExternalEventSequence: run.latest_external_event_sequence,
+      leaseExpiresAtMs: leaseExpiresAtMs !== undefined && Number.isFinite(leaseExpiresAtMs)
+        ? leaseExpiresAtMs
+        : undefined,
+    };
+  }
+
+  #withProbeCursor(
+    run: ExternalAgentWorkerRun,
+    latestExternalEventSequence: number | undefined,
+  ): ExternalAgentWorkerRun {
+    if (latestExternalEventSequence === undefined) return run;
+    if (latestExternalEventSequence === run.latest_external_event_sequence) return run;
+    return { ...run, latest_external_event_sequence: latestExternalEventSequence };
+  }
+
   async claimRun(
     input: ClaimExternalAgentWorkerRunInput,
   ): Promise<ExternalAgentWorkerRun | null> {
@@ -353,11 +401,27 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
+      const probeRun = this.#probeRun(response.run, response.credentials);
+      const probeResult = await this.#ownershipProbe?.afterClaim({
+        apiUrl: this.#apiUrl,
+        fetch: this.#fetch,
+        workerId: input.workerId,
+        run: probeRun,
+        credentials: this.#probeCredentials(response.credentials),
+      });
+      response.run = this.#withProbeCursor(
+        response.run,
+        probeResult?.latestExternalEventSequence,
+      );
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
     }
     if (response.run && !response.credentials) {
       apply(mapDelete, this.#runCredentials, [response.run.run_id]);
+      apply(mapDelete, this.#runClaims, [response.run.run_id]);
     }
     return response.run;
   }
@@ -365,6 +429,9 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   async renewLease(
     input: ClaimExternalAgentWorkerRunInput & { runId: string },
   ): Promise<ExternalAgentWorkerRun | null> {
+    const previousCredentials = apply(mapGet, this.#runCredentials, [input.runId]) as
+      | RunCredentials
+      | undefined;
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
@@ -377,11 +444,46 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
+      const probeRun = this.#probeRun(response.run, response.credentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
+      const probeResult = await this.#ownershipProbe?.afterRenew({
+        apiUrl: this.#apiUrl,
+        fetch: this.#fetch,
+        workerId: input.workerId,
+        run: probeRun,
+        credentials: this.#probeCredentials(response.credentials),
+        previousCredentials: previousCredentials
+          ? this.#probeCredentials(previousCredentials)
+          : undefined,
+      });
+      response.run = this.#withProbeCursor(
+        response.run,
+        probeResult?.latestExternalEventSequence,
+      );
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
     }
     if (!response.run || !response.credentials) {
+      const previousClaim = apply(mapGet, this.#runClaims, [input.runId]) as
+        | { workerId: string; run: ExternalAgentWorkerRun }
+        | undefined;
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
+      if (previousCredentials && previousClaim) {
+        await this.#ownershipProbe?.afterLeaseLost({
+          apiUrl: this.#apiUrl,
+          fetch: this.#fetch,
+          workerId: previousClaim.workerId,
+          run: this.#probeRun(previousClaim.run, previousCredentials),
+          credentials: this.#probeCredentials(previousCredentials),
+        });
+      }
     }
     return response.run;
   }
@@ -446,8 +548,26 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       model: "",
       fetch: this.#fetch,
     });
+    const claim = apply(mapGet, this.#runClaims, [input.runId]) as
+      | { workerId: string; run: ExternalAgentWorkerRun }
+      | undefined;
+    if (claim) {
+      const probeInput = {
+        apiUrl: this.#apiUrl,
+        fetch: this.#fetch,
+        workerId: claim.workerId,
+        run: this.#probeRun(claim.run, credentials),
+        credentials: this.#probeCredentials(credentials),
+      };
+      if (input.status === "cancelled") {
+        await this.#ownershipProbe?.afterCancelled(probeInput);
+      } else {
+        await this.#ownershipProbe?.afterTerminal?.(probeInput);
+      }
+    }
     if (apply(mapGet, this.#runCredentials, [input.runId]) === credentials) {
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
     }
   }
 }

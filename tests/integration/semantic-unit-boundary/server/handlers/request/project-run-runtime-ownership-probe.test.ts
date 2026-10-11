@@ -249,6 +249,69 @@ function createHeartbeatClient(
 describe("project-run runtime ownership probe", () => {
   afterEach(() => __resetProjectRunRuntimeOwnershipProbeFlightsForTests());
 
+  it("uses the old private client only after a different accepted issuer attempt", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const base = new RecordingClient();
+    let replaced = false;
+    const old = boundaryClient(base, {
+      put: async (path, body, options) => {
+        if (replaced) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await base.put(path, body, options);
+      },
+      post: async (path, body, options) => {
+        if (replaced) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await base.post(path, body, options);
+      },
+    });
+    const probe = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    const first = probe.createSession({
+      ...baseSessionInput(old),
+      authorityAttemptId: "first-issuer-attempt",
+    });
+    assertExists(first);
+    await first.beforeExecute();
+    replaced = true;
+    const next = probe.createSession({
+      ...baseSessionInput(base),
+      authorityAttemptId: "second-issuer-attempt",
+    });
+    assertExists(next);
+    await next.beforeExecute();
+    assertEquals(receipts.map((receipt) => [receipt.phase, receipt.status]), [
+      ["current", "ok"],
+      ["current", "ok"],
+      ["stale-after-replacement", "ok"],
+    ]);
+    assertEquals(receipts[2]!.sourcePath, receipts[0]!.sourcePath);
+    assertEquals(receipts[2]!.afterHash, receipts[0]!.afterHash);
+    assertEquals(receipts[2]!.versionHash, receipts[0]!.versionHash);
+  });
+
+  it("labels only authenticated manual resume as current resumed ownership", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = new RecordingClient();
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(client),
+        request: {
+          runId,
+          canonicalRunId: runId,
+          projectId: "proj-1",
+          resumedManually: true,
+        },
+      });
+    assertExists(session);
+    await session.beforeExecute();
+    assertEquals(receipts[0]!.phase, "current-after-manual-resume");
+    assertEquals(receipts[0]!.status, "ok");
+  });
+
   it("does not activate from project env-file values", () => {
     const values = new Map<string, string>([
       ["VERYFRONT_RUNTIME_OWNERSHIP_PROBE_STAGE", "1"],
@@ -431,6 +494,132 @@ describe("project-run runtime ownership probe", () => {
     await session.beforeExecute();
     denyWrites = true;
     await session.afterStopAcknowledged();
+
+    assertEquals(client.writes.length, 1);
+    assertEquals(receipts[0]!.sourcePath, receipts[1]!.sourcePath);
+    assertEquals(receipts[1]!.status, "ok");
+    assertEquals(receipts[1]!.reason, "stale-current-surfaces-preserved");
+    assertEquals(receipts[1]!.afterHash, receipts[0]!.afterHash);
+    assertEquals(receipts[1]!.versionHash, receipts[0]!.versionHash);
+  });
+
+  it("does not block acknowledgement or attempt stale writes while the server is still running", async () => {
+    const base = new RecordingClient();
+    let committed = false;
+    const done = Promise.withResolvers<void>();
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const retained = boundaryClient(base, {
+      put: async (path, body, options) => {
+        if (committed) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await base.put(path, body, options);
+      },
+      post: async (path, body, options) => {
+        if (committed) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await base.post(path, body, options);
+      },
+    });
+    const session = createProjectRunRuntimeOwnershipProbe(activation, (receipt) => {
+      receipts.push(receipt);
+      if (receipt.phase === "stale-after-pause") done.resolve();
+    }).createSession({
+      ...baseSessionInput(retained),
+      createReadbackClient: () =>
+        boundaryClient(base, {
+          get: async <T>(
+            path: string,
+            params?: Record<string, string>,
+            options?: { signal?: AbortSignal },
+          ) => {
+            if (committed && isRunPath(path)) {
+              return {
+                id: runId,
+                project_id: "proj-1",
+                status: "waiting",
+                control: { waiting: { reason: "manual_pause" } },
+              } as T;
+            }
+            return await base.get<T>(path, params, options);
+          },
+        }),
+    });
+    assertExists(session);
+    await session.beforeExecute();
+    assertExists(session.afterPauseAcknowledged);
+    await session.afterPauseAcknowledged();
+    assertEquals(base.writes.length, 1);
+    assertEquals(receipts.length, 1);
+    committed = true;
+    await done.promise;
+    assertEquals(base.writes.length, 1);
+    assertEquals(receipts[1]!.status, "ok");
+  });
+
+  it("proves retained authority denial after an acknowledged pause", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const pauseDone = Promise.withResolvers<void>();
+    const client = new RecordingClient();
+    let denyWrites = false;
+    const denyingClient: RuntimeOwnershipProbeApiClient = {
+      get: <T>(path: string, params?: Record<string, string>, options?: { signal?: AbortSignal }) =>
+        client.get<T>(path, params, options),
+      post: (path, body, options) => client.post(path, body, options),
+      put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
+        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await client.put<T>(path, body, options);
+      },
+    };
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => {
+        receipts.push(receipt);
+        if (receipt.phase === "stale-after-pause") pauseDone.resolve();
+      },
+    )
+      .createSession({
+        ...baseSessionInput(denyingClient),
+        createReadbackClient: () =>
+          boundaryClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) => {
+              if (denyWrites && isRunPath(path)) {
+                return {
+                  id: runId,
+                  project_id: "proj-1",
+                  status: "waiting",
+                  control: { waiting: { reason: "manual_pause" } },
+                } as T;
+              }
+              return await client.get<T>(path, params, options);
+            },
+          }),
+        createEventAppendClient: () => ({
+          get: (path, params, options) => client.get(path, params, options),
+          post: async (path, body, options) => {
+            if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+            return await client.post(path, body, options);
+          },
+          put: (path, body, options) => client.put(path, body, options),
+        }),
+        createHeartbeatClient: () => ({
+          get: (path, params, options) => client.get(path, params, options),
+          post: async (path, body, options) => {
+            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            return await client.post(path, body, options);
+          },
+          put: (path, body, options) => client.put(path, body, options),
+        }),
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    denyWrites = true;
+    assertExists(session.afterPauseAcknowledged);
+    await session.afterPauseAcknowledged();
+    await pauseDone.promise;
+    assertEquals(receipts[1]!.phase, "stale-after-pause");
 
     assertEquals(client.writes.length, 1);
     assertEquals(receipts[0]!.sourcePath, receipts[1]!.sourcePath);

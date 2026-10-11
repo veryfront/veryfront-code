@@ -16955,6 +16955,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     backend: MemoryBackend,
     definition: WorkflowDefinition,
     options: {
+      onPauseProbe?: () => void;
       statePersistence?: "durable" | "ephemeral";
       now?: () => number;
       onDiscover?: () => void;
@@ -16966,6 +16967,20 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
+      ...(options.onPauseProbe
+        ? {
+          createRuntimeOwnershipProbe: () => ({
+            createSession: () => ({
+              beforeExecute: () => Promise.resolve(),
+              afterStopAcknowledged: () => Promise.resolve(),
+              afterPauseAcknowledged: () => {
+                options.onPauseProbe?.();
+                return Promise.resolve();
+              },
+            }),
+          }),
+        }
+        : {}),
       findWorkflowById: async () => {
         options.onDiscover?.();
         return {
@@ -17031,6 +17046,25 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
 
   function pauseAckCalls(urls: string[]): string[] {
     return urls.filter((url) => new URL(url).pathname === `/runs/${runId}/pause-ack`);
+  }
+
+  for (const status of [200, 403]) {
+    it(`runs the private pause probe only after an actual 200 acknowledgement (${status})`, async () => {
+      const backend = new SharedMemoryBackend();
+      let probes = 0;
+      await withMockFetch(
+        () => Promise.resolve(Response.json({ stop: true }, { status })),
+        async () => {
+          const result = await dispatch(createHandler(backend, threeSteps([]), {
+            onPauseProbe: () => {
+              probes++;
+            },
+          }));
+          assertEquals(result.status, "waiting");
+        },
+      );
+      assertEquals(probes, status === 200 ? 1 : 0);
+    });
   }
 
   it("pauses at a batch boundary and resumes manually under the same run id", async () => {
