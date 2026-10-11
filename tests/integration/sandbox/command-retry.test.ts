@@ -1,0 +1,226 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
+import { Sandbox } from "../../../src/sandbox/sandbox.ts";
+
+describe("Sandbox command dispatch uncertainty", () => {
+  afterEach(restoreMockFetch);
+
+  for (const method of ["proxy-command", "proxy-stream", "runtime-command"]) {
+    const commandPath = method === "proxy-command"
+      ? "/commands/run"
+      : method === "proxy-stream"
+      ? "/commands/stream"
+      : "/exec";
+    for (
+      const code of [
+        undefined,
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "EPIPE",
+        "ECONNREFUSED",
+        "EHOSTUNREACH",
+        "ACCESSOR-CODE",
+        "ACCESSOR-SYSCALL",
+      ]
+    ) {
+      it(`${method} does not replay a dispatched command after ${code ?? "an unclassified fetch failure"}`, async () => {
+        let executions = 0;
+        let reconnects = 0;
+        let getterCalls = 0;
+        const cause = code
+          ? {
+            code: code === "ACCESSOR-SYSCALL" ? "ECONNREFUSED" : code,
+            ...(code === "EHOSTUNREACH" ? { syscall: "write" } : {}),
+            ...(code === "ACCESSOR-CODE" ? { syscall: "connect" } : {}),
+          }
+          : undefined;
+        if (cause && (code === "ACCESSOR-CODE" || code === "ACCESSOR-SYSCALL")) {
+          Object.defineProperty(cause, code === "ACCESSOR-CODE" ? "code" : "syscall", {
+            get() {
+              getterCalls++;
+              throw new Error("Transport metadata getter must not run");
+            },
+          });
+        }
+        const failure = new TypeError("fetch failed", cause ? { cause } : undefined);
+        const endpoint = "http://127.0.0.1:43210";
+        const session = {
+          id: "retry-fixture",
+          endpoint,
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        };
+        installMockFetch(async (input) => {
+          const path = new URL(String(input)).pathname;
+          if (path.endsWith(commandPath)) {
+            // The server dispatched the side effect, but its response never reached the client.
+            executions++;
+            throw failure;
+          }
+          if (path.endsWith("/heartbeat")) {
+            return Response.json({ ok: true });
+          }
+          if (path === "/sandboxes/retry-fixture") {
+            reconnects++;
+            return Response.json(session);
+          }
+          if (path === "/sandboxes") return Response.json(session);
+          throw new Error(`Unexpected fixture request ${path}`);
+        });
+        const sandbox = Sandbox.createLazy({
+          apiUrl: endpoint,
+          authToken: "fixture-token",
+          projectReference: "fixture-project",
+          deleteOnClose: false,
+          execStartMaxAttempts: 2,
+          execStartRetryDelayMs: 0,
+          ...(method === "runtime-command"
+            ? { resolveRuntimeEndpoint: () => "http://127.0.0.1:43211" }
+            : {}),
+        });
+        try {
+          const error = await assertRejects(
+            () =>
+              method === "proxy-stream"
+                ? Array.fromAsync(sandbox.streamCommand("fixture side effect"))
+                : sandbox.runCommand("fixture side effect"),
+            TypeError,
+            "fetch failed",
+          );
+          assertEquals(error === failure, true, "Preserve the original uncertain failure");
+          assertEquals(getterCalls, 0, "Only data properties may authorize retry");
+          assertEquals(executions, 1, "An unknown dispatch outcome cannot authorize replay");
+          assertEquals(reconnects, 0, "An unknown dispatch outcome cannot authorize replacement");
+          assertEquals(sandbox.id, session.id);
+        } finally {
+          await sandbox.close();
+        }
+      });
+    }
+    for (
+      const [code, syscall] of [
+        ["ECONNREFUSED", "connect"],
+        ["ENETUNREACH", "connect"],
+        ["EHOSTUNREACH", "connect"],
+        ["ENOTFOUND", "getaddrinfo"],
+        ["EAI_AGAIN", "getaddrinfo"],
+      ]
+    ) {
+      it(`${method} retries ${code} during ${syscall} before execution`, async () => {
+        let requests = 0;
+        let executions = 0;
+        let reconnects = 0;
+        const endpoint = "http://127.0.0.1:43210";
+        const session = {
+          id: "retry-fixture",
+          endpoint,
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        };
+        installMockFetch(async (input) => {
+          const path = new URL(String(input)).pathname;
+          if (path.endsWith(commandPath)) {
+            requests++;
+            if (requests === 1) {
+              throw new TypeError("connection setup failed", { cause: { code, syscall } });
+            }
+            executions++;
+            return method === "proxy-command"
+              ? Response.json({ stdout: "ok", stderr: "", exit_code: 0 })
+              : new Response('{"type":"stdout","data":"ok"}\n{"type":"exit","exitCode":0}\n');
+          }
+          if (path.endsWith("/heartbeat")) return Response.json({ ok: true });
+          if (path === "/sandboxes/retry-fixture") {
+            reconnects++;
+            return Response.json(session);
+          }
+          if (path === "/sandboxes") return Response.json(session);
+          throw new Error(`Unexpected fixture request ${path}`);
+        });
+        const sandbox = Sandbox.createLazy({
+          apiUrl: endpoint,
+          authToken: "fixture-token",
+          projectReference: "fixture-project",
+          deleteOnClose: false,
+          execStartMaxAttempts: 2,
+          execStartRetryDelayMs: 0,
+          ...(method === "runtime-command"
+            ? { resolveRuntimeEndpoint: () => "http://127.0.0.1:43211" }
+            : {}),
+        });
+        try {
+          if (method === "proxy-stream") {
+            const events = await Array.fromAsync(sandbox.streamCommand("fixture side effect"));
+            assertEquals(events[0]?.data, "ok");
+          } else assertEquals((await sandbox.runCommand("fixture side effect")).stdout, "ok");
+          assertEquals(requests, 2);
+          assertEquals(executions, 1);
+          assertEquals(reconnects, 0);
+        } finally {
+          await sandbox.close();
+        }
+      });
+    }
+  }
+  it("preserves an SDK-created workspace after reset until explicit close", async () => {
+    let creates = 0;
+    let deletes = 0;
+    let commands = 0;
+    const endpoint = "http://127.0.0.1:43210";
+    const session = {
+      id: "retry-fixture",
+      endpoint,
+      status: "running",
+      workspace_storage: "ephemeral",
+      ttl_mode: "default",
+    };
+    installMockFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const method = observeFetchRequestInit(init).method;
+      if (path.endsWith("/commands/stream")) {
+        commands++;
+        throw new TypeError("fetch failed", { cause: { code: "ECONNRESET", syscall: "read" } });
+      }
+      if (path === "/sandboxes" && method === "POST") {
+        creates++;
+        return Response.json(session);
+      }
+      if (path === "/sandboxes/retry-fixture" && method === "DELETE") {
+        deletes++;
+        return Response.json({ ok: true });
+      }
+      if (path.endsWith("/heartbeat")) return Response.json({ ok: true });
+      throw new Error(`Unexpected fixture request ${method} ${path}`);
+    });
+    const sandbox = Sandbox.createLazy({
+      apiUrl: endpoint,
+      authToken: "fixture-token",
+      projectReference: "fixture-project",
+      deleteOnClose: true,
+      execStartMaxAttempts: 2,
+      execStartRetryDelayMs: 0,
+    });
+    try {
+      await assertRejects(
+        () => Array.fromAsync(sandbox.streamCommand("fixture side effect")),
+        TypeError,
+        "fetch failed",
+      );
+      assertEquals(commands, 1);
+      assertEquals(creates, 1);
+      assertEquals(deletes, 0);
+      assertEquals(sandbox.id, session.id);
+    } finally {
+      await sandbox.close();
+    }
+    assertEquals(deletes, 1, "Explicit cleanup still honors the caller's policy");
+  });
+});
