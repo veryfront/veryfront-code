@@ -278,3 +278,23 @@ import type {
 | `RuntimeReasoningOption`         | Provider-neutral reasoning controls accepted by model runtimes.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
 | `RuntimeResponseFormat`          | Provider-neutral structured-output request.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
 | `RuntimeStructuredOutputVariant` |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
+
+### `veryfront/provider/veryfront-cloud/cli-context`
+
+Narrow public boundary for first-party CLI operations that need to execute provider work inside a Veryfront Cloud request context.
+
+```ts
+import { runWithVeryfrontCloudContextAsync } from "veryfront/provider/veryfront-cloud/cli-context";
+```
+
+#### Functions
+
+| Name                                | Description                             | Source                                                                                                  |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `runWithVeryfrontCloudContextAsync` | Run with Veryfront Cloud context async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts) |
+
+#### Types
+
+| Name                    | Description                  | Source                                                                                                  |
+| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `VeryfrontCloudContext` | Context for Veryfront Cloud. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts) |

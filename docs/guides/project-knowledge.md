@@ -43,9 +43,12 @@ Broad filesystem tools remain separate capabilities.
 The initial prompt does not include document bodies or the full file catalog.
 Search returns compact metadata pages, and an exact lookup retrieves content.
 Collection selectors are not supported yet. Manifest lookup filters the selected
-scope before pagination. Scoped semantic retrieval currently uses bounded
-overscan and filters matches afterward; exact ranking within a scope requires
-store support for filtering before ranking.
+scope before pagination. Hosted semantic retrieval sends the configured document
+scope to Veryfront Cloud, which filters candidates before ranking. The SDK rejects
+scoped responses without the server's scope acknowledgement. The API enforces
+persisted runtime authorization; the SDK selector only narrows the request.
+Custom vector stores still use bounded overscan and post-filtering unless they
+support filtering before ranking.
 
 ## Add knowledge files
 
