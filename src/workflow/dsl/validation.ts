@@ -34,14 +34,16 @@ export function validateWorkflowPathSegment(id: string, label: string): void {
 }
 
 /**
- * Canonical run ids the Veryfront control plane mints (`run_` + a UUID). The
- * control plane starts a project workflow under that id, and decisions for it
- * must go through `POST /runs/{run_id}/resume` so the canonical run moves with
- * them (#2102). The shape is reserved: ids this runtime generates
- * (`run_` + 12 characters) never match, and `start` refuses a caller-chosen id
- * of this shape unless the start carries `CONTROL_PLANE_OWNED_START`.
+ * Canonical run ids the Veryfront control plane mints: a bare run UUID, or the
+ * legacy `run_` + a UUID (#3131). The control plane starts a project workflow
+ * under that id, and decisions for it must go through
+ * `POST /runs/{run_id}/resume` so the canonical run moves with them (#2102).
+ * The shapes are reserved: ids this runtime generates (`run_` + 12 characters)
+ * never match, and `start` refuses a caller-chosen id of either shape unless
+ * the start carries `CONTROL_PLANE_OWNED_START`.
  */
-const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CONTROL_PLANE_RUN_ID =
+  /^(?:run_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Start option marking the control plane's own dispatch. Internal: this module

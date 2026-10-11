@@ -85,6 +85,16 @@ code 1 and retains the created project in `error.context.localProject`.
 `veryfront routes --json` returns pages and APIs under `data`. Update scripts
 that read these commands' previous output.
 
+### Breaking: bare UUID run ids are reserved for control-plane runs
+
+`WorkflowClient.start()` and `WorkflowExecutor.start()` now also throw
+`INVALID_ARGUMENT` when you pass a caller-chosen `runId` that is a bare UUID.
+The control plane identifies a run by its UUID, so that shape is reserved the
+same way as `run_<uuid>`.
+
+- If you choose your own run ids as bare UUIDs, add a prefix before you
+  upgrade. Generated run ids are unaffected.
+
 ### Breaking: `run_<uuid>` run ids are reserved for control-plane runs
 
 `WorkflowClient.start()` and `WorkflowExecutor.start()` now throw
