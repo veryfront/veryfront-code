@@ -19,14 +19,13 @@ const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
 /**
- * A call that decides host execution, or any read of the capability flag. Object keys
- * and type annotations (`allowHostProjectCodeExecution:` or `?:`, formatted without a
- * space) are not reads; literal
- * grants are tracked separately. Counting every read, whatever its shape, keeps
- * negations, comparisons, ternaries and conjunctions on any receiver in the inventory.
+ * A call that decides host execution, or any use of the capability flag: reads on any
+ * receiver, destructuring (including aliased destructuring) and propagation keys. Type
+ * annotations (`allowHostProjectCodeExecution?: boolean`) and literal grants
+ * (`allowHostProjectCodeExecution: true`, tracked by the register) are not counted.
  */
 const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|\ballowHostProjectCodeExecution\b(?!\??:)/g;
+  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|\ballowHostProjectCodeExecution\b(?!\??:\s*(?:boolean|true)\b)/g;
 /** A literal grant that bypasses those decisions. */
 const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 
@@ -38,11 +37,11 @@ const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
 const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?: RegExp }> = {
   "src/agent/project/agent-runtime.ts": {
     surface: "Project agent runtime capability",
-    guards: 1,
+    guards: 2,
   },
   "src/data/data-fetcher.ts": {
     surface: "Data fetcher capability",
-    guards: 1,
+    guards: 2,
   },
   "src/data/server-data-fetcher.ts": {
     surface: "Remote server-data execution",
@@ -54,11 +53,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/discovery/module-import.ts": {
     surface: "Discovery module import capability",
-    guards: 1,
+    guards: 2,
   },
   "src/discovery/project-discovery-config.ts": {
     surface: "Discovery capability normalization",
-    guards: 1,
+    guards: 2,
   },
   "src/discovery/transpiler.ts": {
     surface: "Discovery module transpilation and import",
@@ -70,7 +69,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/rendering/context/render-context.ts": {
     surface: "Render context capability",
-    guards: 2,
+    guards: 4,
   },
   "src/rendering/orchestrator/pipeline.ts": {
     surface: "Render pipeline capability",
@@ -78,11 +77,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/rendering/renderer.ts": {
     surface: "Renderer capability",
-    guards: 1,
+    guards: 2,
   },
   "src/routing/api/handler.ts": {
     surface: "API route ownership and host-realm selection",
-    guards: 9,
+    guards: 10,
   },
   "src/routing/api/module-loader/loader.ts": {
     surface: "API route module loading",
@@ -98,11 +97,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/schedule/discovery.ts": {
     surface: "Schedule discovery capability",
-    guards: 1,
+    guards: 2,
   },
   "src/server/context/enriched-context.ts": {
     surface: "Enriched request context capability",
-    guards: 1,
+    guards: 2,
   },
   "src/server/dev-server/middleware.ts": {
     surface: "Local development middleware",
@@ -130,7 +129,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/handlers/request/project-run-execute.handler.ts": {
     surface: "Project run execution capability",
-    guards: 2,
+    guards: 4,
   },
   "src/server/handlers/request/public-agent-metadata.handler.ts": {
     surface: "Public agent metadata",
@@ -142,7 +141,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/handlers/request/rsc/index.ts": {
     surface: "RSC request handler",
-    guards: 1,
+    guards: 2,
   },
   "src/server/handlers/request/snippet.handler.ts": {
     surface: "Component snippets",
@@ -166,11 +165,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/runtime-handler/handler-context-builder.ts": {
     surface: "Handler context capability",
-    guards: 2,
+    guards: 4,
   },
   "src/server/runtime-handler/index.ts": {
     surface: "Root middleware and hosted ingress",
-    guards: 4,
+    guards: 5,
   },
   "src/server/runtime-handler/project-middleware.ts": {
     surface: "Project middleware",
@@ -178,7 +177,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/runtime-handler/project-runtime-context.ts": {
     surface: "Project runtime context capability",
-    guards: 2,
+    guards: 4,
   },
   "src/server/services/rendering/ssr.service.ts": {
     surface: "SSR service",
@@ -190,11 +189,11 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/shared/renderer/adapter.ts": {
     surface: "Renderer adapter capability",
-    guards: 2,
+    guards: 4,
   },
   "src/server/startup-discovery.ts": {
     surface: "Startup discovery capability",
-    guards: 1,
+    guards: 2,
   },
   "src/task/discovery.ts": {
     surface: "Task discovery capability",
@@ -202,7 +201,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/task/project-runtime.ts": {
     surface: "Task project runtime capability",
-    guards: 1,
+    guards: 2,
   },
   "src/trigger/discovery.ts": {
     surface: "Trigger discovery capability",
@@ -210,7 +209,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/webhook/discovery.ts": {
     surface: "Webhook discovery capability",
-    guards: 1,
+    guards: 2,
   },
   "src/workflow/discovery/workflow-discovery.ts": {
     surface: "Workflow discovery capability",
@@ -470,5 +469,15 @@ describe("execution surface inventory", () => {
     ].join("\n");
     // Counted: the call on line 4 and the call inside the template expression.
     assertEquals(countGuards(codeOf(source)), 2);
+  });
+
+  it("counts aliased destructuring and propagation, not type annotations", () => {
+    const source = [
+      "const { allowHostProjectCodeExecution: allowed } = options;",
+      "run({ allowHostProjectCodeExecution: options.allowHostProjectCodeExecution });",
+      "interface Options { allowHostProjectCodeExecution?: boolean }",
+      "const grant = { allowHostProjectCodeExecution: true };",
+    ].join("\n");
+    assertEquals(countGuards(codeOf(source)), 3);
   });
 });
