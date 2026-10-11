@@ -352,6 +352,30 @@ function unwrapExpression(node: unknown): unknown {
   return node;
 }
 
+/** The function `f.bind(...)` binds, when `node` is such a call. */
+function boundFunction(node: unknown): unknown {
+  const call = unwrapExpression(node);
+  if (
+    !isNode(call) || (call.type !== "CallExpression" && call.type !== "OptionalCallExpression")
+  ) return undefined;
+  const callee = unwrapExpression(call.callee);
+  if (
+    !isNode(callee) ||
+    (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") ||
+    propertyName(callee.property, callee.computed) !== "bind"
+  ) return undefined;
+  return callee.object;
+}
+
+/** An alias source: the expression itself, or the function a `.bind(...)` call binds. */
+function aliasSource(node: unknown): unknown {
+  let source = unwrapExpression(node);
+  for (let bound = boundFunction(source); bound !== undefined; bound = boundFunction(source)) {
+    source = unwrapExpression(bound);
+  }
+  return source;
+}
+
 /** A literal `true`, also through `true as const`, `<const>true` or parentheses. */
 function isTrue(node: unknown): boolean {
   const value = unwrapExpression(node);
@@ -373,6 +397,12 @@ function calleeNames(callee: unknown): string[] {
       // `predicate.call(thisArg, ctx)` and `predicate.apply(thisArg, [ctx])` call it.
       const through = name === "call" || name === "apply" ? calleeNames(callee.object) : [];
       return name === undefined ? through : [name, ...through];
+    }
+    case "CallExpression":
+    case "OptionalCallExpression": {
+      // `predicate.bind(thisArg)(ctx)` calls the bound predicate.
+      const bound = boundFunction(callee);
+      return bound === undefined ? [] : calleeNames(bound);
     }
     case "LogicalExpression":
       return [...calleeNames(callee.left), ...calleeNames(callee.right)];
@@ -409,7 +439,7 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       isNode(node.left) && node.left.type === "Identifier"
     ) {
       // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`.
-      const source = unwrapExpression(node.right);
+      const source = aliasSource(node.right);
       const from = isNode(source) && source.type === "Identifier"
         ? source.name as string
         : isNode(source) &&
@@ -419,7 +449,7 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       if (from !== undefined) links.push([from, node.left.name as string]);
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
       // `const q = p as Guard`, `const q = (policy.p)!`: aliases through transparent wrappers.
-      const init = unwrapExpression(node.init);
+      const init = aliasSource(node.init);
       if (node.id.type === "Identifier" && isNode(init) && init.type === "Identifier") {
         links.push([init.name as string, node.id.name as string]);
       } else if (
@@ -975,6 +1005,18 @@ describe("execution surface inventory", () => {
     // (`=` and `??=`), destructuring defaults (2), a parameter default, and getters
     // returning `true` (2).
     assertEquals(analysis.grants, 22);
+  });
+
+  it("counts predicates called through bind, directly or by a stored callback", () => {
+    const analysis = analyzeSource(
+      [
+        "requiresIsolatedProjectRuntime.bind(undefined)(ctx);",
+        "const check = policy.isSharedProjectRuntime.bind(policy);",
+        "check(ctx);",
+      ].join("\n"),
+      "ts",
+    );
+    assertEquals(analysis.guards, 2);
   });
 
   it("resolves predicate aliases from parameter defaults and assignments", () => {

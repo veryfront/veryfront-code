@@ -673,6 +673,15 @@ describe("hosted HTTP resolver", () => {
         { sourceImageRepository: "" },
         { lookupSourceImage: undefined as never },
         { session: { ...options().session, expectedBrokerInstanceId: "" } },
+        { session: { ...options().session, allocator: null as never } },
+        { session: { ...options().session, allocator: {} as never } },
+        { session: { ...options().session, allocator: [] as never } },
+        {
+          session: {
+            ...options().session,
+            allocator: { ...options().session.allocator, release: undefined as never },
+          },
+        },
         { serviceAccountId: "" },
         { serviceAccountId: undefined as never },
         { configurationKey: new Uint8Array(16) },
