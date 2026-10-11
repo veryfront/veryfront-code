@@ -195,6 +195,34 @@ const SOURCE_CREDENTIAL_SCOPES = new Set([
   "cache:delete",
 ]);
 
+const REPOSITORY_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
+const isRegistryLabel = (label: string) =>
+  /^[a-z0-9-]+$/.test(label) && !label.startsWith("-") && !label.endsWith("-");
+
+/**
+ * A container image repository without tag or digest, following the distribution
+ * reference grammar: an optional registry host (DNS labels, optional TCP port 1-65535),
+ * then path components of lowercase alphanumerics joined by `.`, `_`, `__` or dashes.
+ */
+function isImageRepository(repository: string): boolean {
+  if (repository.length === 0 || repository.length > 256) return false;
+  const parts = repository.split("/");
+  const first = parts[0]!;
+  if (parts.length > 1 && (first.includes(".") || first.includes(":") || first === "localhost")) {
+    const [host, port, ...extra] = first.split(":");
+    if (
+      extra.length > 0 || !host || !host.split(".").every(isRegistryLabel)
+    ) {
+      return false;
+    }
+    if (port !== undefined) {
+      if (!/^[0-9]{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) return false;
+    }
+    parts.shift();
+  }
+  return parts.every((part) => REPOSITORY_COMPONENT.test(part));
+}
+
 /**
  * Accept only the edge proxy's project source credential for exactly `projectId`: a JWT
  * whose claims are exactly `userId` (the configured service account), `scope` (a subset of
@@ -364,16 +392,7 @@ export function createHostedHttpResolver(
   const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
   const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
   const repository = options.sourceImageRepository;
-  // An optional registry host with a TCP port (1-65535), then path components. Tags and
-  // digests are refused.
-  const repositoryMatch = typeof repository === "string" && repository.length <= 256
-    ? /^[a-z0-9][a-z0-9._-]*(?::([0-9]{1,5})(?=\/))?(?:\/[a-z0-9][a-z0-9._-]*)*$/.exec(repository)
-    : null;
-  const registryPort = repositoryMatch?.[1];
-  if (
-    !repositoryMatch ||
-    (registryPort !== undefined && !(Number(registryPort) >= 1 && Number(registryPort) <= 65535))
-  ) {
+  if (typeof repository !== "string" || !isImageRepository(repository)) {
     throw new TypeError("Hosted HTTP resolver requires a source image repository");
   }
   const serviceAccountId = options.serviceAccountId;
@@ -406,6 +425,22 @@ export function createHostedHttpResolver(
   ) throw new TypeError("Hosted HTTP resolver requires a configuration key of at least 32 bytes");
   const keyBytes = suppliedKey === undefined ? undefined : new Uint8Array(suppliedKey);
   let configurationKey: Promise<CryptoKey> | undefined;
+  // The resolver's raw copy is wiped once the non-extractable key is imported, or the
+  // import fails, so the secret is held only inside the CryptoKey afterwards.
+  const importConfigurationKey = (bytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> => {
+    const wipe = () => bytes.fill(0);
+    let importing: Promise<CryptoKey>;
+    try {
+      importing = crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, [
+        "sign",
+      ]);
+    } catch (error) {
+      wipe();
+      return Promise.reject(error);
+    }
+    importing.then(wipe, wipe);
+    return importing;
+  };
 
   async function authorizeProject(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     const body = await api.readProject(authority, signal);
@@ -494,9 +529,7 @@ export function createHostedHttpResolver(
         false,
         ["sign"],
       ) as Promise<CryptoKey>
-      : crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, [
-        "sign",
-      ]);
+      : importConfigurationKey(keyBytes);
     const configurationId = await deriveConfigurationId(configurationKey, identity, variables);
     signal.throwIfAborted();
 

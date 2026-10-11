@@ -190,6 +190,35 @@ describe("hosted HTTP resolver", () => {
     assertNotEquals(first.installation.configurationId, otherKey.installation.configurationId);
   });
 
+  it("wipes its raw copy of the configuration key once the key is imported", async () => {
+    const key = new Uint8Array(32).fill(7);
+    const subtle = crypto.subtle as SubtleCrypto & { importKey: SubtleCrypto["importKey"] };
+    const importKey = subtle.importKey;
+    const imported: Uint8Array[] = [];
+    subtle.importKey = ((format: "raw", data: Uint8Array, ...rest: unknown[]) => {
+      imported.push(data);
+      return (importKey as (...args: unknown[]) => Promise<CryptoKey>).call(
+        subtle,
+        format,
+        data,
+        ...rest,
+      );
+    }) as SubtleCrypto["importKey"];
+    try {
+      const resolve = createHostedHttpResolver(options({ configurationKey: key }));
+      const first = await resolve(authority, signal());
+      const second = await resolve(authority, signal());
+      assertEquals(first.installation.configurationId, second.installation.configurationId);
+      assertEquals(imported.length, 1);
+      assertNotEquals(imported[0], key);
+      assertEquals(imported[0]!.every((byte) => byte === 0), true);
+      // The caller's buffer is the caller's to wipe.
+      assertEquals(key.every((byte) => byte === 7), true);
+    } finally {
+      delete (subtle as { importKey?: unknown }).importKey;
+    }
+  });
+
   it("keeps configuration identities distinct for lone surrogates", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));
@@ -460,19 +489,29 @@ describe("hosted HTTP resolver", () => {
     assertEquals(resolved.session.expectedImage, IMAGE);
   });
 
-  it("accepts a registry host with a TCP port and refuses tags, digests and invalid ports", () => {
+  it("accepts only distribution repository names, without tag, digest or invalid port", () => {
     createHostedHttpResolver(
       options({ sourceImageRepository: "registry.example:5000/team/source" }),
     );
     createHostedHttpResolver(options({ sourceImageRepository: "localhost:5000/source" }));
     createHostedHttpResolver(options({ sourceImageRepository: "registry.example:65535/source" }));
     createHostedHttpResolver(options({ sourceImageRepository: "registry.example:1/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "ghcr.io/team/source__x.y-z" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "source" }));
     for (
       const repository of [
         "registry.example:99999/team/source",
         "registry.example:65536/team/source",
         "registry.example:0/team/source",
         "registry.example:00000/team/source",
+        "ghcr.io/team/source-",
+        "ghcr.io/team/-source",
+        "ghcr.io/team//source",
+        "ghcr.io/team/source.",
+        "ghcr.io/Team/source",
+        "-registry.example/source",
+        "registry.example:5000:1/source",
+        "",
         "ghcr.io/veryfront/tenant-source:latest",
         "registry.example:5000/team/source:v1",
         `ghcr.io/veryfront/tenant-source@sha256:${"a".repeat(64)}`,
