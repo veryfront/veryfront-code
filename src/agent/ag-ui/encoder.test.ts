@@ -1297,6 +1297,54 @@ describe("agent/ag-ui-encoder", () => {
     }
   });
 
+  it("preserves authored envelope fields when their value requires a snapshot", () => {
+    for (
+      const fixture of [
+        {
+          value: 12n,
+          reasons: ["unsupported_bigint", "unsupported_property"],
+          snapshot: "[unsupported bigint]",
+        },
+        {
+          value: Array.from({ length: 150 }, (_, index) => index),
+          reasons: ["array_truncated"],
+          snapshot: [...Array.from({ length: 100 }, (_, index) => index), "[truncated 50 items]"],
+        },
+      ]
+    ) {
+      const object = {
+        captureStatus: "unsupported",
+        reasons: ["retry", "retry"],
+        value: fixture.value,
+      };
+      for (const withFinish of [false, true]) {
+        const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+        mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
+        if (withFinish) {
+          mapRuntimeStreamEventToAgUiEvents(state, { type: "message-finish", object });
+        }
+        const finished = finalizeAgUiEvents(state, {
+          text: "{}",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          object,
+        }).find((event) => event.event === "RunFinished");
+        assertEquals(finished?.payload.result, {
+          captureStatus: "partial",
+          reasons: fixture.reasons,
+          value: {
+            captureStatus: "unsupported",
+            reasons: ["retry", "retry"],
+            value: fixture.snapshot,
+          },
+        });
+        JSON.stringify(finished?.payload);
+        assertEquals(object.reasons, ["retry", "retry"]);
+      }
+    }
+  });
+
   it("records unsupported markers for reflection failures in finish snapshots and fallbacks", () => {
     const revoked = Proxy.revocable({}, {});
     revoked.revoke();

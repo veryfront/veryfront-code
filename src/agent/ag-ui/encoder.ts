@@ -74,7 +74,10 @@ function defaultEpochMs(): number {
   return reflectApply(dateNow, intrinsicDate, []) as number;
 }
 
-/** Event emitted for AG-UI runtime stream. */
+/**
+ * Event emitted for AG-UI runtime stream. A message-finish producer sets
+ * objectEncoding to "snapshot" only for a generated capture envelope.
+ */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
 /** Public API contract for AG-UI run finished metadata. */
@@ -996,8 +999,9 @@ function readMessageFinishObjectObservation(input: unknown): MessageFinishObject
 function createMessageFinishObjectObservation(
   object: unknown,
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+  encoding: "value" | "snapshot" = "value",
 ): unknown {
-  const existing = readMessageFinishObjectObservation(object);
+  const existing = encoding === "snapshot" ? readMessageFinishObjectObservation(object) : null;
   let snapshot: MessageFinishObjectSnapshot;
   try {
     snapshot = snapshotMessageFinishObjectValue(existing ? existing.value : object, {
@@ -1034,6 +1038,7 @@ function createMessageFinishObjectObservation(
 function createMessageFinishObjectObservationWithinDurableBudget(
   baseValue: Record<string, unknown>,
   object: unknown,
+  encoding: "value" | "snapshot" = "value",
 ): unknown {
   const placeholder = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
   let best: unknown = placeholder;
@@ -1045,7 +1050,7 @@ function createMessageFinishObjectObservationWithinDurableBudget(
   );
   while (low <= high) {
     const mid = mathRound((low + high) / 2);
-    const candidate = createMessageFinishObjectObservation(object, mid);
+    const candidate = createMessageFinishObjectObservation(object, mid, encoding);
     if (isMessageFinishMetadataValueWithinDurableBudget({ ...baseValue, object: candidate })) {
       best = candidate;
       low = mid + 1;
@@ -1086,12 +1091,16 @@ function createMessageFinishMetadataEvent(
   }
 
   if (objectHasOwn(event, "object")) {
-    value.object = createMessageFinishObjectObservation(event.object);
+    const encoding = objectHasOwn(event, "objectEncoding") && event.objectEncoding === "snapshot"
+      ? "snapshot"
+      : "value";
+    value.object = createMessageFinishObjectObservation(event.object, undefined, encoding);
     if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
       const { object: _object, ...baseValue } = value;
       value.object = createMessageFinishObjectObservationWithinDurableBudget(
         baseValue,
         event.object,
+        encoding,
       );
     }
   }

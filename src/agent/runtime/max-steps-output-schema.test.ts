@@ -708,6 +708,7 @@ describe("agent max steps output schema", () => {
         type: "message-finish",
         finishReason: "tool-calls",
         totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        objectEncoding: "snapshot",
         object: {
           captureStatus: "unsupported",
           reasons: ["unsupported_object"],
@@ -1014,6 +1015,85 @@ describe("agent max steps output schema", () => {
     assertEquals(metadata?.outputSchemaError, undefined);
     assertEquals(finished?.object, { city: "Berlin", tempC: 12 });
   });
+
+  for (
+    const fixture of [
+      { name: "scalar", value: 42, expectedValue: 42, reasons: [] as string[] },
+      {
+        name: "bigint",
+        value: 12n,
+        expectedValue: "[unsupported bigint]",
+        reasons: ["unsupported_bigint", "unsupported_property"],
+      },
+      {
+        name: "array",
+        value: Array.from({ length: 150 }, (_, index) => index),
+        expectedValue: [
+          ...Array.from({ length: 100 }, (_, index) => index),
+          "[truncated 50 items]",
+        ],
+        reasons: ["array_truncated"],
+      },
+    ]
+  ) {
+    it(`keeps authored envelope-shaped ${fixture.name} output intact across both runtime paths`, async () => {
+      const authored = {
+        captureStatus: "unsupported",
+        reasons: ["retry", "retry"],
+        value: fixture.value,
+      };
+      const schema = defineSchema((v) => v.object({ city: v.string() }).transform(() => authored));
+      for (const streaming of [false, true]) {
+        const model = createMaxStepsModel('{"city":"Berlin"}');
+        const assistant = agent({
+          id: `authored-envelope-${fixture.name}-${streaming}`,
+          system: "You report weather.",
+          tools: { max_steps_noop_tool: noopTool },
+          maxSteps: 1,
+          outputSchema: schema(),
+          resolveModelTransport: () => Promise.resolve({ model }),
+        });
+        const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+        let callerObject: unknown;
+        let finishEncoding: unknown;
+        await withLocalChildExecution(
+          (input) => input.execute(),
+          async () => {
+            if (streaming) {
+              const result = await assistant.stream({
+                input: "Berlin?",
+                onFinish: (response) => {
+                  callerObject = response.object;
+                },
+              });
+              await result.toDataStreamResponse().text();
+            } else callerObject = (await assistant.generate({ input: "Berlin?" })).object;
+          },
+          (event) => {
+            mapRuntimeStreamEventToAgUiEvents(state, event);
+            if (event.type === "message-finish") finishEncoding = event.objectEncoding;
+            return Promise.resolve();
+          },
+        );
+        assertStrictEquals(callerObject, authored);
+        const value = {
+          captureStatus: "unsupported",
+          reasons: ["retry", "retry"],
+          value: fixture.expectedValue,
+        };
+        const expected = fixture.reasons.length
+          ? { captureStatus: "partial", reasons: fixture.reasons, value }
+          : value;
+        assertEquals(finishEncoding, fixture.reasons.length ? "snapshot" : undefined);
+        assertEquals(
+          finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished")?.payload
+            .result,
+          expected,
+        );
+        assertEquals(authored.reasons, ["retry", "retry"]);
+      }
+    });
+  }
 
   it("preserves a depth-limited capture envelope through streaming finalization", async () => {
     const model = createMaxStepsModel('{"city":"Berlin"}');

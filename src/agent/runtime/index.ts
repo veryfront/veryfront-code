@@ -1492,7 +1492,9 @@ function snapshotOutputSchemaObservationValue(
   }
 }
 
-function createOutputSchemaObservationObject(object: unknown): unknown {
+function createOutputSchemaObservationFields(
+  object: unknown,
+): { object: unknown; objectEncoding: "snapshot" | undefined } {
   let snapshot: OutputSchemaObservationSnapshot;
   try {
     snapshot = snapshotOutputSchemaObservationValue(object);
@@ -1503,11 +1505,10 @@ function createOutputSchemaObservationObject(object: unknown): unknown {
       reasons: ["unsupported_object"],
     };
   }
-  if (snapshot.status === "complete") return snapshot.value;
+  if (snapshot.status === "complete") return { object: snapshot.value, objectEncoding: undefined };
   return {
-    captureStatus: snapshot.status,
-    reasons: snapshot.reasons,
-    value: snapshot.value,
+    object: { captureStatus: snapshot.status, reasons: snapshot.reasons, value: snapshot.value },
+    objectEncoding: "snapshot",
   };
 }
 
@@ -1515,12 +1516,9 @@ function withOutputSchemaObservationObject<
   TTurn extends RuntimeGenerateTextResult & { object?: unknown },
 >(
   turn: TTurn,
-): TTurn {
+): TTurn & { objectEncoding?: "snapshot" } {
   if (!("object" in turn)) return turn;
-  return {
-    ...turn,
-    object: createOutputSchemaObservationObject(turn.object),
-  };
+  return { ...turn, ...createOutputSchemaObservationFields(turn.object) };
 }
 
 function buildGeneratedAssistantMessage(
@@ -3715,9 +3713,7 @@ export class AgentRuntime {
               type: "message-finish",
               ...(finishReason ? { finishReason } : {}),
               ...(finishUsage ? { totalUsage: finishUsage } : {}),
-              ...("object" in response
-                ? { object: createOutputSchemaObservationObject(response.object) }
-                : {}),
+              ...("object" in response ? createOutputSchemaObservationFields(response.object) : {}),
             });
             closeSSEStream(controller);
           } catch (streamError) {
@@ -4159,9 +4155,7 @@ export class AgentRuntime {
             await observeGeneratedAgentTurnFinish({
               finishReason: turn.finishReason,
               usage: turn.usage,
-              ...("object" in turn
-                ? { object: createOutputSchemaObservationObject(turn.object) }
-                : {}),
+              ...("object" in turn ? createOutputSchemaObservationFields(turn.object) : {}),
             });
           }
           generatedTurnFinishObserved = true;
