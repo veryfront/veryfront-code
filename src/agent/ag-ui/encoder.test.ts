@@ -1255,6 +1255,75 @@ describe("agent/ag-ui-encoder", () => {
     });
   }
 
+  it("preserves authored JSON objects that resemble capture envelopes", () => {
+    const object = { captureStatus: "partial", reasons: ["retry", "retry"], value: 42 };
+    for (const withFinish of [false, true]) {
+      const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
+      if (withFinish) mapRuntimeStreamEventToAgUiEvents(state, { type: "message-finish", object });
+      const events = finalizeAgUiEvents(state, {
+        text: "{}",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        object,
+      });
+      const finished = events.find((event) => event.event === "RunFinished");
+      assertEquals(finished?.payload.result, object);
+      assertEquals(JSON.parse(JSON.stringify(finished?.payload.result)), object);
+      assertEquals(object.reasons, ["retry", "retry"]);
+    }
+  });
+
+  it("records unsupported markers for reflection failures in finish snapshots and fallbacks", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    for (
+      const object of [
+        revoked.proxy,
+        new Proxy({}, {
+          getPrototypeOf() {
+            throw new Error("prototype reflection failed");
+          },
+        }),
+        new Proxy({}, {
+          ownKeys() {
+            throw new Error("key reflection failed");
+          },
+        }),
+        new Proxy({ answer: 42 }, {
+          getOwnPropertyDescriptor() {
+            throw new Error("descriptor reflection failed");
+          },
+        }),
+      ]
+    ) {
+      for (const withFinish of [false, true]) {
+        const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+        mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
+        if (withFinish) {
+          mapRuntimeStreamEventToAgUiEvents(state, { type: "message-finish", object });
+        }
+        const events = finalizeAgUiEvents(state, {
+          text: "{}",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          object,
+        });
+        const finished = events.filter((event) => event.event === "RunFinished");
+        assertEquals(finished.length, 1);
+        assertEquals(events.some((event) => event.event === "RunError"), false);
+        assertEquals(finished[0]?.payload.result, {
+          captureStatus: "unsupported",
+          reasons: ["unsupported_object"],
+          value: "[unsupported object]",
+        });
+        JSON.stringify(finished[0]?.payload);
+      }
+    }
+  });
+
   it("bounds the final-response fallback to the durable metadata budget", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
     mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
@@ -1288,6 +1357,7 @@ describe("agent/ag-ui-encoder", () => {
     for (
       const tail of [
         "authored data",
+        "[truncated 50 items]",
         "[truncated 0 items]",
         "[truncated -1 items]",
         "[truncated 1.5 items]",

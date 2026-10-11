@@ -647,6 +647,7 @@ interface MessageFinishObjectSnapshot {
 }
 
 interface MessageFinishObjectSnapshotContext {
+  preserveArrayTruncationMarkers?: boolean;
   remainingBytes: number;
   remainingNodes: number;
   seen: ReturnType<typeof createPrivateWeakStore<object, true>>;
@@ -874,7 +875,8 @@ function snapshotMessageFinishObjectValue(
         : 0;
       // A runtime snapshot contains up to 100 source items plus its omission
       // marker. Keep that bounded extra entry so another snapshot preserves N.
-      const limit = hasMessageFinishArrayTruncationMarker(input, length)
+      const limit = context.preserveArrayTruncationMarkers &&
+          hasMessageFinishArrayTruncationMarker(input, length)
         ? length
         : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
       for (let index = 0; index < limit; index++) {
@@ -980,12 +982,13 @@ function readMessageFinishObjectObservation(input: unknown): MessageFinishObject
         !reason?.enumerable || !objectHasOwn(reason, "value") || typeof reason.value !== "string" ||
         reason.value.length > 128
       ) return null;
-      addCaptureReason(copiedReasons, reason.value);
+      // Authored JSON can have this same shape; preserve its fields verbatim.
+      primordialArrayPush(copiedReasons, reason.value);
     }
     return { status: status.value, reasons: copiedReasons, value: value.value };
   } catch {
     // Reflection failure cannot establish a capture envelope. The ordinary
-    // snapshot path retains its existing unsupported-value handling.
+    // snapshot path will record an unsupported-object marker if it also fails.
     return null;
   }
 }
@@ -995,11 +998,21 @@ function createMessageFinishObjectObservation(
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
 ): unknown {
   const existing = readMessageFinishObjectObservation(object);
-  const snapshot = snapshotMessageFinishObjectValue(existing ? existing.value : object, {
-    remainingBytes: maxOutputBytes,
-    remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
-    seen: createPrivateWeakStore<object, true>(),
-  });
+  let snapshot: MessageFinishObjectSnapshot;
+  try {
+    snapshot = snapshotMessageFinishObjectValue(existing ? existing.value : object, {
+      preserveArrayTruncationMarkers: existing !== null,
+      remainingBytes: maxOutputBytes,
+      remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
+      seen: createPrivateWeakStore<object, true>(),
+    });
+  } catch {
+    snapshot = {
+      value: "[unsupported object]",
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
   if (existing) {
     for (const reason of primordialArrayValues(snapshot.reasons)) {
       addCaptureReason(existing.reasons, reason);

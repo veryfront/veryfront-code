@@ -444,6 +444,42 @@ describe("coverage source paths", () => {
     );
   });
 
+  it("uses the most-specific verified producer root regardless of root ordering", () => {
+    for (
+      const roots of [["/checkout", "/checkout/.cache/veryfront/producer"], [
+        "/checkout/.cache/veryfront/producer",
+        "/checkout",
+      ]]
+    ) {
+      const report = [
+        "SF:/checkout/.cache/veryfront/producer/src/main.mjs",
+        "DA:1,4",
+        "end_of_record",
+        "SF:/checkout/.cache/veryfront/producer/.cache/veryfront/generated.mjs",
+        "DA:2,5",
+        "end_of_record",
+      ].join("\n");
+      assertEquals(
+        normalizeLcovSourcePaths(
+          report,
+          roots,
+          (path) => path === "src/main.mjs",
+        ),
+        "SF:src/main.mjs\nDA:1,4\nend_of_record",
+      );
+      assertThrows(
+        () =>
+          normalizeLcovSourcePaths(
+            "SF:/checkout/.cache/veryfront/producer/src/missing.ts\nDA:1,4",
+            roots,
+            () => false,
+          ),
+        Error,
+        "LCOV source path does not exist",
+      );
+    }
+  });
+
   it("drops generated cache records across runner homes and path separators", () => {
     for (
       const cacheRoot of [

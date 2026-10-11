@@ -228,9 +228,13 @@ function normalizeLcovSource(
   const portable = source.replaceAll("\\", "/");
   // Match the cache shape only below a verified checkout root, so a checkout
   // that itself lives under a `.cache/veryfront/` directory keeps its sources.
-  const producerPrefix = prefixes.find((candidate) =>
-    portable.startsWith(candidate)
-  );
+  let producerPrefix: string | undefined;
+  for (const candidate of prefixes) {
+    if (
+      portable.startsWith(candidate) &&
+      (!producerPrefix || candidate.length > producerPrefix.length)
+    ) producerPrefix = candidate;
+  }
   const cacheCandidate = producerPrefix
     ? `/${portable.slice(producerPrefix.length)}`
     : portable;
@@ -248,9 +252,10 @@ function normalizeLcovSource(
     return { kind: "source", path: relative };
   }
 
-  const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
-  if (prefix) {
-    const relative = normalizeRelativeLcovPath(portable.slice(prefix.length));
+  if (producerPrefix) {
+    const relative = normalizeRelativeLcovPath(
+      portable.slice(producerPrefix.length),
+    );
     if (!sourceExists(relative)) {
       throw new Error(
         `LCOV source path does not exist in the project: ${relative}`,
