@@ -51,7 +51,7 @@ export function setRequestAttributes(
   span: unknown,
   req: Request,
   url: URL,
-  proxyTrusted = false,
+  proxyTrusted: boolean,
 ): void {
   if (!span) return;
 

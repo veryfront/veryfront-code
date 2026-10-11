@@ -187,6 +187,7 @@ export async function prepareProjectRequest(
       requestContext: { slug: binding.projectSlug, branch: null, mode: "production", token: "" },
       proxyTrust: { proxyTrusted: false, identityHeadersTrusted: false },
       loggerFacts: {
+        // Installed identity comes from host configuration, never request headers.
         environment: "production",
         domain: url.hostname,
         projectSlug: binding.projectSlug,

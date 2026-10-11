@@ -143,8 +143,8 @@ describe("server/runtime-handler/tracing", () => {
       const req = new Request("http://localhost/test");
       const url = new URL(req.url);
       // Should not throw
-      setRequestAttributes(null, req, url);
-      setRequestAttributes(undefined, req, url);
+      setRequestAttributes(null, req, url, false);
+      setRequestAttributes(undefined, req, url, false);
     });
 
     it("records the request url, host and scheme on the span", () => {
@@ -157,7 +157,7 @@ describe("server/runtime-handler/tracing", () => {
       const req = new Request("http://localhost/test");
       const url = new URL(req.url);
 
-      setRequestAttributes(span, req, url);
+      setRequestAttributes(span, req, url, false);
 
       assertEquals(
         recorded["http.url"],
