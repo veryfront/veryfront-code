@@ -328,15 +328,10 @@ describe("integrations/remote-tools", () => {
     }
   });
 
-  it("blocks an internal API base unless the host enables internal egress", async () => {
-    // Routing the credentialed integration API through `guardedOutboundFetch`
-    // puts it under the host egress ceiling, which denies private and loopback
-    // destinations by default. Pinning both halves here: a developer or
-    // self-hosted deployment that points `VERYFRONT_API_BASE_URL` at an
-    // internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`, and once
-    // it is set the request goes through unchanged.
+  it("blocks a private HTTPS API unless the host enables internal egress", async () => {
+    // The boot-configured HTTP exception does not authorize private HTTPS APIs.
     setRemoteToolEnv({
-      VERYFRONT_API_BASE_URL: "http://127.0.0.1:8787",
+      VERYFRONT_API_BASE_URL: "https://127.0.0.1:8787",
       VERYFRONT_API_TOKEN: "token",
     });
 

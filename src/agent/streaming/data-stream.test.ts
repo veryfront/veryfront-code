@@ -63,6 +63,34 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("agent/data-stream", () => {
+  it("retains observed SSE events when project code replaces string parsing methods", () => {
+    const originalSplit = String.prototype.split;
+    const originalStartsWith = String.prototype.startsWith;
+    const originalSlice = String.prototype.slice;
+    const originalTrimStart = String.prototype.trimStart;
+    const originalTrim = String.prototype.trim;
+    let parsed: ReturnType<typeof parseDataStreamSseEvents> | undefined;
+    try {
+      String.prototype.split = () => [];
+      String.prototype.startsWith = () => false;
+      String.prototype.slice = () => "";
+      String.prototype.trimStart = () => "";
+      String.prototype.trim = () => "";
+      parsed = parseDataStreamSseEvents(
+        'data: {"type":"text-delta","id":"text-1","delta":"observed"}\n\n' +
+          "data: [DONE]\n\n" + 'data: {"type":"message-start"',
+      );
+    } finally {
+      String.prototype.split = originalSplit;
+      String.prototype.startsWith = originalStartsWith;
+      String.prototype.slice = originalSlice;
+      String.prototype.trimStart = originalTrimStart;
+      String.prototype.trim = originalTrim;
+    }
+    assertEquals(parsed?.events, [{ type: "text-delta", id: "text-1", delta: "observed" }]);
+    assertEquals(parsed?.remainder, 'data: {"type":"message-start"');
+  });
+
   it("parses complete frames and preserves incomplete remainder", () => {
     const parsed = parseDataStreamSseEvents(
       'data: {"type":"text-delta","id":"text-1","delta":"hello"}\n\n' +

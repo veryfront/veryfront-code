@@ -1,3 +1,5 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+
 /** JSON operations captured before project discovery can replace global methods. */
 export const privateJsonParse = JSON.parse;
 const stringify = JSON.stringify;
@@ -23,13 +25,25 @@ const stringValue = String.prototype.valueOf;
 const booleanValue = Boolean.prototype.valueOf;
 const bigintValue = BigInt.prototype.valueOf;
 const finite = Number.isFinite;
+const safeInteger = Number.isSafeInteger;
 const notScalar = Symbol("not-native-json-scalar");
+const circularJsonErrors = createPrivateWeakStore<object, true>();
 
 /** A private array could not be copied for serialization. */
 export class PrivateJsonArrayError extends NativeTypeError {
   constructor() {
     super("Array input cannot be safely copied");
   }
+}
+
+function createPrivateJsonCircularError(): TypeError {
+  const error = new NativeTypeError("Cannot serialize circular data");
+  circularJsonErrors.set(error, true);
+  return error;
+}
+
+export function isPrivateJsonCircularError(error: unknown): boolean {
+  return error !== null && typeof error === "object" && circularJsonErrors.get(error) === true;
 }
 
 function nativeScalar(value: unknown): unknown {
@@ -60,12 +74,30 @@ export function privateJsonStringify(
   value: unknown,
   _replacer: null = null,
   space?: string | number,
+  maxNodes = 100_000,
 ) {
   if (_replacer !== null) {
     throw new NativeTypeError("Private JSON supports data-only serialization");
   }
+  return stringifyPrivateData(value, space, maxNodes, false);
+}
+
+/** Validate the complete public data graph while permitting ancestor cycles. */
+export function validatePrivateJsonDataWithCycles(value: unknown, maxNodes = 100_000): void {
+  stringifyPrivateData(value, undefined, maxNodes, true);
+}
+
+function stringifyPrivateData(
+  value: unknown,
+  space: string | number | undefined,
+  maxNodes: number,
+  allowCycles: boolean,
+) {
+  if (!safeInteger(maxNodes) || maxNodes <= 0) {
+    throw new NativeTypeError("Invalid private JSON structural budget");
+  }
   const ancestors = new NativeSet<object>();
-  let remaining = 100_000;
+  let remaining = maxNodes;
   const copy = (input: unknown, depth = 0): unknown => {
     if (--remaining < 0 || depth > 128) {
       throw new NativeTypeError("Private JSON data exceeds its structural limit");
@@ -81,13 +113,14 @@ export function privateJsonStringify(
     }
     if (array) {
       try {
-        if (input.length > 100_000) throw new PrivateJsonArrayError();
+        if (input.length > maxNodes) throw new PrivateJsonArrayError();
       } catch {
         throw new PrivateJsonArrayError();
       }
     }
     if (apply(setHas, ancestors, [input])) {
-      throw new NativeTypeError("Cannot serialize circular data");
+      if (allowCycles) return null;
+      throw createPrivateJsonCircularError();
     }
     apply(setAdd, ancestors, [input]);
     try {
@@ -113,6 +146,7 @@ export function privateJsonStringify(
       }
       return output;
     } catch (error) {
+      if (isPrivateJsonCircularError(error)) throw error;
       if (array) throw new PrivateJsonArrayError();
       throw error;
     } finally {

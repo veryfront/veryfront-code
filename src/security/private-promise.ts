@@ -89,6 +89,16 @@ function createChain<T, U>(
 }
 
 class PrivatePromise<T> extends NativePromise<T> {
+  constructor(
+    executor: (
+      resolve: (value: T | PromiseLike<T>) => void,
+      reject: (reason?: unknown) => void,
+    ) => void,
+  ) {
+    // Forward directly: a default subclass constructor may traverse mutable array iterators.
+    super(executor);
+  }
+
   static override get [species](): typeof PrivatePromise {
     return PrivatePromise;
   }

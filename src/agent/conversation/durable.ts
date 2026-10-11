@@ -1,3 +1,6 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { terminalRoute } from "./terminal-route.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
@@ -69,11 +72,16 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "./run-event-normalization.ts";
-import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "./run-event-limits.ts";
+import {
+  buildConversationRunEventBatches,
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+} from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
@@ -101,6 +109,10 @@ const AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_C
 const TOOL_CALL_START_EVENT_TYPE = "TOOL_CALL_START";
 const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+
+function normalizeReceiptId(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeToLowerCase, value, []) as string;
+}
 
 /**
  * Wrap a trusted transport so durable run persistence stays in the active
@@ -156,8 +168,6 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
     },
   };
 }
-
-const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
 function backfillPurePrivateEventResponseCursor(
   responseBody: unknown,
@@ -222,9 +232,9 @@ function readSubmittedModelCallCaptureIds(events: unknown[]): string[] {
 }
 
 function requireUniqueSubmittedModelCallCaptureIds(modelCallIds: string[]): void {
-  const seen = new Set<string>();
+  const seen = createPrivateSet<string>();
   for (const modelCallId of modelCallIds) {
-    const key = modelCallId.toLowerCase();
+    const key = normalizeReceiptId(modelCallId);
     if (seen.has(key)) {
       throw new DurableRunEventPersistenceError(
         "Duplicate model call capture identity in run event append",
@@ -239,7 +249,10 @@ function validateAppendModelCallCaptureReceipts(input: {
   submittedModelCallIds: string[];
   canonicalRunId: string;
 }): void {
-  const expectedIds = new Set(input.submittedModelCallIds.map((id) => id.toLowerCase()));
+  const expectedIds = createPrivateSet<string>();
+  for (const id of input.submittedModelCallIds) {
+    expectedIds.add(normalizeReceiptId(id));
+  }
   const receipts = input.response.modelCallCaptures ?? [];
 
   if (expectedIds.size === 0) {
@@ -263,18 +276,18 @@ function validateAppendModelCallCaptureReceipts(input: {
     );
   }
 
-  const receivedIds = new Set<string>();
-  const receivedEventIds = new Set<string>();
-  const canonicalRunId = input.canonicalRunId.toLowerCase();
+  const receivedIds = createPrivateSet<string>();
+  const receivedEventIds = createPrivateSet<string>();
+  const canonicalRunId = normalizeReceiptId(input.canonicalRunId);
   for (const receipt of receipts) {
-    const modelCallId = receipt.modelCallId.toLowerCase();
+    const modelCallId = normalizeReceiptId(receipt.modelCallId);
     if (receivedEventIds.has(receipt.eventId)) {
       throw new DurableRunEventPersistenceError(
         "Append receipt returned duplicate model call capture event identifiers",
       );
     }
     receivedEventIds.add(receipt.eventId);
-    if (receipt.runId.toLowerCase() !== canonicalRunId) {
+    if (normalizeReceiptId(receipt.runId) !== canonicalRunId) {
       throw new DurableRunEventPersistenceError(
         "Append receipt model call capture identifies a different canonical run",
       );
@@ -325,8 +338,8 @@ function readSubmittedToolCallAdmissionStarts(input: {
     return [];
   }
 
-  const seenOccurrences = new Set<string>();
-  const seenEventIndexes = new Set<number>();
+  const seenOccurrences = createPrivateSet<string>();
+  const seenEventIndexes = createPrivateSet<number>();
   const submitted: SubmittedToolCallAdmissionStart[] = [];
 
   for (const start of input.toolCallStarts) {
@@ -354,7 +367,7 @@ function readSubmittedToolCallAdmissionStarts(input: {
       );
     }
 
-    const occurrenceId = start.occurrenceId.toLowerCase();
+    const occurrenceId = normalizeReceiptId(start.occurrenceId);
     if (seenOccurrences.has(occurrenceId)) {
       throw new DurableRunEventPersistenceError(
         "Tool call admission sidecar contains duplicate occurrence_id values",
@@ -387,7 +400,7 @@ function readSubmittedRuntimeObservations(input: {
   if (!input.runtimeObservations || input.runtimeObservations.length === 0) {
     return [];
   }
-  const seenEventIndexes = new Set<number>();
+  const seenEventIndexes = createPrivateSet<number>();
   const submitted: ConversationRunRuntimeObservation[] = [];
   for (const item of input.runtimeObservations) {
     if (!Number.isInteger(item.eventIndex) || item.eventIndex < 0) {
@@ -461,12 +474,12 @@ function validateAppendToolCallAdmissionReceipts(input: {
     );
   }
 
-  const seenOccurrences = new Set<string>();
-  const seenDurableEventIds = new Set<string>();
-  const canonicalRunId = input.canonicalRunId.toLowerCase();
+  const seenOccurrences = createPrivateSet<string>();
+  const seenDurableEventIds = createPrivateSet<string>();
+  const canonicalRunId = normalizeReceiptId(input.canonicalRunId);
 
   for (const receipt of receipts) {
-    const occurrenceId = receipt.occurrenceId.toLowerCase();
+    const occurrenceId = normalizeReceiptId(receipt.occurrenceId);
     const submitted = expectedByOccurrence.get(occurrenceId);
     if (!submitted) {
       throw new DurableRunEventPersistenceError(
@@ -480,7 +493,7 @@ function validateAppendToolCallAdmissionReceipts(input: {
     }
     seenOccurrences.add(occurrenceId);
 
-    if (receipt.runId.toLowerCase() !== canonicalRunId) {
+    if (normalizeReceiptId(receipt.runId) !== canonicalRunId) {
       throw new DurableRunEventPersistenceError(
         "Append receipt tool call admission identifies a different canonical run",
       );
@@ -1002,45 +1015,6 @@ export async function recoverConversationRunAppendExecution(input: {
   };
 }
 
-function getConversationRunEventJsonByteLength(event: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(event)).byteLength;
-}
-
-function buildConversationRunEventBatches(input: {
-  events: unknown[];
-  maxEventsPerBatch: number;
-  maxBatchPayloadBytes?: number;
-}): unknown[][] {
-  const maxBatchPayloadBytes = input.maxBatchPayloadBytes ??
-    DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES;
-  const batches: unknown[][] = [];
-  let currentBatch: unknown[] = [];
-  let currentBatchBytes = 0;
-
-  for (const event of input.events) {
-    const eventBytes = getConversationRunEventJsonByteLength(event);
-
-    if (
-      currentBatch.length > 0 &&
-      (currentBatch.length >= input.maxEventsPerBatch ||
-        currentBatchBytes + eventBytes > maxBatchPayloadBytes)
-    ) {
-      batches.push(currentBatch);
-      currentBatch = [];
-      currentBatchBytes = 0;
-    }
-
-    currentBatch.push(event);
-    currentBatchBytes += eventBytes;
-  }
-
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
-
-  return batches;
-}
-
 /** Flush conversation run event batches. */
 export async function flushConversationRunEventBatches(input: {
   authToken: string;
@@ -1396,8 +1370,8 @@ export function createConversationRunEventQueueController(input: {
   let disabled = false;
   let disposed = false;
   let appendRequestCount = 0;
-  const modelCallCaptureReceipts = new Map<string, AgentRunModelCallCaptureReceipt>();
-  const toolCallAdmissionReceipts = new Map<string, AgentRunToolCallAdmissionReceipt>();
+  const modelCallCaptureReceipts = createPrivateMap<string, AgentRunModelCallCaptureReceipt>();
+  const toolCallAdmissionReceipts = createPrivateMap<string, AgentRunToolCallAdmissionReceipt>();
   let disableReason: ReturnType<
     ConversationRunEventQueueController["getSnapshot"]
   >["disableReason"];
@@ -1405,13 +1379,13 @@ export function createConversationRunEventQueueController(input: {
 
   function storeModelCallCaptureReceipts(receipts: AgentRunModelCallCaptureReceipt[]): void {
     for (const receipt of receipts) {
-      const key = receipt.modelCallId.toLowerCase();
+      const key = normalizeReceiptId(receipt.modelCallId);
       const existing = modelCallCaptureReceipts.get(key);
       if (existing) {
         if (
           existing.eventId === receipt.eventId &&
-          existing.projectId.toLowerCase() === receipt.projectId.toLowerCase() &&
-          existing.runId.toLowerCase() === receipt.runId.toLowerCase()
+          normalizeReceiptId(existing.projectId) === normalizeReceiptId(receipt.projectId) &&
+          normalizeReceiptId(existing.runId) === normalizeReceiptId(receipt.runId)
         ) {
           continue;
         }
@@ -1425,7 +1399,7 @@ export function createConversationRunEventQueueController(input: {
 
   function storeToolCallAdmissionReceipts(receipts: AgentRunToolCallAdmissionReceipt[]): void {
     for (const receipt of receipts) {
-      const key = receipt.occurrenceId.toLowerCase();
+      const key = normalizeReceiptId(receipt.occurrenceId);
       const existing = toolCallAdmissionReceipts.get(key);
       if (existing) {
         if (
@@ -1433,8 +1407,8 @@ export function createConversationRunEventQueueController(input: {
           existing.startEventId === receipt.startEventId &&
           existing.toolCallId === receipt.toolCallId &&
           existing.publicToolCallId === receipt.publicToolCallId &&
-          existing.projectId.toLowerCase() === receipt.projectId.toLowerCase() &&
-          existing.runId.toLowerCase() === receipt.runId.toLowerCase()
+          normalizeReceiptId(existing.projectId) === normalizeReceiptId(receipt.projectId) &&
+          normalizeReceiptId(existing.runId) === normalizeReceiptId(receipt.runId)
         ) {
           continue;
         }
@@ -1599,7 +1573,7 @@ export function createConversationRunEventQueueController(input: {
       pendingEvents.push(...events);
     },
     takeModelCallCaptureReceipt(modelCallId) {
-      const key = modelCallId.toLowerCase();
+      const key = normalizeReceiptId(modelCallId);
       const receipt = modelCallCaptureReceipts.get(key);
       if (receipt) {
         modelCallCaptureReceipts.delete(key);
@@ -1607,7 +1581,7 @@ export function createConversationRunEventQueueController(input: {
       return receipt;
     },
     takeToolCallAdmissionReceipt(occurrenceId) {
-      const key = occurrenceId.toLowerCase();
+      const key = normalizeReceiptId(occurrenceId);
       const receipt = toolCallAdmissionReceipts.get(key);
       if (receipt) {
         toolCallAdmissionReceipts.delete(key);
@@ -1915,25 +1889,30 @@ export async function appendConversationRunEvents(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const requestBody = JSON.stringify({
-      ...(input.expectedPreviousEventId !== undefined
-        ? { expected_previous_event_id: input.expectedPreviousEventId }
-        : {}),
-      ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
-        ? {
-          expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
-        }
-        : {}),
-      ...(submittedToolCallAdmissionStarts.length > 0
-        ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
-        : {}),
-      ...(submittedRuntimeObservations.length > 0
-        ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
-        : {}),
-      events: normalizedEvents,
-    });
+    const requestBody = privateJsonStringify(
+      {
+        ...(input.expectedPreviousEventId !== undefined
+          ? { expected_previous_event_id: input.expectedPreviousEventId }
+          : {}),
+        ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
+          ? {
+            expected_previous_external_event_sequence: input.expectedPreviousExternalEventSequence,
+          }
+          : {}),
+        ...(submittedToolCallAdmissionStarts.length > 0
+          ? { tool_call_starts: toWireToolCallAdmissionStarts(submittedToolCallAdmissionStarts) }
+          : {}),
+        ...(submittedRuntimeObservations.length > 0
+          ? { runtime_observations: toWireRuntimeObservations(submittedRuntimeObservations) }
+          : {}),
+        events: normalizedEvents,
+      },
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
     if (
-      new TextEncoder().encode(requestBody).byteLength >
+      privateByteLength(encodePrivateText(requestBody)) >
         MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES
     ) {
       throw new DurableRunEventPersistenceError(

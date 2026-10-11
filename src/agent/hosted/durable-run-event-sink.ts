@@ -1,3 +1,23 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
+import { encodePrivateText, privateTextToLowerCase } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import {
+  appendPrivateArray,
+  mapPrivateArray,
+  slicePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
+  IntrinsicPromise,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import {
@@ -6,8 +26,10 @@ import {
 } from "../conversation/run-event-limits.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import {
+  type AgentRunEvent,
   type AgentRunEventSink,
   type AgentRunEventTimingOptions,
+  type AgentRunModelCallContextEvent,
   createTimedAgentRunEventSink,
 } from "../../runtime/model-call-context.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -16,8 +38,30 @@ import {
   getModelCallCaptureReceiptSchema,
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
+const numberIsFinite = Number.isFinite;
+const ArrayIsArray = Array.isArray;
+const ReflectApply = Reflect.apply;
+const MathMax = Math.max;
+const MathMin = Math.min;
+const MathCeil = Math.ceil;
+const MathFloor = Math.floor;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+const TaskSetTimeout = globalThis.setTimeout;
+const TaskClearTimeout = globalThis.clearTimeout;
+const TaskAbortController = AbortController;
+const TaskAbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)!.get!;
+const TaskAbort = AbortController.prototype.abort;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeSlice = String.prototype.slice;
+
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
-const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<unknown>>();
+const persistenceTails = createPrivateWeakStore<
+  ConversationRunChunkMirror,
+  Promise<unknown> | undefined
+>();
 
 export { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 
@@ -57,55 +101,84 @@ async function serializePersistence<T>(
   mirror: ConversationRunChunkMirror,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const previous = persistenceTails.get(mirror) ?? Promise.resolve();
-  const current = previous.then(operation, operation);
+  const previous = persistenceTails.get(mirror) ?? resolvePrivatePromise();
+  const current = chainPrivatePromise(previous, operation, operation);
   persistenceTails.set(mirror, current);
   try {
     return await current;
   } finally {
     if (persistenceTails.get(mirror) === current) {
-      persistenceTails.delete(mirror);
+      persistenceTails.set(mirror, undefined);
     }
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 const TRUNCATED_TEXT_SUFFIX = "… [truncated]";
 const OMITTED_MESSAGE_NOTICE = "[veryfront] Model call context truncated for audit.";
 
-const utf8Encoder = new TextEncoder();
-
 function getUtf8ByteLength(value: string): number {
-  return utf8Encoder.encode(value).byteLength;
+  return privateByteLength(encodePrivateText(value));
+}
+
+function mathMax(left: number, right: number): number {
+  return ReflectApply(MathMax, Math, [left, right]) as number;
+}
+
+function mathMin(left: number, right: number): number {
+  return ReflectApply(MathMin, Math, [left, right]) as number;
+}
+
+function mathCeil(value: number): number {
+  return ReflectApply(MathCeil, Math, [value]) as number;
+}
+
+function mathFloor(value: number): number {
+  return ReflectApply(MathFloor, Math, [value]) as number;
+}
+
+function numberToFixed(value: number, digits: number): string {
+  return ReflectApply(NumberPrototypeToFixed, value, [digits]) as string;
+}
+
+function stringCharCodeAt(value: string, index: number): number {
+  return ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
 }
 
 /** Clamp to a UTF-8 byte budget without splitting a surrogate pair. */
 function truncateTextToBytes(value: string, maxBytes: number): string {
   if (getUtf8ByteLength(value) <= maxBytes) return value;
-  const budget = Math.max(0, maxBytes - getUtf8ByteLength(TRUNCATED_TEXT_SUFFIX));
+  const budget = mathMax(0, maxBytes - getUtf8ByteLength(TRUNCATED_TEXT_SUFFIX));
   let low = 0;
   let high = value.length;
   while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (getUtf8ByteLength(value.slice(0, mid)) <= budget) low = mid;
+    const mid = mathCeil((low + high) / 2);
+    if (getUtf8ByteLength(stringSlice(value, 0, mid)) <= budget) low = mid;
     else high = mid - 1;
   }
   // Never cut between a surrogate pair; step back onto a whole code point.
-  const end = low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1] ?? "") ? low - 1 : low;
-  return `${value.slice(0, end)}${TRUNCATED_TEXT_SUFFIX}`;
+  const previous = low > 0 ? stringCharCodeAt(value, low - 1) : -1;
+  const end = previous >= 0xd800 && previous <= 0xdbff ? low - 1 : low;
+  return `${stringSlice(value, 0, end)}${TRUNCATED_TEXT_SUFFIX}`;
 }
 
 function truncateMessageTextParts(message: unknown, maxTextBytes: number): unknown {
-  if (!isRecord(message) || !Array.isArray(message.content)) return message;
+  if (!isRecord(message) || !ArrayIsArray(message.content)) return message;
   return {
     ...message,
-    content: message.content.map((part) =>
-      isRecord(part) && typeof part.text === "string"
-        ? { ...part, text: truncateTextToBytes(part.text, maxTextBytes) }
-        : part
+    content: mapPrivateArray(
+      message.content,
+      (part) =>
+        isRecord(part) && typeof part.text === "string"
+          ? { ...part, text: truncateTextToBytes(part.text, maxTextBytes) }
+          : part,
     ),
   };
 }
@@ -113,6 +186,9 @@ function truncateMessageTextParts(message: unknown, maxTextBytes: number): unkno
 function buildTruncationNotice(input: {
   originalByteLength: number;
   omittedMessageCount: number;
+  omittedResponseSchema: boolean;
+  omittedRequestControls: boolean;
+  omittedModelMetadata: boolean;
 }): unknown {
   return {
     role: "system",
@@ -121,7 +197,10 @@ function buildTruncationNotice(input: {
         formatMebibytes(input.originalByteLength)
       } exceeded the ${
         formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
-      } append limit; ${input.omittedMessageCount} message(s) omitted. The model call was not ` +
+      } append limit; ${input.omittedMessageCount} message(s) omitted` +
+      `${input.omittedResponseSchema ? "; response schema omitted" : ""}` +
+      `${input.omittedRequestControls ? "; request controls omitted" : ""}` +
+      `${input.omittedModelMetadata ? "; model metadata omitted" : ""}. The model call was not ` +
       `dispatched — this record is an excerpt, not the context that was sent.`,
   };
 }
@@ -146,37 +225,84 @@ function truncatePrivateRunEventToLimit(
   event: Record<string, unknown>,
   originalByteLength: number,
 ): { event: Record<string, unknown>; omittedMessageCount: number } {
-  const messages = Array.isArray(event.messages) ? event.messages : [];
-  const tools = Array.isArray(event.tools) ? event.tools : undefined;
+  const messages = ArrayIsArray(event.messages) ? event.messages : [];
+  const tools = ArrayIsArray(event.tools) ? event.tools : undefined;
+  let request = event.request;
+  let omittedResponseSchema = false;
+  let omittedRequestControls = false;
+  let omittedModelMetadata = false;
+  let model = event.model;
 
   const build = (
     kept: unknown[],
     omittedMessageCount: number,
     keepTools: boolean,
-  ): Record<string, unknown> => ({
-    type: event.type,
-    // Clamped legacy audit records cannot acknowledge complete prepared input.
-    // Deliberately exclude modelCallId so they cannot issue a capture receipt.
-    ...(event.model === undefined ? {} : { model: event.model }),
-    ...(event.request === undefined ? {} : { request: event.request }),
-    messages: [buildTruncationNotice({ originalByteLength, omittedMessageCount }), ...kept],
-    ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
-    ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
-    ...(event.emittedAt === undefined ? {} : { emittedAt: event.emittedAt }),
-  });
+  ): Record<string, unknown> => {
+    const builtMessages = [
+      buildTruncationNotice({
+        originalByteLength,
+        omittedMessageCount,
+        omittedResponseSchema,
+        omittedRequestControls,
+        omittedModelMetadata,
+      }),
+    ];
+    appendPrivateArray(builtMessages, kept);
+    return {
+      type: event.type,
+      // Clamped legacy audit records cannot acknowledge complete prepared input.
+      // Deliberately exclude modelCallId so they cannot issue a capture receipt.
+      ...(model === undefined ? {} : { model }),
+      ...(request === undefined ? {} : { request }),
+      messages: builtMessages,
+      ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
+      ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
+      ...(event.emittedAt === undefined ? {} : { emittedAt: event.emittedAt }),
+    };
+  };
 
   const fits = (candidate: Record<string, unknown>): boolean =>
     getPrivateRunEventAppendRequestByteLength(candidate) <=
       MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES;
 
+  if (model !== undefined && !fits(build([], 0, false))) {
+    const savedRequest = request;
+    request = undefined;
+    const modelAloneFits = fits(build([], 0, false));
+    request = savedRequest;
+    if (!modelAloneFits) {
+      model = undefined;
+      omittedModelMetadata = true;
+    }
+  }
+
+  // A response schema is kept unchanged when it fits. When it alone keeps even a
+  // message-free record over the limit, omit it so the audit record can be written.
+  if (isRecord(request) && request.responseFormat !== undefined && !fits(build([], 0, false))) {
+    const { responseFormat: _omitted, ...requestWithoutResponseFormat } = request;
+    request = requestWithoutResponseFormat;
+    omittedResponseSchema = true;
+  }
+
+  // Keep controls and identity intact unless even the metadata-only record cannot fit.
+  // Omitted audit metadata never substitutes a fabricated identity or capture receipt.
+  if (request !== undefined && !fits(build([], 0, false))) {
+    request = undefined;
+    omittedRequestControls = true;
+  }
+  if (model !== undefined && !fits(build([], 0, false))) {
+    model = undefined;
+    omittedModelMetadata = true;
+  }
+
   // Clamp message text progressively; each pass quarters the per-part budget.
   for (
     let maxTextBytes = 64 * 1024;
     maxTextBytes >= 256;
-    maxTextBytes = Math.floor(maxTextBytes / 4)
+    maxTextBytes = mathFloor(maxTextBytes / 4)
   ) {
     const candidate = build(
-      messages.map((message) => truncateMessageTextParts(message, maxTextBytes)),
+      mapPrivateArray(messages, (message) => truncateMessageTextParts(message, maxTextBytes)),
       0,
       true,
     );
@@ -184,9 +310,9 @@ function truncatePrivateRunEventToLimit(
   }
 
   // Still over: drop the oldest messages, keeping the most recent ones.
-  const clamped = messages.map((message) => truncateMessageTextParts(message, 256));
-  for (let keep = Math.min(clamped.length, 8); keep >= 1; keep--) {
-    const candidate = build(clamped.slice(-keep), clamped.length - keep, true);
+  const clamped = mapPrivateArray(messages, (message) => truncateMessageTextParts(message, 256));
+  for (let keep = mathMin(clamped.length, 8); keep >= 1; keep--) {
+    const candidate = build(slicePrivateArray(clamped, -keep), clamped.length - keep, true);
     if (fits(candidate)) return { event: candidate, omittedMessageCount: clamped.length - keep };
   }
 
@@ -201,7 +327,7 @@ function truncatePrivateRunEventToLimit(
 }
 
 function formatMebibytes(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${numberToFixed(bytes / (1024 * 1024), 1)} MiB`;
 }
 
 /**
@@ -219,7 +345,7 @@ type ResolvedRunEvent = {
 
 function resolvePersistableEvent(event: unknown): ResolvedRunEvent {
   const requestByteLength = getPrivateRunEventAppendRequestByteLength(event);
-  if (!Number.isFinite(requestByteLength)) {
+  if (!numberIsFinite(requestByteLength)) {
     throw new DurableRunEventPersistenceError("Run event is not serializable");
   }
   if (requestByteLength <= MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES) {
@@ -241,6 +367,10 @@ function resolvePersistableEvent(event: unknown): ResolvedRunEvent {
   };
 }
 
+function isModelCallContextEvent(event: AgentRunEvent): event is AgentRunModelCallContextEvent {
+  return event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+}
+
 function buildOversizeError(
   oversize: { originalByteLength: number; omittedMessageCount: number },
 ): DurableRunEventPersistenceError {
@@ -254,7 +384,8 @@ function buildOversizeError(
 }
 
 function getAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+  return getAbortSignalReason(signal) ??
+    new DOMException("This operation was aborted", "AbortError");
 }
 
 async function withPersistenceDeadline<T>(input: {
@@ -262,24 +393,36 @@ async function withPersistenceDeadline<T>(input: {
   abortSignal?: AbortSignal;
   timeoutMs: number;
 }): Promise<T> {
-  if (input.abortSignal?.aborted) throw getAbortReason(input.abortSignal);
-  const controller = new AbortController();
+  if (input.abortSignal && isAbortSignalAborted(input.abortSignal)) {
+    throw getAbortReason(input.abortSignal);
+  }
+  const controller = new TaskAbortController();
+  const signal = ReflectApply(TaskAbortControllerSignalGetter, controller, []) as AbortSignal;
   const timeoutError = new DurableRunEventPersistenceError(
     "Durable run event persistence timed out",
   );
-  const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
-  const onCallerAbort = () => controller.abort(getAbortReason(input.abortSignal!));
-  input.abortSignal?.addEventListener("abort", onCallerAbort, { once: true });
-  const aborted = new Promise<never>((_resolve, reject) => {
-    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
-      once: true,
-    });
+  const timeout = TaskSetTimeout(
+    () => ReflectApply(TaskAbort, controller, [timeoutError]),
+    input.timeoutMs,
+  );
+  const onCallerAbort = () =>
+    ReflectApply(TaskAbort, controller, [getAbortReason(input.abortSignal!)]);
+  if (input.abortSignal) addAbortSignalListenerOnce(input.abortSignal, onCallerAbort);
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const onAbort = () => rejectAbort(getAbortReason(signal));
+  const aborted = new IntrinsicPromise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+    addAbortSignalListenerOnce(signal, onAbort);
   });
   try {
-    return await Promise.race([input.operation(controller.signal), aborted]);
+    return await new IntrinsicPromise<T>((resolve, reject) => {
+      void primordialPromiseThen(aborted, resolve, reject);
+      void primordialPromiseThen(input.operation(signal), resolve, reject);
+    });
   } finally {
-    clearTimeout(timeout);
-    input.abortSignal?.removeEventListener("abort", onCallerAbort);
+    TaskClearTimeout(timeout);
+    if (input.abortSignal) removeAbortSignalListener(input.abortSignal, onCallerAbort);
+    removeAbortSignalListener(signal, onAbort);
   }
 }
 
@@ -314,7 +457,7 @@ export function createDurableRunEventSink(input: {
               );
             }
             await input.mirror.appendEvents([{ ...persistableEvent }]);
-            abortSignal.throwIfAborted();
+            throwIfAbortSignalAborted(abortSignal);
             assertDrained(
               await input.mirror.flush({
                 abortSignal,
@@ -322,13 +465,17 @@ export function createDurableRunEventSink(input: {
               }),
             );
             assertDrained(input.mirror.getSnapshot());
-            if (oversize || event.modelCallId === undefined) return undefined;
+            if (oversize || !isModelCallContextEvent(event) || event.modelCallId === undefined) {
+              return undefined;
+            }
+            const modelCallId = event.modelCallId;
             const receipt = getModelCallCaptureReceiptSchema().safeParse(
-              input.mirror.takeModelCallCaptureReceipt?.(event.modelCallId),
+              input.mirror.takeModelCallCaptureReceipt?.(modelCallId),
             );
             if (
               !receipt.success ||
-              receipt.data.modelCallId.toLowerCase() !== event.modelCallId.toLowerCase()
+              privateTextToLowerCase(receipt.data.modelCallId) !==
+                privateTextToLowerCase(modelCallId)
             ) {
               throw new DurableRunEventPersistenceError(
                 "Durable model capture receipt is missing or invalid",

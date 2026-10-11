@@ -2514,10 +2514,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const maxAgeMs = options?.maxAgeMs ?? BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS;
 
     // Cold initialization just fetched and installed the complete listing for
-    // this branch. That authority check happened inside this call, so it also
-    // satisfies a zero-age caller without immediately listing the same source
-    // tree a second time.
+    // this branch. That authority check satisfies callers that accept a normal
+    // freshness lease, but a zero-age preview document must still re-check the
+    // source authority after initialization. A just-saved project can be
+    // readable by exact file APIs before the branch listing seen during cold
+    // initialization catches up.
     if (
+      maxAgeMs > 0 &&
       initializedNow &&
       this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
       this.sourceSnapshotCheckedAt > 0

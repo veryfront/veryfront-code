@@ -13,7 +13,11 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
-import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  guardedExactHttpLoopbackOutboundFetch,
+  guardedOutboundFetch,
+} from "#cli/outbound-fetch";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -31,7 +35,11 @@ import {
 } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { getHostSecret } from "#cli/process-env";
-import { requireHostPrivateApiHttps, resolveHostOwnedApiBaseUrl } from "#cli/host-api-base";
+import {
+  isHostHttpApiOrigin,
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#cli/host-api-base";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -62,10 +70,14 @@ function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> 
   const protocol = readUrl(endpoint, urlProtocolGetter);
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" ||
     hostname === "[::1]" || hostname === "::1";
-  if (protocol !== "https:" && !(protocol === "http:" && loopback)) {
+  if (
+    protocol !== "https:" && !(protocol === "http:" && loopback) &&
+    !isHostHttpApiOrigin(readUrl(endpoint, urlHrefGetter))
+  ) {
     return {
       ok: false,
-      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
+      error:
+        "The API endpoint must use HTTPS. HTTP requires a loopback endpoint or an operator-configured API origin.",
       status: 400,
     };
   }
@@ -89,10 +101,11 @@ async function sendApiRequest<T>(
     // the global, and a direct call would hand its replacement the
     // `Authorization` header to read.
     //
-    // Endpoint validation allows HTTP only for exact loopback hosts with an
-    // explicit credential. Keep that supported local API route constrained by
-    // the loopback guard, including on redirects.
-    const fetchEndpoint = readUrl(endpoint, urlProtocolGetter) === "http:"
+    // Boot-configured HTTP APIs use the exact origin-bound exception.
+    // Preserve the explicit-token loopback route for other local endpoints.
+    const fetchEndpoint = isHostHttpApiOrigin(endpointHref)
+      ? createVeryfrontApiOriginBoundOutboundFetch(endpointHref)
+      : readUrl(endpoint, urlProtocolGetter) === "http:"
       ? guardedExactHttpLoopbackOutboundFetch
       : guardedOutboundFetch;
     const response = await fetchEndpoint(url, {

@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type {
+  AgentRunEvent,
   AgentRunEventSink,
   AgentRunModelCallContextEvent,
 } from "#veryfront/runtime/model-call-context.ts";
@@ -22,6 +23,12 @@ import {
   type ExecutorModelDispatch,
 } from "./executor-model-bridge.ts";
 import { createHostedExecutorModelBroker as createHostedBroker } from "./executor-model-dispatch.ts";
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): asserts event is AgentRunModelCallContextEvent {
+  assert(event?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+}
 
 function receiptFor(modelCallId: string | undefined) {
   if (!modelCallId) throw new TypeError("Expected broker-owned logical call identity");
@@ -46,6 +53,7 @@ function createHostedExecutorModelBroker(
     modelCallCaptureReceipts: true,
     projectId: "11111111-1111-4111-8111-111111111111",
     runEventSink: async (event) => {
+      assertModelCallContextEvent(event);
       const receipt = receiptFor(event.modelCallId);
       const acknowledgement = await sink(event);
       return acknowledgement ?? receipt;
@@ -389,6 +397,7 @@ describe("hosted executor model dispatch", () => {
             return Promise.resolve(Response.json(response));
           },
         });
+        assertModelCallContextEvent(event);
         assertEquals(event.modelCallId, undefined);
       },
     }));
@@ -427,18 +436,27 @@ describe("hosted executor model dispatch", () => {
     for (
       const sink of [
         () => undefined,
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          modelCallId: "44444444-4444-4444-8444-444444444444",
-        }),
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          eventId: "",
-        }),
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          projectId: "55555555-5555-4555-8555-555555555555",
-        }),
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            modelCallId: "44444444-4444-4444-8444-444444444444",
+          };
+        },
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            eventId: "",
+          };
+        },
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            projectId: "55555555-5555-4555-8555-555555555555",
+          };
+        },
       ]
     ) {
       let dispatches = 0;
@@ -477,6 +495,7 @@ describe("hosted executor model dispatch", () => {
         }),
       runEventSink: (event) => {
         captures++;
+        assertModelCallContextEvent(event);
         assertEquals(event.modelCallId, undefined);
       },
     }));
@@ -508,6 +527,7 @@ describe("hosted executor model dispatch", () => {
       allowedModelIds,
       scope: scope(),
       runEventSink(event) {
+        assertModelCallContextEvent(event);
         const receipt = receiptFor(event.modelCallId);
         capturedIds.push(receipt.modelCallId);
         return {
@@ -579,6 +599,7 @@ describe("hosted executor model dispatch", () => {
           dispatched = actual;
         }),
       runEventSink: async (event) => {
+        assertModelCallContextEvent(event);
         order.push("persist");
         events.push(structuredClone(event));
         entered.resolve();
@@ -615,6 +636,7 @@ describe("hosted executor model dispatch", () => {
           presencePenalty: 0.3,
           frequencyPenalty: 0.1,
           reasoning: { enabled: false },
+          responseFormat: options.responseFormat,
         },
       });
       persisted.resolve();
@@ -635,7 +657,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: false },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 2048 },
-        expectedMaxOutputTokens: 2048,
+        expectedMaxOutputTokens: 4096,
       },
       {
         reasoning: { enabled: false },
@@ -649,7 +671,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: true, budgetTokens: 1024 },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 1024 },
-        expectedMaxOutputTokens: 3072,
+        expectedMaxOutputTokens: 4096,
       },
     ] as const;
     for (const mode of ["generate", "stream"] as const) {
@@ -665,6 +687,7 @@ describe("hosted executor model dispatch", () => {
           allowedModelIds,
           scope: scope(),
           runEventSink: (value) => {
+            assertModelCallContextEvent(value);
             event = value;
           },
           resolveModelRuntime: () => ({
@@ -749,6 +772,7 @@ describe("hosted executor model dispatch", () => {
         allowedModelIds,
         scope: scope(),
         runEventSink: (value) => {
+          assertModelCallContextEvent(value);
           event = value;
         },
         resolveModelRuntime: () => ({
@@ -837,7 +861,15 @@ describe("hosted executor model dispatch", () => {
   });
 
   it("permits schema properties but rejects generationConfig changes to captured controls", async () => {
-    const responseSchema = {
+    const responseJsonSchema = {
+      type: "object",
+      properties: {
+        messages: { type: "string" },
+        auth: { type: "string" },
+        temperature: { type: "number" },
+      },
+    };
+    const legacyResponseSchema = {
       type: "OBJECT",
       properties: {
         messages: { type: "STRING" },
@@ -845,15 +877,16 @@ describe("hosted executor model dispatch", () => {
         temperature: { type: "NUMBER" },
       },
     };
-    let events = 0;
+    const events: AgentRunModelCallContextEvent[] = [];
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
         grant: grant(),
         allowedModelIds,
         scope: scope(),
-        runEventSink: () => {
-          events++;
+        runEventSink: (event) => {
+          assertModelCallContextEvent(event);
+          events.push(event);
         },
         resolveModelRuntime: () => ({ ...model(() => dispatches++), modelProvider: "google" }),
       }),
@@ -864,7 +897,9 @@ describe("hosted executor model dispatch", () => {
         await runtime.doGenerate({
           prompt,
           providerOptions: {
-            [bucket]: { generationConfig: { maxOutputTokens: 4096, responseSchema } },
+            [bucket]: {
+              generationConfig: { maxOutputTokens: 4096, responseJsonSchema },
+            },
           },
         });
         await runtime.doGenerate({
@@ -873,12 +908,18 @@ describe("hosted executor model dispatch", () => {
           temperature: 0.4,
           providerOptions: {
             [bucket]: {
-              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseSchema },
+              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseJsonSchema },
             },
           },
         });
         for (
-          const generationConfig of [{ responseSchema }, { maxOutputTokens: 13 }, {
+          const generationConfig of [{ responseJsonSchema }, {
+            maxOutputTokens: 12,
+            temperature: 0.4,
+            responseSchema: legacyResponseSchema,
+          }, {
+            maxOutputTokens: 13,
+          }, {
             maxOutputTokens: 12,
             temperature: 1,
           }, { maxOutputTokens: 12, thinkingConfig: { thinkingBudget: 4096 } }]
@@ -896,7 +937,14 @@ describe("hosted executor model dispatch", () => {
           );
         }
       }
-      assertEquals(events, 4);
+      assertEquals(events.length, 4);
+      for (const event of events) {
+        assertEquals(event.request?.responseFormat, {
+          type: "json_schema",
+          name: "response",
+          schema: responseJsonSchema,
+        });
+      }
       assertEquals(dispatches, 4);
     } finally {
       await channels.close();
@@ -1270,6 +1318,7 @@ describe("hosted executor model dispatch", () => {
     const channels = ["one", "two"].map((name) => {
       const invocation = { ...binding, invocationId: name };
       const sink: AgentRunEventSink = async (event) => {
+        assertModelCallContextEvent(event);
         await tick();
         seen.push(`${name}:${event.messages[0]?.content}`);
       };

@@ -1058,6 +1058,7 @@ export function createOpenAIModelRuntime(
     provider: providerLabel,
     modelProvider: providerName,
     modelId,
+    openAITransport: "chat-completions",
     specificationVersion: "v3",
     supportedUrls: {},
     runtimeCapabilities: { structuredOutput: true },
@@ -1152,6 +1153,7 @@ export function createOpenAIResponsesRuntime(
     provider: providerLabel,
     modelProvider: providerName,
     modelId,
+    openAITransport: "responses",
     specificationVersion: "v3",
     supportedUrls: {},
     runtimeCapabilities: { structuredOutput: true },
@@ -1344,6 +1346,7 @@ function createOpenAIAdaptiveModelRuntime(
 ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   return {
     ...chatRuntime,
+    openAITransport: "auto",
     doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
       return requestUsesOpenAIHostedTool(optionsForRuntime)
         ? responsesRuntime.doGenerate(optionsForRuntime)

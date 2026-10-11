@@ -1,17 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertInstanceOf,
   assertMatch,
   assertRejects,
-  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
-import type { AgentRunEventSink } from "./model-call-context.ts";
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import type { AgentRunEventSink, AgentRunModelCallContextEvent } from "./model-call-context.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { getCurrentVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
@@ -37,6 +37,18 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
+
+function isModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): event is AgentRunModelCallContextEvent {
+  return event?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+}
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): asserts event is AgentRunModelCallContextEvent {
+  assertEquals(isModelCallContextEvent(event), true);
+}
 
 /**
  * A provider response body that delivers one chunk and then goes quiet.
@@ -264,7 +276,8 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.messages[0], {
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.messages[0], {
       role: "system",
       content: "Shared prompt",
       providerOptions: {
@@ -784,6 +797,141 @@ describe("runtime-bridge", () => {
     }
   });
 
+  it("preserves generation cancellation without recording a provider failure", async () => {
+    for (const stream of [false, true]) {
+      const controller = new AbortController();
+      const cancellation = new DOMException("Generation cancelled", "AbortError");
+      const events: AgentRunEvent[] = [];
+      const cancel = async () => {
+        controller.abort(cancellation);
+        throw cancellation;
+      };
+      const model: ModelRuntime = stream
+        ? {
+          ...createStreamModel("test", "test/cancelled-stream-generation", cancel),
+          _generateViaStream: true,
+        }
+        : createGenerateModel("test", "test/cancelled-generation", cancel);
+      let rejection: unknown;
+      try {
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            generateText({
+              model,
+              abortSignal: controller.signal,
+              messages: [{ role: "user", content: "Hello" }],
+            }),
+        );
+      } catch (error) {
+        rejection = error;
+      }
+      assertEquals(rejection, cancellation);
+      assertEquals(events.map((event) => event.type), ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"]);
+    }
+  });
+
+  it("records a sanitized nonterminal generate failure after mandatory context persistence", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateDetail = "private upstream generate detail";
+    const model = createGenerateModel("test", "test/sanitized-generate-failure", async () => {
+      throw new Error(privateDetail);
+    });
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+      Error,
+      privateDetail,
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateDetail), false);
+  });
+
+  it("records a sanitized nonterminal stream dispatch failure after mandatory context persistence", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateDetail = "private upstream stream dispatch detail";
+    const model = createStreamModel("test", "test/sanitized-stream-dispatch-failure", async () => {
+      throw new Error(privateDetail);
+    });
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            collectAsync(
+              streamText({ model, messages: [{ role: "user", content: "Hello" }] }).fullStream,
+            ),
+        ),
+      Error,
+      privateDetail,
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateDetail), false);
+  });
+
+  it("preserves stream cancellation without recording a provider failure", async () => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("Stream cancelled", "AbortError");
+    const events: AgentRunEvent[] = [];
+    const model = createStreamModel("test", "test/cancelled-stream", async () => {
+      controller.abort(cancellation);
+      throw cancellation;
+    });
+
+    let rejection: unknown;
+    try {
+      await runWithMandatoryRunEventSink(
+        (event) => {
+          events.push(event);
+        },
+        () =>
+          collectAsync(
+            streamText({
+              model,
+              abortSignal: controller.signal,
+              messages: [{ role: "user", content: "Hello" }],
+            }).fullStream,
+          ),
+      );
+    } catch (error) {
+      rejection = error;
+    }
+
+    assertEquals(rejection, cancellation);
+    assertEquals(events.map((event) => event.type), ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"]);
+  });
+
   it("awaits the mandatory sink before the public sink and provider dispatch", async () => {
     const order: string[] = [];
     const model = createGenerateModel("test", "test/composed-run-event-sinks", async () => {
@@ -810,11 +958,12 @@ describe("runtime-bridge", () => {
   });
 
   it("installs exact Veryfront Cloud capture only after a matching mandatory receipt", async () => {
-    const projectId = "11111111-1111-4111-8111-111111111111";
-    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const projectId = "11111111-1111-7111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-7222-8222-222222222222";
     let recordedEvent: AgentRunEvent | undefined;
     let dispatchCapture: unknown;
     const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
       recordedEvent = event;
       if (!event.modelCallId) throw new Error("expected model call id");
       return {
@@ -846,27 +995,151 @@ describe("runtime-bridge", () => {
       () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
     );
 
-    assertEquals(typeof recordedEvent?.modelCallId, "string");
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(typeof recordedEvent.modelCallId, "string");
     assertEquals(dispatchCapture, {
       eventId: "9007199254740993",
       projectId,
       runId: canonicalRunId,
-      modelCallId: recordedEvent?.modelCallId,
+      modelCallId: recordedEvent.modelCallId,
     });
+  });
+
+  it("accepts nil and max UUIDs for exact capture scope receipts", async () => {
+    const cases = [
+      {
+        name: "nil",
+        projectId: "00000000-0000-0000-0000-000000000000",
+        canonicalRunId: "00000000-0000-0000-0000-000000000000",
+      },
+      {
+        name: "max",
+        projectId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        canonicalRunId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      },
+    ];
+
+    for (const receiptCase of cases) {
+      let recordedEvent: AgentRunEvent | undefined;
+      let dispatchCapture: unknown;
+      const sink: AgentRunEventSink = (event) => {
+        assertModelCallContextEvent(event);
+        recordedEvent = event;
+        if (!event.modelCallId) throw new Error(`expected model call id for ${receiptCase.name}`);
+        return {
+          eventId: "9007199254740993",
+          projectId: receiptCase.projectId,
+          runId: receiptCase.canonicalRunId,
+          modelCallId: event.modelCallId,
+        };
+      };
+      bindTestRuntimeObservationWriter({
+        sink,
+        runId: "33333333-3333-4333-8333-333333333333",
+        canonicalRunId: receiptCase.canonicalRunId,
+        projectId: receiptCase.projectId,
+      });
+      const model = registerVeryfrontCloudTestModel(
+        createGenerateModel(
+          "veryfront-cloud",
+          `veryfront-cloud/openai/gpt-test-${receiptCase.name}`,
+          async () => {
+            dispatchCapture = getCurrentVeryfrontCloudModelCallCapture();
+            return {
+              content: [{ type: "text", text: "done" }],
+              finishReason: "stop",
+              usage: {},
+            };
+          },
+        ),
+      );
+
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+
+      assertModelCallContextEvent(recordedEvent);
+      assertEquals(dispatchCapture, {
+        eventId: "9007199254740993",
+        projectId: receiptCase.projectId,
+        runId: receiptCase.canonicalRunId,
+        modelCallId: recordedEvent.modelCallId,
+      });
+    }
+  });
+
+  it("uses captured UUID generation for mandatory Veryfront Cloud capture IDs", async () => {
+    const cryptoPrototype = Object.getPrototypeOf(crypto) as Crypto;
+    const originalRandomUUID = cryptoPrototype.randomUUID;
+    let patchedRandomUUIDCalls = 0;
+    cryptoPrototype.randomUUID = () => {
+      patchedRandomUUIDCalls += 1;
+      throw new Error("project randomUUID hook");
+    };
+
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let recordedEvent: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      recordedEvent = event;
+      if (!event.modelCallId) throw new Error("expected model call id");
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId,
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [{ type: "text", text: "done" }], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    try {
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+    } finally {
+      cryptoPrototype.randomUUID = originalRandomUUID;
+    }
+
+    assertEquals(patchedRandomUUIDCalls, 0);
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(typeof recordedEvent.modelCallId, "string");
+    assertEquals(dispatches, 1);
   });
 
   it("refuses Veryfront Cloud dispatch when the mandatory capture receipt mismatches", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId === undefined
-        ? "33333333-3333-4333-8333-333333333333"
-        : "44444444-4444-4444-8444-444444444444",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId === undefined
+          ? "33333333-3333-4333-8333-333333333333"
+          : "44444444-4444-4444-8444-444444444444",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -896,16 +1169,147 @@ describe("runtime-bridge", () => {
     assertEquals(dispatches, 0);
   });
 
+  it("refuses Veryfront Cloud dispatch when the mandatory capture receipt has an invalid UUID", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: "11111111-1111-9111-8111-111111111111",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel(
+      createGenerateModel(
+        "veryfront-cloud",
+        "veryfront-cloud/openai/gpt-test",
+        async () => {
+          dispatches += 1;
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+      ),
+    );
+
+    await assertRejects(
+      async () =>
+        await runWithMandatoryRunEventSink(
+          sink,
+          async () => await generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+      DurableRunEventPersistenceError,
+      "Model call capture receipt is missing or invalid",
+    );
+    assertEquals(dispatches, 0);
+  });
+
+  it("captures structured Veryfront Cloud response formats before provider dispatch", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const responseJsonSchema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+      required: ["answer"],
+      additionalProperties: false,
+    };
+    const responseFormat = {
+      type: "json_schema" as const,
+      name: "result",
+      schema: {
+        jsonSchema: responseJsonSchema,
+        validate: () => true,
+      },
+      strict: true,
+    };
+    const expectedResponseFormat: NonNullable<
+      AgentRunModelCallContextEvent["request"]
+    >["responseFormat"] = {
+      type: "json_schema",
+      name: "result",
+      schema: {
+        type: "object",
+        properties: { answer: { type: "string" } },
+        required: ["answer"],
+        additionalProperties: false,
+      },
+      strict: true,
+    };
+    let dispatches = 0;
+    let recorded: AgentRunEvent | undefined;
+    const sink: AgentRunEventSink = async (event) => {
+      assertModelCallContextEvent(event);
+      recorded = event;
+      responseFormat.name = "mutated";
+      responseJsonSchema.properties.answer.type = "number";
+      responseFormat.strict = false;
+      await Promise.resolve();
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const model = registerVeryfrontCloudTestModel({
+      provider: "veryfront-cloud",
+      modelId: "veryfront-cloud/openai/gpt-test",
+      specificationVersion: "v3",
+      runtimeCapabilities: { structuredOutput: ["json_schema"] },
+      async doGenerate(options) {
+        dispatches += 1;
+        assert(options !== null && typeof options === "object" && "responseFormat" in options);
+        assertEquals(options.responseFormat, expectedResponseFormat);
+        return {
+          content: [{ type: "text", text: '{"answer":"ok"}' }],
+          finishReason: "stop",
+          usage: {},
+        };
+      },
+      doStream: () => Promise.reject(new Error("unused doStream")),
+    });
+
+    await runWithMandatoryRunEventSink(
+      sink,
+      async () =>
+        await generateText({
+          model,
+          messages: [{ role: "user", content: "Return JSON" }],
+          responseFormat,
+        }),
+    );
+
+    assertEquals(dispatches, 1);
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.responseFormat, expectedResponseFormat);
+  });
+
   it("refuses exact capture when material provider controls are not represented", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -954,6 +1358,7 @@ describe("runtime-bridge", () => {
       let dispatches = 0;
       let recorded: AgentRunEvent | undefined;
       const sink: AgentRunEventSink = (event) => {
+        assertModelCallContextEvent(event);
         recorded = event;
         return {
           eventId: "9007199254740993",
@@ -978,7 +1383,8 @@ describe("runtime-bridge", () => {
             content: "Cached instructions",
             providerOptions,
           });
-          assertEquals(recorded?.messages?.[0], {
+          assertModelCallContextEvent(recorded);
+          assertEquals(recorded.messages[0], {
             role: "system",
             content: "Cached instructions",
             providerOptions,
@@ -1000,12 +1406,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1048,12 +1457,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1101,6 +1513,7 @@ describe("runtime-bridge", () => {
     let sinkCalls = 0;
     let dispatches = 0;
     const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
       sinkCalls += 1;
       return {
         eventId: "9007199254740993",
@@ -1190,10 +1603,14 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(dispatches, 1);
-    assertEquals((recordedEvent as { modelCallId?: string } | undefined)?.modelCallId, undefined);
+    assertModelCallContextEvent(recordedEvent);
+    assertEquals(recordedEvent.modelCallId, undefined);
+    const firstRecordedMessage = recordedEvent.messages[0];
+    assert(firstRecordedMessage !== undefined);
     assertEquals(
-      (recordedEvent?.messages[0] as { providerMetadata?: unknown } | undefined)
-        ?.providerMetadata,
+      "providerMetadata" in firstRecordedMessage
+        ? firstRecordedMessage.providerMetadata
+        : undefined,
       undefined,
     );
     assertEquals(
@@ -1206,12 +1623,15 @@ describe("runtime-bridge", () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
-    const sink: AgentRunEventSink = (event) => ({
-      eventId: "9007199254740993",
-      projectId,
-      runId: canonicalRunId,
-      modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
-    });
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
     const capability = bindTestRuntimeObservationWriter({
       sink,
       runId: "33333333-3333-4333-8333-333333333333",
@@ -1313,7 +1733,8 @@ describe("runtime-bridge", () => {
         "Mandatory model call context event is not cloneable",
       );
       assertInstanceOf(error, DurableRunEventPersistenceError);
-      assertStrictEquals(error.cause, cloneError);
+      assertInstanceOf(error.cause, TypeError);
+      assertEquals(cloneReads, 0);
     } finally {
       if (recorder && originalRecordError) recorder.recordError = originalRecordError;
     }
@@ -1359,9 +1780,10 @@ describe("runtime-bridge", () => {
             } as never,
           }),
       );
-      assertEquals(recorded?.model, { id: bareModelId, modelProvider });
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.model, { id: bareModelId, modelProvider });
       assertEquals(
-        recorded?.request?.reasoning,
+        recorded.request?.reasoning,
         // Cloud Mistral uses the same OpenAI-compatible effort-only builder.
         modelProvider === "openai" || modelProvider === "mistral"
           ? { enabled: true, effort: "high" }
@@ -1385,7 +1807,8 @@ describe("runtime-bridge", () => {
         () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
       );
 
-      assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.request?.reasoning, { enabled: true, effort: "medium" });
     }
   });
 
@@ -1407,8 +1830,9 @@ describe("runtime-bridge", () => {
       () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
     );
 
-    assertEquals(recorded?.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
-    assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
+    assertEquals(recorded.request?.reasoning, { enabled: true, effort: "medium" });
   });
 
   it("omits reasoning when no canonical fields can be projected", async () => {
@@ -1431,7 +1855,219 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, undefined);
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, undefined);
+  });
+
+  it("keeps neutral controls stable while mandatory event persistence awaits", async () => {
+    const stopSequences = ["original"];
+    const reasoning = { enabled: true, budgetTokens: 2048 };
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedStops: ModelRuntimeCallOptions["stopSequences"];
+    let dispatchedBudget: number | undefined;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-haiku-4-5",
+      async doGenerate(options) {
+        dispatchedStops = options.stopSequences;
+        dispatchedBudget = options.reasoning?.budgetTokens;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithMandatoryRunEventSink(async (event) => {
+      recorded = event;
+      stopSequences[0] = "mutated";
+      reasoning.budgetTokens = 4096;
+      await Promise.resolve();
+    }, () =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Synthetic request" }],
+        stopSequences,
+        reasoning,
+        maxOutputTokens: 8192,
+      }));
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.stopSequences, ["original"]);
+    assertEquals(recorded.request?.reasoning, { enabled: true, budgetTokens: 2048 });
+    assertEquals(dispatchedStops, ["original"]);
+    assertEquals(dispatchedBudget, 2048);
+  });
+
+  it("uses one OpenAI provider-options snapshot for capture and dispatch", async () => {
+    let bucketReads = 0;
+    let reasoningReads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedMaxTokens: unknown;
+    let dispatchedReasoningEffort: unknown;
+    const reasoning = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "effort") return undefined;
+        reasoningReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: reasoningReads === 1 ? "low" : "high",
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["effort"];
+      },
+    });
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        bucketReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: {
+            max_output_tokens: bucketReads === 1 ? 111 : 777,
+            reasoning,
+          },
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+      async doGenerate(options) {
+        const bucket = Object.getOwnPropertyDescriptor(options.providerOptions, "openai")?.value;
+        dispatchedMaxTokens = bucket?.max_output_tokens;
+        dispatchedReasoningEffort = Object.getOwnPropertyDescriptor(
+          bucket?.reasoning,
+          "effort",
+        )?.value;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, 111);
+    assertEquals(recorded.request?.reasoning, { enabled: true, effort: "low" });
+    assertEquals(dispatchedMaxTokens, 111);
+    assertEquals(dispatchedReasoningEffort, "low");
+    assertEquals(bucketReads, 1);
+    assertEquals(reasoningReads, 1);
+  });
+
+  it("shares a Google bucket snapshot between the owned event and dispatch", async () => {
+    let reads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedMaxTokens: unknown;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "google") return undefined;
+        reads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: { generationConfig: { maxOutputTokens: reads === 1 ? 111 : 777 } },
+        };
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "google",
+      modelId: "gemini-synthetic",
+      async doGenerate(options) {
+        const bucket = Object.getOwnPropertyDescriptor(options.providerOptions, "google")?.value;
+        dispatchedMaxTokens = bucket?.generationConfig?.maxOutputTokens;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+    await runWithRunEventSink((event) => {
+      recorded = event;
+    }, () =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Hello" }],
+        providerOptions,
+      }));
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, 111);
+    assertEquals(dispatchedMaxTokens, 111);
+    assertEquals(reads, 1);
+  });
+
+  it("does not reuse OpenAI providerOptions when boundary snapshot finds no bucket", async () => {
+    let bucketReads = 0;
+    let recorded: AgentRunEvent | undefined;
+    let dispatchedProviderOptions: unknown;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        bucketReads += 1;
+        if (bucketReads === 1) return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: { max_output_tokens: 777 },
+          writable: true,
+        };
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    });
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+      async doGenerate(options) {
+        dispatchedProviderOptions = options.providerOptions;
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request?.maxOutputTokens, undefined);
+    assertEquals(dispatchedProviderOptions, {});
+    assertEquals(bucketReads, 1);
   });
 
   it("persists adaptive Anthropic thinking as canonical reasoning without raw provider options", async () => {
@@ -1472,10 +2108,12 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, {
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, {
+      maxOutputTokens: 128_000,
       reasoning: { enabled: true, effort: "high" },
     });
-    assertEquals("providerOptions" in (recorded?.request ?? {}), false);
+    assertEquals("providerOptions" in (recorded.request ?? {}), false);
   });
 
   it("persists enabled Anthropic thinking with its canonical token budget", async () => {
@@ -1504,7 +2142,11 @@ describe("runtime-bridge", () => {
         }),
     );
 
-    assertEquals(recorded?.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+    assertModelCallContextEvent(recorded);
+    assertEquals(recorded.request, {
+      maxOutputTokens: 64_000,
+      reasoning: { enabled: true, budgetTokens: 2048 },
+    });
   });
 
   it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
@@ -1544,7 +2186,9 @@ describe("runtime-bridge", () => {
           }),
       );
 
-      assertEquals(recorded?.request, {
+      assertModelCallContextEvent(recorded);
+      assertEquals(recorded.request, {
+        maxOutputTokens: 64_000,
         reasoning: { enabled: true, budgetTokens: 2048 },
       });
     }
@@ -2172,6 +2816,117 @@ describe("runtime-bridge", () => {
     } finally {
       clearTimeout(timer);
     }
+  });
+
+  it("records one sanitized nonterminal stream error-part failure for concurrent consumers", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateMarker = "private-dual-stream-observed-provider-error";
+    const providerError = new ProviderQuotaError({
+      provider: "openai",
+      status: 429,
+      message: privateMarker,
+      retryable: false,
+    });
+    const model = createStreamModel(
+      "test",
+      "test/dual-stream-observed-provider-error",
+      async () => ({
+        stream: readableStreamFrom([
+          { type: "error", error: providerError },
+        ]),
+      }),
+    );
+
+    await runWithMandatoryRunEventSink(
+      (event) => {
+        events.push(event);
+      },
+      async () => {
+        const result = streamText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+        });
+        const settled = await Promise.allSettled([
+          collectAsync(result.textStream),
+          collectAsync(result.fullStream),
+        ]);
+        assertEquals(settled.map((outcome) => outcome.status), ["rejected", "rejected"]);
+      },
+    );
+
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: {
+        message:
+          "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+        code: "AI_PROVIDER_BILLING_ERROR",
+      },
+    });
+    assertEquals(JSON.stringify(events).includes(privateMarker), false);
+  });
+
+  it("records stream error-part failure without waiting for provider cleanup", async () => {
+    const events: AgentRunEvent[] = [];
+    const privateMarker = "private-stalled-provider-cleanup-error";
+    let cleanupStarted = false;
+    const model = createStreamModel("test", "test/stalled-provider-cleanup-error", async () => ({
+      stream: new ReadableStream<unknown>({
+        start(controller) {
+          controller.enqueue({ type: "error", error: new Error(privateMarker) });
+        },
+        cancel() {
+          cleanupStarted = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+    }));
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => timeout.reject(new Error("provider cleanup delayed stream failure observation")),
+      1000,
+    );
+
+    try {
+      await Promise.race([
+        runWithMandatoryRunEventSink(
+          (event) => {
+            events.push(event);
+          },
+          () =>
+            assertRejects(
+              () =>
+                collectAsync(
+                  streamText({ model, messages: [{ role: "user", content: "Hello" }] })
+                    .fullStream,
+                ),
+              Error,
+              "Provider stream failed",
+            ),
+        ),
+        timeout.promise,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    assertEquals(cleanupStarted, true);
+    assertEquals(events.map((event) => event.type), [
+      "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      "RUNTIME_EVENT_RECORDED",
+    ]);
+    assertEquals(events[1], {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "agent_error",
+      value: { message: "Provider stream failed" },
+    });
+    assertEquals(JSON.stringify(events).includes(privateMarker), false);
   });
 
   it("rejects a second stream view started after direct consumption", async () => {

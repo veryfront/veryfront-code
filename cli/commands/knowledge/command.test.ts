@@ -1456,6 +1456,31 @@ it("collects hidden OKF upload Markdown without downloading viewer artifacts", a
   assertEquals(collection.skipped[0]?.source, "uploads/.bundle/viz.html");
 });
 
+it("retains skipped-only prefix results without retrying a directory prefix", async () => {
+  let calls = 0;
+  const collection = await collectKnowledgeSources(
+    { sources: [], path: "uploads/docs", all: true, recursive: true, okfBundle: false },
+    {
+      client: createMockClient({
+        get: () => {
+          calls++;
+          return Promise.resolve({
+            data: [{ type: "file", path: "uploads/docs/archive.zip" }],
+            page_info: { next: null },
+          });
+        },
+      }),
+      projectSlug: "my-project",
+      downloadUploads: async () => {
+        throw new Error("must not download unsupported files");
+      },
+    },
+  );
+  assertEquals(calls, 1);
+  assertEquals(collection.sources, []);
+  assertEquals(collection.skipped.map((source) => source.reason), ["unsupported_file_type"]);
+});
+
 it("collects Markdown in hidden OKF roots and directories", async () => {
   const tempDir = await makeTempDir({ prefix: "veryfront-okf-hidden-" });
   const root = join(tempDir, ".bundle");

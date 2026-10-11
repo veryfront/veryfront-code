@@ -506,3 +506,18 @@ it("tool_search miss asks for a refined search while authorized tools stay defer
   );
   assertEquals(steps[1], "Continue with the available tools or answer without a tool.");
 });
+
+it("tool_search does not recommend executing the first available phrase match", async () => {
+  const steps = await toolSearchNextSteps(
+    [["conversation"], ["conversation"]],
+    {
+      create_conversation: noopTool("create_conversation", "Create a conversation"),
+      delete_conversation: noopTool("delete_conversation", "Delete a conversation"),
+      read_release_marker: noopTool("read_release_marker", "Read the release marker"),
+    },
+  );
+  assertEquals(
+    steps[1],
+    "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it.",
+  );
+});
