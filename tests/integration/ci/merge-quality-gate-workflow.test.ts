@@ -264,6 +264,10 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(String(run.run), "planIntegrationShard({ index, total: 3 })");
     assertStringIncludes(String(run.run), "DENO_SUITE_PROFILES[suite]");
     assertStringIncludes(String(run.run), "buildDenoSuiteCommandArgs(suite, files");
+    // The shard must execute the reviewed dependency graph, not resolve new
+    // transitive versions that can conflict with the dependency-age policy.
+    assertStringIncludes(String(run.run), 'passthroughArgs: ["--frozen"]');
+    assertEquals(String(run.run).includes("--no-lock"), false);
     assertStringIncludes(String(run.run), "buildTestProcessEnv(Deno.env.toObject(), profile.env)");
     assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
     const aggregate = asRecord(jobs.tests, "integration aggregate");

@@ -340,7 +340,7 @@ jobs:
                 const status = await new Deno.Command("deno", {
                   args: buildDenoSuiteCommandArgs(suite, files, {
                     parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
-                    passthroughArgs: ["--no-lock"],
+                    passthroughArgs: ["--frozen"],
                   }),
                   clearEnv: true,
                   env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
