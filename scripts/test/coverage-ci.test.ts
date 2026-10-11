@@ -362,6 +362,68 @@ describe("coverage source paths", () => {
     assert(merged.includes("BRDA:10,0,0,3\n"));
   });
 
+  it("maps GitHub checkout roots without producer provenance", () => {
+    const report = [
+      "SF:/home/runner/work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+      "DA:10,2",
+      "BRDA:10,0,0,1",
+      "end_of_record",
+      "SF:/home/runner/_work/veryfront-code/veryfront-code/scripts/test/coverage-ci.ts",
+      "DA:10,3",
+      "BRDA:10,0,1,2",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/local/checkout"],
+        (path) => path === "scripts/test/coverage-ci.ts",
+      ),
+      [
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:10,2",
+        "BRDA:10,0,0,1",
+        "end_of_record",
+        "SF:scripts/test/coverage-ci.ts",
+        "DA:10,3",
+        "BRDA:10,0,1,2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("drops generated Veryfront cache records without dropping source records", () => {
+    const report = [
+      "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+      "DA:1,99",
+      "BRDA:1,0,0,99",
+      "end_of_record",
+      "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+      "DA:2,7",
+      "BRDA:2,0,0,7",
+      "end_of_record",
+      "SF:src/eval/runner.ts",
+      "DA:3,3",
+      "BRDA:3,0,0,1",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/local/checkout"],
+        (path) => path === "src/eval/runner.ts",
+      ),
+      [
+        "SF:src/eval/runner.ts",
+        "DA:3,3",
+        "BRDA:3,0,0,1",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
   it("preserves verified relative paths and rejects foreign or nonexistent sources", () => {
     const root = "/home/runner/_work/veryfront-code/veryfront-code";
     const exists = (path: string) => path === "src/task.ts";
@@ -369,7 +431,7 @@ describe("coverage source paths", () => {
     assertEquals(normalizeLcovSourcePaths(relative, [root], exists), relative);
     for (
       const source of [
-        "/home/runner/.cache/veryfront/src/task.ts.mjs",
+        "/home/runner/.cache/veryfront/src/task.ts",
         "/home/runner/.cache/work/veryfront-code/veryfront-code/src/task.ts",
         "/home/runner/.cache/_work/veryfront-code/veryfront-code/src/task.ts",
         "/foreign/src/task.ts",
@@ -386,6 +448,32 @@ describe("coverage source paths", () => {
         "LCOV source",
       );
     }
+  });
+
+  it("fails closed when checkout source paths cannot be verified", () => {
+    const root = "/home/runner/_work/veryfront-code/veryfront-code";
+
+    assertThrows(
+      () =>
+        normalizeLcovSourcePaths(
+          `SF:${root}/src/missing.ts\nDA:10,2\nend_of_record\n`,
+          [root],
+          (path) => path === "src/task.ts",
+        ),
+      Error,
+      "LCOV source path does not exist in the project: src/missing.ts",
+    );
+
+    assertThrows(
+      () =>
+        normalizeLcovSourcePaths(
+          `SF:${root}/../outside.ts\nDA:10,2\nend_of_record\n`,
+          [root],
+          () => true,
+        ),
+      Error,
+      "LCOV source path escapes the project",
+    );
   });
 });
 

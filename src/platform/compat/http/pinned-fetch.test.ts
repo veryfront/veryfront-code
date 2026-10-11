@@ -1041,7 +1041,18 @@ describe("fetchWithPinnedAddresses", () => {
     const bodyPullStarted = new Promise<void>((resolve) => {
       releaseBodyPull = resolve;
     });
+    let finishBodyPull!: () => void;
+    const bodyPullFinished = new Promise<void>((resolve) => {
+      finishBodyPull = resolve;
+    });
     let cancelStarted = false;
+    let cancelSettled = false;
+    let finishCancel!: () => void;
+    const cancelFinished = new Promise<void>((resolve) => {
+      finishCancel = resolve;
+    }).then(() => {
+      cancelSettled = true;
+    });
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         bodyController = controller;
@@ -1049,11 +1060,11 @@ describe("fetchWithPinnedAddresses", () => {
       },
       pull() {
         releaseBodyPull();
-        return new Promise(() => {});
+        return bodyPullFinished;
       },
       cancel() {
         cancelStarted = true;
-        return new Promise(() => {});
+        return cancelFinished;
       },
     }) as unknown as BodyInit;
 
@@ -1092,8 +1103,13 @@ describe("fetchWithPinnedAddresses", () => {
       if (timeout !== undefined) clearTimeout(timeout);
       assertEquals(result.includes(mutationMember), true);
       assertEquals(cancelStarted, true);
+      assertEquals(cancelSettled, false);
     } finally {
       Object.defineProperty(ClientRequest.prototype, mutationMember, originalMember);
+      finishCancel();
+      finishBodyPull();
+      if (cancelStarted) await cancelFinished;
+      await bodyPullFinished;
       await closeNodeTestServer(server);
     }
   });

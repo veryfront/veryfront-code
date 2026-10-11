@@ -21,10 +21,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import {
-  guardedOutboundFetch,
-  OutboundRequestBlockedError,
-} from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import {
   assertCacheReadMaximumBytes,
   assertCacheValueWithinLimit,
@@ -324,7 +321,7 @@ export class ApiCacheBackend implements CacheBackend {
           : this.apiBaseUrl;
         if (tokenSource === "host-private") requireHostPrivateApiHttps(apiBaseUrl);
         const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
-        const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
+        const apiFetch = createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl);
         const cacheBaseUrl = `${apiBaseUrl}/projects/${encodedProjectRef}/cache`;
         const url = `${cacheBaseUrl}${path}`;
         // The operation is a route template; appended after sanitizing so its
@@ -337,7 +334,7 @@ export class ApiCacheBackend implements CacheBackend {
           const response = await withSpan(
             SpanNames.HTTP_CLIENT_FETCH,
             () =>
-              guardedOutboundFetch(
+              apiFetch(
                 url,
                 {
                   method,
@@ -348,15 +345,6 @@ export class ApiCacheBackend implements CacheBackend {
                   body: body ? JSON.stringify(body) : undefined,
                   signal: controller.signal,
                   redirect: "error",
-                },
-                {
-                  authorizeUrl: (target) => {
-                    if (readUrlProperty(target, urlOriginGetter) !== apiOrigin) {
-                      throw new OutboundRequestBlockedError(
-                        "Cache API request blocked: destination origin is not authorized",
-                      );
-                    }
-                  },
                 },
               ),
             {

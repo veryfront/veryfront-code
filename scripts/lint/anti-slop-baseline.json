@@ -19,7 +19,6 @@
     "extensions/ext-redis/src/redis-client-manager.ts": 1,
     "extensions/ext-redis/src/redis-runtime-provider.ts": 2,
     "extensions/ext-schema-zod/src/adapter.ts": 1,
-    "src/agent/conversation/private-run-event.ts": 1,
     "src/agent/hosted/child-run-event-writer-token.ts": 3,
     "src/agent/hosted/child-status.ts": 1,
     "src/agent/runtime/error-utils.ts": 5,

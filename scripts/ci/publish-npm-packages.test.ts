@@ -201,6 +201,7 @@ describe("npm package publishing", () => {
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
           "verify_npm_compatibility_artifact() { :; }",
+          'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
           'package_dirs() { echo "$PACKAGE_DIR"; }',
           'canonical_tarball_for_package_dir() { echo "candidate-$VERSION.tgz"; }',
           'curl() { printf \'%s\\n\' "$(jq -n --arg version "$VERSION" --arg head "$GITHUB_SHA" \'{name:"veryfront",version:$version,gitHead:$head}\')" 200; }',
@@ -295,6 +296,7 @@ describe("npm package publishing", () => {
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
           "verify_npm_compatibility_artifact() { :; }",
+          'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
           "rc_tag_for_package() { echo rc; }",
@@ -503,6 +505,7 @@ describe("npm package publishing", () => {
             "set -euo pipefail",
             'source "$SCRIPT_PATH"',
             "verify_npm_compatibility_artifact() { :; }",
+            'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
             "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
             'npm() { printf "%s\\n" "$*" >> "$NPM_LOG"; }',
             publishFunction,
@@ -2589,6 +2592,7 @@ describe("RC publication deadline", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { echo npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         "jq() { echo veryfront; }",
@@ -2725,6 +2729,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension history npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2752,6 +2757,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2780,6 +2786,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2812,6 +2819,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2905,6 +2913,39 @@ describe("RC metadata verification order", () => {
     assertStringIncludes(
       githubRelease?.run ?? "",
       'install_target="veryfront@rc"',
+    );
+  });
+});
+
+describe("RC dependency scheduling", () => {
+  it("delegates the verified package batch to the bounded dependency scheduler", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' npm/extensions/ext-a npm/extensions/ext-b npm; }",
+        "jq() { echo veryfront; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        "rc_tag_for_package() { echo rc; }",
+        "rc_publish_package_dir() { echo serial-publish; }",
+        'deno() { printf "%s\\n" "$*"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertStringIncludes(
+      decoder.decode(output.stdout),
+      "scripts/ci/publish-rc-packages.ts npm/extensions/ext-a npm/extensions/ext-b npm",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("serial-publish"),
+      false,
     );
   });
 });

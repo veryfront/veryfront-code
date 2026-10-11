@@ -897,6 +897,12 @@ describe("eval/runner", () => {
       target: "agent:researcher",
       dataset,
     });
+    Object.defineProperty(controller.signal, "throwIfAborted", {
+      configurable: true,
+      value: () => {
+        throw undefined;
+      },
+    });
     await assertRejects(
       () => runEval(definition, { signal: controller.signal, adapters: {} }),
       Error,

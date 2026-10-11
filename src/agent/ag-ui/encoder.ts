@@ -1,7 +1,77 @@
+import {
+  primordialArrayFilter,
+  primordialArrayFlatMap,
+  primordialArrayMap,
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  encodePrivateText,
+  privateTextSlice,
+  privateTextSplit,
+  privateTextStartsWith,
+} from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import {
+  MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "../conversation/run-event-limits.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { AgentResponse } from "../types.ts";
-import { buildNativeRunEventFrame } from "./native-run-events.ts";
+import { buildNativeRunEventFrame, buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
+
+// Project code can replace globals before runtime observations are stamped.
+// Keep the timing path on load-time captures.
+const objectHasOwn = Object.hasOwn;
+const mathMax = Math.max;
+const mathMin = Math.min;
+const mathRound = Math.round;
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
+const numberToString = Number.prototype.toString;
+const numberMaxValue = Number.MAX_VALUE;
+const ArrayIsArray = Array.isArray;
+const objectKeys = Object.keys;
+const objectAssign = Object.assign;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
+const intrinsicCrypto = crypto;
+const cryptoRandomUUID = intrinsicCrypto.randomUUID;
+const intrinsicPerformance = performance;
+const performanceNow = intrinsicPerformance.now;
+const intrinsicDate = Date;
+const dateNow = intrinsicDate.now;
+const reflectApply = Reflect.apply;
+const reflectOwnKeys = Reflect.ownKeys;
+const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
+const MESSAGE_FINISH_OBJECT_STRING_TRUNCATED_SUFFIX = "… [truncated]";
+const MESSAGE_FINISH_OBJECT_MAX_DEPTH = 32;
+const MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS = 100;
+const MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS = 100;
+const MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES = JSON_VALUE_MAX_STRING_BYTES;
+const MESSAGE_FINISH_OBJECT_MAX_KEY_BYTES = 16 * 1024;
+const MESSAGE_FINISH_OBJECT_MAX_NODES = 50_000;
+const MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR = "[unsupported accessor]";
+const MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET = "[truncated message-finish object budget]";
+
+function randomUUID(): string {
+  return reflectApply(cryptoRandomUUID, intrinsicCrypto, []) as string;
+}
+
+function defaultNowMs(): number {
+  return reflectApply(performanceNow, intrinsicPerformance, []) as number;
+}
+
+function defaultEpochMs(): number {
+  return reflectApply(dateNow, intrinsicDate, []) as number;
+}
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -117,8 +187,8 @@ export function createAgUiEncoderState(
   // Clocked by default. This state is built at three separate composition
   // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
   // for every run -- which is exactly what happened twice before.
-  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
-  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
+  const nowMs = options.nowMs === null ? undefined : options.nowMs ?? defaultNowMs;
+  const epochMs = options.epochMs === null ? undefined : options.epochMs ?? defaultEpochMs;
   return {
     ...(nowMs ? { nowMs, startedMs: options.startedMs ?? nowMs() } : {}),
     ...(epochMs ? { epochMs } : {}),
@@ -132,8 +202,8 @@ export function createAgUiEncoderState(
     activeStepName: null,
     activeStepId: null,
     stepCount: 0,
-    streamedToolInputIds: new Set<string>(),
-    openToolCallIds: new Set<string>(),
+    streamedToolInputIds: createPrivateSet<string>(),
+    openToolCallIds: createPrivateSet<string>(),
     sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
@@ -141,11 +211,14 @@ export function createAgUiEncoderState(
 }
 
 function serializeToolInput(input: unknown): string {
-  try {
-    return JSON.stringify(input ?? {});
-  } catch {
-    return "{}";
-  }
+  const serialized = privateJsonStringify(
+    input ?? {},
+    null,
+    undefined,
+    MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+  );
+  if (serialized === undefined) throw new TypeError("Observed tool input is not JSON data");
+  return serialized;
 }
 
 function getMessageId(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): string {
@@ -159,7 +232,7 @@ function getMessageId(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): s
   }
 
   if (!state.messageId) {
-    state.messageId = crypto.randomUUID();
+    state.messageId = randomUUID();
   }
 
   return state.messageId;
@@ -261,12 +334,12 @@ function nextStep(
 ): { stepName: string; stepId: string } {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
-  state.activeStepId = getStepIdentity(event) ?? crypto.randomUUID();
+  state.activeStepId = getStepIdentity(event) ?? randomUUID();
   return { stepName: state.activeStepName, stepId: state.activeStepId };
 }
 
 function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: string } {
-  const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
+  const stepName = state.activeStepName ?? `step-${mathMax(state.stepCount, 1)}`;
   const stepId = state.activeStepId ?? undefined;
   state.activeStepName = null;
   state.activeStepId = null;
@@ -277,13 +350,13 @@ function finishStep(state: AgUiEncoderState): { stepName: string; stepId?: strin
 }
 
 function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
-  const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
+  const data = event.data && typeof event.data === "object" && !ArrayIsArray(event.data)
     ? event.data as Record<string, unknown>
     : event;
 
   if (typeof data.model === "string") {
     state.metadata.model = data.model;
-    const provider = data.model.split("/")[0];
+    const provider = privateTextSplit(data.model, "/")[0];
     if (provider) {
       state.metadata.provider = provider;
     }
@@ -370,71 +443,71 @@ function applyResponseMetadata(
     state.metadata.finishReason = finishReason;
   }
   const costUsd = metadata?.costUsd;
-  if (typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0) {
+  if (typeof costUsd === "number" && numberIsFinite(costUsd) && costUsd >= 0) {
     state.metadata.costUsd = costUsd;
   }
   const providerCostUsd = metadata?.providerCostUsd;
   if (
-    typeof providerCostUsd === "number" && Number.isFinite(providerCostUsd) && providerCostUsd >= 0
+    typeof providerCostUsd === "number" && numberIsFinite(providerCostUsd) && providerCostUsd >= 0
   ) {
     state.metadata.providerCostUsd = providerCostUsd;
   }
   const providerInputCostUsd = metadata?.providerInputCostUsd;
   if (
-    typeof providerInputCostUsd === "number" && Number.isFinite(providerInputCostUsd) &&
+    typeof providerInputCostUsd === "number" && numberIsFinite(providerInputCostUsd) &&
     providerInputCostUsd >= 0
   ) {
     state.metadata.providerInputCostUsd = providerInputCostUsd;
   }
   const providerOutputCostUsd = metadata?.providerOutputCostUsd;
   if (
-    typeof providerOutputCostUsd === "number" && Number.isFinite(providerOutputCostUsd) &&
+    typeof providerOutputCostUsd === "number" && numberIsFinite(providerOutputCostUsd) &&
     providerOutputCostUsd >= 0
   ) {
     state.metadata.providerOutputCostUsd = providerOutputCostUsd;
   }
   const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
   if (
-    typeof veryfrontChargeUsd === "number" && Number.isFinite(veryfrontChargeUsd) &&
+    typeof veryfrontChargeUsd === "number" && numberIsFinite(veryfrontChargeUsd) &&
     veryfrontChargeUsd >= 0
   ) {
     state.metadata.veryfrontChargeUsd = veryfrontChargeUsd;
   }
   const veryfrontInputChargeUsd = metadata?.veryfrontInputChargeUsd;
   if (
-    typeof veryfrontInputChargeUsd === "number" && Number.isFinite(veryfrontInputChargeUsd) &&
+    typeof veryfrontInputChargeUsd === "number" && numberIsFinite(veryfrontInputChargeUsd) &&
     veryfrontInputChargeUsd >= 0
   ) {
     state.metadata.veryfrontInputChargeUsd = veryfrontInputChargeUsd;
   }
   const veryfrontOutputChargeUsd = metadata?.veryfrontOutputChargeUsd;
   if (
-    typeof veryfrontOutputChargeUsd === "number" && Number.isFinite(veryfrontOutputChargeUsd) &&
+    typeof veryfrontOutputChargeUsd === "number" && numberIsFinite(veryfrontOutputChargeUsd) &&
     veryfrontOutputChargeUsd >= 0
   ) {
     state.metadata.veryfrontOutputChargeUsd = veryfrontOutputChargeUsd;
   }
   const veryfrontBilledUsd = metadata?.veryfrontBilledUsd;
   if (
-    typeof veryfrontBilledUsd === "number" && Number.isFinite(veryfrontBilledUsd) &&
+    typeof veryfrontBilledUsd === "number" && numberIsFinite(veryfrontBilledUsd) &&
     veryfrontBilledUsd >= 0
   ) {
     state.metadata.veryfrontBilledUsd = veryfrontBilledUsd;
   }
   const costCredits = metadata?.costCredits;
-  if (typeof costCredits === "number" && Number.isFinite(costCredits) && costCredits >= 0) {
+  if (typeof costCredits === "number" && numberIsFinite(costCredits) && costCredits >= 0) {
     state.metadata.costCredits = costCredits;
   }
   const billableInputTokens = metadata?.billableInputTokens;
   if (
-    typeof billableInputTokens === "number" && Number.isFinite(billableInputTokens) &&
+    typeof billableInputTokens === "number" && numberIsFinite(billableInputTokens) &&
     billableInputTokens >= 0
   ) {
     state.metadata.billableInputTokens = billableInputTokens;
   }
   const billableOutputTokens = metadata?.billableOutputTokens;
   if (
-    typeof billableOutputTokens === "number" && Number.isFinite(billableOutputTokens) &&
+    typeof billableOutputTokens === "number" && numberIsFinite(billableOutputTokens) &&
     billableOutputTokens >= 0
   ) {
     state.metadata.billableOutputTokens = billableOutputTokens;
@@ -455,6 +528,512 @@ function applyResponseMetadata(
   ) {
     state.metadata.usageCaptureStatus = usageCaptureStatus;
   }
+}
+
+function readFiniteNonNegativeNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && numberIsFinite(value) && value >= 0 ? value : undefined;
+}
+
+function copyNumberMetadata(
+  target: AgUiRunFinishedMetadata,
+  usage: Record<string, unknown>,
+  metadataKey: keyof Pick<
+    AgUiRunFinishedMetadata,
+    | "reasoningTokens"
+    | "billableInputTokens"
+    | "billableOutputTokens"
+    | "costUsd"
+    | "providerInputCostUsd"
+    | "providerOutputCostUsd"
+    | "providerCostUsd"
+    | "veryfrontInputChargeUsd"
+    | "veryfrontOutputChargeUsd"
+    | "veryfrontChargeUsd"
+    | "veryfrontBilledUsd"
+    | "costCredits"
+    | "cacheCreationInputTokens"
+    | "cacheCreation1hInputTokens"
+    | "cacheReadInputTokens"
+  >,
+): void {
+  const value = readFiniteNonNegativeNumber(usage, metadataKey);
+  if (value !== undefined) target[metadataKey] = value;
+}
+
+function readMessageFinishUsageMetadata(
+  event: AgUiRuntimeStreamEvent,
+): AgUiRunFinishedMetadata | null {
+  const usage = event.totalUsage && typeof event.totalUsage === "object" &&
+      !ArrayIsArray(event.totalUsage)
+    ? event.totalUsage as Record<string, unknown>
+    : event.usage && typeof event.usage === "object" && !ArrayIsArray(event.usage)
+    ? event.usage as Record<string, unknown>
+    : null;
+  if (!usage) return null;
+
+  const metadata: AgUiRunFinishedMetadata = {};
+  const inputTokens = readFiniteNonNegativeNumber(usage, "inputTokens") ??
+    readFiniteNonNegativeNumber(usage, "promptTokens");
+  if (inputTokens !== undefined) metadata.inputTokens = inputTokens;
+
+  const outputTokens = readFiniteNonNegativeNumber(usage, "outputTokens") ??
+    readFiniteNonNegativeNumber(usage, "completionTokens");
+  if (outputTokens !== undefined) metadata.outputTokens = outputTokens;
+
+  const totalTokens = readFiniteNonNegativeNumber(usage, "totalTokens") ??
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined);
+  if (totalTokens !== undefined) metadata.totalTokens = totalTokens;
+
+  const cachedInputTokens = readFiniteNonNegativeNumber(usage, "cachedInputTokens") ??
+    readFiniteNonNegativeNumber(usage, "cacheReadInputTokens");
+  if (cachedInputTokens !== undefined) metadata.cachedInputTokens = cachedInputTokens;
+
+  copyNumberMetadata(metadata, usage, "cacheCreationInputTokens");
+  copyNumberMetadata(metadata, usage, "cacheCreation1hInputTokens");
+  copyNumberMetadata(metadata, usage, "cacheReadInputTokens");
+  copyNumberMetadata(metadata, usage, "reasoningTokens");
+  copyNumberMetadata(metadata, usage, "billableInputTokens");
+  copyNumberMetadata(metadata, usage, "billableOutputTokens");
+  copyNumberMetadata(metadata, usage, "costUsd");
+  copyNumberMetadata(metadata, usage, "providerInputCostUsd");
+  copyNumberMetadata(metadata, usage, "providerOutputCostUsd");
+  copyNumberMetadata(metadata, usage, "providerCostUsd");
+  copyNumberMetadata(metadata, usage, "veryfrontInputChargeUsd");
+  copyNumberMetadata(metadata, usage, "veryfrontOutputChargeUsd");
+  copyNumberMetadata(metadata, usage, "veryfrontChargeUsd");
+  copyNumberMetadata(metadata, usage, "veryfrontBilledUsd");
+  copyNumberMetadata(metadata, usage, "costCredits");
+
+  const costSource = usage.costSource;
+  if (costSource === "gateway" || costSource === "missing" || costSource === "partial") {
+    metadata.costSource = costSource;
+  }
+  const billingMode = usage.billingMode;
+  if (billingMode === "direct" || billingMode === "deferred") {
+    metadata.billingMode = billingMode;
+  }
+  const usageCaptureStatus = usage.usageCaptureStatus;
+  if (
+    usageCaptureStatus === "complete" ||
+    usageCaptureStatus === "partial" ||
+    usageCaptureStatus === "missing"
+  ) {
+    metadata.usageCaptureStatus = usageCaptureStatus;
+  }
+
+  return objectKeys(metadata).length > 0 ? metadata : null;
+}
+
+type MessageFinishObjectCaptureStatus = "complete" | "partial" | "unsupported";
+
+interface MessageFinishObjectSnapshot {
+  value: unknown;
+  status: MessageFinishObjectCaptureStatus;
+  reasons: string[];
+}
+
+interface MessageFinishObjectSnapshotContext {
+  remainingBytes: number;
+  remainingNodes: number;
+  seen: ReturnType<typeof createPrivateWeakStore<object, true>>;
+}
+
+function addCaptureReason(reasons: string[], reason: string): void {
+  for (const existing of primordialArrayValues(reasons)) {
+    if (existing === reason) return;
+  }
+  primordialArrayPush(reasons, reason);
+}
+
+function getUtf8ByteLength(value: string): number {
+  return privateByteLength(encodePrivateText(value));
+}
+
+function createNullDataRecord(): Record<string, unknown> {
+  return objectCreate(null) as Record<string, unknown>;
+}
+
+function defineDataProperty(
+  target: Record<string, unknown> | unknown[],
+  key: string,
+  value: unknown,
+): void {
+  objectDefineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function consumeMessageFinishSnapshotBudget(
+  context: MessageFinishObjectSnapshotContext,
+  value: string,
+): boolean {
+  const bytes = getUtf8ByteLength(value);
+  if (bytes > context.remainingBytes) return false;
+  context.remainingBytes -= bytes;
+  return true;
+}
+
+function truncateMessageFinishString(
+  context: MessageFinishObjectSnapshotContext,
+  value: string,
+): { value: string; truncated: boolean } {
+  if (
+    getUtf8ByteLength(value) <= JSON_VALUE_MAX_STRING_BYTES &&
+    consumeMessageFinishSnapshotBudget(context, value)
+  ) {
+    return { value, truncated: false };
+  }
+
+  if (context.remainingBytes <= getUtf8ByteLength(MESSAGE_FINISH_OBJECT_STRING_TRUNCATED_SUFFIX)) {
+    return { value: MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET, truncated: true };
+  }
+
+  let end = value.length;
+  while (end > 0) {
+    const candidate = `${
+      privateTextSlice(value, 0, end)
+    }${MESSAGE_FINISH_OBJECT_STRING_TRUNCATED_SUFFIX}`;
+    if (
+      getUtf8ByteLength(candidate) <= JSON_VALUE_MAX_STRING_BYTES &&
+      consumeMessageFinishSnapshotBudget(context, candidate)
+    ) {
+      return { value: candidate, truncated: true };
+    }
+    end = mathMin(end - 1, mathRound(end / 2));
+  }
+
+  return { value: MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET, truncated: true };
+}
+
+function isSupportedMessageFinishObjectKey(key: string): boolean {
+  return getUtf8ByteLength(key) <= MESSAGE_FINISH_OBJECT_MAX_KEY_BYTES;
+}
+
+function getMessageFinishMetadataDurableByteLength(value: unknown): number {
+  try {
+    const durable = buildRuntimeEventRecordedEvent({
+      runtime: "veryfront",
+      kind: "message_finish_metadata",
+      value,
+    }).durable;
+    const serialized = privateJsonStringify(
+      {
+        ...durable,
+        // AG-UI timing is stamped after native payload construction. Reserve
+        // the largest valid JSON representations so a payload accepted here
+        // cannot become omitted by durable normalization after stamping.
+        elapsedMs: numberMaxValue,
+        emittedAt: numberMaxValue,
+      },
+      null,
+      undefined,
+      MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+    );
+    return typeof serialized === "string"
+      ? getUtf8ByteLength(serialized)
+      : Number.POSITIVE_INFINITY;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function isMessageFinishMetadataValueWithinDurableBudget(value: unknown): boolean {
+  return getMessageFinishMetadataDurableByteLength(value) <=
+    MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES;
+}
+
+function createTruncatedMessageFinishObjectObservation(reason: string): Record<string, unknown> {
+  return {
+    captureStatus: "partial",
+    reasons: [reason],
+    value: MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET,
+  };
+}
+
+function createTruncatedMessageFinishScalarObservation(
+  field: string,
+  reason: string,
+): Record<string, unknown> {
+  return {
+    captureStatus: "partial",
+    field,
+    reasons: [reason],
+  };
+}
+
+function hasRemainingEligibleMessageFinishObjectProperty<TInput extends object>(
+  input: TInput,
+  keys: readonly (string | symbol)[],
+  startIndex: number,
+): boolean {
+  for (let index = startIndex; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string" || !isSupportedMessageFinishObjectKey(key)) continue;
+    const property = objectGetOwnPropertyDescriptor(input, key);
+    if (property?.enumerable) return true;
+  }
+  return false;
+}
+
+function snapshotMessageFinishObjectValue(
+  input: unknown,
+  context: MessageFinishObjectSnapshotContext = {
+    remainingBytes: MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+    remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
+    seen: createPrivateWeakStore<object, true>(),
+  },
+  depth = 0,
+): MessageFinishObjectSnapshot {
+  const reasons: string[] = [];
+  context.remainingNodes -= 1;
+  if (context.remainingNodes < 0) {
+    return {
+      value: MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET,
+      status: "partial",
+      reasons: ["aggregate_budget_exhausted"],
+    };
+  }
+  if (input === null || typeof input === "boolean") {
+    return { value: input, status: "complete", reasons };
+  }
+  if (typeof input === "string") {
+    const truncated = truncateMessageFinishString(context, input);
+    if (truncated.truncated) {
+      addCaptureReason(
+        reasons,
+        truncated.value === MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET
+          ? "aggregate_budget_exhausted"
+          : "string_truncated",
+      );
+    }
+    return {
+      value: truncated.value,
+      status: truncated.truncated ? "partial" : "complete",
+      reasons,
+    };
+  }
+  if (typeof input === "number") {
+    return numberIsFinite(input)
+      ? { value: input, status: "complete", reasons }
+      : { value: "[unsupported number]", status: "unsupported", reasons: ["unsupported_number"] };
+  }
+  if (typeof input !== "object") {
+    return {
+      value: `[unsupported ${typeof input}]`,
+      status: "unsupported",
+      reasons: [`unsupported_${typeof input}`],
+    };
+  }
+  if (context.seen.get(input) === true) {
+    return { value: "[circular]", status: "partial", reasons: ["circular"] };
+  }
+  if (depth >= MESSAGE_FINISH_OBJECT_MAX_DEPTH) {
+    return { value: "[truncated nested data]", status: "partial", reasons: ["max_depth"] };
+  }
+
+  context.seen.set(input, true);
+  try {
+    if (ArrayIsArray(input)) {
+      const output: unknown[] = [];
+      const length = typeof input.length === "number" && numberIsFinite(input.length)
+        ? mathMax(0, mathRound(input.length))
+        : 0;
+      const limit = mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
+      for (let index = 0; index < limit; index++) {
+        const property = objectGetOwnPropertyDescriptor(
+          input,
+          reflectApply(numberToString, index, []) as string,
+        );
+        const item = !property || !property.enumerable
+          ? { value: null, status: "complete", reasons: [] } satisfies MessageFinishObjectSnapshot
+          : !objectHasOwn(property, "value")
+          ? {
+            value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
+            status: "partial",
+            reasons: ["accessor_property"],
+          } satisfies MessageFinishObjectSnapshot
+          : snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+        primordialArrayPush(output, item.value);
+        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
+      }
+      if (length > limit) {
+        primordialArrayPush(output, `[truncated ${length - limit} items]`);
+        addCaptureReason(reasons, "array_truncated");
+      }
+      return {
+        value: output,
+        status: reasons.length > 0 ? "partial" : "complete",
+        reasons,
+      };
+    }
+
+    const prototype = objectGetPrototypeOf(input);
+    if (prototype !== null && prototype !== objectPrototype) {
+      return {
+        value: "[unsupported object]",
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    const output = createNullDataRecord();
+    const keys = reflectOwnKeys(input);
+    let copiedKeys = 0;
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const key = keys[keyIndex];
+      if (typeof key !== "string") continue;
+      if (!isSupportedMessageFinishObjectKey(key)) {
+        addCaptureReason(reasons, "object_key_unsupported");
+        continue;
+      }
+      const property = objectGetOwnPropertyDescriptor(input, key);
+      if (!property?.enumerable) continue;
+      if (!objectHasOwn(property, "value")) {
+        defineDataProperty(output, key, MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR);
+        addCaptureReason(reasons, "accessor_property");
+        copiedKeys += 1;
+      } else {
+        const item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+        defineDataProperty(output, key, item.value);
+        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_property");
+        copiedKeys += 1;
+      }
+      if (copiedKeys >= MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS) {
+        if (hasRemainingEligibleMessageFinishObjectProperty(input, keys, keyIndex + 1)) {
+          addCaptureReason(reasons, "object_keys_truncated");
+        }
+        break;
+      }
+    }
+    return {
+      value: output,
+      status: reasons.length > 0 ? "partial" : "complete",
+      reasons,
+    };
+  } finally {
+    context.seen.set(input, undefined as never);
+  }
+}
+
+function createMessageFinishObjectObservation(
+  object: unknown,
+  maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+): unknown {
+  const snapshot = snapshotMessageFinishObjectValue(object, {
+    remainingBytes: maxOutputBytes,
+    remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
+    seen: createPrivateWeakStore<object, true>(),
+  });
+  if (snapshot.status === "complete") return snapshot.value;
+  return {
+    captureStatus: snapshot.status,
+    reasons: snapshot.reasons,
+    value: snapshot.value,
+  };
+}
+
+function createMessageFinishObjectObservationWithinDurableBudget(
+  baseValue: Record<string, unknown>,
+  object: unknown,
+): unknown {
+  const placeholder = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
+  let best: unknown = placeholder;
+
+  let low = 0;
+  let high = mathMin(
+    MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+    MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+  );
+  while (low <= high) {
+    const mid = mathRound((low + high) / 2);
+    const candidate = createMessageFinishObjectObservation(object, mid);
+    if (isMessageFinishMetadataValueWithinDurableBudget({ ...baseValue, object: candidate })) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
+}
+
+function createMessageFinishMetadataEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const value: Record<string, unknown> = {};
+  let finishReasonMetadata: string | null = null;
+  if (typeof event.finishReason === "string" && event.finishReason.length > 0) {
+    const snapshot = snapshotMessageFinishObjectValue(event.finishReason);
+    if (
+      snapshot.status === "complete" &&
+      typeof snapshot.value === "string"
+    ) {
+      finishReasonMetadata = snapshot.value;
+      value.finishReason = snapshot.value;
+    } else {
+      value.finishReason = createTruncatedMessageFinishScalarObservation(
+        "finishReason",
+        snapshot.reasons[0] ?? "serialized_budget_exhausted",
+      );
+    }
+  }
+
+  const usageMetadata = readMessageFinishUsageMetadata(event);
+  if (usageMetadata) {
+    objectAssign(state.metadata, usageMetadata);
+    value.totalUsage = usageMetadata;
+  }
+
+  if (event.object !== undefined) {
+    value.object = createMessageFinishObjectObservation(event.object);
+    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+      const { object: _object, ...baseValue } = value;
+      value.object = createMessageFinishObjectObservationWithinDurableBudget(
+        baseValue,
+        event.object,
+      );
+    }
+  }
+
+  if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+    if (objectHasOwn(value, "finishReason")) {
+      value.finishReason = createTruncatedMessageFinishScalarObservation(
+        "finishReason",
+        "serialized_budget_exhausted",
+      );
+    }
+    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+      value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
+    }
+  }
+
+  if (
+    finishReasonMetadata !== null &&
+    value.finishReason === finishReasonMetadata
+  ) {
+    state.metadata.finishReason = finishReasonMetadata;
+  }
+
+  if (objectKeys(value).length === 0) return [];
+  return [
+    buildRuntimeEventRecordedEvent({
+      runtime: "veryfront",
+      kind: "message_finish_metadata",
+      value,
+    }).live,
+  ];
 }
 
 /** Response payload for build AG-UI finalize. */
@@ -581,7 +1160,7 @@ export function buildAgUiFinalizeResponse(
     }
     : undefined;
 
-  if (!usage && Object.keys(responseMetadata).length === 0) {
+  if (!usage && objectKeys(responseMetadata).length === 0) {
     return null;
   }
 
@@ -591,7 +1170,7 @@ export function buildAgUiFinalizeResponse(
     toolCalls: [],
     status: "completed",
     ...(usage ? { usage } : {}),
-    ...(Object.keys(responseMetadata).length > 0 ? { metadata: responseMetadata } : {}),
+    ...(objectKeys(responseMetadata).length > 0 ? { metadata: responseMetadata } : {}),
   };
 }
 
@@ -618,13 +1197,13 @@ function completeToolInput(
   const events: AgUiEncodedEvent[] = [];
 
   if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
-    events.push({
+    appendEncodedEvents(events, [{
       event: "ToolCallArgs",
       payload: {
         toolCallId,
         delta: serializeToolInput("input" in event ? event.input : {}),
       },
-    });
+    }]);
   }
 
   if (toolCallId.length > 0) {
@@ -632,10 +1211,10 @@ function completeToolInput(
     state.openToolCallIds?.delete(toolCallId);
   }
 
-  events.push({
+  appendEncodedEvents(events, [{
     event: "ToolCallEnd",
     payload: { toolCallId: event.toolCallId },
-  });
+  }]);
 
   return events;
 }
@@ -802,31 +1381,33 @@ export function stampAgUiEventTiming(
   // wall-clock traces and logs, and turns ingest lag into `created_at -
   // emittedAt`. Both are stamped because wall clocks can step backwards and
   // the monotonic reading cannot.
-  for (const { payload } of events) {
-    if (Object.hasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
-    if (Object.hasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
+  for (const { payload } of primordialArrayValues(events)) {
+    if (objectHasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
+    if (objectHasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
   }
 
-  const needsElapsedMs = events.some(({ payload }) => !Object.hasOwn(payload, "elapsedMs"));
-  const needsEmittedAt = events.some(({ payload }) => !Object.hasOwn(payload, "emittedAt"));
+  const needsElapsedMs =
+    primordialArrayFilter(events, ({ payload }) => !objectHasOwn(payload, "elapsedMs")).length > 0;
+  const needsEmittedAt =
+    primordialArrayFilter(events, ({ payload }) => !objectHasOwn(payload, "emittedAt")).length > 0;
   const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
-    ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
+    ? mathMax(0, mathRound(state.nowMs() - state.startedMs))
     : undefined;
-  const emittedAt = needsEmittedAt && state.epochMs ? Math.round(state.epochMs()) : undefined;
+  const emittedAt = needsEmittedAt && state.epochMs ? mathRound(state.epochMs()) : undefined;
   if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
   if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
   if (elapsedMs === undefined && emittedAt === undefined) {
     return events;
   }
 
-  return events.map((entry) => ({
+  return primordialArrayMap(events, (entry) => ({
     ...entry,
     payload: {
       ...entry.payload,
-      ...(elapsedMs !== undefined && !Object.hasOwn(entry.payload, "elapsedMs")
+      ...(elapsedMs !== undefined && !objectHasOwn(entry.payload, "elapsedMs")
         ? { elapsedMs }
         : {}),
-      ...(emittedAt !== undefined && !Object.hasOwn(entry.payload, "emittedAt")
+      ...(emittedAt !== undefined && !objectHasOwn(entry.payload, "emittedAt")
         ? { emittedAt }
         : {}),
     },
@@ -834,13 +1415,13 @@ export function stampAgUiEventTiming(
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsFinite(value) || value < 0) {
     throw new TypeError("elapsedMs must be a finite non-negative number");
   }
 }
 
 function assertValidEmittedAt(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsInteger(value) || value < 0) {
     throw new TypeError("emittedAt must be a non-negative integer");
   }
 }
@@ -853,8 +1434,8 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     state.manuallyPaused = true;
     return [];
   }
-  if (event.type.startsWith("data-")) {
-    const name = event.type.slice("data-".length);
+  if (privateTextStartsWith(event.type, "data-")) {
+    const name = privateTextSlice(event.type, "data-".length);
     if (name.length === 0) {
       return [];
     }
@@ -886,31 +1467,35 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       getMessageId(state, event);
       return [];
 
+    case "message-finish":
+    case "finish":
+      return createMessageFinishMetadataEvent(state, event);
+
     case "text-start": {
       const events = closeOpenReasoningEvent(state);
       if (state.textOpen) {
         if (isActiveTextIdentity(state, event)) return events;
-        events.push(...closeOpenTextEvent(state));
+        appendEncodedEvents(events, closeOpenTextEvent(state));
       }
       const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.textOpen = true;
       state.activeTextContentId = contentId;
       state.sawVisibleOutput = true;
-      events.push(createTextEvent(messageId, "TextMessageStart", "", contentId));
+      appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
       return events;
     }
 
     case "text-delta": {
       const events = closeOpenReasoningEvent(state);
       if (state.textOpen && !isActiveTextIdentity(state, event)) {
-        events.push(...closeOpenTextEvent(state));
+        appendEncodedEvents(events, closeOpenTextEvent(state));
       }
       const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.sawVisibleOutput = true;
       if (!state.textOpen) {
         state.textOpen = true;
         state.activeTextContentId = contentId;
-        events.push(
+        appendEncodedEvents(events, [
           createTextEvent(messageId, "TextMessageStart", "", contentId),
           createTextEvent(
             messageId,
@@ -918,16 +1503,16 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
             typeof event.delta === "string" ? event.delta : "",
             contentId,
           ),
-        );
+        ]);
         return events;
       }
 
-      events.push(createTextEvent(
+      appendEncodedEvents(events, [createTextEvent(
         messageId,
         "TextMessageContent",
         typeof event.delta === "string" ? event.delta : "",
         state.activeTextContentId ?? contentId,
-      ));
+      )]);
       return events;
     }
 
@@ -942,9 +1527,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
 
     case "reasoning-start": {
       const events = closeOpenTextEvent(state);
-      events.push(...closeOpenReasoningEvent(state));
+      appendEncodedEvents(events, closeOpenReasoningEvent(state));
       state.sawVisibleOutput = true;
-      events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
       return events;
     }
 
@@ -952,9 +1537,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       const events = closeOpenTextEvent(state);
       state.sawVisibleOutput = true;
       if (state.reasoningMessageId === null) {
-        events.push(createReasoningEvent(state, event, "ReasoningMessageStart"));
+        appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
       }
-      events.push(createReasoningEvent(state, event, "ReasoningMessageContent"));
+      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
       return events;
     }
 
@@ -965,22 +1550,22 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return closeOpenReasoningEvent(state);
 
     case "tool-input-start": {
-      const events = [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-      ];
+      const events = combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+      ]);
       state.sawVisibleOutput = true;
       if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
-        (state.openToolCallIds ??= new Set<string>()).add(event.toolCallId);
+        (state.openToolCallIds ??= createPrivateSet<string>()).add(event.toolCallId);
       }
-      events.push({
+      appendEncodedEvents(events, [{
         event: "ToolCallStart",
         payload: {
           toolCallId: event.toolCallId,
           toolCallName: event.toolName,
           ...(state.messageId ? { parentMessageId: state.messageId } : {}),
         },
-      });
+      }]);
       return events;
     }
 
@@ -989,35 +1574,37 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       if (typeof event.toolCallId === "string") {
         state.streamedToolInputIds.add(event.toolCallId);
       }
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        {
-          event: "ToolCallArgs",
-          payload: {
-            toolCallId: event.toolCallId,
-            delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          {
+            event: "ToolCallArgs",
+            payload: {
+              toolCallId: event.toolCallId,
+              delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+            },
           },
-        },
-      ];
+        ],
+      ]);
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        ...completeToolInput(state, event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        completeToolInput(state, event),
+      ]);
     }
 
     case "tool-input-error": {
       state.sawVisibleOutput = true;
-      const events = [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        ...completeToolInput(state, event),
-      ];
-      events.push({
+      const events = combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        completeToolInput(state, event),
+      ]);
+      appendEncodedEvents(events, [{
         event: "ToolCallResult",
         payload: {
           toolCallId: event.toolCallId,
@@ -1026,30 +1613,32 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
           },
           isError: true,
         },
-      });
+      }]);
       return events;
     }
 
     case "tool-output-available":
       if (event.preliminary === true) return [];
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createToolResultEvent(
-          event.toolCallId,
-          event.output,
-          // Producers send a provider result they judge failed as tool-output-error,
-          // so only forwarded results without the marker are judged by content.
-          event.providerExecuted !== true && isToolResultErrorOutput(event.output),
-        ),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createToolResultEvent(
+            event.toolCallId,
+            event.output,
+            // Producers send a provider result they judge failed as tool-output-error,
+            // so only forwarded results without the marker are judged by content.
+            event.providerExecuted !== true && isToolResultErrorOutput(event.output),
+          ),
+        ],
+      ]);
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
         // A truncated local tool call terminalizes as `tool-input-start`
         // (plus any partial deltas) and then straight to this event, so the
         // input is still open. `tool-input-available` and `tool-input-error`
@@ -1057,33 +1646,41 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         // or the client is left with ToolCallStart and ToolCallResult and no
         // ToolCallEnd. No synthetic args are emitted: the model never
         // committed any, and inventing `{}` would claim it did.
-        ...closeOpenToolInput(state, event.toolCallId),
-        createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
-      ];
+        closeOpenToolInput(state, event.toolCallId),
+        [
+          createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
+        ],
+      ]);
 
     case "tool-output-denied":
       state.sawVisibleOutput = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createToolResultEvent(event.toolCallId, { error: "Tool output denied" }, true),
+        ],
+      ]);
 
     case "step-start":
     case "start-step":
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepStarted", event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createStepEvent(state, "StepStarted", event),
+        ],
+      ]);
 
     case "step-end":
     case "finish-step":
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        createStepEvent(state, "StepFinished", event),
-      ];
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          createStepEvent(state, "StepFinished", event),
+        ],
+      ]);
 
     case "data":
       applyDataMetadata(state, event);
@@ -1091,19 +1688,21 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
 
     case "error":
       state.sawTerminalError = true;
-      return [
-        ...closeOpenTextEvent(state),
-        ...closeOpenReasoningEvent(state),
-        {
-          event: "RunError",
-          payload: {
-            ...(typeof event.code === "string" && event.code.length > 0
-              ? { code: event.code }
-              : {}),
-            message: typeof event.error === "string" ? event.error : "Agent run failed",
+      return combineEncodedEvents([
+        closeOpenTextEvent(state),
+        closeOpenReasoningEvent(state),
+        [
+          {
+            event: "RunError",
+            payload: {
+              ...(typeof event.code === "string" && event.code.length > 0
+                ? { code: event.code }
+                : {}),
+              message: typeof event.error === "string" ? event.error : "Agent run failed",
+            },
           },
-        },
-      ];
+        ],
+      ]);
 
     default:
       // The `data-` guard at the top of this function already returns for
@@ -1143,10 +1742,10 @@ function finalizeAgUiEventsUnstamped(
   }
 
   const events: AgUiEncodedEvent[] = [];
-  events.push(...closeOpenTextEvent(state));
-  events.push(...closeOpenReasoningEvent(state));
+  appendEncodedEvents(events, closeOpenTextEvent(state));
+  appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
-  events.push({
+  appendEncodedEvents(events, [{
     event: "RunFinished",
     payload: {
       metadata: state.metadata,
@@ -1155,7 +1754,19 @@ function finalizeAgUiEventsUnstamped(
       // output did not parse; a parsed `null` is still reported.
       ...(response?.object !== undefined ? { result: response.object } : {}),
     },
-  });
+  }]);
 
   return events;
+}
+
+function appendEncodedEvents(
+  target: AgUiEncodedEvent[],
+  entries: readonly AgUiEncodedEvent[],
+): void {
+  for (const entry of primordialArrayValues(entries)) primordialArrayPush(target, entry);
+}
+function combineEncodedEvents(
+  groups: readonly (readonly AgUiEncodedEvent[])[],
+): AgUiEncodedEvent[] {
+  return primordialArrayFlatMap(groups, (group) => group);
 }

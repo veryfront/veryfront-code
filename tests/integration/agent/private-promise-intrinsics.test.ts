@@ -3,6 +3,19 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 
 describe("private promise lifecycle intrinsics", () => {
+  it("forwards the constructor executor while array iteration is replaced", async () => {
+    const input = Promise.resolve("owned-result");
+    const iterator = Array.prototype[Symbol.iterator];
+    let result: string | undefined;
+    try {
+      Array.prototype[Symbol.iterator] = function* () {};
+      result = await chainPrivatePromise(input, (value) => value);
+    } finally {
+      Array.prototype[Symbol.iterator] = iterator;
+    }
+    assertEquals(result, "owned-result");
+  });
+
   it("awaits original inputs and callback results with replaced constructor and then methods", async () => {
     const input = Promise.withResolvers<void>();
     const output = Promise.withResolvers<string>();

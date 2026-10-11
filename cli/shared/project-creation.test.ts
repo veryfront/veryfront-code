@@ -489,7 +489,7 @@ describe("createProject", () => {
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "package.json"), "{");
+      await Deno.writeTextFile(join(projectDir, "package.json"), "{\n");
 
       const result = await createProject({
         ...baseRequest(parentDir),

@@ -45,6 +45,10 @@ import {
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import {
+  hasProviderObservedSkillBody,
+  hasProviderObservedSkillReferences,
+} from "#veryfront/tool/provider-observed-skill-bodies.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectDefineProperty = Object.defineProperty;
@@ -67,7 +71,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. load_skill does not perform the task by itself. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
+  `Load skill instructions; loading does not perform the task. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Wait for the body result before choosing a reference; never batch the first body load with a reference read. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -316,6 +320,11 @@ export type RuntimeLoadSkillToolOptions = {
   description?: string;
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
+  /**
+   * Reject reference reads when the execution context carries no provider-observed
+   * skill body snapshot. Hosts that execute this tool for a remote runtime set it.
+   */
+  requireProviderObservation?: boolean;
 };
 
 const getRuntimeLoadSkillReferenceFileInputSchema = defineSchema((v) =>
@@ -1539,6 +1548,13 @@ function buildRuntimeLoadSkillInputSchema(
   })();
 }
 
+function buildUnobservedSkillBodyError(skillId: string): RuntimeLoadSkillErrorOutput {
+  return {
+    error:
+      `Read the load_skill result for "${skillId}" before requesting reference files. Retry this reference in the next step using a listed path.`,
+  };
+}
+
 async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
   builtinStore: RuntimeLoadSkillBuiltinStore,
@@ -1556,6 +1572,12 @@ async function loadRuntimeSkillReferenceFile(
   const normalizedFile = normalizeStrictRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
+  }
+  const observed = hasProviderObservedSkillBody(executionContext, skillId);
+  if (
+    observed === false || (observed === undefined && options.requireProviderObservation === true)
+  ) {
+    return buildUnobservedSkillBodyError(skillId);
   }
 
   authorityAttempts:
@@ -1578,15 +1600,24 @@ async function loadRuntimeSkillReferenceFile(
         file,
         normalizedFile,
       );
+    const observedBodyMayAuthorizeColdReference = !hasLoadedSkillResponse &&
+      observed === true;
     const reusableCachedAuthorization: RuntimeSkillReferenceAuthorization | undefined =
       cachedAuthorization &&
-        (!cachedAuthorization.requiresActiveSkillContext || resumedReferenceIsAdvertised)
+        (!cachedAuthorization.requiresActiveSkillContext || resumedReferenceIsAdvertised ||
+          (observedBodyMayAuthorizeColdReference &&
+            hasProviderObservedSkillReferences(
+                executionContext,
+                skillId,
+                cachedAuthorization.references,
+              ) === true))
         ? cachedAuthorization
         : undefined;
     if (
       !reusableCachedAuthorization &&
       !hasLoadedSkillResponse &&
-      !resumedReferenceIsAdvertised
+      !resumedReferenceIsAdvertised &&
+      !observedBodyMayAuthorizeColdReference
     ) {
       return {
         error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
@@ -1596,7 +1627,8 @@ async function loadRuntimeSkillReferenceFile(
 
     let authorization: RuntimeSkillReferenceAuthorization | undefined = reusableCachedAuthorization;
     if (!authorization) {
-      const requiresActiveSkillContext = !hasLoadedSkillResponse && resumedReferenceIsAdvertised;
+      const requiresActiveSkillContext = !hasLoadedSkillResponse &&
+        (resumedReferenceIsAdvertised || observedBodyMayAuthorizeColdReference);
       const bodyPublication = privateAuthority.captureBody(loadedSkillKey);
       const projectSkill = await loadRuntimeSkillBody(options, skillId, budget);
       budget.throwIfTerminated();
@@ -1686,6 +1718,14 @@ async function loadRuntimeSkillReferenceFile(
       }
       authorityGuard = published.guard;
       authorization = published.value;
+    }
+    // Bind the observation to this scope's body: a body seen under another
+    // project or branch advertised a different reference list.
+    if (
+      hasProviderObservedSkillReferences(executionContext, skillId, authorization.references) ===
+        false
+    ) {
+      return buildUnobservedSkillBodyError(skillId);
     }
     if (!authorization.has(normalizedFile)) {
       const availableReferences = authorization.references.length > 0

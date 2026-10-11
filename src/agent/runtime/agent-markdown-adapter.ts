@@ -53,6 +53,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     system: definition.system ?? definition.instructions,
     ...(definition.model ? { model: definition.model } : {}),
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
+    ...(definition.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: definition.parallelToolCalls }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(providerTools ? { providerTools } : {}),
     ...(failClosedUnrestrictedSelector

@@ -27,6 +27,9 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
+const GENERATED_MDX_CACHE_PREFIX =
+  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
+const GENERATED_VERYFRONT_CACHE_PREFIX = "/home/runner/.cache/veryfront/";
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -109,6 +112,10 @@ export interface LcovArtifactReport {
   content: string;
 }
 
+type NormalizedLcovSource =
+  | { kind: "source"; path: string }
+  | { kind: "drop-generated-cache" };
+
 function validateProducerWorkspace(value: unknown): string {
   if (
     typeof value !== "string" || !/^(?:\/|[A-Za-z]:[\\/])/.test(value) ||
@@ -170,12 +177,17 @@ export function normalizeLcovArtifacts(
     )?.[1];
     return normalizeLcovSourcePaths(report.content, [
       workspace,
+      ...githubWorkspaceRoots(workspace),
       ...(producer ? [producer] : []),
+      ...(producer ? githubWorkspaceRoots(producer) : []),
     ], sourceExists);
   });
 }
 
-/** Rewrite only exact checkout prefixes whose relative source exists in this checkout. */
+/**
+ * Rewrite verified checkout prefixes, drop generated MDX cache records, and
+ * fail closed when a path that should be a checkout source is missing.
+ */
 export function normalizeLcovSourcePaths(
   report: string,
   producerRoots: readonly string[],
@@ -184,31 +196,124 @@ export function normalizeLcovSourcePaths(
   const prefixes = producerRoots.map((root) =>
     validateProducerWorkspace(root) + "/"
   );
-  const knownProducerRoot =
-    /^(?:\/home\/runner\/(?:work|_work)|[A-Za-z]:\/a)\/veryfront-code\/veryfront-code\//;
-  return report.replace(/^SF:([^\r\n]+)/gm, (_record, source: string) => {
-    const portable = source.replaceAll("\\", "/");
-    const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
-    const relative = prefix
-      ? portable.slice(prefix.length)
-      : portable.replace(knownProducerRoot, "");
-    if (
-      /^(?:\/|[A-Za-z]:)/.test(relative) ||
-      relative.split("/").some((part) =>
-        part === ".." || part === "." || part === ""
-      )
-    ) {
-      throw new Error(
-        `LCOV source is outside a recognized repository checkout: ${source}`,
-      );
+  const newline = report.includes("\r\n") ? "\r\n" : "\n";
+  const output: string[] = [];
+  let keepRecord = true;
+
+  for (const line of report.split(/\r?\n/)) {
+    if (line.startsWith("SF:")) {
+      const source = normalizeLcovSource(line.slice(3), prefixes, sourceExists);
+      if (source.kind === "drop-generated-cache") {
+        keepRecord = false;
+        continue;
+      }
+      keepRecord = true;
+      output.push(`SF:${source.path}`);
+      continue;
     }
+    if (!keepRecord) {
+      if (line === "end_of_record") keepRecord = true;
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join(newline);
+}
+
+function normalizeLcovSource(
+  source: string,
+  prefixes: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): NormalizedLcovSource {
+  const portable = source.replaceAll("\\", "/");
+  if (isGeneratedVeryfrontCacheSource(portable)) {
+    return { kind: "drop-generated-cache" };
+  }
+
+  if (!portable.startsWith("/") && !/^[A-Za-z]:\//.test(portable)) {
+    const relative = normalizeRelativeLcovPath(portable);
     if (!sourceExists(relative)) {
       throw new Error(
-        `LCOV source does not exist in the repository: ${relative}`,
+        `LCOV source path does not exist in the project: ${relative}`,
       );
     }
-    return `SF:${relative}`;
-  });
+    return { kind: "source", path: relative };
+  }
+
+  const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
+  if (prefix) {
+    const relative = normalizeRelativeLcovPath(portable.slice(prefix.length));
+    if (!sourceExists(relative)) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
+    }
+    return { kind: "source", path: relative };
+  }
+
+  const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
+  if (githubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(githubCheckout[2]);
+    if (!sourceExists(relative)) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
+    }
+    return { kind: "source", path: relative };
+  }
+
+  const windowsGithubCheckout = /^[A-Za-z]:\/a\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
+  if (windowsGithubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(windowsGithubCheckout[2]);
+    if (!sourceExists(relative)) {
+      throw new Error(
+        `LCOV source path does not exist in the project: ${relative}`,
+      );
+    }
+    return { kind: "source", path: relative };
+  }
+
+  throw new Error(
+    `LCOV source is outside a recognized repository checkout: ${source}`,
+  );
+}
+
+function isGeneratedVeryfrontCacheSource(source: string): boolean {
+  return source.startsWith(GENERATED_MDX_CACHE_PREFIX) ||
+    (source.startsWith(GENERATED_VERYFRONT_CACHE_PREFIX) &&
+      source.endsWith(".mjs"));
+}
+
+function normalizeRelativeLcovPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) {
+        throw new Error(`LCOV source path escapes the project: ${path}`);
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  if (parts.length === 0) {
+    throw new Error(`LCOV source path is empty after normalization: ${path}`);
+  }
+  return parts.join("/");
+}
+
+function githubWorkspaceRoots(root: string): string[] {
+  const portable = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const match = /^\/home\/runner\/(_?work)\/([^/]+)\/\2$/.exec(portable);
+  if (!match?.[1] || !match[2]) return [];
+  const alternate = match[1] === "_work" ? "work" : "_work";
+  return [`/home/runner/${alternate}/${match[2]}/${match[2]}`];
 }
 
 export function mergeLcovReports(reports: string[]): string {

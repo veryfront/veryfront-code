@@ -1,5 +1,4 @@
 import {
-  readProviderOptions,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
@@ -13,7 +12,13 @@ import {
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
-import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
+import {
+  defineOpenAIProviderOptions,
+  readOpenAIProviderOptions,
+} from "./openai-provider-options.ts";
+
+const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   serviceTier?: "auto" | "default" | "flex" | "scale";
@@ -64,19 +69,21 @@ export function buildOpenAIChatRequest(
   // keep merging that bucket at the lowest precedence. max_tokens is normalized
   // per bucket BEFORE merging so a higher-precedence bucket's max_tokens
   // override still beats a lower bucket's max_completion_tokens.
-  const bucketNames = [
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  ];
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
   const providerOpts: Record<string, unknown> = {};
-  for (const bucketName of bucketNames) {
+  for (let index = 0; index < bucketNames.length; index += 1) {
+    const bucketName = bucketNames[index]!;
     defineOpenAIProviderOptions(
       providerOpts,
-      normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
+      normalizeNativeMaxTokens(
+        readOpenAIProviderOptions(options.providerOptions, [bucketName]),
+        modelId,
+      ),
     );
   }
-  const finalTools = Object.hasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
+  const finalTools = ObjectHasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
   const resolvedReasoning = resolveOpenAIReasoningConfig(
     modelId,
     providerName,
@@ -208,10 +215,11 @@ export function buildOpenAIChatRequest(
 }
 
 function hasOpenAIFunctionTools(value: unknown): boolean {
-  if (!Array.isArray(value)) {
+  if (!ArrayIsArray(value)) {
     return false;
   }
-  for (const tool of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const tool = value[index];
     if (
       typeof tool === "object" &&
       tool !== null &&

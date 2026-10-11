@@ -10,6 +10,7 @@ import {
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { EVAL_RECORD_TIMEOUT } from "#veryfront/errors";
+import { throwIfAborted as throwIfEvalAborted } from "#veryfront/utils/abort.ts";
 import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 import {
   createEvalReportExporterRegistry,
@@ -797,9 +798,9 @@ export async function runEval(
     ? createEvalRunId(startedAt)
     : normalizeEvalString(options.runId, "Eval run id");
   const baseDir = options.baseDir ?? cwd();
-  options.signal?.throwIfAborted();
+  throwIfEvalAborted(options.signal);
   const loadedExamples = await definition.dataset.load({ baseDir });
-  options.signal?.throwIfAborted();
+  throwIfEvalAborted(options.signal);
   const examples = normalizeEvalExamples(
     loadedExamples,
     `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
@@ -817,7 +818,7 @@ export async function runEval(
   notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
 
   for (const [index, { example, repetition }] of jobs.entries()) {
-    options.signal?.throwIfAborted();
+    throwIfEvalAborted(options.signal);
     const progress = {
       evalId: definition.id,
       recordId: `${example.id}:${repetition}`,
@@ -839,7 +840,7 @@ export async function runEval(
       runId,
       recordTimeoutMs,
     );
-    options.signal?.throwIfAborted();
+    throwIfEvalAborted(options.signal);
     records.push(record);
     notifyEvalProgress(options, {
       type: "record-finished",

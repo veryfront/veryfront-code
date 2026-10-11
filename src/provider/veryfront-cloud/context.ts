@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 
 /** Context for Veryfront Cloud. */
@@ -23,11 +23,28 @@ export interface VeryfrontCloudContext {
   catalogScopeKey?: string;
 }
 
-const veryfrontCloudContextStorage = new AsyncLocalStorage<VeryfrontCloudContext>();
-const modelCallCaptureStorage = new AsyncLocalStorage<{
+const veryfrontCloudContextStorage = createPrivateAsyncLocalStorage<VeryfrontCloudContext>();
+const modelCallCaptureStorage = createPrivateAsyncLocalStorage<{
   readonly receipt: Readonly<AgentRunModelCallCaptureReceipt> | undefined;
   readonly assertActive: () => void;
 }>();
+const ReflectApply = Reflect.apply;
+const ObjectFreeze = Object.freeze;
+const veryfrontCloudContextRun = veryfrontCloudContextStorage.run;
+const veryfrontCloudContextGetStore = veryfrontCloudContextStorage.getStore;
+const modelCallCaptureRun = modelCallCaptureStorage.run;
+const modelCallCaptureGetStore = modelCallCaptureStorage.getStore;
+
+function freezeModelCallCaptureReceipt(
+  receipt: AgentRunModelCallCaptureReceipt,
+): Readonly<AgentRunModelCallCaptureReceipt> {
+  return ReflectApply(ObjectFreeze, Object, [{
+    eventId: receipt.eventId,
+    projectId: receipt.projectId,
+    runId: receipt.runId,
+    modelCallId: receipt.modelCallId,
+  }]) as Readonly<AgentRunModelCallCaptureReceipt>;
+}
 
 /** Internal dispatch scope, independent of caller-set Cloud context and model options. */
 export function runWithVeryfrontCloudModelCallCapture<T>(
@@ -35,17 +52,22 @@ export function runWithVeryfrontCloudModelCallCapture<T>(
   operation: () => T,
 ): T {
   scope.assertActive();
-  return modelCallCaptureStorage.run({
-    receipt: scope.receipt === undefined ? undefined : Object.freeze({ ...scope.receipt }),
+  return ReflectApply(modelCallCaptureRun, modelCallCaptureStorage, [{
+    receipt: scope.receipt === undefined ? undefined : freezeModelCallCaptureReceipt(scope.receipt),
     assertActive: scope.assertActive,
-  }, operation);
+  }, operation]) as T;
 }
 
 /** Read only the capture scope installed by the acknowledged hosted dispatch permit. */
 export function getCurrentVeryfrontCloudModelCallCapture():
   | Readonly<AgentRunModelCallCaptureReceipt>
   | undefined {
-  const scope = modelCallCaptureStorage.getStore();
+  const scope = ReflectApply(modelCallCaptureGetStore, modelCallCaptureStorage, []) as
+    | {
+      readonly receipt: Readonly<AgentRunModelCallCaptureReceipt> | undefined;
+      readonly assertActive: () => void;
+    }
+    | undefined;
   if (!scope) return undefined;
   scope.assertActive();
   return scope.receipt;
@@ -56,7 +78,7 @@ export function runWithVeryfrontCloudContext<T>(
   context: VeryfrontCloudContext,
   fn: () => T,
 ): T {
-  return veryfrontCloudContextStorage.run(context, fn);
+  return ReflectApply(veryfrontCloudContextRun, veryfrontCloudContextStorage, [context, fn]) as T;
 }
 
 /** Run with Veryfront Cloud context async. */
@@ -64,15 +86,22 @@ export function runWithVeryfrontCloudContextAsync<T>(
   context: VeryfrontCloudContext,
   fn: () => Promise<T>,
 ): Promise<T> {
-  return veryfrontCloudContextStorage.run(context, fn);
+  return ReflectApply(veryfrontCloudContextRun, veryfrontCloudContextStorage, [
+    context,
+    fn,
+  ]) as Promise<T>;
 }
 
 export function getCurrentVeryfrontCloudContext(): VeryfrontCloudContext | undefined {
-  return veryfrontCloudContextStorage.getStore();
+  return ReflectApply(veryfrontCloudContextGetStore, veryfrontCloudContextStorage, []) as
+    | VeryfrontCloudContext
+    | undefined;
 }
 
 export function markCurrentVeryfrontCloudBillingGroupUsed(): void {
-  const context = veryfrontCloudContextStorage.getStore();
+  const context = ReflectApply(veryfrontCloudContextGetStore, veryfrontCloudContextStorage, []) as
+    | VeryfrontCloudContext
+    | undefined;
   if (context?.billingGroupId) {
     context.billingGroupUsed = true;
   }

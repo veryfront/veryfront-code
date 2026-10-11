@@ -136,6 +136,7 @@ delete_release() {
   gh release delete "$tag" --repo "$repo" --yes --cleanup-tag >/dev/null 2>&1 || true
 }
 
+existing_public_release_verified=false
 create_draft_release() {
   local existing_is_draft
   if existing_is_draft="$(
@@ -146,8 +147,49 @@ create_draft_release() {
       return 0
     fi
 
-    echo "::error::GitHub release ${tag} already exists and is not a draft." >&2
-    return "$retry_fatal_status"
+    # A rerun may only adopt the identical qualified publication; never mutate it.
+    local verification_dir asset existing_prerelease expected_asset_names remote_asset_names
+    expected_asset_names="$(printf '%s\n' "${assets[@]##*/}" | LC_ALL=C sort)"
+    if ! remote_asset_names="$(
+      gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name'
+    )"; then
+      return "$retry_fatal_status"
+    fi
+    remote_asset_names="$(printf '%s\n' "$remote_asset_names" | LC_ALL=C sort)"
+    if [[ "$remote_asset_names" != "$expected_asset_names" ]]; then
+      echo "::error::Existing public release asset-name set differs for ${tag}." >&2
+      return "$retry_fatal_status"
+    fi
+    verification_dir="$(mktemp -d)" || return "$retry_fatal_status"
+    for asset in "${assets[@]}"; do
+      if ! gh release download "$tag" --repo "$repo" \
+        --pattern "${asset##*/}" --output "$verification_dir/asset" || \
+        ! cmp -s "$asset" "$verification_dir/asset"; then
+        rm -rf "$verification_dir"
+        echo "::error::Existing public release asset is missing or differs: ${asset##*/}." >&2
+        return "$retry_fatal_status"
+      fi
+      rm -f "$verification_dir/asset"
+    done
+    rm -rf "$verification_dir"
+    if ! existing_prerelease="$(
+      gh release view "$tag" --repo "$repo" --json isPrerelease --jq '.isPrerelease'
+    )" || [[ "$existing_prerelease" != "$prerelease" ]]; then
+      echo "::error::Existing public release mode differs for ${tag}." >&2
+      return "$retry_fatal_status"
+    fi
+    # Installers resolve the version through releases/latest, so adopt only the current one.
+    local latest_tag
+    if [[ "$latest" == true ]] && {
+      ! latest_tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name')" ||
+        [[ "$latest_tag" != "$tag" ]]
+    }; then
+      echo "::error::Existing public release ${tag} is not the latest release." >&2
+      return "$retry_fatal_status"
+    fi
+    existing_public_release_verified=true
+    echo "Verified identical existing public release ${tag}." >&2
+    return 0
   fi
 
   local create_args=(
@@ -180,6 +222,10 @@ run_with_retry \
   "GitHub release draft creation" \
   --fatal-status "$retry_fatal_status" \
   create_draft_release
+if [[ "$existing_public_release_verified" == true ]]; then
+  trap - EXIT
+  exit 0
+fi
 incomplete_draft_created=true
 
 # Start long transfers first so metadata cannot delay their worker allocation.

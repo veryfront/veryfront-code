@@ -37,6 +37,8 @@ export interface AgentPauseCheckpoint {
   providerMetadata?: { messageId: string; metadata: Record<string, unknown> }[];
   hasSubmittedFormInput?: boolean;
   activeSkillDelegationOverrides?: SkillDelegationOverrides;
+  /** Skill load results that were runtime-trusted when the checkpoint was written. */
+  trustedSkillLoadResultIds?: string[];
   toolExposureCheckpoint?: { version: 1 | 2; loadedToolNames: string[] };
 }
 
@@ -116,6 +118,7 @@ export const getAgentPauseCheckpointSchema = defineSchema((v) =>
       ]).optional(),
       maxSteps: v.number().int().positive().max(MAX_RUNTIME_SKILL_STEPS).optional(),
     }).strict().optional(),
+    trustedSkillLoadResultIds: v.array(v.string().min(1)).optional(),
     toolExposureCheckpoint: v.object({
       version: v.union([v.literal(1), v.literal(2)]),
       loadedToolNames: v.array(v.string().min(1)),

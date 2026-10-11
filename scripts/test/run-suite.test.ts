@@ -48,6 +48,7 @@ const UNIT_CWD_FILES = [
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
@@ -70,6 +71,27 @@ describe("child-run CPU measurement isolation", () => {
       assertEquals(
         buildDenoSuiteCommandArgs(suite, [summaryTest], {
           parallel: shouldRunDenoBatchInParallel(true, [summaryTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
+describe("native command deadline measurement isolation", () => {
+  it("runs native command latency assertions alone in unit and coverage batches", () => {
+    const commandTest = "src/platform/compat/process/command.test.ts";
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", commandTest, "src/b.test.ts"],
+        100,
+      ),
+      [["src/a.test.ts"], [commandTest], ["src/b.test.ts"]],
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [commandTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [commandTest]),
         }).includes("--parallel"),
         false,
       );
@@ -252,6 +274,18 @@ describe("suite planning parity", () => {
           `${suite} must select ${file} so its non-Deno branch executes`,
         );
       }
+    }
+  });
+
+  it("keeps hosted executor intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain hosted executor intrinsic coverage`,
+      );
     }
   });
 
@@ -937,6 +971,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
@@ -951,6 +986,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
@@ -966,6 +1002,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
@@ -980,6 +1017,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

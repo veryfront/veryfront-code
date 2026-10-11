@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import {
   requireSecureInferenceApiBaseUrl,
@@ -53,9 +53,9 @@ function resolveTrustedInferenceApiBaseUrl(): string {
 // module builds, never through a getter project code could call. The storage
 // methods are captured at load so a project that replaces
 // `AsyncLocalStorage.prototype.run` or `.getStore` cannot observe the scope.
-const projectRunInferenceScopes = new AsyncLocalStorage<ProjectRunInferenceScope>();
-const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
-const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const projectRunInferenceScopes = createPrivateAsyncLocalStorage<ProjectRunInferenceScope>();
+const AsyncLocalStorageRun = projectRunInferenceScopes.run;
+const AsyncLocalStorageGetStore = projectRunInferenceScopes.getStore;
 
 /**
  * @internal Run a project-run execution with its signed inference credential in

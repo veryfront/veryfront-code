@@ -586,6 +586,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.requestedTemperature !== undefined
         ? { temperature: runtimeConfig.requestedTemperature }
         : {}),
+      ...(runtimeConfig.requestedParallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: runtimeConfig.requestedParallelToolCalls }),
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),

@@ -194,7 +194,9 @@ export class LazySandbox {
   private endpoint: string | null = null;
   private sessionId: string | null = null;
   private readonly retainedSessions = new Map<string | null, string>();
+  private readonly replaceableRetainedSessions = new Map<string | null, string>();
   private sessionProjectId: string | null = null;
+  private sessionCanBeReplacedOnMissing = false;
   private ensurePromise: PendingOperation | null = null;
   private closePromise: PendingOperation | null = null;
   private heartbeatPromise: PendingOperation | null = null;
@@ -604,7 +606,7 @@ export class LazySandbox {
           await this.deleteSession(currentSessionId);
         }
         if (!this.deleteOnClose) {
-          this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+          this.retainSession(this.sessionProjectId, currentSessionId);
         }
         this.resetSessionState(currentSessionId);
       })(),
@@ -638,12 +640,20 @@ export class LazySandbox {
       await this.attachExistingSession(this.sandboxId);
       return;
     }
-    const retained = this.retainedSessions.get(this.resolveProjectId());
+    const projectId = this.resolveProjectId();
+    const retained = this.retainedSessions.get(projectId);
     if (retained) {
       // Only workspaces protected from automatic deletion enter this map.
       this.deleteOnClose = false;
-      await this.attachExistingSession(retained);
-      return;
+      try {
+        await this.attachExistingSession(retained);
+        return;
+      } catch (error) {
+        if (!this.shouldReplaceMissingRetainedSession(projectId, retained, error)) {
+          throw error;
+        }
+        this.forgetRetainedSession(projectId, retained);
+      }
     }
 
     // A failed cleanup must not be overwritten by the next provisioning attempt.
@@ -691,15 +701,17 @@ export class LazySandbox {
     }
 
     const session = await res.json();
+    this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
     this.deleteOnClose = this.requestedDeleteOnClose ??
-      (hasTemporarySandboxPolicy(session) && this.creationPolicy.ttlMode !== "always_on");
+      this.sessionCanBeReplacedOnMissing;
     this.sessionId = session.id;
     this.sessionProjectId = projectId;
 
     try {
       const endpoint = await this.resolveReadyEndpoint(session, (readySession) => {
+        this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(readySession);
         this.deleteOnClose = this.requestedDeleteOnClose ??
-          (hasTemporarySandboxPolicy(readySession) && this.creationPolicy.ttlMode !== "always_on");
+          this.sessionCanBeReplacedOnMissing;
       });
       this.endpoint = endpoint;
       await this.heartbeat(true);
@@ -711,7 +723,7 @@ export class LazySandbox {
         await this.deleteSession(currentSessionId);
       }
       if (currentSessionId && !this.deleteOnClose) {
-        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+        this.retainSession(this.sessionProjectId, currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
       throw error;
@@ -741,6 +753,7 @@ export class LazySandbox {
       const session = this.sandboxEndpoint
         ? { id: sessionId, endpoint: this.sandboxEndpoint, status: "running" }
         : await this.getSession(sessionId);
+      this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
       this.endpoint = await this.resolveReadyEndpoint(session);
       await this.heartbeat(true);
       this.startHeartbeatLoop();
@@ -844,7 +857,7 @@ export class LazySandbox {
         await this.deleteSession(currentSessionId);
       }
       if (currentSessionId && !this.deleteOnClose) {
-        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+        this.retainSession(this.sessionProjectId, currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
     }
@@ -877,6 +890,37 @@ export class LazySandbox {
     }, this.heartbeatIntervalMs);
   }
 
+  private canReplaceMissingSession(session: Partial<SandboxSessionRecord>): boolean {
+    return hasTemporarySandboxPolicy(session) && this.creationPolicy.ttlMode !== "always_on";
+  }
+
+  private retainSession(projectId: string | null, sessionId: string): void {
+    this.retainedSessions.set(projectId, sessionId);
+    if (this.sessionCanBeReplacedOnMissing) {
+      this.replaceableRetainedSessions.set(projectId, sessionId);
+      return;
+    }
+    applyIntrinsic(mapDelete, this.replaceableRetainedSessions, [projectId]);
+  }
+
+  private forgetRetainedSession(projectId: string | null, sessionId: string): void {
+    if (this.retainedSessions.get(projectId) === sessionId) {
+      applyIntrinsic(mapDelete, this.retainedSessions, [projectId]);
+    }
+    if (this.replaceableRetainedSessions.get(projectId) === sessionId) {
+      applyIntrinsic(mapDelete, this.replaceableRetainedSessions, [projectId]);
+    }
+  }
+
+  private shouldReplaceMissingRetainedSession(
+    projectId: string | null,
+    sessionId: string,
+    error: unknown,
+  ): boolean {
+    return this.replaceableRetainedSessions.get(projectId) === sessionId &&
+      isFailedSandboxLookupStatus(error, 404);
+  }
+
   private stopHeartbeatLoop(): void {
     if (!this.heartbeatTimer) return;
     clearInterval(this.heartbeatTimer);
@@ -894,7 +938,8 @@ export class LazySandbox {
       if (policy === "unavailable") return;
       if (policy === "retain") {
         this.deleteOnClose = false;
-        this.retainedSessions.set(this.sessionProjectId, sessionId);
+        this.sessionCanBeReplacedOnMissing = false;
+        this.retainSession(this.sessionProjectId, sessionId);
         return;
       }
     }
@@ -934,6 +979,7 @@ export class LazySandbox {
       this.sessionProjectId = null;
       this.heartbeatPromise = null;
       this.lastHeartbeatAt = 0;
+      this.sessionCanBeReplacedOnMissing = false;
     }
   }
 
@@ -1070,7 +1116,7 @@ export class LazySandbox {
       await this.deleteSession(sessionId);
     }
     if (!this.deleteOnClose) {
-      this.retainedSessions.set(this.sessionProjectId, sessionId);
+      this.retainSession(this.sessionProjectId, sessionId);
     }
     this.resetSessionState(sessionId);
   }
@@ -1175,6 +1221,14 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
  */
 function isRetryableExecStartError(error: unknown): boolean {
   return error instanceof Error && /fetch failed/i.test(error.message);
+}
+
+function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
+  if (!(error instanceof Error)) return false;
+  const detail = "detail" in error && typeof error.detail === "string"
+    ? error.detail
+    : error.message;
+  return detail.startsWith(`Failed to get sandbox: ${status} `);
 }
 
 /**
