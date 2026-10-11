@@ -232,7 +232,7 @@ jobs:
         timeout-minutes: 5
       # docs:snippets:check runs the integrations guide's TypeScript first call
       # under Node, which needs Node 22.18+ to run .ts files without flags.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         if: ${{ matrix.check == 'lint' }}
         with:
           node-version: "24"
@@ -291,7 +291,7 @@ jobs:
         with:
           warm-cache: "true"
           warm-redis-cache: ${{ matrix.shard == 1 }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
           package-manager-cache: false
@@ -427,7 +427,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
           package-manager-cache: false
@@ -491,7 +491,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
           package-manager-cache: false
@@ -735,7 +735,7 @@ jobs:
           name: coverage-sonar
           path: coverage
       - name: Set up Node for the pinned Sonar action
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
       - name: Fetch the pinned official Sonar action outside the scan workspace
@@ -1589,7 +1589,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -1812,7 +1812,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
