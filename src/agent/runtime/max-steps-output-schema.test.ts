@@ -10,6 +10,11 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../factory.ts";
+import {
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "../ag-ui/encoder.ts";
 import type { AgentConfig } from "../types.ts";
 import { createInvokeAgentTool } from "./agent-delegation.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
@@ -712,6 +717,39 @@ describe("agent max steps output schema", () => {
     );
   });
 
+  it("keeps an exact key-budget object complete when only a hidden property remains", async () => {
+    const expected: Record<string, unknown> = {};
+    for (let index = 0; index < 100; index++) expected[`item${index}`] = index;
+    Object.defineProperty(expected, "hidden", { value: "private", enumerable: false });
+    const schema = defineSchema((v) => v.object({ city: v.string() }).transform(() => expected));
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "exact-key-budget-observation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: schema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+    assertStrictEquals(response.object, expected);
+    const finishes = observed.filter((event) => event.type === "message-finish");
+    assertEquals(finishes.length, 1);
+    const object = finishes[0]?.object as Record<string, unknown>;
+    assertEquals(object.captureStatus, undefined);
+    assertEquals(Object.keys(object).length, 100);
+    for (let index = 0; index < 100; index++) assertEquals(object[`item${index}`], index);
+    assertEquals(Object.hasOwn(object, "hidden"), false);
+  });
+
   it("marks deeply nested parsed objects partial in max-steps observations", async () => {
     const model = createMaxStepsModel('{"city":"Berlin"}');
     const assistant = agent({
@@ -975,6 +1013,61 @@ describe("agent max steps output schema", () => {
     assertEquals(metadata?.warning, "Max steps (1) reached");
     assertEquals(metadata?.outputSchemaError, undefined);
     assertEquals(finished?.object, { city: "Berlin", tempC: 12 });
+  });
+
+  it("preserves a depth-limited capture envelope through streaming finalization", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "stream-depth-truncation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: deepReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const result = await assistant.stream({ input: "Berlin?" });
+    const body = await result.toDataStreamResponse().text();
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = body.split("\n").filter((line) => line.startsWith("data: {")).map((line) =>
+      JSON.parse(line.slice(6))
+    );
+    for (const event of events) mapRuntimeStreamEventToAgUiEvents(state, event);
+    const original = events.find((event) => event.type === "message-finish")?.object;
+    assertEquals(original.captureStatus, "partial");
+    assertEquals(original.reasons, ["max_depth"]);
+    const finish = finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished");
+    assertEquals(finish?.payload.result, original);
+  });
+
+  it("preserves the original array truncation marker through streaming finalization", async () => {
+    const schema = defineSchema((v) =>
+      v.object({ city: v.string() }).transform(() =>
+        Array.from({ length: 150 }, (_, index) => index)
+      )
+    );
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "stream-array-truncation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: schema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const result = await assistant.stream({ input: "Berlin?" });
+    const body = await result.toDataStreamResponse().text();
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = body.split("\n").filter((line) => line.startsWith("data: {")).map((line) =>
+      JSON.parse(line.slice(6))
+    );
+    for (const event of events) mapRuntimeStreamEventToAgUiEvents(state, event);
+    const finish = finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished");
+    assertEquals(finish?.payload.result, {
+      captureStatus: "partial",
+      reasons: ["array_truncated"],
+      value: [...Array.from({ length: 100 }, (_, index) => index), "[truncated 50 items]"],
+    });
+    JSON.stringify(finish?.payload);
   });
 
   for (

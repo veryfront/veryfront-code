@@ -1449,6 +1449,12 @@ function snapshotOutputSchemaObservationValue(
     for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
       if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
       const key = descriptorKeys[keyIndex];
+      if (typeof key !== "string") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
+        continue;
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable) continue;
       if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
         addOutputSchemaObservationReason(reasons, "object_keys_truncated");
         break;
@@ -1457,12 +1463,6 @@ function snapshotOutputSchemaObservationValue(
         addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
         break;
       }
-      if (typeof key !== "string") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
-        continue;
-      }
-      const descriptor = descriptors[key];
-      if (!descriptor?.enumerable) continue;
       if (!ObjectHasOwn(descriptor, "value")) {
         defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
           enumerable: true,

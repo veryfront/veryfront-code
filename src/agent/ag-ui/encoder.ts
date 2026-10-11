@@ -7,6 +7,7 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 import {
   encodePrivateText,
+  privateTextEndsWith,
   privateTextSlice,
   privateTextSplit,
   privateTextStartsWith,
@@ -791,6 +792,23 @@ function hasRemainingEligibleMessageFinishObjectProperty<TInput extends object>(
   return false;
 }
 
+function hasMessageFinishArrayTruncationMarker(input: unknown[], length: number): boolean {
+  if (length !== MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS + 1) return false;
+  const property = objectGetOwnPropertyDescriptor(input, length - 1);
+  if (!property?.enumerable || !objectHasOwn(property, "value")) return false;
+  const value = property.value;
+  if (
+    typeof value !== "string" || !privateTextStartsWith(value, "[truncated ") ||
+    !privateTextEndsWith(value, " items]")
+  ) return false;
+  const count = privateTextSlice(value, 11, value.length - 7);
+  if (count.length === 0 || count[0] === "0") return false;
+  for (let index = 0; index < count.length; index++) {
+    if (count[index]! < "0" || count[index]! > "9") return false;
+  }
+  return true;
+}
+
 function snapshotMessageFinishObjectValue(
   input: unknown,
   context: MessageFinishObjectSnapshotContext = {
@@ -854,7 +872,11 @@ function snapshotMessageFinishObjectValue(
       const length = typeof input.length === "number" && numberIsFinite(input.length)
         ? mathMax(0, mathRound(input.length))
         : 0;
-      const limit = mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
+      // A runtime snapshot contains up to 100 source items plus its omission
+      // marker. Keep that bounded extra entry so another snapshot preserves N.
+      const limit = hasMessageFinishArrayTruncationMarker(input, length)
+        ? length
+        : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
       for (let index = 0; index < limit; index++) {
         const property = objectGetOwnPropertyDescriptor(
           input,
@@ -932,15 +954,62 @@ function snapshotMessageFinishObjectValue(
   }
 }
 
+function readMessageFinishObjectObservation(input: unknown): MessageFinishObjectSnapshot | null {
+  if (input === null || typeof input !== "object") return null;
+  try {
+    const prototype = objectGetPrototypeOf(input);
+    if (prototype !== null && prototype !== objectPrototype) return null;
+    if (reflectOwnKeys(input).length !== 3) return null;
+    const status = objectGetOwnPropertyDescriptor(input, "captureStatus");
+    const reasons = objectGetOwnPropertyDescriptor(input, "reasons");
+    const value = objectGetOwnPropertyDescriptor(input, "value");
+    if (
+      !status?.enumerable || !objectHasOwn(status, "value") ||
+      (status.value !== "partial" && status.value !== "unsupported") ||
+      !reasons?.enumerable || !objectHasOwn(reasons, "value") || !ArrayIsArray(reasons.value) ||
+      !value?.enumerable || !objectHasOwn(value, "value")
+    ) return null;
+    const length = objectGetOwnPropertyDescriptor(reasons.value, "length")?.value;
+    if (!numberIsInteger(length) || length < 1 || length > MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS) {
+      return null;
+    }
+    const copiedReasons: string[] = [];
+    for (let index = 0; index < length; index++) {
+      const reason = objectGetOwnPropertyDescriptor(reasons.value, index);
+      if (
+        !reason?.enumerable || !objectHasOwn(reason, "value") || typeof reason.value !== "string" ||
+        reason.value.length > 128
+      ) return null;
+      addCaptureReason(copiedReasons, reason.value);
+    }
+    return { status: status.value, reasons: copiedReasons, value: value.value };
+  } catch {
+    // Reflection failure cannot establish a capture envelope. The ordinary
+    // snapshot path retains its existing unsupported-value handling.
+    return null;
+  }
+}
+
 function createMessageFinishObjectObservation(
   object: unknown,
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
 ): unknown {
-  const snapshot = snapshotMessageFinishObjectValue(object, {
+  const existing = readMessageFinishObjectObservation(object);
+  const snapshot = snapshotMessageFinishObjectValue(existing ? existing.value : object, {
     remainingBytes: maxOutputBytes,
     remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
     seen: createPrivateWeakStore<object, true>(),
   });
+  if (existing) {
+    for (const reason of primordialArrayValues(snapshot.reasons)) {
+      addCaptureReason(existing.reasons, reason);
+    }
+    return {
+      captureStatus: snapshot.status === "complete" ? existing.status : "partial",
+      reasons: existing.reasons,
+      value: snapshot.value,
+    };
+  }
   if (snapshot.status === "complete") return snapshot.value;
   return {
     captureStatus: snapshot.status,
@@ -1753,6 +1822,15 @@ function finalizeAgUiEventsUnstamped(
   appendEncodedEvents(events, closeOpenTextEvent(state));
   appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
+  let finishObject = state.finishObject;
+  if (finishObject === undefined && response && objectHasOwn(response, "object")) {
+    let value = createMessageFinishObjectObservation(response.object);
+    if (!isMessageFinishMetadataValueWithinDurableBudget({ object: value })) {
+      value = createMessageFinishObjectObservationWithinDurableBudget({}, response.object);
+    }
+    finishObject = { value };
+  }
+
   appendEncodedEvents(events, [{
     event: "RunFinished",
     payload: {
@@ -1762,11 +1840,7 @@ function finalizeAgUiEventsUnstamped(
       // cannot represent arrive as the documented marker. Absent when the agent
       // declares no schema or the output did not parse; a parsed `null` is
       // still reported.
-      ...(state.finishObject !== undefined
-        ? { result: state.finishObject.value }
-        : response?.object !== undefined
-        ? { result: response.object }
-        : {}),
+      ...(finishObject !== undefined ? { result: finishObject.value } : {}),
     },
   }]);
 
