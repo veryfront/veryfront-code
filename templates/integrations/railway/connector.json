@@ -28,7 +28,7 @@
     {
       "id": "railway__list_projects",
       "name": "List Projects",
-      "description": "List Railway projects accessible to the token",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -65,7 +65,7 @@
     {
       "id": "railway__get_project",
       "name": "Get Project",
-      "description": "Get a project with its services and environments",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -88,7 +88,7 @@
     {
       "id": "railway__list_deployments",
       "name": "List Deployments",
-      "description": "List deployments filtered by project, service, or environment",
+      "description": "List deployments",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -148,7 +148,7 @@
     {
       "id": "railway__get_deployment",
       "name": "Get Deployment",
-      "description": "Get a deployment by ID, including redeploy/rollback eligibility",
+      "description": "Get deployment",
       "requiresWrite": false,
       "endpoint": {
         "type": "graphql",
@@ -171,7 +171,7 @@
     {
       "id": "railway__restart_deployment",
       "name": "Restart Deployment",
-      "description": "Restart a running deployment",
+      "description": "Restart deployment",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",
@@ -191,7 +191,7 @@
     {
       "id": "railway__redeploy_deployment",
       "name": "Redeploy Deployment",
-      "description": "Redeploy an existing deployment (creates a new deployment from it)",
+      "description": "Redeploy deployment",
       "requiresWrite": true,
       "endpoint": {
         "type": "graphql",

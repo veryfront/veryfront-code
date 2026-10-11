@@ -37,7 +37,7 @@
     {
       "id": "finapi__search_banks",
       "name": "Search Banks",
-      "description": "Search finAPI's database of supported banks by name, BLZ, BIC, or city, with interface and location filters",
+      "description": "Search banks",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -108,7 +108,7 @@
     {
       "id": "finapi__get_bank",
       "name": "Get Bank",
-      "description": "Retrieve a single bank from finAPI's catalog by its identifier, including supported interfaces and login requirements",
+      "description": "Get bank",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +126,7 @@
     {
       "id": "finapi__get_client_configuration",
       "name": "Get Client Configuration",
-      "description": "Get your finAPI client's configuration: token validity periods, callback URLs, enabled bank sets, and consent settings",
+      "description": "Get client configuration",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -136,7 +136,7 @@
     {
       "id": "finapi__create_user",
       "name": "Create User",
-      "description": "Provision a new finAPI end user (one per application end user); user-level operations then authenticate with that user's own token",
+      "description": "Create user",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

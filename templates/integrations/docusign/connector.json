@@ -46,7 +46,7 @@
     {
       "id": "docusign__get_user_info",
       "name": "Get User Info",
-      "description": "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountId and base_uri (accountHostPrefix) values every other tool needs",
+      "description": "Get user info",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56,7 +56,7 @@
     {
       "id": "docusign__list_envelopes",
       "name": "List Envelopes",
-      "description": "List envelope status changes in an account to track what is sent, delivered, or completed",
+      "description": "List envelopes",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "docusign__get_envelope",
       "name": "Get Envelope",
-      "description": "Get the status and details of a single envelope by ID",
+      "description": "Get envelope",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -145,7 +145,7 @@
     {
       "id": "docusign__list_envelope_recipients",
       "name": "List Envelope Recipients",
-      "description": "List the recipients of an envelope and their signing status",
+      "description": "List envelope recipients",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -180,7 +180,7 @@
     {
       "id": "docusign__create_envelope",
       "name": "Create and Send Envelope",
-      "description": "Create an envelope with documents and recipients and send it for signature",
+      "description": "Create and send envelope",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -230,7 +230,7 @@
     {
       "id": "docusign__resend_envelope",
       "name": "Resend Envelope",
-      "description": "Resend the signing request email to an in-progress envelope's pending recipients, e.g. to chase outstanding signers",
+      "description": "Resend envelope",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -267,7 +267,7 @@
     {
       "id": "docusign__list_templates",
       "name": "List Templates",
-      "description": "List the reusable envelope templates in an account, e.g. to find a template before sending from it",
+      "description": "List templates",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -315,7 +315,7 @@
     {
       "id": "docusign__download_envelope_documents",
       "name": "Download Envelope Documents",
-      "description": "Download all documents of an envelope as a single combined PDF",
+      "description": "Download envelope documents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

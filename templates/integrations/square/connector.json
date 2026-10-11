@@ -44,7 +44,7 @@
     {
       "id": "square__list_payments",
       "name": "List Payments",
-      "description": "List payments taken by the seller account",
+      "description": "List payments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -113,7 +113,7 @@
     {
       "id": "square__get_payment",
       "name": "Get Payment",
-      "description": "Get details of a payment",
+      "description": "Get payment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -141,7 +141,7 @@
     {
       "id": "square__search_orders",
       "name": "Search Orders",
-      "description": "Search orders across locations (read-only search via POST)",
+      "description": "Search orders",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -180,7 +180,7 @@
     {
       "id": "square__list_customers",
       "name": "List Customers",
-      "description": "List customer profiles",
+      "description": "List customers",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -222,7 +222,7 @@
     {
       "id": "square__list_locations",
       "name": "List Locations",
-      "description": "List the seller's business locations",
+      "description": "List locations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -244,7 +244,7 @@
     {
       "id": "square__list_catalog",
       "name": "List Catalog",
-      "description": "List catalog objects such as items and categories",
+      "description": "List catalog",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
