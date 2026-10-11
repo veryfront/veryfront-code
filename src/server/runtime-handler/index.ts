@@ -652,6 +652,7 @@ export function createVeryfrontHandler(
         requestId: lifecycle.requestId,
         request_url: req.url,
         domain: preparedRequest.loggerFacts.domain,
+        environment: preparedRequest.loggerFacts.environment,
         project_slug: preparedRequest.loggerFacts.projectSlug,
         project_id: preparedRequest.loggerFacts.projectId,
         release_id: preparedRequest.loggerFacts.releaseId,
@@ -667,7 +668,7 @@ export function createVeryfrontHandler(
 
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
-      setRequestAttributes(spanInfo.span, req, url);
+      setRequestAttributes(spanInfo.span, req, url, proxyTrusted === true);
 
       // Reject untrusted/malformed proxy identity before any project-keyed
       // accounting is touched. In particular, isolation creates per-slug

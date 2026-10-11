@@ -210,6 +210,31 @@ async function assertJsonResponse(
 }
 
 describe("prepareProjectRequest", () => {
+  it("records preview target facts only from a trusted proxy", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: {
+        host: "runtime.internal",
+        "x-forwarded-host": "demo.preview.example.com",
+        "x-project-slug": "demo",
+        "x-token": "test-token",
+        "x-environment": "preview",
+      },
+    });
+    for (const trusted of [true, false]) {
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(trusted),
+      });
+      assertEquals(
+        prepared.loggerFacts.domain,
+        trusted ? "demo.preview.example.com" : "runtime.internal",
+      );
+      assertEquals(prepared.loggerFacts.environment, trusted ? "preview" : undefined);
+    }
+  });
+
   it("reuses explicit false proxy trust for headers and request context", async () => {
     let trustChecks = 0;
     const req = new Request("http://localhost/page", {

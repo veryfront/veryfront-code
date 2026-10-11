@@ -120,6 +120,25 @@ describe("server/runtime-handler/tracing", () => {
   });
 
   describe("setRequestAttributes", () => {
+    it("uses the preview host only after proxy trust is established", () => {
+      const req = new Request("http://runtime.internal/page", {
+        headers: { host: "runtime.internal", "x-forwarded-host": "demo.preview.example.com" },
+      });
+      for (const trusted of [true, false]) {
+        const recorded: Record<string, unknown> = {};
+        const span = {
+          setAttribute: (key: string, value: unknown) => {
+            recorded[key] = value;
+          },
+        };
+        setRequestAttributes(span, req, new URL(req.url), trusted);
+        assertEquals(
+          recorded["http.host"],
+          trusted ? "demo.preview.example.com" : "runtime.internal",
+        );
+      }
+    });
+
     it("should not throw when span is null/undefined", () => {
       const req = new Request("http://localhost/test");
       const url = new URL(req.url);

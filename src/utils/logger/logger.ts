@@ -96,6 +96,7 @@ export interface LogEntry {
   project_slug?: string;
   request_url?: string;
   domain?: string;
+  environment?: string;
   project_id?: string;
   process_role?: string;
   release_id?: string;
@@ -530,6 +531,7 @@ class ConsoleLogger implements Logger {
     // runs, so scrub credential-shaped text while preserving the field value.
     extractToEntryField(entry, mergedContext, "request_url", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "domain", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "environment", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "project_id", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "release_id", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "branch_id", sanitizeStringFieldValue);

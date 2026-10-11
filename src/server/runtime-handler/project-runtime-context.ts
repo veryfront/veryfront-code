@@ -138,6 +138,7 @@ export interface ProjectRuntimeContextResolution {
 
 interface RequestContextFacts {
   domain: string;
+  environment: string | undefined;
   projectSlug: string | undefined;
   projectId: string | undefined;
   releaseId: string | undefined;
@@ -186,6 +187,7 @@ export async function prepareProjectRequest(
       requestContext: { slug: binding.projectSlug, branch: null, mode: "production", token: "" },
       proxyTrust: { proxyTrusted: false, identityHeadersTrusted: false },
       loggerFacts: {
+        environment: "production",
         domain: url.hostname,
         projectSlug: binding.projectSlug,
         projectId: binding.projectId,
@@ -215,7 +217,7 @@ export async function prepareProjectRequest(
     allowHostTokenFallback: !isProxyMode,
   });
 
-  const hostHeader = req.headers.get("host") ?? url.host;
+  const hostHeader = getEffectiveRequestHost(req, url, proxyTrusted === true);
   const domain = hostHeader.replace(/:\d+$/, "");
 
   return {
@@ -225,6 +227,7 @@ export async function prepareProjectRequest(
     proxyTrust: { proxyTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
+      environment: headers.environment,
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,
       releaseId: headers.releaseId,
