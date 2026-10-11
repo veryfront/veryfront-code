@@ -567,7 +567,8 @@ stored value is a marker object instead:
   `unsupported_number`, `unsupported_undefined`, `unsupported_property`,
   `accessor_property`,
   `circular`, `max_depth`, `array_truncated`, `object_keys_truncated`,
-  `string_truncated`, `aggregate_budget_exhausted` or `object_key_unsupported`.
+  `string_truncated`, `aggregate_budget_exhausted`, `object_key_unsupported`
+  or `serialized_budget_exhausted`.
 - `value` holds the JSON-safe part. Each value that could not be captured is
   replaced with a string placeholder:
   - `"[unsupported bigint]"`, `"[unsupported undefined]"`,
@@ -592,6 +593,13 @@ stored value is a marker object instead:
   is replaced with `"[truncated message-finish object budget]"`
   (`aggregate_budget_exhausted`). A key longer than 16 KiB is left out
   (`object_key_unsupported`).
+
+  The stored run event that carries the snapshot is also limited to 240 KiB,
+  together with the finish reason and usage. When the snapshot would exceed it,
+  strings are cut further, so a 300 KiB string is truncated even though it is
+  under 1 MiB. If no truncated snapshot fits, for example because its keys
+  alone are too large, the stored value is
+  `{ "captureStatus": "partial", "reasons": ["serialized_budget_exhausted"], "value": "[truncated message-finish object budget]" }`.
 
 ## Runtime UTC context
 
