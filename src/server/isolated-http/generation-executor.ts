@@ -118,8 +118,15 @@ export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): strin
     input.allocation.source,
     input.configuration ?? null,
     // The request filter lowercases and deduplicates these names, so compare them that way.
-    [...new Set(input.headerOptions.denyHeaders?.map((name) => name.toLowerCase()))].sort(),
+    [...new Set(input.headerOptions.denyHeaders?.map((name) => name.toLowerCase()))]
+      .sort(compareCodeUnits),
   ]);
+}
+
+/** Locale-independent order by UTF-16 code units. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }
 
 function timerDelay(value: number): number {
