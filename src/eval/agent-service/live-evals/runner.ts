@@ -175,6 +175,25 @@ function assertLiveEvalRunnerConfig(config: LiveEvalRunnerConfig): void {
   );
 }
 
+function hasJudgeRunError(run: ParsedRun): boolean {
+  return run.eventTypes.includes(agUiSseEventTypes.runError);
+}
+
+function hasSuccessfulJudgeTerminal(run: ParsedRun, rootRunId: string): boolean {
+  if (hasJudgeRunError(run)) {
+    return false;
+  }
+
+  return run.events.some((event) => {
+    if (getStringField(event, "type") !== agUiSseEventTypes.runFinished) {
+      return false;
+    }
+
+    const eventRunId = getStringField(event, "runId") ?? getStringField(event, "run_id");
+    return eventRunId === null || eventRunId === rootRunId;
+  });
+}
+
 function createLiveEvalJudgeSupport(
   config: Pick<
     LiveEvalRunnerConfig,
@@ -220,6 +239,12 @@ function createLiveEvalJudgeSupport(
       const run = await parseSseResponse(response);
       if (run.responseStatus !== 200) {
         return { pass: false, reason: `judge returned HTTP ${run.responseStatus}` };
+      }
+      if (hasJudgeRunError(run)) {
+        return { pass: false, reason: "judge reported RUN_ERROR" };
+      }
+      if (!hasSuccessfulJudgeTerminal(run, body.runId)) {
+        return { pass: false, reason: "judge stream ended before RUN_FINISHED" };
       }
       const line = run.text
         .split("\n")
