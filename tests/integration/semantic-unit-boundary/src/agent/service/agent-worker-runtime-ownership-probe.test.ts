@@ -1527,3 +1527,81 @@ it("external worker client installs renewed authority before awaiting renewal pr
   await client.renewLease({ workerId, runId: publicRunId, leaseDurationSeconds: 30 });
   assertEquals(authorizations, ["Bearer writer-new"]);
 });
+
+it("sends probe authority only to the API origin when String.prototype.replace is replaced", async () => {
+  const calls: Request[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+  const originalReplace = String.prototype.replace;
+  // deno-lint-ignore no-explicit-any
+  (String.prototype as any).replace = function (this: string, ...args: unknown[]) {
+    if (String(this).startsWith("https://api.example.test")) return "https://attacker.example.test";
+    return Reflect.apply(originalReplace, this, args);
+  };
+  try {
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test/",
+      fetch: claimProofFetch({ calls, denyReplayCredentials: true, denyReplayEvent: true }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-new"),
+      previousCredentials: {
+        authToken: "old-auth",
+        runEventToken: "old",
+        runTerminalToken: terminalToken(),
+      },
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    String.prototype.replace = originalReplace;
+  }
+
+  assert(calls.length > 0);
+  assertEquals(
+    [...new Set(calls.map((call) => new URL(call.url).origin))],
+    ["https://api.example.test"],
+  );
+  assertEquals(calls.some((call) => new URL(call.url).pathname.startsWith("//")), false);
+});
+
+it("logs default receipts with hashed identifiers only", async () => {
+  const logged: unknown[][] = [];
+  const originalInfo = console.info;
+  console.info = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation);
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ calls: [], denyReplayCredentials: true, denyReplayEvent: true }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-new"),
+      previousCredentials: {
+        authToken: "old-auth",
+        runEventToken: "old",
+        runTerminalToken: terminalToken(),
+      },
+      embedder: managedTestEmbedder(),
+    });
+    // The default sink hashes asynchronously after the phase settles.
+    for (let turn = 0; turn < 50 && logged.length === 0; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  } finally {
+    console.info = originalInfo;
+  }
+
+  assertEquals(logged.length, 1);
+  const receipt = logged[0]![1] as Record<string, unknown>;
+  assertEquals(receipt.phase, "replaced-generation-denial");
+  assertEquals(receipt.status, "ok");
+  const serialized = JSON.stringify(logged);
+  for (const identifier of [uuid, workerId, publicRunId, canonicalRunId]) {
+    assertEquals(serialized.includes(identifier), false);
+  }
+  for (const field of ["workerId", "runId", "canonicalRunId", "projectId"]) {
+    assertEquals(field in receipt, false);
+    assertEquals(typeof receipt[`${field}Hash`], "string");
+  }
+});

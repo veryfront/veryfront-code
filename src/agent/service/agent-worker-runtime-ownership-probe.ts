@@ -27,6 +27,7 @@ const RuntimeJSONstringify = JSON.stringify;
 const RuntimeObjectKeys = Object.keys;
 const RuntimeMathFround = Math.fround;
 const RuntimeStringPrototypeReplaceAll = String.prototype.replaceAll;
+const RuntimeStringPrototypeSlice = String.prototype.slice;
 const RuntimeStringPrototypeSplit = String.prototype.split;
 const RuntimeReflectApply = Reflect.apply;
 const RuntimeMapPrototypeClear = Map.prototype.clear;
@@ -336,6 +337,21 @@ function workerGenerationHeaders(
   return { "X-Veryfront-Worker-Generation": generation };
 }
 
+/**
+ * Join the API origin and a probe path without patchable string methods: the
+ * result decides where a bearer token is sent. Index reads on a primitive
+ * string and the captured slice cannot be redirected by worker code.
+ */
+function probeRequestUrl(apiUrl: string, path: string): string {
+  if (typeof apiUrl !== "string" || typeof path !== "string" || path[0] !== "/") {
+    throw new TypeError("Probe request target is invalid");
+  }
+  const base = apiUrl[apiUrl.length - 1] === "/"
+    ? RuntimeReflectApply(RuntimeStringPrototypeSlice, apiUrl, [0, -1]) as string
+    : apiUrl;
+  return base + path;
+}
+
 async function requestJson(
   input: AgentWorkerRuntimeOwnershipProbeClaimInput,
   method: "GET" | "POST" | "PUT",
@@ -348,7 +364,7 @@ async function requestJson(
     throw new DOMException("Probe operation deadline exceeded", "TimeoutError");
   }
   const signal = RuntimeAbortSignalTimeout(inputTimeout(input));
-  const response = await input.fetch(`${input.apiUrl.replace(/\/$/, "")}${path}`, {
+  const response = await input.fetch(probeRequestUrl(input.apiUrl, path), {
     method,
     signal,
     headers: {
@@ -356,7 +372,7 @@ async function requestJson(
       "Content-Type": "application/json",
       ...extraHeaders,
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : RuntimeJSONstringify(body),
   });
   return { status: response.status, ok: response.ok, body: await readResponseBody(response) };
 }
@@ -1585,8 +1601,38 @@ async function cancelledChildDenied(
   }
 }
 
+const RECEIPT_IDENTIFIER_FIELDS = [
+  "workerId",
+  "runId",
+  "canonicalRunId",
+  "projectId",
+  "sourcePath",
+] as const;
+
+/**
+ * Log form of a receipt. Account and execution identifiers are replaced by
+ * their hashes, which still correlate receipts of one run. A custom sink
+ * receives the unredacted receipt.
+ */
+async function redactAgentWorkerRuntimeOwnershipProbeReceipt(
+  receipt: AgentWorkerRuntimeOwnershipProbeReceipt,
+): Promise<Record<string, unknown>> {
+  const redacted: Record<string, unknown> = { ...receipt };
+  for (const field of RECEIPT_IDENTIFIER_FIELDS) {
+    const value = receipt[field];
+    if (value === undefined) continue;
+    delete redacted[field];
+    redacted[`${field}Hash`] = await computeHash(value);
+  }
+  return redacted;
+}
+
 function defaultReceiptSink(receipt: AgentWorkerRuntimeOwnershipProbeReceipt): void {
-  console.info("[agent-worker-runtime-ownership-probe] receipt", receipt);
+  void redactAgentWorkerRuntimeOwnershipProbeReceipt(receipt).then(
+    (redacted) => console.info("[agent-worker-runtime-ownership-probe] receipt", redacted),
+    // A receipt that cannot be redacted is not logged.
+    () => console.info("[agent-worker-runtime-ownership-probe] receipt unavailable"),
+  );
 }
 
 export function createAgentWorkerRuntimeOwnershipProbe(
