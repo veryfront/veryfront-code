@@ -325,7 +325,8 @@ it("still rejects invalid references in both the reference and legacy forms", as
 
 // The load_skill definition is sent with every model request. This budget
 // covers the serialized provider definition (description plus input schema) so
-// per-request context growth needs a deliberate change here.
+// per-request context growth needs a deliberate change here. Raise it only in
+// the same pull request that grows the definition, and state the new size there.
 const LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS = 1_900;
 
 it("keeps the advertised load_skill definition within its character budget", () => {

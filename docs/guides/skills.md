@@ -102,10 +102,11 @@ also expose the two supporting skill tools when skill access is enabled:
 
 Hosted chat providers use nested `load_skill` input. After loading a skill,
 hosted chat can read only a reference listed by that skill through
-`load_skill({ reference: { skillId, file } })`. The tool schema advertises only
-this form. The older `load.file` form is no longer advertised, but it remains
-accepted for existing callers. Hosted chat does not execute skill scripts
-directly.
+`load_skill({ reference: { skillId, file } })`. The `load.file` form is no
+longer advertised, but it remains accepted for existing callers. After a form
+input is submitted, the tool instead offers only the flat `{ skillId, file }`
+form, limited to the active skill's references. Hosted chat does not execute
+skill scripts directly.
 
 Read the skill's load result before selecting a reference path. Hosted chat
 rejects a reference read in the same step as the skill's first body load. Retry
