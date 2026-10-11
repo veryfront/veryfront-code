@@ -31,8 +31,8 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * a non-cacheable project-execution-unavailable response without host execution fallback.
  * Control-plane routes retain their existing handlers. Preview mode (including Markdown
  * preview), component snippets (GET) and WebSocket upgrades (including preview HMR) are
- * unsupported under isolation and refused. A refused WebSocket upgrade receives no 101; on
- * Node.js the upgrade transport closes the connection rather than writing the 503 body.
+ * unsupported under isolation and refused. A refused WebSocket upgrade receives a 503 without
+ * a body and no 101; on Node.js the upgrade transport then closes the connection.
  * The installed application handles its own authentication, CORS and middleware.
  * Source publication, resolver authorization and executor deployment remain caller prerequisites.
  */
@@ -77,6 +77,11 @@ function unavailable(
   request: Request,
   detail = "An authorized isolated application release is unavailable",
 ): Response {
+  // An upgrade transport may close the socket without reading a body, so a refused
+  // upgrade carries none and its request tracking completes immediately.
+  if (isWebSocketUpgrade(request)) {
+    return new Response(null, { status: 503, headers: { "cache-control": "no-store" } });
+  }
   const response = createErrorResponseFromDefinition(PROJECT_EXECUTION_UNAVAILABLE, {
     detail,
     instance: new URL(request.url).pathname,

@@ -182,7 +182,6 @@ describe("hosted HTTP ingress", () => {
       const input of [
         new Request("https://app.example/@/components/card.snippet.mdx"),
         new Request("https://app.example/@components/card"),
-        new Request("https://app.example/_ws", { headers: { upgrade: "websocket" } }),
       ]
     ) {
       const response = await fetch(input, selection);
@@ -190,6 +189,14 @@ describe("hosted HTTP ingress", () => {
       assertEquals(response.headers.get("cache-control"), "no-store");
       assertEquals((await response.json()).detail, "This surface is unsupported under isolation");
     }
+    // A refused upgrade has no body, so a transport that drops it leaves nothing pending.
+    const upgrade = await fetch(
+      new Request("https://app.example/_ws", { headers: { upgrade: "websocket" } }),
+      selection,
+    );
+    assertEquals(upgrade.status, 503);
+    assertEquals(upgrade.headers.get("cache-control"), "no-store");
+    assertEquals(upgrade.body, null);
     assertEquals(
       (await fetch(request(), { ...selection, mode: "preview" })).status,
       503,

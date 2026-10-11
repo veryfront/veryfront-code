@@ -444,11 +444,15 @@ it("refuses preview HMR, preview hosts and modes, and snippets under isolation w
       );
       assertEquals(response.status, 503, path);
       assertEquals(response.headers.get("cache-control"), "no-store");
-      assertEquals(
-        (await response.json()).detail,
-        "This surface is unsupported under isolation",
-        path,
-      );
+      if ("upgrade" in extra) {
+        assertEquals(response.body, null, path);
+      } else {
+        assertEquals(
+          (await response.json()).detail,
+          "This surface is unsupported under isolation",
+          path,
+        );
+      }
     }
     assertEquals(resolutions, 0);
     assertEquals(hostReads, 0);
