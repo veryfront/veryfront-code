@@ -85,6 +85,8 @@ interface HostedHttpCompositionDependencies {
   isOverrideEnabled?: () => boolean;
   /** @internal Startup host file read bound; replaced in hermetic tests. */
   hostFileReadTimeoutMs?: number;
+  /** @internal Broker token read bound; replaced in hermetic tests. */
+  tokenReadTimeoutMs?: number;
   /** @internal Runtime support check; replaced in hermetic tests. */
   runtime?: () => HostedHttpRuntimeSupport;
   /** @internal Monotonic clock for the source records refresh; replaced in hermetic tests. */
@@ -425,24 +427,40 @@ export async function createHostedHttpComposition(
     refreshMs: SOURCE_RECORDS_REFRESH_MS,
   });
   const tokenFile = config.brokerTokenFile;
-  let tokenRead: Promise<string> | undefined;
+  const tokenReadTimeoutMs = dependencies.tokenReadTimeoutMs ?? TOKEN_READ_TIMEOUT_MS;
+  let tokenRead: { promise: Promise<string>; timedOut: boolean } | undefined;
   const allocator = (dependencies.createAllocatorClient ?? createHostedExecutorAllocatorClient)({
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
       // A file read cannot be interrupted once in flight. At most one raw read runs
       // at a time and callers share it; each caller races it against its own signal
-      // and a fixed bound, so a stalled file system cannot accumulate reads.
-      tokenRead ??= readBoundedText(
-        read,
-        "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
-        tokenFile,
-        MAX_TOKEN_BYTES,
-      ).finally(() => {
-        tokenRead = undefined;
-      });
-      const token = (await settleWithin(tokenRead, signal, TOKEN_READ_TIMEOUT_MS)).trim();
-      if (!token) throw new Error("Executor broker token is unavailable");
+      // and a fixed bound, so a stalled file system cannot accumulate reads. A read
+      // that outlives the bound may return a token rotated away meanwhile: it stays
+      // only to block a second read, its result is never used, and callers are
+      // refused until it settles and the next caller reads again.
+      if (tokenRead?.timedOut) throw new Error("Executor broker token is unavailable");
+      if (!tokenRead) {
+        const entry = { timedOut: false } as { promise: Promise<string>; timedOut: boolean };
+        entry.promise = readBoundedText(
+          read,
+          "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
+          tokenFile,
+          MAX_TOKEN_BYTES,
+        ).finally(() => {
+          if (tokenRead === entry) tokenRead = undefined;
+        });
+        tokenRead = entry;
+      }
+      const current = tokenRead;
+      let token: string;
+      try {
+        token = (await settleWithin(current.promise, signal, tokenReadTimeoutMs)).trim();
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "TimeoutError") current.timedOut = true;
+        throw error;
+      }
+      if (current.timedOut || !token) throw new Error("Executor broker token is unavailable");
       return token;
     },
   });

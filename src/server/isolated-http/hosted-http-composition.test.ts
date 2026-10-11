@@ -507,6 +507,46 @@ describe("hosted HTTP host composition", () => {
     assertEquals(tokenReads, 2);
   });
 
+  it("never uses a broker token read that outlived its bound", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let tokenReads = 0;
+    const stalled = Promise.withResolvers<Uint8Array>();
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      tokenReadTimeoutMs: 50,
+      readFile: (path) => {
+        if (path !== "/host/token") return host.readFile(path);
+        tokenReads++;
+        return tokenReads === 1
+          ? stalled.promise
+          : Promise.resolve(new TextEncoder().encode("broker-token-3"));
+      },
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    const readToken = () => allocatorOptions!.readBrokerToken(new AbortController().signal);
+    // A caller that joins before the first caller times out shares the same read, and its
+    // own bound runs later than the first caller's.
+    const first = readToken();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const joined = readToken();
+    await assertRejects(() => first, Error, "timed out");
+    // While the timed-out read is pending, new callers are refused without a second read.
+    await assertRejects(readToken, Error, "unavailable");
+    // The timed-out read settles with a pre-rotation token: nobody receives it.
+    stalled.resolve(new TextEncoder().encode("rotated-away"));
+    await assertRejects(() => joined, Error, "unavailable");
+    assertEquals(tokenReads, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(await readToken(), "broker-token-3");
+    assertEquals(tokenReads, 2);
+  });
+
   it("detaches a broker token read that never settles", async () => {
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();
