@@ -434,6 +434,7 @@ import {
 } from "./tool-result-context-tools.ts";
 
 const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
@@ -1297,6 +1298,14 @@ function snapshotOutputSchemaObservationValue(
       reasons: ["aggregate_budget_exhausted"],
     };
   }
+  if (typeof value === "number" && !NumberIsFinite(value)) {
+    // JSON has no NaN or Infinity; serializing them would silently store null.
+    return {
+      value: "[unsupported number]",
+      status: "unsupported",
+      reasons: ["unsupported_number"],
+    };
+  }
   if (
     value === null || typeof value === "string" || typeof value === "number" ||
     typeof value === "boolean"
@@ -1440,6 +1449,12 @@ function snapshotOutputSchemaObservationValue(
     for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
       if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
       const key = descriptorKeys[keyIndex];
+      if (typeof key !== "string") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
+        continue;
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable) continue;
       if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
         addOutputSchemaObservationReason(reasons, "object_keys_truncated");
         break;
@@ -1448,12 +1463,6 @@ function snapshotOutputSchemaObservationValue(
         addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
         break;
       }
-      if (typeof key !== "string") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
-        continue;
-      }
-      const descriptor = descriptors[key];
-      if (!descriptor?.enumerable) continue;
       if (!ObjectHasOwn(descriptor, "value")) {
         defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
           enumerable: true,
@@ -1483,7 +1492,9 @@ function snapshotOutputSchemaObservationValue(
   }
 }
 
-function createOutputSchemaObservationObject(object: unknown): unknown {
+function createOutputSchemaObservationFields(
+  object: unknown,
+): { object: unknown; objectEncoding: "snapshot" | undefined } {
   let snapshot: OutputSchemaObservationSnapshot;
   try {
     snapshot = snapshotOutputSchemaObservationValue(object);
@@ -1494,11 +1505,10 @@ function createOutputSchemaObservationObject(object: unknown): unknown {
       reasons: ["unsupported_object"],
     };
   }
-  if (snapshot.status === "complete") return snapshot.value;
+  if (snapshot.status === "complete") return { object: snapshot.value, objectEncoding: undefined };
   return {
-    captureStatus: snapshot.status,
-    reasons: snapshot.reasons,
-    value: snapshot.value,
+    object: { captureStatus: snapshot.status, reasons: snapshot.reasons, value: snapshot.value },
+    objectEncoding: "snapshot",
   };
 }
 
@@ -1506,12 +1516,9 @@ function withOutputSchemaObservationObject<
   TTurn extends RuntimeGenerateTextResult & { object?: unknown },
 >(
   turn: TTurn,
-): TTurn {
+): TTurn & { objectEncoding?: "snapshot" } {
   if (!("object" in turn)) return turn;
-  return {
-    ...turn,
-    object: createOutputSchemaObservationObject(turn.object),
-  };
+  return { ...turn, ...createOutputSchemaObservationFields(turn.object) };
 }
 
 function buildGeneratedAssistantMessage(
@@ -3706,9 +3713,7 @@ export class AgentRuntime {
               type: "message-finish",
               ...(finishReason ? { finishReason } : {}),
               ...(finishUsage ? { totalUsage: finishUsage } : {}),
-              ...("object" in response && response.object !== undefined
-                ? { object: response.object }
-                : {}),
+              ...("object" in response ? createOutputSchemaObservationFields(response.object) : {}),
             });
             closeSSEStream(controller);
           } catch (streamError) {
@@ -4150,9 +4155,7 @@ export class AgentRuntime {
             await observeGeneratedAgentTurnFinish({
               finishReason: turn.finishReason,
               usage: turn.usage,
-              ...("object" in turn
-                ? { object: createOutputSchemaObservationObject(turn.object) }
-                : {}),
+              ...("object" in turn ? createOutputSchemaObservationFields(turn.object) : {}),
             });
           }
           generatedTurnFinishObserved = true;
