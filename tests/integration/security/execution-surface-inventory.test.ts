@@ -56,41 +56,20 @@ const PREDICATES = new Set([
 const FLAG = "allowHostProjectCodeExecution";
 
 /**
- * The operator-owned override that grants host execution. A file that names it reads the
- * grant directly instead of calling a predicate, so each one is listed here by hand.
+ * The operator-owned override that grants host execution. A file that names the constant
+ * or the environment variable in code reads the grant directly instead of calling a
+ * predicate. Each file and its number of code references is listed here by hand; comments
+ * and longer strings that merely mention the name do not count.
  */
-const OPERATOR_GATE_NAMES = [
-  "HOST_PROJECT_EXECUTION_OVERRIDE_ENV",
-  "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
-];
-const OPERATOR_GATE_READERS = [
-  "src/security/host-execution-policy.ts",
-  "src/security/sandbox/worker-pool.ts",
-  "src/server/handlers/request/api/project-discovery.ts",
-  "src/server/production-server.ts",
-];
-
-async function operatorGateReaders(): Promise<string[]> {
-  const readers: string[] = [];
-  async function walk(relativeDir: string): Promise<void> {
-    for await (const entry of Deno.readDir(`${REPO_ROOT}${relativeDir}`)) {
-      const relativePath = `${relativeDir}${entry.name}`;
-      if (entry.isDirectory) {
-        await walk(`${relativePath}/`);
-        continue;
-      }
-      if (
-        !/\.[cm]?[jt]sx?$/.test(entry.name) ||
-        /\.(?:test|test-helpers)\.[cm]?[jt]sx?$/.test(entry.name) ||
-        entry.name.endsWith(".d.ts")
-      ) continue;
-      const text = await Deno.readTextFile(`${REPO_ROOT}${relativePath}`);
-      if (OPERATOR_GATE_NAMES.some((name) => text.includes(name))) readers.push(relativePath);
-    }
-  }
-  for (const root of SCANNED_ROOTS) await walk(root);
-  return readers.toSorted();
-}
+const OPERATOR_GATE_CONSTANT = "HOST_PROJECT_EXECUTION_OVERRIDE_ENV";
+const OPERATOR_GATE_VARIABLE = "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION";
+const OPERATOR_GATE_READS: Record<string, number> = {
+  // The definition, its literal, and the default read.
+  "src/security/host-execution-policy.ts": 3,
+  // Import (2 identifiers) and the name reported in diagnostics.
+  "src/server/handlers/request/api/project-discovery.ts": 3,
+  "src/server/production-server.ts": 3,
+};
 
 /**
  * Files that decide whether tenant code may run on the host, the surface each one guards,
@@ -311,6 +290,8 @@ interface SourceAnalysis {
   grants: number;
   /** `isLocalProject !== true` checks. */
   localProjectChecks: number;
+  /** Code references to the operator execution override constant or variable. */
+  gateReads: number;
 }
 
 type SyntaxNode = { type: string; [key: string]: unknown };
@@ -494,7 +475,7 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
       ? ["typescript", "jsx", ...shared]
       : ["jsx", ...shared],
   });
-  const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0 };
+  const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0, gateReads: 0 };
   const predicates = predicateAliases(ast.program as unknown as SyntaxNode);
 
   const visitChildren = (node: SyntaxNode, inType: boolean, skip?: unknown) => {
@@ -536,6 +517,10 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
         return;
       case "Identifier":
         if (node.name === FLAG) result.guards++;
+        if (node.name === OPERATOR_GATE_CONSTANT) result.gateReads++;
+        break;
+      case "StringLiteral":
+        if (node.value === OPERATOR_GATE_VARIABLE) result.gateReads++;
         break;
       case "MemberExpression":
       case "OptionalMemberExpression":
@@ -719,7 +704,11 @@ async function readSources(): Promise<Map<string, SourceAnalysis>> {
       ) continue;
       const text = await Deno.readTextFile(`${REPO_ROOT}${relativePath}`);
       // A file that never names a predicate or the flag cannot count; skip parsing it.
-      if (!text.includes(FLAG) && ![...PREDICATES].some((name) => text.includes(name))) {
+      if (
+        !text.includes(FLAG) && !text.includes(OPERATOR_GATE_CONSTANT) &&
+        !text.includes(OPERATOR_GATE_VARIABLE) &&
+        ![...PREDICATES].some((name) => text.includes(name))
+      ) {
         continue;
       }
       try {
@@ -1011,13 +1000,19 @@ describe("execution surface inventory", () => {
     assertEquals(analysis.grants, 3);
   });
 
-  it("lists every file that reads the operator execution override", async () => {
+  it("counts every code reference to the operator execution override", async () => {
+    const all = await sources();
+    const found = Object.fromEntries(
+      [...all.entries()]
+        .filter(([, analysis]) => analysis.gateReads > 0)
+        .map(([path, analysis]) => [path, analysis.gateReads] as const)
+        .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
     assertEquals(
-      await operatorGateReaders(),
-      OPERATOR_GATE_READERS.toSorted(),
-      "A file names the operator execution override that is not listed in " +
-        "OPERATOR_GATE_READERS, or a listed file no longer names it. Review the read, then " +
-        "update the list.",
+      found,
+      OPERATOR_GATE_READS,
+      "A file references the operator execution override in code a different number of " +
+        "times than OPERATOR_GATE_READS records. Review each read, then update the entry.",
     );
   });
 });
