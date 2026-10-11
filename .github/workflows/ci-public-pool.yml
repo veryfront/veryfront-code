@@ -108,7 +108,7 @@ jobs:
         timeout-minutes: 5
       # docs:snippets:check runs the integrations guide's TypeScript first call
       # under Node, which needs Node 22.18+ to run .ts files without flags.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ inputs.check == 'lint' }}
         with:
           node-version: "24"
@@ -219,7 +219,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           package-manager-cache: false
@@ -251,7 +251,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -284,7 +284,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -320,7 +320,7 @@ jobs:
             import { MINIMUM_NODE_VERSION } from "./scripts/build/runtime-support.ts";
             console.log(`version=${MINIMUM_NODE_VERSION}`);
           ' >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ steps.node-version.outputs.version }}
           package-manager-cache: false
@@ -341,7 +341,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -371,7 +371,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -408,7 +408,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ inputs.node-version }}
           package-manager-cache: false
@@ -447,7 +447,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
