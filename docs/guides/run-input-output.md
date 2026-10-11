@@ -46,9 +46,10 @@ written before a tool call is intermediate narration and is not part of the
 output. When the agent declares `outputSchema`, the hosted runtime reports a JSON
 snapshot of the parsed value as `result` on the `RunFinished` event, and the run
 stores that snapshot instead of the text. The snapshot equals the parsed value
-when it is plain JSON. Otherwise it is a marker object with `captureStatus`,
-`reasons` and `value` fields. See [Agents](./agents.md) for structured output
-and the marker fields.
+when it is plain JSON within the snapshot size limits. Otherwise it is a marker
+object with `captureStatus`, `reasons` and `value` fields. See
+[Agents](./agents.md) for structured output, the size limits and the marker
+fields.
 
 ### Workflows
 

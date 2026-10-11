@@ -547,9 +547,10 @@ failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
 
 `response.object` in your own code is always the parsed value. The snapshot
-equals it when the value is plain JSON: strings, finite numbers, booleans,
-`null`, arrays and plain objects. Otherwise, for example when an `outputSchema`
-transform returns a `Date`, a `bigint` or `undefined`, the stored value is a
+equals it when the value is plain JSON (strings, finite numbers, booleans,
+`null`, arrays and plain objects) and stays within the size limits below.
+Otherwise, for example when an `outputSchema` transform returns a `Date`, a
+`bigint` or `undefined`, or when a string is too long, the stored value is a
 marker object instead:
 
 ```json
@@ -564,7 +565,8 @@ marker object instead:
   `unsupported` when none of it could be.
 - `reasons` lists why, for example `unsupported_object`, `unsupported_bigint`,
   `unsupported_undefined`, `unsupported_property`, `accessor_property`,
-  `circular`, `max_depth`, `array_truncated` or `object_keys_truncated`.
+  `circular`, `max_depth`, `array_truncated`, `object_keys_truncated`,
+  `string_truncated`, `aggregate_budget_exhausted` or `object_key_unsupported`.
 - `value` holds the JSON-safe part. Each value that could not be captured is
   replaced with a string placeholder:
   - `"[unsupported bigint]"`, `"[unsupported undefined]"`,
@@ -577,7 +579,12 @@ marker object instead:
   - `"[truncated nested data]"` below the depth limit.
 
   The snapshot keeps at most 100 array items or object keys per level, 32
-  levels and 1,000 nodes in total.
+  levels and 1,000 nodes in total. String content is limited to 1 MiB per
+  string and 1 MiB across the whole snapshot: a longer string is cut and ends
+  with `"… [truncated]"` (`string_truncated`), and a string that no longer fits
+  is replaced with `"[truncated message-finish object budget]"`
+  (`aggregate_budget_exhausted`). A key longer than 16 KiB is left out
+  (`object_key_unsupported`).
 
 ## Runtime UTC context
 
