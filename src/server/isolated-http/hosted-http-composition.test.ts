@@ -8,6 +8,7 @@ import {
   createRefreshingSourceRecordLookup,
   isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
+  readHostFilePrefix,
   settleWithin,
 } from "./hosted-http-composition.ts";
 
@@ -545,6 +546,77 @@ describe("hosted HTTP host composition", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assertEquals(await readToken(), "broker-token-3");
     assertEquals(tokenReads, 2);
+  });
+
+  it("retires a broker token read once a waiter aborts", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let tokenReads = 0;
+    const stalled = Promise.withResolvers<Uint8Array>();
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      readFile: (path) => {
+        if (path !== "/host/token") return host.readFile(path);
+        tokenReads++;
+        return tokenReads === 1
+          ? stalled.promise
+          : Promise.resolve(new TextEncoder().encode("broker-token-3"));
+      },
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    const controller = new AbortController();
+    const aborted = allocatorOptions!.readBrokerToken(controller.signal);
+    controller.abort(new Error("request canceled"));
+    await assertRejects(() => aborted, Error, "request canceled");
+    // The token file rotates while the abandoned read stalls: nobody may join it.
+    const later = () => allocatorOptions!.readBrokerToken(new AbortController().signal);
+    await assertRejects(later, Error, "unavailable");
+    assertEquals(tokenReads, 1);
+    stalled.resolve(new TextEncoder().encode("rotated-away"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(await later(), "broker-token-3");
+    assertEquals(tokenReads, 2);
+  });
+
+  it("wipes the host file read buffer when a read fails or is aborted midway", async () => {
+    for (const failure of ["throws", "aborts"] as const) {
+      const buffers: Uint8Array[] = [];
+      let closed = 0;
+      const controller = new AbortController();
+      const handle = {
+        read(buffer: Uint8Array, offset: number) {
+          buffers.push(buffer);
+          if (offset === 0) {
+            buffer.fill(0x6b, 0, 16);
+            if (failure === "aborts") controller.abort(new Error("startup deadline"));
+            return Promise.resolve({ bytesRead: 16 });
+          }
+          return Promise.reject(new Error("device error"));
+        },
+        close() {
+          closed++;
+          return Promise.resolve();
+        },
+      };
+      await assertRejects(
+        () =>
+          readHostFilePrefix("/host/configuration-key", {
+            maxBytes: 64,
+            signal: controller.signal,
+            open: () => Promise.resolve(handle),
+          }),
+        Error,
+        failure === "throws" ? "device error" : "startup deadline",
+      );
+      assertEquals(buffers.length > 0, true, failure);
+      assertEquals(buffers[0]!.every((byte) => byte === 0), true, failure);
+      assertEquals(closed, 1, failure);
+    }
   });
 
   it("detaches a broker token read that never settles", async () => {

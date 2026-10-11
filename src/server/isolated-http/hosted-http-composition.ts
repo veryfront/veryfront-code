@@ -213,19 +213,36 @@ export async function settleWithin<T>(
   }
 }
 
+/** The part of a file handle a bounded host file read uses. */
+interface HostFileHandle {
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: null,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
 /**
  * Read at most `maxBytes + 1` bytes of a host file, so an oversized file is detected
- * without loading it whole.
+ * without loading it whole. The read buffer is wiped on every exit, so a partial read
+ * of a secret that fails or is aborted leaves no copy behind.
  * @internal
  */
 export async function readHostFilePrefix(
   path: string,
-  options: { signal?: AbortSignal; maxBytes: number },
+  options: {
+    signal?: AbortSignal;
+    maxBytes: number;
+    /** @internal Opens the file; replaced in hermetic tests. */
+    open?: (path: string, flags: "r") => Promise<HostFileHandle>;
+  },
 ): Promise<Uint8Array> {
   options.signal?.throwIfAborted();
   const limit = options.maxBytes + 1;
+  const handle = await (options.open ?? open)(path, "r");
   const buffer = new Uint8Array(limit);
-  const handle = await open(path, "r");
   try {
     let length = 0;
     while (length < limit) {
@@ -234,10 +251,9 @@ export async function readHostFilePrefix(
       if (bytesRead === 0) break;
       length += bytesRead;
     }
-    const result = buffer.slice(0, length);
-    buffer.fill(0);
-    return result;
+    return buffer.slice(0, length);
   } finally {
+    buffer.fill(0);
     await handle.close();
   }
 }
@@ -428,20 +444,21 @@ export async function createHostedHttpComposition(
   });
   const tokenFile = config.brokerTokenFile;
   const tokenReadTimeoutMs = dependencies.tokenReadTimeoutMs ?? TOKEN_READ_TIMEOUT_MS;
-  let tokenRead: { promise: Promise<string>; timedOut: boolean } | undefined;
+  let tokenRead: { promise: Promise<string>; retired: boolean } | undefined;
   const allocator = (dependencies.createAllocatorClient ?? createHostedExecutorAllocatorClient)({
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
       // A file read cannot be interrupted once in flight. At most one raw read runs
       // at a time and callers share it; each caller races it against its own signal
-      // and a fixed bound, so a stalled file system cannot accumulate reads. A read
-      // that outlives the bound may return a token rotated away meanwhile: it stays
-      // only to block a second read, its result is never used, and callers are
-      // refused until it settles and the next caller reads again.
-      if (tokenRead?.timedOut) throw new Error("Executor broker token is unavailable");
+      // and a fixed bound, so a stalled file system cannot accumulate reads. Once any
+      // caller gives up on a read (its bound or its own abort), the read may return a
+      // token rotated away meanwhile: it is retired, stays only to block a second
+      // read, its result is never used, and callers are refused until it settles and
+      // the next caller reads again.
+      if (tokenRead?.retired) throw new Error("Executor broker token is unavailable");
       if (!tokenRead) {
-        const entry = { timedOut: false } as { promise: Promise<string>; timedOut: boolean };
+        const entry = { retired: false } as { promise: Promise<string>; retired: boolean };
         entry.promise = readBoundedText(
           read,
           "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
@@ -457,10 +474,10 @@ export async function createHostedHttpComposition(
       try {
         token = (await settleWithin(current.promise, signal, tokenReadTimeoutMs)).trim();
       } catch (error) {
-        if (error instanceof DOMException && error.name === "TimeoutError") current.timedOut = true;
+        current.retired = true;
         throw error;
       }
-      if (current.timedOut || !token) throw new Error("Executor broker token is unavailable");
+      if (current.retired || !token) throw new Error("Executor broker token is unavailable");
       return token;
     },
   });
