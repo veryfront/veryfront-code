@@ -161,21 +161,43 @@ describe("WorkflowClient", () => {
     }
   });
 
-  it("reserves control-plane shaped run IDs for control-plane owned starts (#2102)", async () => {
-    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
-    await assertRejects(
-      () => client.start("test-workflow", {}, { runId }),
-      VeryfrontError,
-      "reserved for the Veryfront control plane",
-    );
-    assertEquals(await backend.getRun(runId), null);
+  for (
+    const runId of [
+      "run_27714e62-7b05-466e-809e-0d8f1cdf1e62",
+      // Bare canonical run UUIDs are the control plane's run identity (#3131).
+      "27714e62-7b05-466e-809e-0d8f1cdf1e62",
+      "27714E62-7B05-466E-809E-0D8F1CDF1E62",
+    ]
+  ) {
+    it(`reserves control-plane shaped run ID ${runId} for control-plane owned starts (#2102, #3131)`, async () => {
+      await assertRejects(
+        () => client.start("test-workflow", {}, { runId }),
+        VeryfrontError,
+        "reserved for the Veryfront control plane",
+      );
+      assertEquals(await backend.getRun(runId), null);
 
-    const handle = await client.start("test-workflow", {}, {
-      runId,
-      [CONTROL_PLANE_OWNED_START]: true,
+      const handle = await client.start("test-workflow", {}, {
+        runId,
+        [CONTROL_PLANE_OWNED_START]: true,
+      });
+      assertEquals(handle.runId, runId);
+      assertEquals((await backend.getRun(runId))?._controlPlaneOwned, true);
     });
-    assertEquals(handle.runId, runId);
-    assertEquals((await backend.getRun(runId))?._controlPlaneOwned, true);
+  }
+
+  it("does not reserve run IDs that only resemble a UUID (#3131)", async () => {
+    for (
+      const runId of [
+        "run_27714e62",
+        "27714e62-7b05-466e-809e-0d8f1cdf1e62-x",
+        "x27714e62-7b05-466e-809e-0d8f1cdf1e62",
+        "27714e627b05466e809e0d8f1cdf1e62",
+      ]
+    ) {
+      const handle = await client.start("test-workflow", {}, { runId });
+      assertEquals(handle.runId, runId);
+    }
   });
 
   for (const waitBeforeCancel of [true, false]) {
