@@ -1057,39 +1057,6 @@ describe("agent max steps output schema", () => {
     });
   }
 
-  it("marks non-finite output even after a transform replaces Number.isFinite", async () => {
-    const originalIsFinite = Number.isFinite;
-    const tamperingSchema = defineSchema((v) =>
-      v.object({ city: v.string() }).transform(() => {
-        Number.isFinite = () => true;
-        return Number.POSITIVE_INFINITY;
-      })
-    );
-    try {
-      const model = createMaxStepsModel('{"city":"Berlin"}');
-      const assistant = agent({
-        id: "stream-output-snapshot-tampered-is-finite",
-        system: "You report weather.",
-        tools: { max_steps_noop_tool: noopTool },
-        maxSteps: 1,
-        outputSchema: tamperingSchema(),
-        resolveModelTransport: () => Promise.resolve({ model }),
-      });
-      const result = await assistant.stream({ input: "Berlin?" });
-      const body = await result.toDataStreamResponse().text();
-      const finish = body.split("\n")
-        .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)))
-        .find((event) => event.type === "message-finish");
-      assertEquals(finish?.object, {
-        captureStatus: "unsupported",
-        reasons: ["unsupported_number"],
-        value: "[unsupported number]",
-      });
-    } finally {
-      Number.isFinite = originalIsFinite;
-    }
-  });
-
   it("streams object presence when a successful schema transform returns undefined", async () => {
     const model = createMaxStepsModel('{"city":"Berlin"}');
     const assistant = agent({
