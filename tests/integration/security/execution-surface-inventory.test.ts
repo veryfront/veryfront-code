@@ -94,7 +94,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/routing/api/route-executor.ts": {
     surface: "API route execution",
-    guards: 6,
+    guards: 5,
   },
   "src/schedule/discovery.ts": {
     surface: "Schedule discovery capability",
@@ -234,10 +234,42 @@ const PREDICATE_DEFINITIONS = new Set([
   "src/security/sandbox/worker-pool.ts",
 ]);
 
-/** Remove line and block comments, keeping string and template literals intact. */
-function stripComments(source: string): string {
+/**
+ * Remove comments and the text of string and template literals, keeping `${...}`
+ * template expressions as code. Line breaks are kept so line filtering still works.
+ */
+function maskNonCode(source: string): string {
   let result = "";
   let index = 0;
+  // Brace depth of the enclosing code for each open template expression.
+  const templateDepths: number[] = [];
+  let depth = 0;
+
+  /** Mask template text up to its closing backtick or the next `${`. */
+  const scanTemplateText = () => {
+    while (index < source.length) {
+      const char = source[index]!;
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+      if (char === "`") {
+        result += "`";
+        index++;
+        return;
+      }
+      if (char === "$" && source[index + 1] === "{") {
+        result += "${";
+        index += 2;
+        templateDepths.push(depth);
+        depth = 0;
+        return;
+      }
+      if (char === "\n") result += "\n";
+      index++;
+    }
+  };
+
   while (index < source.length) {
     const char = source[index]!;
     const next = source[index + 1];
@@ -248,23 +280,37 @@ function stripComments(source: string): string {
     if (char === "/" && next === "*") {
       const end = source.indexOf("*/", index + 2);
       const comment = source.slice(index, end < 0 ? source.length : end + 2);
-      // Keep line breaks so line-based filtering still sees the same lines.
       result += comment.replace(/[^\n]/g, "");
       index += comment.length;
       continue;
     }
-    if (char === '"' || char === "'" || char === "`") {
-      let end = index + 1;
+    if (char === '"' || char === "'") {
       // Quoted strings end at a line break, so a quote inside a regular
-      // expression literal can hide at most the rest of its line.
-      while (
-        end < source.length && source[end] !== char && (char === "`" || source[end] !== "\n")
-      ) {
+      // expression literal can mask at most the rest of its line.
+      let end = index + 1;
+      while (end < source.length && source[end] !== char && source[end] !== "\n") {
         end += source[end] === "\\" ? 2 : 1;
       }
-      result += source.slice(index, end + 1);
+      result += char + char;
       index = end + 1;
       continue;
+    }
+    if (char === "`") {
+      result += "`";
+      index++;
+      scanTemplateText();
+      continue;
+    }
+    if (char === "{") depth++;
+    if (char === "}") {
+      if (depth === 0 && templateDepths.length > 0) {
+        result += "}";
+        index++;
+        depth = templateDepths.pop()!;
+        scanTemplateText();
+        continue;
+      }
+      depth--;
     }
     result += char;
     index++;
@@ -274,7 +320,7 @@ function stripComments(source: string): string {
 
 /** Drop comments and imports so only real code counts. */
 function codeOf(source: string): string {
-  return stripComments(source)
+  return maskNonCode(source)
     .split("\n")
     .filter((line) => !line.trim().startsWith("import "))
     .join("\n");
@@ -412,14 +458,17 @@ describe("execution surface inventory", () => {
     );
   });
 
-  it("does not count guards inside comments, and keeps comment markers inside strings", () => {
+  it("counts guards only in code, not in comments or string and template text", () => {
     const source = [
       "/*",
       "if (requiresIsolatedProjectRuntime(ctx)) return;",
       "*/",
       'const text = "/* not a comment */"; isSharedProjectRuntime(ctx);',
       "run(); // requiresIsolatedProjectRuntime(ctx)",
+      'throw new Error("requiresIsolatedProjectRuntime( was removed");',
+      "log(`isSharedProjectRuntime( ${requiresIsolatedProjectRuntime(ctx)} done`);",
     ].join("\n");
-    assertEquals(countGuards(codeOf(source)), 1);
+    // Counted: the call on line 4 and the call inside the template expression.
+    assertEquals(countGuards(codeOf(source)), 2);
   });
 });
