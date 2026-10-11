@@ -419,7 +419,18 @@ export function createHostedHttpResolver(
   if (typeof options.lookupSourceImage !== "function") {
     throw new TypeError("Hosted HTTP resolver requires a source image lookup");
   }
-  const session = { ...options.session };
+  // Copy only the documented session fields; each one is validated below, so nothing
+  // unvalidated reaches the executor session.
+  const given = options.session ?? ({} as HostedHttpResolverOptions["session"]);
+  const session: HostedHttpResolverOptions["session"] = {
+    expectedBrokerInstanceId: given.expectedBrokerInstanceId,
+    allocator: given.allocator,
+    connectTransport: given.connectTransport,
+    ...(given.ownerSignal === undefined ? {} : { ownerSignal: given.ownerSignal }),
+    ...(given.pollIntervalMs === undefined ? {} : { pollIntervalMs: given.pollIntervalMs }),
+    ...(given.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: given.requestTimeoutMs }),
+    ...(given.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: given.cleanupTimeoutMs }),
+  };
   if (
     // The same identifier rule the executor session applies to its binding.
     !getHostedExecutorIdentifierSchema().safeParse(session.expectedBrokerInstanceId).success ||
@@ -429,6 +440,9 @@ export function createHostedHttpResolver(
       typeof session.allocator[operation] !== "function"
     )
   ) throw new TypeError("Hosted HTTP resolver requires a host executor session");
+  if (session.ownerSignal !== undefined && !(session.ownerSignal instanceof AbortSignal)) {
+    throw new TypeError("Hosted HTTP resolver requires an AbortSignal owner signal");
+  }
   // The executor session rejects these limits at dispatch; refuse them at setup instead.
   for (const name of ["pollIntervalMs", "requestTimeoutMs", "cleanupTimeoutMs"] as const) {
     const value = session[name];
