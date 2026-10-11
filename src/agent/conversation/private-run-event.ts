@@ -64,6 +64,7 @@ function isRequest(value: unknown): boolean {
     !isRecord(value) || !hasOnlyKeys(value, [
       "maxOutputTokens",
       "temperature",
+      "parallelToolCalls",
       "topP",
       "topK",
       "stopSequences",
@@ -88,6 +89,8 @@ function isRequest(value: unknown): boolean {
     const field = ownDataValue(value, key);
     if (field !== undefined && !isFiniteNumber(field)) return false;
   }
+  const parallelToolCalls = ownDataValue(value, "parallelToolCalls");
+  if (parallelToolCalls !== undefined && typeof parallelToolCalls !== "boolean") return false;
   const maxOutputTokens = ownDataValue(value, "maxOutputTokens");
   if (typeof maxOutputTokens === "number" && maxOutputTokens < 0) return false;
   const stops = ownDataValue(value, "stopSequences");

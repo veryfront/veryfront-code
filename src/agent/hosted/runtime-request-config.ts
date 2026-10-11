@@ -42,6 +42,7 @@ export type HostedRuntimeRequestConfigAgent = Pick<
   | "model"
   | "thinking"
   | "temperature"
+  | "parallelToolCalls"
   | "maxSteps"
   | "tools"
   | "deniedTools"
@@ -68,6 +69,7 @@ export type ResolvedHostedRuntimeRequestConfig = {
   clientProfile: RuntimeClientProfile | null;
   requestedThinking: RuntimeAgentThinkingConfig | undefined;
   requestedTemperature: number | undefined;
+  requestedParallelToolCalls?: boolean;
   requestedMaxSteps: number | undefined;
   requestedMaxOutputTokens: number | undefined;
   requestedAllowedTools: string[] | undefined;
@@ -341,6 +343,9 @@ export function resolveHostedRuntimeRequestConfig(
       requestedThinking: effectiveRuntimeOverrides?.thinking,
     }),
     requestedTemperature: input.agentConfig.temperature,
+    ...(input.agentConfig.parallelToolCalls === undefined
+      ? {}
+      : { requestedParallelToolCalls: input.agentConfig.parallelToolCalls }),
     requestedMaxSteps: effectiveRuntimeOverrides?.maxSteps ??
       input.agentConfig.maxSteps,
     requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,

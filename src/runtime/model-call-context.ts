@@ -69,6 +69,7 @@ export type ModelCallResponseFormat =
 export interface ModelCallRequest {
   maxOutputTokens?: number;
   temperature?: number;
+  parallelToolCalls?: boolean;
   topP?: number;
   topK?: number;
   stopSequences?: string[];

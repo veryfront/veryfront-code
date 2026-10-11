@@ -144,6 +144,12 @@ values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+Set `parallelToolCalls: false` to request one tool call at a time from providers
+that support this control. Markdown agents accept `parallel-tool-calls: false`
+or `parallelToolCalls: false` in frontmatter. Omit the option to preserve the
+provider's default. This setting controls tool-call batching; it does not force
+the model to call a tool or change which tools it may use.
+
 File-read results from the immediately preceding user turn retain their content
 and version metadata so follow-up edits can use the file evidence. Older reads
 and large non-file results are compacted normally. Under context pressure, the
@@ -630,6 +636,7 @@ export default agent({
 | `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                             |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                     |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                                         |
+| `parallelToolCalls`   | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                        |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                                                 |
 | `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                                           |
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                                         |
