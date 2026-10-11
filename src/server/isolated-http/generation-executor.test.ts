@@ -114,6 +114,8 @@ describe("hosted HTTP generation broker", () => {
     );
     const next = fixture(() => new Response("new"));
     next.input.installation.configurationId = "config-b";
+    // The previous release's request began authorization earlier.
+    old.input.session.request.requestedAt -= 1_000;
     const broker = createHostedHttpBroker({ maxActive: 2, drainTimeoutMs: 10_000 });
     try {
       const pending = await broker.fetch(new Request("https://app.example/old"), old.input);
@@ -161,10 +163,60 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("keeps the current generation when another begins authorization in the same millisecond", async () => {
+    const current = fixture(() => new Response("current"));
+    const other = fixture(() => new Response("other"));
+    other.input.installation.configurationId = "config-b";
+    other.input.session.request.requestedAt = current.input.session.request.requestedAt;
+    const broker = createHostedHttpBroker({ maxActive: 2 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), current.input)).text(),
+        "current",
+      );
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example"), other.input),
+        Error,
+        "newer generation",
+      );
+      assertEquals(other.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("does not restore an older generation after the newer one retires", async () => {
+    const stale = fixture(() => new Response("stale"));
+    stale.input.session.request.requestedAt -= 1_000;
+    const current = fixture(() => new Response("current"));
+    current.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 1, idleTimeoutMs: 10 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), current.input)).text(),
+        "current",
+      );
+      await current.releaseEntered.promise;
+      assertEquals(broker.generations, 0);
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example"), stale.input),
+        Error,
+        "newer generation",
+      );
+      assertEquals(stale.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("releases a generation stopped with requests in flight as canceled", async () => {
     const old = fixture(() => new Response(new ReadableStream<Uint8Array>({})));
     const next = fixture(() => new Response("new"));
     next.input.installation.configurationId = "config-b";
+    // The previous release's request began authorization earlier.
+    old.input.session.request.requestedAt -= 1_000;
     const broker = createHostedHttpBroker({ maxActive: 2, drainTimeoutMs: 0 });
     try {
       const pending = await broker.fetch(new Request("https://app.example/old"), old.input);

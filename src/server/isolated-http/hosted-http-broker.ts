@@ -73,6 +73,8 @@ export interface HostedHttpBrokerOptions extends HostedExecutorSessionPoolOption
   executionPolicyId?: string;
 }
 
+/** Environments whose generation order the broker remembers. */
+const MAX_TRACKED_ENVIRONMENTS = 4096;
 /** Upper bound on the delay between retries of an unconfirmed retirement. */
 const MAX_RETIREMENT_RETRY_MS = 60_000;
 
@@ -112,8 +114,11 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   const contexts = new WeakMap<Request, HostedHttpGenerationRequest>();
   /** Current pool key of each project environment's generation. */
   const scopes = new Map<string, Readonly<WorkerGenerationIdentity>>();
-  /** Latest authorization time of a request served by each environment's current generation. */
-  const authorizedAt = new Map<string, number>();
+  /**
+   * Latest admitted generation of each environment and when its newest request began
+   * authorization. Kept after the generation retires, up to a bounded number of environments.
+   */
+  const watermarks = new Map<string, { generationId: string; at: number }>();
   /** Generations whose executor was constructed. */
   const constructed = new Set<string>();
   /** Pending retries of retirements whose release was not confirmed. */
@@ -142,33 +147,36 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   function forget(key: Readonly<WorkerGenerationIdentity>): void {
     if (scopes.get(key.scopeId)?.generationId !== key.generationId) return;
     scopes.delete(key.scopeId);
-    authorizedAt.delete(key.scopeId);
   }
 
   function currentKey(identity: Readonly<WorkerGenerationIdentity>, requestedAt: number) {
+    const mark = watermarks.get(identity.scopeId);
+    const same = mark?.generationId === identity.generationId;
+    // Resolutions can complete out of order during a release change. A request whose
+    // authorization did not begin strictly after the latest admitted generation's newest
+    // request must not replace that generation, even after it retired.
+    if (mark && !same && requestedAt <= mark.at) {
+      throw SERVICE_OVERLOADED.create({
+        detail: "A newer generation serves this project environment",
+      });
+    }
+    watermarks.delete(identity.scopeId);
+    watermarks.set(identity.scopeId, {
+      generationId: identity.generationId,
+      at: same ? Math.max(mark.at, requestedAt) : requestedAt,
+    });
+    if (watermarks.size > MAX_TRACKED_ENVIRONMENTS) {
+      watermarks.delete(watermarks.keys().next().value!);
+    }
     const current = scopes.get(identity.scopeId);
-    const latest = authorizedAt.get(identity.scopeId) ?? requestedAt;
-    if (current?.generationId.startsWith(`${identity.generationId}:`)) {
-      authorizedAt.set(identity.scopeId, Math.max(latest, requestedAt));
-      return current;
-    }
-    if (current) {
-      // A request authorized before the current generation's latest request must not
-      // replace it: resolutions can complete out of order during a release change.
-      if (requestedAt < latest) {
-        throw SERVICE_OVERLOADED.create({
-          detail: "A newer generation serves this project environment",
-        });
-      }
-      // A new generation for this environment: drain the previous one.
-      retire(current);
-    }
+    if (current?.generationId.startsWith(`${identity.generationId}:`)) return current;
+    // A new generation for this environment: drain the previous one.
+    if (current) retire(current);
     const key = Object.freeze({
       scopeId: identity.scopeId,
       generationId: `${identity.generationId}:${++epoch}`,
     });
     scopes.set(key.scopeId, key);
-    authorizedAt.set(key.scopeId, requestedAt);
     return key;
   }
 
