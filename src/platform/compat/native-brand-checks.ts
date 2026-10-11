@@ -327,7 +327,19 @@ function loadNativeBrandCheckModule(): unknown {
 
   const hostProcess = (globalThis as typeof globalThis & { process?: HostProcess }).process;
   if (hostProcess) {
-    const getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule");
+    let getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule");
+    if (!getBuiltinModule && isDeno) {
+      // Deno 2.9 exposes this host API through an own accessor. Like the host
+      // prototypes captured above, it is trusted during host initialization.
+      // Resolve it once here, never while inspecting candidate values.
+      // This exception is only for the host resolver: predicates returned by
+      // it and every untrusted candidate still require own data properties.
+      const descriptor = getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+      if (descriptor && hasOwn(descriptor, "get") && typeof descriptor.get === "function") {
+        const resolver = apply(descriptor.get, hostProcess, []);
+        if (typeof resolver === "function") getBuiltinModule = resolver;
+      }
+    }
     if (getBuiltinModule) {
       return apply(getBuiltinModule, hostProcess, ["node:util/types"]);
     }
