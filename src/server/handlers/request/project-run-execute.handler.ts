@@ -269,6 +269,7 @@ const KNOWLEDGE_LOG_TRUNCATED_MESSAGE = "Knowledge ingest logs were truncated";
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -2479,6 +2480,19 @@ async function withProjectRunObservationDeadline<T>(input: {
 
 type ProjectRunObservationEvent = Record<string, unknown> & { type: string };
 
+function projectRunObservationBatchRequiresCursor(
+  events: readonly Record<string, unknown>[],
+): boolean {
+  for (const event of primordialArrayValues(events)) {
+    if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return true;
+  }
+  return false;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && NumberIsSafeInteger(value) && value > 0;
+}
+
 function snapshotProjectRunObservationEvent(
   event: Record<string, unknown>,
 ): ProjectRunObservationEvent {
@@ -2541,29 +2555,53 @@ function createProjectRunObservationMirror(input: {
   ) => {
     if (disabled || events.length === 0) return;
     const ordinal = ++appendOrdinal;
+    const requiresCursor = projectRunObservationBatchRequiresCursor(events);
+    if (requiresCursor && latestEventId <= 0) {
+      disabled = true;
+      throw new DurableRunEventPersistenceError(
+        "Project run observation append cursor is unavailable",
+      );
+    }
     let body: unknown;
     try {
-      const encodedBody = privateJsonStringify(
-        {
-          events,
-          ...(executionEntryOccurrenceId
-            ? {
-              runtime_observations: {
-                version: 1,
-                observations: [{
-                  kind: "execution_entry",
-                  occurrence_id: executionEntryOccurrenceId,
-                  event_index: 0,
-                }],
-              },
-            }
-            : {}),
-        },
+      const logicalPayload = {
+        events,
+        ...(executionEntryOccurrenceId
+          ? {
+            runtime_observations: {
+              version: 1,
+              observations: [{
+                kind: "execution_entry",
+                occurrence_id: executionEntryOccurrenceId,
+                event_index: 0,
+              }],
+            },
+          }
+          : {}),
+      };
+      const encodedLogicalPayload = privateJsonStringify(
+        logicalPayload,
         null,
         undefined,
         MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
       );
-      // Hash the exact sent bytes with scope and ordinal; fresh model facts never reuse an old key.
+      const encodedBody = requiresCursor
+        ? privateJsonStringify(
+          {
+            expected_previous_event_id: latestEventId,
+            ...logicalPayload,
+          },
+          null,
+          undefined,
+          MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+        )
+        : encodedLogicalPayload;
+      if (typeof encodedLogicalPayload !== "string" || typeof encodedBody !== "string") {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append body is invalid",
+        );
+      }
+      // Hash the logical event payload, not the cursor wrapper; fresh model facts never reuse an old key.
       const scopeHash = await computeObservationHash(privateJsonStringify([
         "project-runtime-observation-v1",
         input.runId,
@@ -2571,7 +2609,7 @@ function createProjectRunObservationMirror(input: {
         input.attemptId,
         ordinal,
       ]));
-      const payloadHash = await computeObservationHash(encodedBody);
+      const payloadHash = await computeObservationHash(encodedLogicalPayload);
       const idempotencyKey = `project-runtime-observation:${await computeObservationHash(
         `${scopeHash}:${payloadHash}`,
       )}`;
@@ -2618,7 +2656,13 @@ function createProjectRunObservationMirror(input: {
           "Project run observation append identified a different run",
         );
       }
-      if (typeof receipt.latest_event_id === "number") latestEventId = receipt.latest_event_id;
+      if (isPositiveSafeInteger(receipt.latest_event_id)) {
+        latestEventId = receipt.latest_event_id;
+      } else if (requiresCursor) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append receipt cursor is invalid",
+        );
+      }
       const captures = receipt.model_call_captures;
       if (captures !== undefined) {
         if (!ArrayIsArray(captures)) {

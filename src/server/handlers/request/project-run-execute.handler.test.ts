@@ -9629,6 +9629,7 @@ describe("project run inference credential header", () => {
           const payload = requestJsonBody(init);
           const events = payload?.events;
           if (!Array.isArray(events)) throw new Error("Expected event batch");
+          const previousCursor = cursor;
           const runtimeContextEvents = (events as Record<string, unknown>[]).filter((event) =>
             event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
           );
@@ -9642,8 +9643,18 @@ describe("project run inference credential header", () => {
             }]);
             assertMatch(JSON.stringify(payload?.runtime_observations), /"kind":"execution_entry"/);
             assertMatch(JSON.stringify(payload?.runtime_observations), /"event_index":0/);
+            assertEquals(payload?.expected_previous_event_id, undefined);
           } else {
             assertEquals(payload?.runtime_observations, undefined);
+          }
+          if (
+            (events as Record<string, unknown>[]).some((event) =>
+              event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+            )
+          ) {
+            assertEquals(payload?.expected_previous_event_id, previousCursor);
+          } else {
+            assertEquals(payload?.expected_previous_event_id, undefined);
           }
           appended.push(...events as Record<string, unknown>[]);
           cursor += events.length;
@@ -11999,7 +12010,11 @@ describe("project run inference credential header", () => {
             }
             if (failure === "wrong-run") return Response.json({ run_id: "other-run" });
             if (failure === "invalid-capture") {
-              return Response.json({ run_id: canonicalRunId, model_call_captures: [{}] });
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 2,
+                model_call_captures: [{}],
+              });
             }
             if (failure === "invalid-json") {
               return new Response("{");
@@ -12037,6 +12052,146 @@ describe("project run inference credential header", () => {
         assertStringIncludes(payload.error, "Project run observation sink is disabled");
       }
       if (failure !== "pre-append") assertEquals(appendCalls, 2);
+    });
+  }
+
+  it("fails closed before private model observations when the execution-entry receipt has no cursor", async () => {
+    const runId = "run_model_observation_missing_cursor";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let appendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await getActiveRunEventSink()?.({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          modelCallId,
+          messages: [{ role: "user", content: [{ type: "text", text: "Exact provider input" }] }],
+          tools: [],
+        });
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          appendCalls++;
+          const payload = requestJsonBody(init);
+          assertEquals(payload?.expected_previous_event_id, undefined);
+          assertEquals(payload?.runtime_observations !== undefined, true);
+          return Response.json({
+            run_id: canonicalRunId,
+            appended_count: Array.isArray(payload?.events) ? payload.events.length : 0,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project run observation append cursor is unavailable");
+    assertEquals(appendCalls, 1);
+  });
+
+  for (
+    const [name, latestEventId] of [
+      ["missing", undefined],
+      ["fractional", 1.5],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ] as const
+  ) {
+    it(`fails closed before managed model dispatch when the execution-entry cursor is ${name}`, async () => {
+      const runId = `run_model_dispatch_invalid_cursor_${name}`;
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      let appendCalls = 0;
+      let modelDispatches = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          const model: ModelRuntime<ModelRuntimeCallOptions> = {
+            provider: "test",
+            modelId: "test/blocked-dispatch",
+            executionMode: "remote",
+            runtimeCapabilities: { structuredOutput: true },
+            doGenerate() {
+              modelDispatches++;
+              return Promise.resolve({
+                content: [{ type: "text", text: "unexpected" }],
+                finishReason: "stop" as const,
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+            },
+            doStream() {
+              modelDispatches++;
+              throw new Error("unexpected stream dispatch");
+            },
+          };
+          const assistant = agent({
+            id: "blocked-dispatch-probe",
+            model: "test/blocked-dispatch",
+            system: "Say never dispatched.",
+            skills: false,
+            resolveModelTransport: () => Promise.resolve({ model }),
+          });
+          await assistant.generate({ input: "Say hello." });
+          return { success: true, result: "recorded", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            appendCalls++;
+            const payload = requestJsonBody(init);
+            assertEquals(payload?.expected_previous_event_id, undefined);
+            assertEquals(payload?.runtime_observations !== undefined, true);
+            return Response.json({
+              run_id: canonicalRunId,
+              ...(latestEventId === undefined ? {} : { latest_event_id: latestEventId }),
+              appended_count: Array.isArray(payload?.events) ? payload.events.length : 0,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "Project run observation append cursor is unavailable");
+      assertEquals(appendCalls, 1);
+      assertEquals(modelDispatches, 0);
     });
   }
 
