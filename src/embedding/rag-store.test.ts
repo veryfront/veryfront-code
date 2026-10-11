@@ -1620,16 +1620,19 @@ describe("ragStore", () => {
         const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
 
         // RAG document management routes
-        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        const ragDocMatch = path.match(
+          /^\/projects\/[^/]+\/knowledge\/retrieval-documents(?:\/(.+))?$/,
+        );
         if (ragDocMatch !== null) {
           const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()].map((document) => ({
+              data: [...ragDocuments.values()].map((document) => ({
                 ...document,
                 revision: "a".repeat(64),
               })),
+              page_info: { next: null },
             });
           }
 
@@ -1641,6 +1644,8 @@ describe("ragStore", () => {
               type: string;
               metadata?: Record<string, unknown>;
             };
+            // Create carries no revision guard; an existing ID is a 409 conflict.
+            assertEquals("expected_revision" in body, false);
             ragDocuments.set(body.id, {
               id: body.id,
               title: body.title,
@@ -1649,12 +1654,12 @@ describe("ragStore", () => {
               metadata: body.metadata,
               created_at: new Date().toISOString(),
             });
-            return Response.json({ id: body.id });
+            return Response.json({ id: body.id }, { status: 201 });
           }
 
           if (request.method === "DELETE" && docId) {
             ragDocuments.delete(docId);
-            return Response.json({ deleted: 1 });
+            return Response.json({ id: docId, status: "deleted" });
           }
         }
 
@@ -2006,9 +2011,10 @@ describe("ragStore", () => {
       const path = new URL(request.url).pathname;
       requests.push(`${request.method} ${path}`);
       assertEquals(request.method, "GET");
-      assertEquals(path, "/projects/cloud-project/rag/documents");
+      assertEquals(path, "/projects/cloud-project/knowledge/retrieval-documents");
       return Promise.resolve(Response.json({
-        documents: [{
+        page_info: { next: null },
+        data: [{
           id: "fixture-document",
           title: "Existing",
           source: "",
@@ -2030,10 +2036,78 @@ describe("ragStore", () => {
         "document revision is unavailable",
       );
       assertEquals(requests, [
-        "GET /projects/cloud-project/rag/documents",
-        "GET /projects/cloud-project/rag/documents",
+        "GET /projects/cloud-project/knowledge/retrieval-documents",
+        "GET /projects/cloud-project/knowledge/retrieval-documents",
       ]);
     });
+  });
+
+  it("pages retrieval documents and deletes the record by revision on the canonical routes", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const requests: string[] = [];
+    const record = (id: string) => ({
+      id,
+      revision: id === "doc-b" ? "b".repeat(64) : "a".repeat(64),
+      title: id,
+      source: `knowledge/${id}.md`,
+      type: "md",
+      metadata: {},
+      created_at: "2026-09-14T00:00:00Z",
+      updated_at: "2026-09-14T00:00:00Z",
+    });
+    await withMockFetch((input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}${url.search}`);
+      if (url.pathname === "/projects/cloud-project/knowledge/retrieval-documents") {
+        assertEquals(url.searchParams.get("limit"), "100");
+        const cursor = url.searchParams.get("cursor");
+        return Promise.resolve(Response.json(
+          cursor === "page-2"
+            ? { data: [record("doc-b")], page_info: { next: null } }
+            : { data: [record("doc-a")], page_info: { next: "page-2" } },
+        ));
+      }
+      if (url.pathname === "/projects/cloud-project/knowledge/retrieval-documents/doc-b") {
+        assertEquals(request.method, "DELETE");
+        return Promise.resolve(Response.json({ id: "doc-b", status: "deleted" }));
+      }
+      if (url.pathname.endsWith("/files")) {
+        return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+      }
+      if (request.method === "DELETE" && url.pathname.endsWith("/chunks")) {
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }
+      throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+    }, async () => {
+      const store = ragStore({ model: "test/demo" });
+      assertEquals((await store.listDocuments()).map((document) => document.id), [
+        "doc-a",
+        "doc-b",
+      ]);
+      await store.removeDocument("doc-b");
+      assertEquals(requests.some((request) => request.includes("/rag/documents")), false);
+      assert(
+        requests.includes(
+          `DELETE /projects/cloud-project/knowledge/retrieval-documents/doc-b?expected_revision=${
+            "b".repeat(64)
+          }`,
+        ),
+      );
+    });
+  });
+
+  it("fails a retrieval document listing that repeats a cursor", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ data: [], page_info: { next: "same" } })),
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(() => store.listDocuments(), Error, "repeated a cursor");
+      },
+    );
   });
 
   it("removes discovered orphan parts even when another part cannot be inspected", async () => {
@@ -2044,8 +2118,8 @@ describe("ragStore", () => {
     await withMockFetch((input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
-      if (url.pathname.endsWith("/rag/documents")) {
-        return Promise.resolve(Response.json({ documents: [] }));
+      if (url.pathname.endsWith("/knowledge/retrieval-documents")) {
+        return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
       }
       if (url.pathname.endsWith("/files")) {
         assertEquals(url.searchParams.get("fields"), "(path)");
@@ -2145,38 +2219,44 @@ describe("ragStore", () => {
           });
         }
 
-        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        const ragDocMatch = path.match(
+          /^\/projects\/[^/]+\/knowledge\/retrieval-documents(?:\/(.+))?$/,
+        );
         if (ragDocMatch !== null) {
           const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()].map((document) => ({
+              data: [...ragDocuments.values()].map((document) => ({
                 ...document,
                 revision: "a".repeat(64),
               })),
+              page_info: { next: null },
             });
           }
 
-          if (request.method === "POST" && !docId) {
+          if (request.method === "PUT" && docId) {
             const body = await request.json() as {
-              id: string;
               title: string;
               source: string;
               type: string;
               metadata?: Record<string, unknown>;
+              expected_revision: string;
             };
-            ragDocuments.set(body.id, {
-              id: body.id,
+            assertEquals(body.expected_revision, "a".repeat(64));
+            assertEquals("id" in body, false);
+            const existing = ragDocuments.get(docId);
+            assert(existing);
+            ragDocuments.set(docId, {
+              id: docId,
               title: body.title,
               source: body.source,
               type: body.type,
               metadata: body.metadata,
-              created_at: ragDocuments.get(body.id)?.created_at ??
-                "2026-06-25T00:00:00.000Z",
+              created_at: existing.created_at,
               updated_at: "2026-06-25T01:00:00.000Z",
             });
-            return Response.json({ document: ragDocuments.get(body.id) });
+            return Response.json(ragDocuments.get(docId));
           }
         }
 
@@ -2354,13 +2434,16 @@ describe("ragStore", () => {
           });
         }
 
-        const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        const ragDocMatch = path.match(
+          /^\/projects\/[^/]+\/knowledge\/retrieval-documents(?:\/(.+))?$/,
+        );
         if (ragDocMatch !== null && request.method === "GET" && !ragDocMatch[1]) {
           return Response.json({
-            documents: [...ragDocuments.values()].map((document) => ({
+            data: [...ragDocuments.values()].map((document) => ({
               ...document,
               revision: "a".repeat(64),
             })),
+            page_info: { next: null },
           });
         }
 
@@ -2572,12 +2655,12 @@ describe("ragStore", () => {
         }
 
         // RAG document management
-        if (url.pathname.match(/\/rag\/documents(\/|$)/)) {
+        if (url.pathname.match(/\/knowledge\/retrieval-documents(\/|$)/)) {
           if (request.method === "POST") {
             const body = await request.json() as { id: string };
-            return Response.json({ id: body.id });
+            return Response.json({ id: body.id }, { status: 201 });
           }
-          return Response.json({ documents: [] });
+          return Response.json({ data: [], page_info: { next: null } });
         }
 
         throw new Error(`Unhandled ${request.method} ${url.pathname}`);
@@ -2663,16 +2746,19 @@ describe("ragStore", () => {
           });
         }
 
-        const ragDocMatch = url.pathname.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
+        const ragDocMatch = url.pathname.match(
+          /^\/projects\/[^/]+\/knowledge\/retrieval-documents(?:\/(.+))?$/,
+        );
         if (ragDocMatch !== null) {
           const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()].map((document) => ({
+              data: [...ragDocuments.values()].map((document) => ({
                 ...document,
                 revision: "a".repeat(64),
               })),
+              page_info: { next: null },
             });
           }
 
@@ -2693,7 +2779,7 @@ describe("ragStore", () => {
               created_at: "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T00:00:00.000Z",
             });
-            return Response.json({ document: ragDocuments.get(body.id) });
+            return Response.json(ragDocuments.get(body.id), { status: 201 });
           }
         }
 
