@@ -16,13 +16,15 @@ import { parse } from "npm:@babel/parser@7.29.2";
  * to update.
  *
  * Supported forms, and the only ones this test claims to see:
- * - direct predicate calls, including `receiver.predicate(...)`;
+ * - direct predicate calls, including `receiver.predicate(...)` and calls through a
+ *   fallback or wrapper such as `(override ?? predicate)()`;
  * - predicates imported under another name (`import { p as q }`);
  * - local aliases (`const q = p`), member aliases (`const q = policy.p`) and
  *   destructured aliases (`const { p: q } = policy`), transitively;
  * - every runtime use of `allowHostProjectCodeExecution`, including negation and
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
- * - literal `allowHostProjectCodeExecution: true` grants in values and types.
+ * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
+ *   `as` / `satisfies` assertion types.
  *
  * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
  * other modules) is out of scope: the runtime guards, not this test, enforce
@@ -286,6 +288,7 @@ const TYPE_ONLY_NODES = new Set([
   "TSTypeParameterInstantiation",
   "TSDeclareFunction",
   "TSDeclareMethod",
+  "TSTypeLiteral",
 ]);
 
 function isNode(value: unknown): value is SyntaxNode {
@@ -315,6 +318,36 @@ function propertyName(key: unknown, computed: unknown): string | undefined {
 
 function isTrue(node: unknown): boolean {
   return isNode(node) && node.type === "BooleanLiteral" && node.value === true;
+}
+
+/**
+ * The names a call may resolve to: `p()`, `receiver.p()`, and every branch of a fallback
+ * such as `(override ?? p)()`, `(flag ? p : q)()`, `(0, p)()` or `p!()`.
+ */
+function calleeNames(callee: unknown): string[] {
+  if (!isNode(callee)) return [];
+  switch (callee.type) {
+    case "Identifier":
+      return [callee.name as string];
+    case "MemberExpression":
+    case "OptionalMemberExpression": {
+      const name = propertyName(callee.property, callee.computed);
+      return name === undefined ? [] : [name];
+    }
+    case "LogicalExpression":
+      return [...calleeNames(callee.left), ...calleeNames(callee.right)];
+    case "ConditionalExpression":
+      return [...calleeNames(callee.consequent), ...calleeNames(callee.alternate)];
+    case "SequenceExpression":
+      return Array.isArray(callee.expressions) ? calleeNames(callee.expressions.at(-1)) : [];
+    case "ParenthesizedExpression":
+    case "TSNonNullExpression":
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+      return calleeNames(callee.expression);
+    default:
+      return [];
+  }
 }
 
 /**
@@ -422,15 +455,17 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
     switch (node.type) {
       case "CallExpression":
       case "OptionalCallExpression": {
-        const callee = node.callee;
-        const name = isNode(callee) &&
-            (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
-            !callee.computed
-          ? nameOf(callee.property)
-          : nameOf(callee);
-        if (name !== undefined && predicates.has(name)) result.guards++;
+        if (calleeNames(node.callee).some((name) => predicates.has(name))) result.guards++;
         break;
       }
+      case "TSAsExpression":
+      case "TSSatisfiesExpression":
+      case "TSTypeAssertion":
+        // `value as { allowHostProjectCodeExecution: true }`: the expression is code, the
+        // asserted type is a type position.
+        if (isNode(node.expression)) visit(node.expression, false);
+        if (isNode(node.typeAnnotation)) visit(node.typeAnnotation, true);
+        return;
       case "Identifier":
         if (node.name === FLAG) result.guards++;
         break;
@@ -670,6 +705,18 @@ describe("execution surface inventory", () => {
       ),
       7,
     );
+    // A predicate reached through a fallback or wrapper is still a call of it.
+    assertEquals(
+      guards(
+        [
+          "(dependencies.isOverrideEnabled ?? isHostProjectExecutionOverrideEnabled)();",
+          "(useFake ? fake : requiresIsolatedProjectRuntime)(ctx);",
+          "(0, isSharedProjectRuntime)(ctx);",
+          "policy.isHostRealmApiExecution!(true);",
+        ].join("\n"),
+      ),
+      4,
+    );
     // An unrelated local with an unrelated name stays uncounted.
     assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
   });
@@ -688,13 +735,16 @@ describe("execution surface inventory", () => {
         'const quoted = { "allowHostProjectCodeExecution": true };',
         'const computed = { ["allowHostProjectCodeExecution"]: true };',
         'if (options["allowHostProjectCodeExecution"]) run();',
+        'const asserted = value as { "allowHostProjectCodeExecution": true };',
+        "const satisfied = value satisfies { allowHostProjectCodeExecution: true };",
+        "const read = (options as Options).allowHostProjectCodeExecution;",
       ].join("\n"),
       false,
     );
     // Destructuring (1), propagation key and read (2), negation (1), comparison (1),
-    // computed read (1).
-    assertEquals(analysis.guards, 6);
-    // Identifier, type, quoted and computed keys.
-    assertEquals(analysis.grants, 4);
+    // computed read (1), read through an assertion (1).
+    assertEquals(analysis.guards, 7);
+    // Identifier, type, quoted and computed keys, and `as` / `satisfies` assertion types.
+    assertEquals(analysis.grants, 6);
   });
 });
