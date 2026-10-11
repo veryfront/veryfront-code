@@ -37,6 +37,7 @@ describe("Sandbox command dispatch uncertainty", () => {
           ? {
             code: code === "ACCESSOR-SYSCALL" ? "ECONNREFUSED" : code,
             ...(code === "EHOSTUNREACH" ? { syscall: "write" } : {}),
+            ...(code === "ECONNREFUSED" ? { syscall: "read" } : {}),
             ...(code === "ACCESSOR-CODE" ? { syscall: "connect" } : {}),
           }
           : undefined;
@@ -111,6 +112,13 @@ describe("Sandbox command dispatch uncertainty", () => {
         ["EHOSTUNREACH", "connect"],
         ["ENOTFOUND", "getaddrinfo"],
         ["EAI_AGAIN", "getaddrinfo"],
+        ["EADDRNOTAVAIL", "connect"],
+        ["EADDRNOTAVAIL", "bind"],
+        ["EADDRNOTAVAIL", undefined],
+        ["ETIMEDOUT", "connect"],
+        ["ECONNREFUSED", undefined],
+        ["ENOTFOUND", undefined],
+        ["EAI_AGAIN", undefined],
       ]
     ) {
       it(`${method} retries ${code} during ${syscall} before execution`, async () => {
@@ -169,6 +177,137 @@ describe("Sandbox command dispatch uncertainty", () => {
         }
       });
     }
+  }
+  for (const method of ["proxy-command", "proxy-stream", "runtime-command"]) {
+    it(`${method} never retries a body failure after receiving a response`, async () => {
+      let commands = 0;
+      const endpoint = "http://127.0.0.1:43210";
+      const session = {
+        id: "retry-fixture",
+        endpoint,
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      };
+      const failure = new TypeError("body transport failed", {
+        cause: { code: "ECONNREFUSED", syscall: "connect" },
+      });
+      installMockFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (
+          path.endsWith("/commands/run") || path.endsWith("/commands/stream") ||
+          path.endsWith("/exec")
+        ) {
+          commands++;
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(failure);
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (path.endsWith("/heartbeat")) return Response.json({ ok: true });
+        if (path === "/sandboxes" || path === "/sandboxes/retry-fixture") {
+          return Response.json(session);
+        }
+        throw new Error(`Unexpected fixture request ${path}`);
+      });
+      const sandbox = Sandbox.createLazy({
+        apiUrl: endpoint,
+        authToken: "fixture-token",
+        projectReference: "fixture-project",
+        deleteOnClose: false,
+        execStartMaxAttempts: 2,
+        execStartRetryDelayMs: 0,
+        ...(method === "runtime-command"
+          ? { resolveRuntimeEndpoint: () => "http://127.0.0.1:43211" }
+          : {}),
+      });
+      try {
+        const error = await assertRejects(
+          () =>
+            method === "proxy-stream"
+              ? Array.fromAsync(sandbox.streamCommand("fixture side effect"))
+              : sandbox.runCommand("fixture side effect"),
+          TypeError,
+          "body transport failed",
+        );
+        assertEquals(error === failure, true);
+        assertEquals(commands, 1, "Receiving a response rules out a setup-only failure");
+      } finally {
+        await sandbox.close();
+      }
+    });
+  }
+  for (const method of ["proxy-command", "proxy-stream", "runtime-command"]) {
+    it(`${method} does not treat argument evaluation as a fetch failure`, async () => {
+      let lookups = 0;
+      let commands = 0;
+      let reconnects = 0;
+      const endpoint = "http://127.0.0.1:43210";
+      const session = {
+        id: "retry-fixture",
+        endpoint,
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      };
+      const failure = new TypeError("options lookup failed", {
+        cause: { code: "ECONNREFUSED", syscall: "connect" },
+      });
+      const commandOptions = {
+        get cwd(): string {
+          lookups++;
+          throw failure;
+        },
+      };
+      installMockFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (
+          path.endsWith("/commands/run") || path.endsWith("/commands/stream") ||
+          path.endsWith("/exec")
+        ) {
+          commands++;
+          return Response.json({});
+        }
+        if (path.endsWith("/heartbeat")) return Response.json({ ok: true });
+        if (path === "/sandboxes/retry-fixture") {
+          reconnects++;
+          return Response.json(session);
+        }
+        if (path === "/sandboxes") return Response.json(session);
+        throw new Error(`Unexpected fixture request ${path}`);
+      });
+      const sandbox = Sandbox.createLazy({
+        apiUrl: endpoint,
+        authToken: "fixture-token",
+        projectReference: "fixture-project",
+        deleteOnClose: false,
+        execStartMaxAttempts: 2,
+        execStartRetryDelayMs: 0,
+        ...(method === "runtime-command"
+          ? { resolveRuntimeEndpoint: () => "http://127.0.0.1:43211" }
+          : {}),
+      });
+      try {
+        const error = await assertRejects(
+          () =>
+            method === "proxy-stream"
+              ? Array.fromAsync(sandbox.streamCommand("fixture side effect", commandOptions))
+              : sandbox.runCommand("fixture side effect", commandOptions),
+          TypeError,
+          "options lookup failed",
+        );
+        assertEquals(error === failure, true);
+        assertEquals(lookups, 1);
+        assertEquals(commands, 0);
+        assertEquals(reconnects, 0);
+      } finally {
+        await sandbox.close();
+      }
+    });
   }
   it("preserves an SDK-created workspace after reset until explicit close", async () => {
     let creates = 0;
