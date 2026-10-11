@@ -2,14 +2,17 @@ import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { snapshotInstalledProjectHttpBinding } from "../runtime-handler/installed-project.ts";
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
 
-const MAX_RESPONSE_BYTES = 16 * 1024;
+const SOURCE_RESPONSE_BYTES = 16 * 1024;
+const PROJECT_RESPONSE_BYTES = 64 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const unavailable = () => new Error("Runtime source authorization failed");
 
-/** Revalidate one binding through the narrow source-read API; credentials never enter executor input. */
+/** Revalidate exact source access and active environment binding through existing read-only APIs. */
 export function createRuntimeSourceAuthorizer(options: {
   baseUrl: string;
   timeoutMs?: number;
+  /** Host-only project-read credential. Never use the caller's source grant to read environments. */
+  readProjectToken(projectId: string, signal: AbortSignal): Promise<string>;
   /** Host-owned transport injection; production defaults to verified native HTTPS fetch. */
   fetch?: typeof globalThis.fetch;
 }) {
@@ -21,11 +24,42 @@ export function createRuntimeSourceAuthorizer(options: {
   const base = origin.origin;
   const fetch = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 5000;
+  const readProjectToken = options.readProjectToken;
   if (
-    typeof fetch !== "function" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+    typeof fetch !== "function" || typeof readProjectToken !== "function" ||
+    !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
     timeoutMs > 30_000
   ) {
     throw new TypeError("Invalid runtime source authorization limits");
+  }
+  async function readJson(url: URL, token: string, maximum: number, signal: AbortSignal) {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "error",
+      credentials: "omit",
+      cache: "no-store",
+      signal,
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/json",
+        "accept-encoding": "identity",
+      },
+    });
+    signal.throwIfAborted();
+    const length = response.headers.get("content-length");
+    if (
+      response.status !== 200 ||
+      response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+        "application/json" ||
+      ![null, "identity"].includes(response.headers.get("content-encoding")) ||
+      (length !== null && (!/^\d+$/.test(length) || Number(length) > maximum))
+    ) throw unavailable();
+    const { text, truncated } = await readResponseTextPrefix(response, maximum + 1, signal, {
+      fatalUtf8: true,
+    });
+    signal.throwIfAborted();
+    if (truncated || new TextEncoder().encode(text).byteLength > maximum) throw unavailable();
+    return JSON.parse(text);
   }
   return async (authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void> => {
     const binding = snapshotInstalledProjectHttpBinding({
@@ -48,50 +82,46 @@ export function createRuntimeSourceAuthorizer(options: {
     signal.addEventListener("abort", cancel, { once: true });
     const combined = lifetime.signal;
     try {
-      const url = new URL(
-        `/projects/${binding.projectId}/releases/${binding.releaseId}/runtime-binding`,
+      const sourceUrl = new URL(
+        `/projects/${binding.projectId}/releases/${binding.releaseId}/files`,
         base,
       );
-      url.searchParams.set("environment_id", binding.environmentId);
-      const response = await fetch(url, {
-        method: "GET",
-        redirect: "error",
-        credentials: "omit",
-        cache: "no-store",
-        signal: combined,
-        headers: {
-          authorization: `Bearer ${token}`,
-          accept: "application/json",
-          "accept-encoding": "identity",
-        },
-      });
-      combined.throwIfAborted();
-      const length = response.headers.get("content-length");
+      sourceUrl.searchParams.set("limit", "1");
+      sourceUrl.searchParams.set("fields", "(id)");
+      const source = await readJson(sourceUrl, token, SOURCE_RESPONSE_BYTES, combined);
       if (
-        response.status !== 200 ||
-        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
-          "application/json" ||
-        ![null, "identity"].includes(response.headers.get("content-encoding")) ||
-        (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_RESPONSE_BYTES))
+        !source || typeof source !== "object" || Array.isArray(source) ||
+        source.release_id !== binding.releaseId || !Array.isArray(source.data) ||
+        source.data.length > 1 ||
+        source.data.some((row: unknown) =>
+          !row || typeof row !== "object" || Array.isArray(row) ||
+          Object.keys(row).length !== 1 || typeof (row as { id?: unknown }).id !== "string"
+        )
       ) throw unavailable();
-      const { text, truncated } = await readResponseTextPrefix(
-        response,
-        MAX_RESPONSE_BYTES + 1,
-        combined,
-        { fatalUtf8: true },
-      );
       combined.throwIfAborted();
-      if (truncated || new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+      const projectToken = await readProjectToken(binding.projectId, combined);
+      combined.throwIfAborted();
+      if (typeof projectToken !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(projectToken)) {
         throw unavailable();
       }
-      const result = JSON.parse(text);
+      const project = await readJson(
+        new URL(`/projects/${binding.projectId}`, base),
+        projectToken,
+        PROJECT_RESPONSE_BYTES,
+        combined,
+      );
       if (
-        !result || typeof result !== "object" || Array.isArray(result) ||
-        Object.keys(result).length !== 5 ||
-        result.project_id !== binding.projectId || result.project_slug !== binding.projectSlug ||
-        result.environment_id !== binding.environmentId ||
-        result.environment_name !== binding.environmentName ||
-        result.release_id !== binding.releaseId
+        !project || typeof project !== "object" || Array.isArray(project) ||
+        project.id !== binding.projectId || project.slug !== binding.projectSlug ||
+        !Array.isArray(project.environments) || project.environments.length > 256
+      ) throw unavailable();
+      const environments = project.environments.filter((entry: unknown) =>
+        entry && typeof entry === "object" &&
+        !Array.isArray(entry) && (entry as { id?: unknown }).id === binding.environmentId
+      );
+      if (
+        environments.length !== 1 || environments[0].name !== binding.environmentName ||
+        environments[0].active_release_id !== binding.releaseId
       ) throw unavailable();
     } catch {
       // Denial is explicit; transport errors and response bodies cannot disclose source credentials.
