@@ -1,3 +1,5 @@
+import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
+import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -3746,4 +3748,71 @@ describe("runtime-bridge", () => {
 
     assertEquals(result.text, "Continuing");
   });
+});
+
+it("exact managed capture retains parallel tool control before OpenAI wire dispatch", async () => {
+  const projectId = "11111111-1111-7111-8111-111111111111",
+    canonicalRunId = "22222222-2222-7222-8222-222222222222";
+  for (const value of [false, true, undefined]) {
+    let recorded: AgentRunEvent | undefined;
+    let dispatches = 0;
+    const sink: AgentRunEventSink = (event) => {
+      assertModelCallContextEvent(event);
+      recorded = event;
+      return {
+        eventId: "9007199254740993",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "33333333-3333-4333-8333-333333333333",
+      };
+    };
+    bindTestRuntimeObservationWriter({
+      sink,
+      runId: "33333333-3333-4333-8333-333333333333",
+      canonicalRunId,
+      projectId,
+    });
+    const runtime: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "veryfront-cloud",
+      modelId: "gpt-4o",
+      specificationVersion: "v3",
+      doGenerate(options) {
+        dispatches++;
+        assertModelCallContextEvent(recorded);
+        assertEquals(typeof getCurrentVeryfrontCloudModelCallCapture()?.eventId, "string");
+        const wire = buildOpenAIChatRequest(
+          "gpt-4o",
+          "veryfront-cloud",
+          options,
+          false,
+          createWarningCollector(),
+        );
+        assertEquals(recorded.request?.parallelToolCalls, wire.parallel_tool_calls);
+        assertEquals(recorded.request?.parallelToolCalls, value);
+        assertEquals(
+          recorded.request === undefined
+            ? false
+            : Object.hasOwn(recorded.request, "parallelToolCalls"),
+          value !== undefined,
+        );
+        return Promise.resolve({
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+      doStream: () => Promise.reject(new Error("unused")),
+    };
+    const model = registerVeryfrontCloudTestModel(runtime);
+    await runWithMandatoryRunEventSink(
+      sink,
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Fixture" }],
+          ...(value === undefined ? {} : { parallelToolCalls: value }),
+        }),
+    );
+    assertEquals(dispatches, 1);
+  }
 });

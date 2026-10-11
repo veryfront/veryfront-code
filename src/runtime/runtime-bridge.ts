@@ -234,6 +234,7 @@ type ModelCallRequestSource = Pick<
   GenerateTextOptions,
   | "maxOutputTokens"
   | "temperature"
+  | "parallelToolCalls"
   | "topP"
   | "topK"
   | "stopSequences"
