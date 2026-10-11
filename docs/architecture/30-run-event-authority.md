@@ -50,6 +50,44 @@ Runtime observations travel through private carriers and are removed from public
 
 Enable this path only with matching API and writer-generation support. Legacy history without these proofs remains readable through the existing run-event surface, but cannot supply missing target execution, step, or message provenance.
 
+## Runtime ownership diagnostic probes
+
+Runtime ownership probes are diagnostic checks for staging qualification. They
+verify that the project runtime and external worker paths use the expected
+canonical run authority. They do not enable product behavior, grant user
+authority, or replace API-side validation.
+
+Use the probes only in staging or an equivalent isolated diagnostic
+environment. Enable them for a bounded run, capture the receipts, then remove
+the variables. Each probe family requires an expiry value. The value can be an RFC timestamp
+or Unix epoch milliseconds. The probe is inactive when the expiry is invalid, in
+the past, or more than 6 hours in the future. Operation timeouts default to
+5000 ms and are capped at 30000 ms. Probe failures must not change claim,
+lease, terminal, or cancellation outcomes.
+
+### Project runtime probe variables
+
+| Variable                                                 | Purpose                                            |
+| -------------------------------------------------------- | -------------------------------------------------- |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_STAGE`                | Set to `1` to enable the project runtime probe.    |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_ID`                   | Optional diagnostic id for receipt grouping.       |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_PROJECT_ID`           | Project id expected by the probe.                  |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_ENVIRONMENT_ID`       | Environment id expected by the probe.              |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_EXPIRES_AT`           | Required RFC timestamp or Unix epoch milliseconds. |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_OPERATION_TIMEOUT_MS` | Optional per-operation timeout in milliseconds.    |
+
+### Agent worker probe variables
+
+| Variable                                                              | Purpose                                                    |
+| --------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_STAGE`                | Set to `1` to enable the external worker probe.            |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_ID`                   | Optional diagnostic id for receipt grouping.               |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_PROJECT_ID`           | Project id expected by the probe.                          |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_WORKER_ID`            | Optional worker id restriction.                            |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_CHILD_TOOL_CALL_ID`   | Optional child tool call id used by the stale child check. |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_EXPIRES_AT`           | Required RFC timestamp or Unix epoch milliseconds.         |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_OPERATION_TIMEOUT_MS` | Optional per-operation timeout in milliseconds.            |
+
 ## Event schema contributor verification
 
 The following commands run from the SDK source repository after changing parser behavior, schema artifacts, or generated payload types. They are not installed-project verification commands.

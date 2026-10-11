@@ -34,6 +34,7 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 // The outgoing headers carry the caller's credentials, so they are only ever
 // touched through methods captured before project code could replace them.
 const IntrinsicReflectApply = Reflect.apply;
+const SetHas = Set.prototype.has;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const HeadersHas = Headers.prototype.has;
@@ -770,7 +771,10 @@ export function planPinnedConnectAttempts(
 export function isRetriableConnectFailure(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
-  if (typeof code !== "string" || !RETRIABLE_CONNECT_CODES.has(code)) return false;
+  if (
+    typeof code !== "string" ||
+    !IntrinsicReflectApply(SetHas, RETRIABLE_CONNECT_CODES, [code])
+  ) return false;
   // ETIMEDOUT is the one code here that is not exclusively a connect failure:
   // it also surfaces when a socket times out after the request was written, and
   // replaying then could deliver a non-idempotent request twice. Only the

@@ -11,6 +11,7 @@ const branchId = "33333333-3333-4333-8333-333333333333";
 const sourcePath = "knowledge/owned/runtime-proof.md";
 const content = "---\ntype: concept\ntitle: Runtime proof\n---\nComplete current canonical body.\n";
 const NativeError = Error;
+
 async function fixture() {
   let denied = false, changed = false, sourceVersion = versionId, embedCalls = 0;
   const wires: string[] = [];
@@ -89,6 +90,22 @@ describe("host-owned canonical index authority proof", () => {
     const current = await f.probe({ ...f.request, stale: false });
     f.deny();
     const stale = await f.probe({ ...f.request, stale: true });
+    const payload = JSON.parse(f.wires[0]!) as {
+      chunks: Array<{
+        content: string;
+        start_offset: number;
+        end_offset: number;
+        metadata: { title?: unknown; okf_metadata?: { title?: unknown } };
+      }>;
+    };
+    assertEquals(payload.chunks[0]?.content, "Complete current canonical body.\n");
+    assertEquals(
+      payload.chunks[0]?.start_offset,
+      content.length - "Complete current canonical body.\n".length,
+    );
+    assertEquals(payload.chunks[0]?.end_offset, content.length);
+    assertEquals(payload.chunks[0]?.metadata.title, "Runtime proof");
+    assertEquals(payload.chunks[0]?.metadata.okf_metadata?.title, "Runtime proof");
     assertEquals(current.authorizationDenied, false);
     assertEquals(stale.authorizationDenied, true);
     assertEquals(f.wires.length, 2);

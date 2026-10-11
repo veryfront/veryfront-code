@@ -1,6 +1,6 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { inspectOkfDocument } from "#veryfront/knowledge/okf-document.ts";
+import { inspectRuntimeOwnershipOkfDocument } from "./project-run-runtime-ownership-okf-inspector.ts";
 
 export interface OwnershipIndexClient {
   get<T>(
@@ -114,9 +114,8 @@ export function createRuntimeOwnershipIndexProbe(input: {
         authorizationDenied: true,
       };
     }
-    const inspected = inspectOkfDocument(request.sourcePath, request.content);
+    const inspected = inspectRuntimeOwnershipOkfDocument(request.sourcePath, request.content);
     const body = inspected.body;
-    if (!body.trim()) throw new Error("Index probe requires a nonempty complete canonical body");
     const vector = await input.embed(body, signal);
     if (
       !arrayIsArray(vector) || vector.length !== 1536 || (() => {

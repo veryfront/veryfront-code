@@ -133,6 +133,7 @@ interface RetainedCanonicalSourceIndexProof {
   sourcePath: string;
   sourceHash: string;
   sourceVersionHash: string;
+  sourceFileId: string;
   sourceVersionId: string;
   indexRequestHash: string;
   indexResponseHash: string;
@@ -568,6 +569,10 @@ function readSourceVersionId(body: unknown): string | undefined {
   return readStringFieldFromRecord(body, ["version_id", "versionId"]);
 }
 
+function readSourceFileId(body: unknown): string | undefined {
+  return readStringFieldFromRecord(body, ["id", "file_id", "fileId"]);
+}
+
 function readStringFieldFromRecord(body: unknown, fields: readonly string[]): string | undefined {
   if (body !== null && typeof body === "object") {
     const record = body as Record<string, unknown>;
@@ -697,12 +702,15 @@ async function canonicalIndexBody(
 function validateCanonicalIndexResponse(
   body: unknown,
   input: {
+    fileId: string;
     versionId: string;
     sourcePath: string;
     sourceChecksum?: string;
     indexedChunkCount: number;
   },
 ): string | undefined {
+  const fileId = readStringFieldFromRecord(body, ["file_id", "fileId"]);
+  if (fileId !== input.fileId) return "canonical-index-file-mismatch";
   const versionId = readStringFieldFromRecord(body, ["version_id", "versionId"]);
   if (versionId !== input.versionId) return "canonical-index-version-mismatch";
   const path = readStringFieldFromRecord(body, ["path"]);
@@ -734,7 +742,7 @@ function validateCanonicalIndexResponse(
 
 function validateCanonicalIndexStateResponse(
   body: unknown,
-  input: { sourcePath: string; versionId: string },
+  input: { sourcePath: string; fileId: string; versionId: string },
 ): string | undefined {
   if (body === null || typeof body !== "object") {
     return "canonical-index-state-response-invalid";
@@ -750,6 +758,9 @@ function validateCanonicalIndexStateResponse(
     return "canonical-index-state-missing";
   }
   const record = matching as Record<string, unknown>;
+  if (record.file_id !== input.fileId) {
+    return "canonical-index-state-file-mismatch";
+  }
   if (record.file_version_id !== input.versionId) {
     return "canonical-index-state-version-mismatch";
   }
@@ -768,6 +779,7 @@ async function readCanonicalIndexStateHash(
   activation: AgentWorkerRuntimeOwnershipProbeActivation,
   input: AgentWorkerRuntimeOwnershipProbeClaimInput,
   sourcePathValue: string,
+  fileId: string,
   versionId: string,
   token: string,
 ): Promise<string> {
@@ -786,6 +798,7 @@ async function readCanonicalIndexStateHash(
   }
   const invalidIndexStateReason = validateCanonicalIndexStateResponse(response.body, {
     sourcePath: sourcePathValue,
+    fileId,
     versionId,
   });
   if (invalidIndexStateReason !== undefined) {
@@ -831,6 +844,10 @@ async function publishCanonicalSourceAndIndex(
   if (versionId === undefined) {
     throw new Error("canonical source readback did not include an immutable version id");
   }
+  const fileId = readSourceFileId(readback.body);
+  if (fileId === undefined) {
+    throw new Error("canonical source readback did not include an immutable file id");
+  }
   const indexBody = await canonicalIndexBody(input, versionId, content);
   const indexRequestHash = await safeHash(indexBody);
   const indexed = await requestJson(
@@ -845,6 +862,7 @@ async function publishCanonicalSourceAndIndex(
   }
   const sourceChecksum = readStringFieldFromRecord(readback.body, ["checksum"]);
   const invalidIndexReason = validateCanonicalIndexResponse(indexed.body, {
+    fileId,
     versionId,
     sourcePath: path,
     sourceChecksum,
@@ -859,6 +877,7 @@ async function publishCanonicalSourceAndIndex(
     activation,
     input,
     path,
+    fileId,
     versionId,
     input.credentials.authToken,
   );
@@ -878,6 +897,7 @@ async function publishCanonicalSourceAndIndex(
       sourcePath: path,
       sourceHash,
       sourceVersionHash,
+      sourceFileId: fileId,
       sourceVersionId: versionId,
       indexRequestHash,
       indexResponseHash,
@@ -930,6 +950,10 @@ async function proveCanonicalSourceIndexReplayDenied(
   if (versionId === undefined) {
     throw new Error("canonical replay source setup did not include an immutable version id");
   }
+  const fileId = readSourceFileId(readback.body);
+  if (fileId === undefined) {
+    throw new Error("canonical replay source setup did not include an immutable file id");
+  }
   const indexBody = await canonicalIndexBody(input, versionId, content);
   const indexRequestHash = await safeHash(indexBody);
   const indexed = await requestJson(
@@ -944,6 +968,7 @@ async function proveCanonicalSourceIndexReplayDenied(
   }
   const sourceChecksum = readStringFieldFromRecord(readback.body, ["checksum"]);
   const invalidIndexReason = validateCanonicalIndexResponse(indexed.body, {
+    fileId,
     versionId,
     sourcePath: path,
     sourceChecksum,
@@ -957,6 +982,7 @@ async function proveCanonicalSourceIndexReplayDenied(
     activation,
     input,
     path,
+    fileId,
     versionId,
     input.credentials.authToken,
   );
@@ -992,6 +1018,7 @@ async function proveCanonicalSourceIndexReplayDenied(
     activation,
     input,
     path,
+    fileId,
     versionId,
     input.credentials.authToken,
   );
@@ -1063,6 +1090,7 @@ async function proveRetainedCanonicalSourceIndexReplayDenied(
     activation,
     input,
     proof.sourcePath,
+    proof.sourceFileId,
     proof.sourceVersionId,
     proof.readAuthToken,
   );
@@ -1272,9 +1300,7 @@ async function currentWriteIndex(
       eventResponseHash: await safeHash(appended.body),
       reason: ok ? undefined : after.reason ?? "probe-event-not-indexed",
     });
-    if (committedLatestExternalEventSequence !== undefined) {
-      return { latestExternalEventSequence: committedLatestExternalEventSequence };
-    }
+    return { latestExternalEventSequence: committedLatestExternalEventSequence };
   } catch (error) {
     if (error instanceof Error && error.message.includes("append cursor is unavailable")) {
       throw error;

@@ -6,6 +6,7 @@ import {
   createExternalAgentWorkerClient,
   type ExternalAgentWorker,
 } from "./external-worker-client.ts";
+import type { AgentWorkerRuntimeOwnershipProbe } from "./agent-worker-runtime-ownership-probe.ts";
 
 const API_URL = "https://api.example.com";
 const API_TOKEN = "api-token";
@@ -92,6 +93,20 @@ function fetchSequence(...responses: Response[]): {
       }
       return next;
     }) as typeof fetch,
+  };
+}
+
+function throwingProbe(
+  phase: "afterClaim" | "afterRenew" | "afterTerminal",
+  message?: string,
+): AgentWorkerRuntimeOwnershipProbe {
+  const fail = () => Promise.reject(new Error(message ?? `${phase} probe failed`));
+  return {
+    afterClaim: phase === "afterClaim" ? fail : () => Promise.resolve(),
+    afterRenew: phase === "afterRenew" ? fail : () => Promise.resolve(),
+    afterLeaseLost: () => Promise.resolve(),
+    afterCancelled: () => Promise.resolve(),
+    afterTerminal: phase === "afterTerminal" ? fail : () => Promise.resolve(),
   };
 }
 
@@ -307,6 +322,134 @@ describe("external agent worker client", () => {
       },
       "a failed completion must forward the terminal error",
     );
+  });
+
+  it("preserves a claimed run when afterClaim probe observation fails", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "completed" }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe("afterClaim"),
+    });
+
+    const run = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await client.completeRun({ runId: RUN_ID, status: "completed" });
+
+    assertEquals(run?.run_id, RUN_ID);
+    assertEquals(String(calls[1]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
+    assertEquals(requestBody(calls[1]!), { status: "completed", output: null });
+  });
+
+  it("preserves a renewed lease when afterRenew probe observation fails", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({
+        ...claim(),
+        run: {
+          ...claim().run,
+          latest_external_event_sequence: 8,
+        },
+      }),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "completed" }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe("afterRenew"),
+    });
+
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    const renewed = await client.renewLease({
+      workerId: WORKER_ID,
+      runId: RUN_ID,
+      leaseDurationSeconds: 30,
+    });
+    await client.completeRun({ runId: RUN_ID, status: "completed" });
+
+    assertEquals(renewed?.latest_external_event_sequence, 8);
+    assertEquals(String(calls[2]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
+    assertEquals(requestBody(calls[2]!), { status: "completed", output: null });
+  });
+
+  it("fails a claim when the ownership probe loses the committed append cursor", async () => {
+    const { calls, fetchImpl } = fetchSequence(jsonResponse(claim()));
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterClaim",
+        "Agent worker runtime ownership probe append cursor is unavailable",
+      ),
+    });
+
+    await assertRejects(
+      () => client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 }),
+      Error,
+      "append cursor is unavailable",
+    );
+    assertEquals(calls.length, 1);
+  });
+
+  it("fails a renewal when the ownership probe loses the committed stale generation outcome", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({
+        ...claim(),
+        run: { ...claim().run, latest_external_event_sequence: 8 },
+      }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterRenew",
+        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+      ),
+    });
+
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await assertRejects(
+      () =>
+        client.renewLease({
+          workerId: WORKER_ID,
+          runId: RUN_ID,
+          leaseDurationSeconds: 30,
+        }),
+      Error,
+      "stale generation outcome is ambiguous",
+    );
+    assertEquals(calls.length, 2);
+  });
+
+  it("preserves terminal completion when afterTerminal probe observation fails", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ id: CANONICAL_RUN_ID, status: "completed" }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe("afterTerminal"),
+    });
+
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await client.completeRun({ runId: RUN_ID, status: "completed" });
+    await assertRejects(
+      () => client.completeRun({ runId: RUN_ID, status: "completed" }),
+      Error,
+      "Current worker claim authority is required",
+    );
+
+    assertEquals(String(calls[1]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
+    assertEquals(requestBody(calls[1]!), { status: "completed", output: null });
   });
 
   it("raises a network error for non-2xx worker API responses", async () => {

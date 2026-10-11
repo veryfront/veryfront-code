@@ -107,7 +107,8 @@ type ClaimFetchOptions = {
   failEventReadback?: boolean;
   paginatedReadback?: boolean;
   wrongIndexVersion?: boolean;
-  indexStatus?: "empty" | "wrong-version" | "not-ready";
+  wrongIndexFile?: boolean;
+  indexStatus?: "empty" | "wrong-file" | "wrong-version" | "not-ready";
   denyReplayCredentials?: boolean;
   replayCredentialDenial?: "authority-409" | "generic-409";
   denyReplayEvent?: boolean;
@@ -181,7 +182,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
         assertEquals(index.model?.dimension, 1536);
         assertEquals(index.chunks?.[0]?.vector?.length, 1536);
         return Response.json({
-          file_id: "11111111-1111-4111-8111-111111111111",
+          file_id: options.wrongIndexFile
+            ? "99999999-9999-4999-8999-999999999999"
+            : "11111111-1111-4111-8111-111111111111",
           version_id: options.wrongIndexVersion
             ? "99999999-9999-4999-8999-999999999999"
             : "22222222-2222-4222-8222-222222222222",
@@ -201,7 +204,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
         return Response.json({
           data: paths.map((path) => ({
             path,
-            file_id: "11111111-1111-4111-8111-111111111111",
+            file_id: options.indexStatus === "wrong-file"
+              ? "99999999-9999-4999-8999-999999999999"
+              : "11111111-1111-4111-8111-111111111111",
             file_version_id: options.indexStatus === "wrong-version"
               ? "99999999-9999-4999-8999-999999999999"
               : "22222222-2222-4222-8222-222222222222",
@@ -410,8 +415,8 @@ it("rejects embeddings that would overflow the float32 index vector schema", asy
   assertEquals(receipts[0]?.errorType, "Error");
 });
 
-it("fails canonical source/index proof when index status is missing, stale, or not ready", async () => {
-  for (const indexStatus of ["empty", "wrong-version", "not-ready"] as const) {
+it("fails canonical source/index proof when index status is missing, wrong-file, stale, or not ready", async () => {
+  for (const indexStatus of ["empty", "wrong-file", "wrong-version", "not-ready"] as const) {
     const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
     const probe = createAgentWorkerRuntimeOwnershipProbe(
       activation,
@@ -443,6 +448,27 @@ it("fails canonical source/index proof when index acknowledgement does not match
   await probe.afterClaim({
     apiUrl: "https://api.example.test",
     fetch: claimProofFetch({ wrongIndexVersion: true }),
+    workerId,
+    run: probeRun(),
+    credentials: credentials(),
+    embedder: managedTestEmbedder(),
+  });
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.errorType, "Error");
+});
+
+it("fails canonical source/index proof when index acknowledgement does not match the source file", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+
+  await probe.afterClaim({
+    apiUrl: "https://api.example.test",
+    fetch: claimProofFetch({ wrongIndexFile: true }),
     workerId,
     run: probeRun(),
     credentials: credentials(),
