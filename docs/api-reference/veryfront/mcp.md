@@ -1,6 +1,6 @@
 ---
 title: "veryfront/mcp"
-description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads."
+description: "MCP server exposing tools, prompts, and resources. Resource-template captures are percent-decoded exactly once; malformed escapes are not found, and resources with `mcp.enabled: false` are omitted from both lists and reads. Object output schemas that compile are included in discovery. Calls to those tools validate output and return its snapshot as structured content and serialized text. Validators without JSON Schema compilation omit output contracts; native schemas still validate results, and raw schemas retain text-only results. Contracts without a root object type retain text-only results but are still validated. Contracts that do not compile are omitted from discovery; native schemas still validate text-only results, and raw schemas fail calls with a generic error."
 order: 19
 ---
 

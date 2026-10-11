@@ -76,6 +76,40 @@ mechanism.
 
 ### `tool_search`
 
+Use one of two input forms:
+
+- `{"query":"get_agent"}` searches or loads an exact authorized executable tool.
+  Its input schema becomes visible on the next model step.
+- `{"inventory":{"limit":10}}` browses executable tool metadata without loading
+  schemas or changing exposure. Results distinguish `available` and `deferred`
+  tools. Follow `nextCursor` with `{"inventory":{"cursor":"10","limit":10}}`.
+  Page sizes range from 1 to 20, default 10. Descriptions are previews of at most
+  240 characters plus an ellipsis. Inventory does not inspect parameter schemas.
+
+Choose `query` or `inventory`, not both. Inventory contains only this run's
+provider-visible authorized tools, not project tool definitions. It preserves
+provider-hidden tool filtering and execution permissions. Use an exact returned
+name to load a deferred tool. A search miss directs the model to browse instead
+of repeatedly guessing resource display names. If the catalog changes and a
+cursor is outside the current inventory, restart without a cursor.
+
+For queries with three or more terms, a candidate supported only by parameter
+descriptions must match at least half the terms. One incidental field description
+does not identify a capability. Name and tool-description matches retain their
+existing ranking, including integration catalog navigation.
+
+### Bounded reference results
+
+Agents can enable `toolResultContext` to replace oversized tool results with a
+preview and a run-local retrieval reference. The runtime exposes `get_tool_result`
+only after a stored reference exists. Reads use bounded sections; events and
+persisted history retain the original result.
+
+Root skill instructions remain inline. Advertised reference-file results from
+`load_skill` and `veryfront__load_skill` follow the configured limits instead of
+bypassing them. Loading a reference still requires the parent skill and its
+authorized reference path. Result retrieval does not widen file access.
+
 - Schema-free results: `{ name, description, status: "available" | "loaded" }`.
   Input schemas are never returned by a search.
 - Searches the run's authorized catalog only, under the same project and

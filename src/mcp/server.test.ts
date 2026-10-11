@@ -6,10 +6,13 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { dynamicTool } from "#veryfront/tool";
+import { dynamicTool, tool } from "#veryfront/tool";
 import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { register, resolve } from "#veryfront/extensions/contracts.ts";
 
 import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
@@ -749,6 +752,659 @@ describe("mcp/server", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+  });
+
+  it("omits uncompilable output contracts without breaking tool discovery", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:uncompilable-output",
+      tool({
+        id: "test:uncompilable-output",
+        description: "Has an unresolved output reference",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: {
+          type: "object",
+          properties: { value: { $ref: "#/$defs/missing" } },
+        },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    registerTool(
+      "test:valid-output",
+      tool({
+        id: "test:valid-output",
+        description: "Has a valid output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { value: { type: "string" } } },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" });
+    const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+    const definition = definitions.find((entry) => entry.name === "test:uncompilable-output");
+    assertExists(definition);
+    assertEquals(Object.hasOwn(definition, "outputSchema"), false);
+    assertExists(definitions.find((entry) => entry.name === "test:valid-output")?.outputSchema);
+
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:uncompilable-output", arguments: {} },
+    });
+    const direct = called.result as { isError: boolean; content: Array<{ text: string }> };
+    assertEquals(direct.isError, true);
+    assertEquals(Object.hasOwn(direct, "structuredContent"), false);
+    assertEquals(
+      direct.content[0]?.text,
+      'Tool "test:uncompilable-output" has an invalid output contract',
+    );
+
+    const started = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:uncompilable-output", arguments: {}, task: {} },
+    });
+    const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const status = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = status.result as { status: string; statusMessage?: string };
+    assertEquals(task.status, "failed");
+    assertEquals(
+      task.statusMessage,
+      'Tool "test:uncompilable-output" has an invalid output contract',
+    );
+  });
+
+  it("revalidates output against a contract changed in place after first use", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const outputSchema: JsonSchema = {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    };
+    const mutable = tool({
+      id: "test:mutable-output",
+      description: "Has a contract edited after registration",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      outputSchema,
+      execute: async () => ({ value: "saved" }),
+    });
+    registerTool("test:mutable-output", mutable);
+    const call = async (id: number) =>
+      (await server.handleRequest({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "test:mutable-output", arguments: {} },
+      })).result as { isError: boolean };
+    assertEquals((await call(1)).isError, false);
+    (mutable.outputSchemaJson!.properties as Record<string, JsonSchema>).value = { type: "number" };
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const advertised = (listed.result as { tools: ToolListEntry[] }).tools.find((entry) =>
+      entry.name === "test:mutable-output"
+    );
+    assertEquals(advertised?.outputSchema?.properties, { value: { type: "number" } });
+    assertEquals((await call(3)).isError, true);
+  });
+
+  it("snapshots output contracts without invoking schema accessors", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let accessorReads = 0;
+    const hooked = tool({
+      id: "test:accessor-output",
+      description: "Has an accessor in its output contract",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      outputSchema: { type: "object", properties: { value: { type: "string" } } },
+      execute: async () => ({ value: "saved" }),
+    });
+    Object.defineProperty(hooked.outputSchemaJson!, "type", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("schema accessor ran");
+      },
+    });
+    registerTool("test:accessor-output", hooked);
+    registerTool(
+      "test:plain-output",
+      tool({
+        id: "test:plain-output",
+        description: "Has a plain output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { value: { type: "string" } } },
+        execute: async () => ({ value: "saved" }),
+      }),
+    );
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (listed.result as { tools: ToolListEntry[] }).tools;
+    const accessorEntry = tools.find((entry) => entry.name === "test:accessor-output");
+    assertExists(accessorEntry);
+    assertEquals(Object.hasOwn(accessorEntry, "outputSchema"), false);
+    assertExists(tools.find((entry) => entry.name === "test:plain-output")?.outputSchema);
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:accessor-output", arguments: {} },
+    });
+    const result = called.result as { isError: boolean; content: Array<{ text: string }> };
+    assertEquals(result.isError, true);
+    assertEquals(
+      result.content[0]?.text,
+      'Tool "test:accessor-output" has an invalid output contract',
+    );
+    assertEquals(accessorReads, 0);
+  });
+
+  it("rejects contract results that do not serialize to JSON text", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:undefined-output",
+      tool({
+        id: "test:undefined-output",
+        description: "Transforms its result to undefined",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.string().transform(() => undefined))(),
+        execute: async () => "saved",
+      }),
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:undefined-output", arguments: {} },
+    });
+    const result = called.result as { isError: boolean; content: Array<{ text?: unknown }> };
+    assertEquals(result.isError, true);
+    assertEquals(typeof result.content[0]?.text, "string");
+  });
+
+  it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const outputSchema: JsonSchema = {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+    };
+    registerTool(
+      "test:output",
+      tool({
+        id: "test:output",
+        description: "Returns a documented object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema,
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    registerTool(
+      "test:untyped",
+      dynamicTool({
+        id: "test:untyped",
+        description: "Has no output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(tools.find((entry) => entry.name === "test:output")?.outputSchema, outputSchema);
+    assertEquals(
+      Object.hasOwn(tools.find((entry) => entry.name === "test:untyped")!, "outputSchema"),
+      false,
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:output", arguments: {} },
+    });
+    assertEquals(called.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+    registerTool(
+      "test:invalid-output",
+      tool({
+        id: "test:invalid-output",
+        description: "Violates its declared output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema,
+        execute: async () => ({ ok: "wrong type" }),
+      }),
+    );
+    const invalid = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "test:invalid-output", arguments: {} },
+    });
+    assertEquals((invalid.result as { isError: boolean }).isError, true);
+    assertEquals(Object.hasOwn(invalid.result!, "structuredContent"), false);
+    for (
+      const [name, expected] of [["test:output", "completed"], ["test:invalid-output", "failed"]]
+    ) {
+      const started = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name, arguments: {}, task: {} },
+      });
+      const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+      await server.waitForPendingTasks();
+      const status = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tasks/get",
+        params: { taskId },
+      });
+      assertEquals((status.result as { status: string }).status, expected);
+      if (expected === "completed") {
+        const completed = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tasks/result",
+          params: { taskId },
+        });
+        assertEquals((completed.result as { structuredContent: unknown }).structuredContent, {
+          ok: true,
+        });
+      }
+    }
+  });
+
+  it("keeps primitive and array outputs compatible with text-only MCP results", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const cases: Array<{ id: string; schema: JsonSchema; value: unknown }> = [
+      { id: "test:string-output", schema: { type: "string" }, value: "accepted" },
+      {
+        id: "test:array-output",
+        schema: { type: "array", items: { type: "number" } },
+        value: [1, 2],
+      },
+    ];
+    for (const entry of cases) {
+      registerTool(
+        entry.id,
+        tool({
+          id: entry.id,
+          description: "Returns a non-object value",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: entry.schema,
+          execute: async () => entry.value,
+        }),
+      );
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((definition) => definition.name === entry.id)!,
+          "outputSchema",
+        ),
+        false,
+      );
+      const called = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(called.result, {
+        content: [{ type: "text", text: JSON.stringify(entry.value, null, 2) }],
+        isError: false,
+      });
+    }
+  });
+
+  it("validates declared output contracts that MCP cannot advertise", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const cases: Array<
+      { id: string; schema: JsonSchema | Schema<unknown>; valid: unknown; invalid: unknown }
+    > = [
+      {
+        id: "test:composed-output",
+        schema: {
+          allOf: [{ type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] }],
+        },
+        valid: { ok: true },
+        invalid: { other: true },
+      },
+      { id: "test:string-contract", schema: { type: "string" }, valid: "accepted", invalid: 42 },
+      {
+        id: "test:native-string-contract",
+        schema: defineSchema((v) => v.string())(),
+        valid: "accepted",
+        invalid: 42,
+      },
+    ];
+    for (const entry of cases) {
+      let returned = entry.valid;
+      registerTool(
+        entry.id,
+        tool({
+          id: entry.id,
+          description: "Declares a contract without a root object type",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: entry.schema,
+          execute: async () => returned,
+        }),
+      );
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((definition) => definition.name === entry.id)!,
+          "outputSchema",
+        ),
+        false,
+      );
+      const accepted = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(accepted.result, {
+        content: [{ type: "text", text: JSON.stringify(entry.valid, null, 2) }],
+        isError: false,
+      });
+      returned = entry.invalid;
+      const rejected = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(rejected.result, {
+        content: [{
+          type: "text",
+          text: `Tool "${entry.id}" result does not match its declared output schema`,
+        }],
+        isError: true,
+      });
+    }
+  });
+
+  it("returns the validated snapshot when a tool mutates its retained result", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const retained: Record<string, unknown> = { ok: true };
+    registerTool(
+      "test:retained-output",
+      tool({
+        id: "test:retained-output",
+        description: "Retains its result object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+        execute: async () => retained,
+      }),
+    );
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:retained-output", arguments: {} },
+    });
+    retained.ok = "no longer valid";
+    assertEquals(called.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
+  it("validates native output schemas without a JSON Schema compiler", async () => {
+    const validator = resolve<SchemaValidator>("SchemaValidator");
+    let returned: Record<string, unknown> = { ok: true };
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:native-output",
+      tool({
+        id: "test:native-output",
+        description: "Uses a native output schema",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        execute: async () => returned,
+      }),
+    );
+    register("SchemaValidator", { ...validator, compileJsonSchema: undefined });
+    try {
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((entry) => entry.name === "test:native-output")!,
+          "outputSchema",
+        ),
+        false,
+      );
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:native-output", arguments: {} },
+      });
+      assertEquals(response.result, {
+        content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+        structuredContent: { ok: true },
+        isError: false,
+      });
+      returned = { ok: "invalid" };
+      const invalid = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "test:native-output", arguments: {} },
+      });
+      assertEquals((invalid.result as { isError: boolean }).isError, true);
+      registerTool(
+        "test:legacy-json-output",
+        tool({
+          id: "test:legacy-json-output",
+          description: "Raw JSON output contract without a compiler",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: {
+            type: "object",
+            properties: { ok: { type: "boolean" } },
+            required: ["ok"],
+          },
+          execute: async () => ({ ok: true }),
+        }),
+      );
+      const legacy = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "test:legacy-json-output", arguments: {} },
+      });
+      assertEquals(legacy.result, {
+        content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+        isError: false,
+      });
+    } finally {
+      register("SchemaValidator", validator);
+    }
+  });
+
+  it("serializes native validated output instead of discarded non-JSON fields", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:stripped-output",
+      tool({
+        id: "test:stripped-output",
+        description: "Strips non-JSON fields before serialization",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        execute: async () => ({ ok: true, ignored: 1n }),
+      }),
+    );
+    const expected = {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    };
+    const direct = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:stripped-output", arguments: {} },
+    });
+    assertEquals(direct.result, expected);
+    const started = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:stripped-output", arguments: {}, task: {} },
+    });
+    const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const completed = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    assertEquals(completed.result, expected);
+  });
+
+  it("accepts native pipelines that transform primitive results into object outputs", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    // The native pipeline accepts a string; its pre-converted contract
+    // describes the object produced by validation, not that input string.
+    registerTool("test:transformed-output", {
+      ...tool<unknown, unknown>({
+        id: "test:transformed-output",
+        description: "Converts a string to an object",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.string().transform((value) => ({ ok: value === "yes" })).pipe(
+            v.object({ ok: v.boolean() }),
+          )
+        )(),
+        execute: async () => "yes",
+      }),
+      outputSchemaJson: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+    });
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(
+      (definitions.find((entry) => entry.name === "test:transformed-output")!
+        .outputSchema as JsonSchema).type,
+      "object",
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:transformed-output", arguments: {} },
+    });
+    assertEquals(response.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
+  it("snapshots native transform results before their retained object changes", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const retained: Record<string, unknown> = { ok: true };
+    registerTool(
+      "test:native-retained-output",
+      tool<unknown, unknown>({
+        id: "test:native-retained-output",
+        description: "Returns a retained native transform result",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.object({ ok: v.boolean() }).transform(() => retained)
+        )(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:native-retained-output", arguments: {} },
+    });
+    retained.ok = "changed";
+    assertEquals(response.result, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
+      structuredContent: { ok: true },
+      isError: false,
+    });
+  });
+
+  it("rejects native transformed output that violates the advertised contract", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:mismatched-transform",
+      tool<unknown, unknown>({
+        id: "test:mismatched-transform",
+        description: "Changes the native output shape",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchema: defineSchema((v) =>
+          v.object({ a: v.string() }).transform(() => ({ b: 1 }))
+        )(),
+        execute: async () => ({ a: "accepted input" }),
+      }),
+    );
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:mismatched-transform", arguments: {} },
+    });
+    assertEquals((response.result as { isError: boolean }).isError, true);
+    assertEquals(Object.hasOwn(response.result!, "structuredContent"), false);
   });
 
   it("hides agent-owned tools from tools/list", async () => {

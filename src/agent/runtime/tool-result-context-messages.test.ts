@@ -77,6 +77,60 @@ function resultRetrievalUnavailable(value: unknown): unknown {
 }
 
 describe("agent runtime tool result context message adapter", () => {
+  it("does not invoke skill-result accessors or failing proxy traps", () => {
+    let reads = 0;
+    const accessor = {
+      get skillId() {
+        reads++;
+        throw new Error("unexpected getter");
+      },
+    };
+    let proxyTrapCalls = 0;
+    const proxy = new Proxy({}, {
+      has() {
+        proxyTrapCalls++;
+        throw new Error("unexpected has trap");
+      },
+      getOwnPropertyDescriptor() {
+        proxyTrapCalls++;
+        throw new Error("unexpected descriptor trap");
+      },
+    });
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 128, previewBytes: 32, maxSectionBytes: 64 },
+    });
+    for (const result of [accessor, proxy]) {
+      const message = toolMessage(result, "load_skill");
+      const transformed = createModelToolResultContextMessages([message], context);
+      assertStrictEquals(transformed[0], message);
+    }
+    assertEquals(reads, 0);
+    assertEquals(proxyTrapCalls, 0);
+  });
+
+  it("bounds skill reference files while preserving root instructions and raw results", () => {
+    for (const toolName of ["load_skill", "veryfront__load_skill"]) {
+      const context = createToolResultContext({
+        limits: { maxInlineBytes: 128, previewBytes: 32, maxSectionBytes: 64 },
+      });
+      const root = toolMessage({ skillId: "platform", instructions: "root".repeat(100) }, toolName);
+      const referenceResult = {
+        skillId: "platform",
+        file: "references/guide.md",
+        content: "guide".repeat(100),
+      };
+      const reference = toolMessage(referenceResult, toolName);
+      const transformed = createModelToolResultContextMessages([root, reference], context);
+      assertStrictEquals(transformed[0], root);
+      const result = requireToolResultPart(transformed[1]!.parts[0]!).result;
+      assertEquals(resultType(result), "tool_result_reference");
+      assertStrictEquals(requireToolResultPart(reference.parts[0]!).result, referenceResult);
+      const ref = resultRef(result)!;
+      assertStrictEquals(context.getOriginalResult(ref), referenceResult);
+      assertLessOrEqual(context.read({ ref }).byteLength, 64);
+    }
+  });
+
   it("clones only the model-visible oversized tool result part", () => {
     const context = createToolResultContext({ limits: { maxInlineBytes: 8 } });
     const originalResult = { rows: ["alpha", "bravo", "charlie"] };

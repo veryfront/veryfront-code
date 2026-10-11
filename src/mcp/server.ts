@@ -1,7 +1,15 @@
 import { getMCPRegistry } from "./registry.ts";
 import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
+import type { Tool } from "#veryfront/tool/types.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
+import type {
+  JsonSchema,
+  JsonSchemaValidationFunction,
+  SchemaValidator,
+} from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { resourcePatternToUriTemplate } from "#veryfront/resource/pattern.ts";
 import { promptRegistry } from "#veryfront/prompt";
@@ -19,6 +27,161 @@ const MAX_CONTEXT_HEADER_LENGTH = 255;
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
+
+// Snapshots a tool's JSON output contract through descriptor reads only, so
+// schema accessors, proxies and toJSON hooks never run. Returns undefined
+// without a contract and null for a contract that cannot be snapshotted.
+function snapshotOutputContract(tool: Tool): JsonSchema | null | undefined {
+  if (tool.outputSchemaJson !== undefined) {
+    return snapshotJsonSchemaObject(tool.outputSchemaJson) ?? null;
+  }
+  if (tool.outputSchema === undefined) return undefined;
+  try {
+    return snapshotJsonSchemaObject(zodToJsonSchema(tool.outputSchema)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function mcpOutputSchema(contract: JsonSchema | null | undefined): JsonSchema | undefined {
+  return contract?.type === "object" ? contract : undefined;
+}
+
+interface CompiledOutputContract {
+  validator: SchemaValidator;
+  content: string;
+  check: JsonSchemaValidationFunction | null;
+}
+
+const compiledOutputContracts = new WeakMap<Tool, CompiledOutputContract>();
+
+// Compiles a tool's output contract snapshot once per validator and schema
+// content, so a schema edited in place is recompiled before its next use.
+// Returns undefined when no compiler or contract is available and null when
+// the contract does not snapshot or compile; compiler messages never reach
+// MCP clients.
+function compileOutputContract(
+  tool: Tool,
+  contract: JsonSchema | null | undefined,
+): JsonSchemaValidationFunction | null | undefined {
+  const validator = resolve<SchemaValidator>("SchemaValidator");
+  if (!validator.compileJsonSchema || contract === undefined) return undefined;
+  if (contract === null) return null;
+  const content = JSON.stringify(contract);
+  const cached = compiledOutputContracts.get(tool);
+  if (cached?.validator === validator && cached.content === content) return cached.check;
+  let check: JsonSchemaValidationFunction | null;
+  try {
+    check = validator.compileJsonSchema(contract);
+  } catch {
+    check = null;
+  }
+  compiledOutputContracts.set(tool, { validator, content, check });
+  return check;
+}
+
+// A declared contract never yields a successful result without JSON text.
+function contractText(tool: Tool, value: unknown): string {
+  const text = JSON.stringify(value, null, 2);
+  if (typeof text !== "string") {
+    throw new Error(`Tool "${tool.id}" result does not serialize to JSON text`);
+  }
+  return text;
+}
+
+function invalidOutputContract(tool: Tool): Error {
+  return new Error(`Tool "${tool.id}" has an invalid output contract`);
+}
+
+// MCP only advertises output schemas whose root is `type: "object"`. Contracts
+// it cannot advertise (primitives, arrays, combinators) are still enforced, so
+// a declared schema never lets a nonconforming result through as plain text.
+async function validateUnadvertisedOutput(
+  tool: Tool,
+  contract: JsonSchema | null | undefined,
+  result: unknown,
+): Promise<unknown> {
+  if (typeof tool.outputSchema?.safeParse === "function") {
+    const validation = tool.outputSchema.safeParse(result);
+    if (!validation.success) {
+      throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+    }
+    return validation.data;
+  }
+  if (tool.outputSchemaJson === undefined) return result;
+  const check = compileOutputContract(tool, contract);
+  if (check === undefined) return result;
+  if (check === null) throw invalidOutputContract(tool);
+  const validation = await check(result);
+  if (!validation.success) {
+    throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+  }
+  return validation.value;
+}
+
+async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
+  const contract = snapshotOutputContract(tool);
+  const outputSchema = mcpOutputSchema(contract);
+  const check = outputSchema === undefined ? undefined : compileOutputContract(tool, contract);
+  // Discovery omits a contract that does not compile, so such a tool returns a
+  // text-only result. A native schema still validates it; a raw JSON contract
+  // that cannot compile fails closed with a generic error.
+  if (outputSchema === undefined || check === null) {
+    const output = await validateUnadvertisedOutput(tool, contract, result);
+    const text = contract === undefined
+      ? JSON.stringify(output, null, 2)
+      : contractText(tool, output);
+    return { content: [{ type: "text", text }], isError: false };
+  }
+  if (typeof tool.outputSchema?.safeParse === "function") {
+    const validation = tool.outputSchema.safeParse(result);
+    if (!validation.success) {
+      throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+    }
+    if (
+      validation.data === null || typeof validation.data !== "object" ||
+      Array.isArray(validation.data)
+    ) {
+      throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
+    }
+    const text = contractText(tool, validation.data);
+    const snapshot: unknown = JSON.parse(text);
+    if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      throw new Error(`Tool "${tool.id}" must serialize an object for its MCP output contract`);
+    }
+    if (check) {
+      const contractValidation = await check(snapshot);
+      if (!contractValidation.success) {
+        throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(contractValidation.value, null, 2) }],
+        structuredContent: contractValidation.value,
+        isError: false,
+      };
+    }
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: snapshot,
+      isError: false,
+    };
+  }
+  if (check === undefined) {
+    return { content: [{ type: "text", text: contractText(tool, result) }], isError: false };
+  }
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
+  }
+  const validation = await check(result);
+  if (!validation.success) {
+    throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify(validation.value, null, 2) }],
+    structuredContent: validation.value,
+    isError: false,
+  };
+}
 
 class JsonRpcError extends Error {
   readonly code: number;
@@ -346,6 +509,12 @@ export class MCPServer {
         description: tool.description,
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
+      const contract = snapshotOutputContract(tool);
+      const outputSchema = mcpOutputSchema(contract);
+      // An invalid output contract is omitted and must not break the rest of discovery.
+      if (outputSchema !== undefined && compileOutputContract(tool, contract)) {
+        entry.outputSchema = outputSchema;
+      }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;
       tools.push(entry);
@@ -427,10 +596,7 @@ export class MCPServer {
         async () => {
           try {
             const result = await executeTool(toolName, args, taskToolContext);
-            this.taskStore.complete(task.taskId, {
-              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-              isError: false,
-            });
+            this.taskStore.complete(task.taskId, await formatToolResult(tool, result));
           } catch (error) {
             if (this.taskStore.get(task.taskId)?.status === "cancelled") {
               return;
@@ -477,10 +643,7 @@ export class MCPServer {
 
         try {
           const result = await executeTool(toolName, args, foregroundToolContext);
-          return {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            isError: false,
-          };
+          return await formatToolResult(tool, result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return {

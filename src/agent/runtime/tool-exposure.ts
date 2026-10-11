@@ -332,6 +332,7 @@ function snapshotSearchableTool(
   tool: ToolDefinition,
   status: ToolSearchMatch["status"],
   budget: SchemaSearchBudget,
+  includeParameterDescriptions = true,
 ): SearchableTool | null {
   try {
     if (!tool || typeof tool !== "object" || ArrayIsArray(tool)) return null;
@@ -361,7 +362,7 @@ function snapshotSearchableTool(
       status,
       normalizedName: normalizeSearchText(name.value),
       normalizedDescription: normalizeSearchText(description.value),
-      parameterDescriptions: parameters
+      parameterDescriptions: includeParameterDescriptions && parameters
         ? snapshotSchemaDescriptions(parameters.value, budget) ?? []
         : [],
     };
@@ -388,6 +389,7 @@ function getMatchedField(
 function collectSearchCandidates(input: {
   available: readonly ToolDefinition[];
   authorized: readonly ToolDefinition[];
+  includeParameterDescriptions?: boolean;
 }): SearchableTool[] {
   const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
   const candidates: SearchableTool[] = [];
@@ -399,13 +401,75 @@ function collectSearchCandidates(input: {
       if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
-      const snapshot = snapshotSearchableTool(tool, status, budget);
+      const snapshot = snapshotSearchableTool(
+        tool,
+        status,
+        budget,
+        input.includeParameterDescriptions,
+      );
       if (snapshot) pushPrivateArray(candidates, snapshot);
     }
   };
   append(input.available, "available");
   append(input.authorized, "loaded");
   return candidates;
+}
+
+/** Bounded executable metadata, without inspecting or loading tool schemas. */
+export type ToolInventoryPage = {
+  matches: Array<{ name: string; description: string; status: "available" | "deferred" }>;
+  resultCount: number;
+  loadedCount: 0;
+  miss: boolean;
+  nextCursor: string | null;
+};
+
+export function listToolExposure(input: {
+  authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
+  cursor?: string;
+  limit?: number;
+}): ToolInventoryPage {
+  const limit = input.limit ?? 10;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    throw new Error("Tool inventory limit must be an integer from 1 to 20");
+  }
+  const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+  if (
+    input.cursor !== undefined &&
+    (!testPrivateRegExp(/^(0|[1-9][0-9]{0,9})$/, input.cursor) || !Number.isSafeInteger(offset))
+  ) {
+    throw new Error("Invalid tool inventory cursor");
+  }
+  const candidates = collectSearchCandidates({
+    authorized: input.authorized,
+    available: input.available ?? [],
+    includeParameterDescriptions: false,
+  });
+  const seen = createPrivateSet<string>([]);
+  const entries: ToolInventoryPage["matches"] = [];
+  for (let index = 0; index < candidates.length; index++) {
+    const entry = candidates[index]!;
+    if (setHas(seen, entry.name)) continue;
+    ReflectApply(SetAdd, seen, [entry.name]);
+    pushPrivateArray(entries, {
+      name: entry.name,
+      description: entry.description.length > 240
+        ? `${privateTextSlice(entry.description, 0, previewEnd(entry.description, 240))}...`
+        : entry.description,
+      status: entry.status === "available" ? "available" : "deferred",
+    });
+  }
+  sortSearchItems(entries, (left, right) => compareAscii(left.name, right.name));
+  if (offset > entries.length) throw new Error("Tool inventory changed; restart without a cursor");
+  const matches = slicePrivateArray(entries, offset, offset + limit);
+  return {
+    matches,
+    resultCount: matches.length,
+    loadedCount: 0,
+    miss: matches.length === 0,
+    nextCursor: offset + matches.length < entries.length ? String(offset + matches.length) : null,
+  };
 }
 
 /** Rank candidates against the query taken as one phrase, strongest field first. */
@@ -479,11 +543,13 @@ function scoreToolExposureTerms(
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
+    let matchedCapabilityField = false;
     for (let index = 0; index < weightedTerms.length; index++) {
       const { term, documentFrequency, inverseDocumentFrequency } = weightedTerms[index]!;
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
       matchedTermCount += 1;
+      if (field !== "parameterDescription") matchedCapabilityField = true;
       score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
       if (documentFrequency <= averageDocumentFrequency) matchedSelectiveTerm = true;
     }
@@ -491,6 +557,11 @@ function scoreToolExposureTerms(
     // something better to prefer. A candidate matching *every* term is not filler
     // however common those terms are: in a one-tool catalog every term matches
     // everything, so the floor alone would report a certain match as a miss.
+    // A rare generic parameter field does not establish a multiword capability.
+    // Name and description evidence can still route to catalog navigation,
+    // such as an integration reader mentioning the requested provider.
+    const minimumMatchedTerms = terms.length >= 3 ? Math.ceil(terms.length / 2) : 1;
+    if (!matchedCapabilityField && matchedTermCount < minimumMatchedTerms) continue;
     if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
     pushPrivateArray(scored, { score, match: toSearchMatch(candidate) });
   }
@@ -619,6 +690,12 @@ function rankToolExposureMatches(input: {
   return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
 }
 
+/** Keep a preview cut from splitting a UTF-16 surrogate pair. */
+function previewEnd(text: string, limit: number): number {
+  const last = privateTextCharCodeAt(text, limit - 1);
+  return last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit;
+}
+
 /** Create fresh run-local tool exposure state. */
 export function createToolExposureState(
   loadedToolNames: Iterable<string> = [],
@@ -649,16 +726,31 @@ export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      "Search authorized tools by exact name or capability before declaring a requested tool unavailable. Matching authorized tools become available on the next model step.",
+      "Discover this run's executable tools, not project tool definitions. Use inventory to browse bounded metadata pages without loading schemas. Use query with an exact returned name to load that tool's input schema for the next step, or a short capability phrase to search before declaring a requested tool unavailable. Choose query or inventory, not both.",
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["query"],
       properties: {
         query: {
           type: "string",
           description:
             `One exact tool name when known, or one short capability phrase. UTF-8 input must be at most ${TOOL_SEARCH_QUERY_MAX_BYTES} bytes. Do not combine alternatives.`,
+        },
+        inventory: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            cursor: {
+              type: "string",
+              description: "Use nextCursor from the preceding page. Omit for the first page.",
+            },
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              description: "Metadata entries per page, default 10.",
+            },
+          },
         },
       },
     },
