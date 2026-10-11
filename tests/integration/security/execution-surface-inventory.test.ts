@@ -17,7 +17,8 @@ import { parse } from "npm:@babel/parser@7.29.2";
  *
  * Supported forms, and the only ones this test claims to see:
  * - direct predicate calls, including `receiver.predicate(...)` and calls through a
- *   fallback or wrapper such as `(override ?? predicate)()` or `(<T> predicate)()`;
+ *   fallback or wrapper such as `(override ?? predicate)()` or `(<T> predicate)()`,
+ *   `predicate.call(...)` / `predicate.apply(...)` and tagged templates;
  * - predicates imported under another name (`import { p as q }`);
  * - local aliases (`const q = p`), member aliases (`const q = policy.p`) and
  *   destructured aliases (`const { p: q } = policy`), transitively;
@@ -25,10 +26,13 @@ import { parse } from "npm:@babel/parser@7.29.2";
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
  * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
  *   `as` / `satisfies` assertion types, class fields and constructor parameter properties
- *   initialized to or typed as `true`, and `true` wrapped in `as const`, `<const>` or
- *   parentheses.
+ *   initialized to or typed as `true`, assignments of `true` (`=`, `||=`, `??=`),
+ *   destructuring and parameter defaults of `true`, getters returning `true`, and `true`
+ *   wrapped in `as const`,
+ *   `<const>` or parentheses;
+ * - TypeScript and JavaScript sources (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`).
  *
- * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
+ * Dynamic or computed access (`policy[name]()`, alias reassignment, re-exports through
  * other modules) is out of scope: the runtime guards, not this test, enforce
  * isolation. This test only keeps the inventory of those guards honest.
  */
@@ -347,7 +351,9 @@ function calleeNames(callee: unknown): string[] {
     case "MemberExpression":
     case "OptionalMemberExpression": {
       const name = propertyName(callee.property, callee.computed);
-      return name === undefined ? [] : [name];
+      // `predicate.call(thisArg, ctx)` and `predicate.apply(thisArg, [ctx])` call it.
+      const through = name === "call" || name === "apply" ? calleeNames(callee.object) : [];
+      return name === undefined ? through : [name, ...through];
     }
     case "LogicalExpression":
       return [...calleeNames(callee.left), ...calleeNames(callee.right)];
@@ -432,15 +438,18 @@ function predicateAliases(program: SyntaxNode): Set<string> {
  * declarations and type positions are not uses. A property `allowHostProjectCodeExecution:
  * true`, in a value or a type, is a literal grant.
  */
-function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
+function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): SourceAnalysis {
+  const shared = ["decorators-legacy", "decoratorAutoAccessors", "importAttributes"] as const;
   const ast = parse(source, {
-    sourceType: "module",
+    sourceType: language === "js" ? "unambiguous" : "module",
     allowAwaitOutsideFunction: true,
     allowReturnOutsideFunction: true,
     errorRecovery: false,
-    plugins: tsx
-      ? ["typescript", "jsx", "decorators-legacy", "decoratorAutoAccessors", "importAttributes"]
-      : ["typescript", "decorators-legacy", "decoratorAutoAccessors", "importAttributes"],
+    plugins: language === "ts"
+      ? ["typescript", ...shared]
+      : language === "tsx"
+      ? ["typescript", "jsx", ...shared]
+      : ["jsx", ...shared],
   });
   const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0 };
   const predicates = predicateAliases(ast.program as unknown as SyntaxNode);
@@ -492,7 +501,13 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
         break;
       case "ObjectProperty":
         if (propertyName(node.key, node.computed) === FLAG) {
-          if (isTrue(node.value)) {
+          // `{ allowHostProjectCodeExecution: true }`, or a destructuring default
+          // `{ allowHostProjectCodeExecution = true }` that grants when the option is absent.
+          if (
+            isTrue(node.value) ||
+            (isNode(node.value) && node.value.type === "AssignmentPattern" &&
+              isTrue(node.value.right))
+          ) {
             result.grants++;
             return;
           }
@@ -503,6 +518,53 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
           return;
         }
         break;
+      case "TaggedTemplateExpression":
+        if (calleeNames(node.tag).some((name) => predicates.has(name))) result.guards++;
+        break;
+      case "ObjectMethod":
+      case "ClassMethod":
+      case "ClassPrivateMethod":
+        // A getter `get allowHostProjectCodeExecution() { return true; }` is a grant; any
+        // other accessor or method of that name is a use.
+        if (propertyName(node.key, node.computed) === FLAG) {
+          const body = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
+          const only = body.length === 1 && isNode(body[0]) ? body[0] : undefined;
+          if (node.kind === "get" && only?.type === "ReturnStatement" && isTrue(only.argument)) {
+            result.grants++;
+            return;
+          }
+          result.guards++;
+          visitChildren(node, false, node.key);
+          return;
+        }
+        break;
+      case "AssignmentPattern":
+        // A parameter default `(allowHostProjectCodeExecution = true) => ...` is a grant.
+        if (nameOf(node.left) === FLAG && isTrue(node.right)) {
+          result.grants++;
+          return;
+        }
+        break;
+      case "AssignmentExpression": {
+        // `options.allowHostProjectCodeExecution = true` (also `||=` / `??=`) is a grant.
+        const target = node.left;
+        const assigned = isNode(target) &&
+            (target.type === "MemberExpression" || target.type === "OptionalMemberExpression")
+          ? propertyName(target.property, target.computed)
+          : nameOf(target);
+        if (
+          assigned === FLAG && ["=", "||=", "??="].includes(node.operator as string) &&
+          isTrue(node.right)
+        ) {
+          result.grants++;
+          if (isNode(target) && target.type !== "Identifier") {
+            // The receiver is still code: `get().allowHostProjectCodeExecution = true`.
+            if (isNode(target.object)) visit(target.object, false);
+          }
+          return;
+        }
+        break;
+      }
       case "TSParameterProperty": {
         // `constructor(public allowHostProjectCodeExecution = true)` declares a field like
         // a class property: a literal `true` default is a grant, a declaration is not a use.
@@ -583,7 +645,8 @@ async function readSources(): Promise<Map<string, SourceAnalysis>> {
         continue;
       }
       if (
-        !/\.tsx?$/.test(entry.name) || /\.(?:test|test-helpers)\.tsx?$/.test(entry.name) ||
+        !/\.[cm]?[jt]sx?$/.test(entry.name) ||
+        /\.(?:test|test-helpers)\.[cm]?[jt]sx?$/.test(entry.name) ||
         entry.name.endsWith(".d.ts")
       ) continue;
       const text = await Deno.readTextFile(`${REPO_ROOT}${relativePath}`);
@@ -592,7 +655,12 @@ async function readSources(): Promise<Map<string, SourceAnalysis>> {
         continue;
       }
       try {
-        sources.set(relativePath, analyzeSource(text, entry.name.endsWith(".tsx")));
+        const language = /\.[cm]?jsx?$/.test(entry.name)
+          ? "js"
+          : entry.name.endsWith(".tsx")
+          ? "tsx"
+          : "ts";
+        sources.set(relativePath, analyzeSource(text, language));
       } catch (error) {
         throw new Error(`Could not parse ${relativePath}`, { cause: error });
       }
@@ -712,7 +780,7 @@ describe("execution surface inventory", () => {
   });
 
   it("counts guards only in code, not in comments, strings, templates or regular expressions", () => {
-    const guards = (source: string) => analyzeSource(source, false).guards;
+    const guards = (source: string) => analyzeSource(source).guards;
     const source = [
       "/*",
       "if (requiresIsolatedProjectRuntime(ctx)) return;",
@@ -743,7 +811,7 @@ describe("execution surface inventory", () => {
   });
 
   it("counts calls of a predicate through an import or local alias", () => {
-    const guards = (source: string) => analyzeSource(source, false).guards;
+    const guards = (source: string) => analyzeSource(source).guards;
     assertEquals(
       guards(
         [
@@ -773,9 +841,12 @@ describe("execution surface inventory", () => {
           "(0, isSharedProjectRuntime)(ctx);",
           "policy.isHostRealmApiExecution!(true);",
           "(<typeof requiresIsolatedProjectRuntime> requiresIsolatedProjectRuntime)(ctx);",
+          "isSharedProjectRuntime.call(undefined, ctx);",
+          "policy.isHostRealmApiExecution.apply(policy, [true]);",
+          "requiresIsolatedProjectRuntime`tagged`;",
         ].join("\n"),
       ),
-      5,
+      8,
     );
     // An unrelated local with an unrelated name stays uncounted.
     assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
@@ -810,17 +881,41 @@ describe("execution surface inventory", () => {
         "class Declared { declare readonly allowHostProjectCodeExecution: true; }",
         "abstract class Contract { abstract allowHostProjectCodeExecution: true; }",
         "class Typed { allowHostProjectCodeExecution: boolean = false; }",
+        "options.allowHostProjectCodeExecution = true;",
+        'settings["allowHostProjectCodeExecution"] ??= true;',
+        "const { allowHostProjectCodeExecution = true } = input;",
+        "const { allowHostProjectCodeExecution: enabled = true } = input;",
+        "function grantByDefault(allowHostProjectCodeExecution = true) {}",
+        "options.allowHostProjectCodeExecution = false;",
+        "const getter = { get allowHostProjectCodeExecution() { return true; } };",
+        "class Getter { get allowHostProjectCodeExecution() { return true; } }",
+        "class Computed { get allowHostProjectCodeExecution() { return compute(); } }",
         "const constGrant = { allowHostProjectCodeExecution: true as const };",
       ].join("\n"),
-      false,
     );
     // Destructuring (1), propagation key and read (2), negation (1), comparison (1),
-    // computed read (1), read through an assertion (1).
-    assertEquals(analysis.guards, 7);
+    // computed read (1), read through an assertion (1), assignment of `false` (1), a
+    // computed getter (1).
+    assertEquals(analysis.guards, 9);
     // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, class
     // and accessor fields initialized to `true` (also `as const` and `<const>`), a
     // constructor parameter property defaulting to or typed as `true`, `declare` and
-    // `abstract` fields typed as `true`, and `true as const` in a value.
-    assertEquals(analysis.grants, 15);
+    // `abstract` fields typed as `true`, `true as const` in a value, assignments of `true`
+    // (`=` and `??=`), destructuring defaults (2), a parameter default, and getters
+    // returning `true` (2).
+    assertEquals(analysis.grants, 22);
+  });
+
+  it("parses JavaScript sources, including JSX", () => {
+    const analysis = analyzeSource(
+      [
+        "const view = <Page allowed={options.allowHostProjectCodeExecution} />;",
+        "if (requiresIsolatedProjectRuntime(ctx)) stop();",
+        "module.exports = { allowHostProjectCodeExecution: true };",
+      ].join("\n"),
+      "js",
+    );
+    assertEquals(analysis.guards, 2);
+    assertEquals(analysis.grants, 1);
   });
 });
