@@ -1,11 +1,13 @@
+import {
+  PROJECT_METADATA_ENVIRONMENTS,
+  PROJECT_METADATA_RESPONSE_BYTES,
+  PROJECT_METADATA_TOKEN_CODE_UNITS,
+} from "#veryfront/utils/project-metadata-limits.ts";
 import { readProxyResponseJson, settleProxyResponseBody } from "#veryfront/proxy/response-body.ts";
 import { snapshotInstalledProjectHttpBinding } from "../runtime-handler/installed-project.ts";
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
 
 const SOURCE_RESPONSE_BYTES = 16 * 1024;
-// Match the bounded project metadata accepted by proxy routing.
-const PROJECT_RESPONSE_BYTES = 512 * 1024;
-const MAX_PROJECT_ENVIRONMENTS = 1_000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const unavailable = () => new Error("Runtime source authorization failed");
 
@@ -138,20 +140,24 @@ export function createRuntimeSourceAuthorizer(options: {
         combined,
       );
       combined.throwIfAborted();
-      if (typeof projectToken !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(projectToken)) {
+      if (
+        typeof projectToken !== "string" ||
+        projectToken.length > PROJECT_METADATA_TOKEN_CODE_UNITS ||
+        !/^[\x21-\x7e]+$/.test(projectToken)
+      ) {
         throw unavailable();
       }
       const project = await readJson(
         new URL(`/projects/${binding.projectId}`, base),
         projectToken,
-        PROJECT_RESPONSE_BYTES,
+        PROJECT_METADATA_RESPONSE_BYTES,
         combined,
       );
       if (
         !isRecord(project) ||
         project.id !== binding.projectId || project.slug !== binding.projectSlug ||
         !Array.isArray(project.environments) ||
-        project.environments.length > MAX_PROJECT_ENVIRONMENTS
+        project.environments.length > PROJECT_METADATA_ENVIRONMENTS
       ) throw unavailable();
       const environments = project.environments.filter((entry: unknown) =>
         entry && typeof entry === "object" &&

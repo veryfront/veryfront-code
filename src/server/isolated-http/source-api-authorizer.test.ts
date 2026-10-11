@@ -34,6 +34,30 @@ function setup(
   });
 }
 describe("runtime source API authorization", () => {
+  it("honors the established 64KiB project credential limit", async () => {
+    for (const length of [8193, 65536]) {
+      const token = "a".repeat(length);
+      let projectReads = 0;
+      const authorize = setup(async (url, init) => {
+        if (String(url).includes("/releases/")) return Response.json(source);
+        projectReads++;
+        assertEquals(
+          new Headers((init as RequestInit).headers).get("authorization"),
+          `Bearer ${token}`,
+        );
+        return Response.json(project);
+      }, async () => token);
+      await authorize(authority, signal());
+      assertEquals(projectReads, 1);
+    }
+    let projectReads = 0;
+    const authorize = setup(async (url) => {
+      if (!String(url).includes("/releases/")) projectReads++;
+      return Response.json(source);
+    }, async () => "a".repeat(65537));
+    await assertRejects(() => authorize(authority, signal()));
+    assertEquals(projectReads, 0);
+  });
   it("cancels denied and malformed API bodies at both source and project reads", async () => {
     for (const stage of ["source", "project"]) {
       for (const status of [401, 403, 200]) {
