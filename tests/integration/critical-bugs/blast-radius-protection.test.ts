@@ -26,6 +26,34 @@ import { join } from "#veryfront/compat/path";
 import { withTestContext } from "../../_helpers/context.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 
+function createSlowRenderGate(): {
+  promise: Promise<void>;
+  release: () => void;
+  started: number;
+} {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release, started: 0 };
+}
+
+async function waitForSlowRenderStarts(
+  gate: { readonly started: number },
+  expectedStarts: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (gate.started < expectedStarts && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert(
+    gate.started >= expectedStarts,
+    `Expected ${expectedStarts} slow renders to be active, got ${gate.started}`,
+  );
+}
+
 async function clearRendererState(renderer: unknown): Promise<void> {
   const maybe = renderer as { clearAllState?: () => Promise<void> | void } | null;
   if (typeof maybe?.clearAllState === "function") {
@@ -274,11 +302,12 @@ describe(
           );
           await writeTextFile(
             join(slowDir, "app", "page.tsx"),
-            `export default function Page() {
-              // Note: In a real scenario, this would be async data fetching
-              // Here we just create a large component to slow things down
-              const items = Array.from({ length: 10000 }, (_, i) => i);
-              return <div>{items.map(i => <span key={i}>{i}</span>)}</div>;
+            `export default async function Page() {
+              const gate = globalThis.__veryfrontBlastSlowRenderGate;
+              if (!gate) throw new Error("Missing blast-radius slow render gate");
+              gate.started++;
+              await gate.promise;
+              return <div>Slow</div>;
             }`,
           );
 
@@ -300,9 +329,15 @@ describe(
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
           const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
+          const {
+            RENDER_ACQUIRE_TIMEOUT_MS,
+            RENDER_PER_PROJECT_LIMIT,
+          } = await import("../../../src/rendering/renderer-concurrency.ts");
 
           let slowRenderer: unknown;
           let fastRenderer: unknown;
+          let slowGate: ReturnType<typeof createSlowRenderGate> | undefined;
+          let slowPromises: Array<Promise<unknown>> = [];
 
           try {
             slowRenderer = await createRenderer({
@@ -315,27 +350,70 @@ describe(
               mode: "development",
             });
 
-            const slowPromises = Array.from(
-              { length: 5 },
+            const warmFastResult = await (fastRenderer as any).renderPage("/");
+            assertStringIncludes(
+              warmFastResult.html,
+              "Fast",
+              "Fast project should render before slow project saturates its slots",
+            );
+
+            slowGate = createSlowRenderGate();
+            Object.defineProperty(globalThis, "__veryfrontBlastSlowRenderGate", {
+              configurable: true,
+              value: slowGate,
+              writable: true,
+            });
+
+            const slowRenderCount = Math.max(1, RENDER_PER_PROJECT_LIMIT);
+            slowPromises = Array.from(
+              { length: slowRenderCount },
               () => (slowRenderer as any).renderPage("/"),
             );
-
-            const fastStart = Date.now();
-            const fastResult = await (fastRenderer as any).renderPage("/");
-            const fastDuration = Date.now() - fastStart;
-
-            assertStringIncludes(fastResult.html, "Fast", "Fast project should render correctly");
-
-            assert(
-              fastDuration < 15000,
-              `Fast render took ${fastDuration}ms - should not be blocked by slow renders`,
+            await waitForSlowRenderStarts(
+              slowGate,
+              slowRenderCount,
+              RENDER_ACQUIRE_TIMEOUT_MS,
             );
 
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const fastOutcome = await Promise.race([
+              (fastRenderer as any).renderPage("/").then((result: { html: string }) => ({
+                result,
+                status: "rendered" as const,
+              })),
+              new Promise<{ status: "blocked" }>((resolve) => {
+                timeoutId = setTimeout(
+                  () => resolve({ status: "blocked" }),
+                  RENDER_ACQUIRE_TIMEOUT_MS,
+                );
+              }),
+            ]).finally(() => {
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
+            });
+
+            assert(
+              fastOutcome.status === "rendered",
+              "Fast project should render while slow project renders are still active",
+            );
+            assertStringIncludes(
+              fastOutcome.result.html,
+              "Fast",
+              "Fast project should render correctly",
+            );
+            assert(
+              slowGate.started >= slowRenderCount,
+              "Slow project renders should remain active until the test releases them",
+            );
+
+            slowGate.release();
             await Promise.allSettled(slowPromises);
 
             await clearRendererState(slowRenderer);
             await clearRendererState(fastRenderer);
           } finally {
+            slowGate?.release();
+            await Promise.allSettled(slowPromises);
+            Reflect.deleteProperty(globalThis, "__veryfrontBlastSlowRenderGate");
             await cleanupBundler();
           }
         });

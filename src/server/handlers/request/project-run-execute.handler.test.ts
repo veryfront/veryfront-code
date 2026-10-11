@@ -43,6 +43,10 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
@@ -63,6 +67,67 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+
+// Provider HTTP fixtures exercise real gateway/model execution, not real model quality.
+const canonicalKnowledgeFixtureReceipt = {
+  file_id: "11111111-1111-4111-8111-111111111111",
+  version_id: "22222222-2222-4222-8222-222222222222",
+};
+function canonicalKnowledgeIndexResponse(
+  url: string,
+  init?: RequestInit,
+  publishedChecksums?: ReadonlyMap<string, string>,
+): Response | undefined {
+  const body = requestJsonBody(init);
+  const parsedUrl = new URL(url);
+  if (/^\/runs\/[^/]+\/events$/.test(parsedUrl.pathname)) {
+    return Response.json({
+      run_id: parsedUrl.pathname.split("/").at(-2),
+      latest_event_id: 1,
+      appended_count: Array.isArray(body?.events) ? body.events.length : 0,
+    });
+  }
+  if (url.endsWith("/embeddings")) {
+    const inputs = Array.isArray(body?.input) ? body.input : [body?.input];
+    return Response.json({
+      object: "list",
+      model: "text-embedding-3-small",
+      data: inputs.map((_value, index) => ({
+        object: "embedding",
+        index,
+        embedding: Array(1536).fill(0.25),
+      })),
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+  }
+  if (url.endsWith("/index")) {
+    const path = decodeURIComponent(
+      new URL(url).pathname.split("/files/")[1]?.slice(0, -"/index".length) ?? "",
+    );
+    return Response.json({
+      ...canonicalKnowledgeFixtureReceipt,
+      path,
+      checksum: publishedChecksums?.get(path),
+      indexed_chunk_count: Array.isArray(body?.chunks) ? body.chunks.length : 0,
+      model: body?.model,
+    });
+  }
+  return undefined;
+}
+
+async function canonicalKnowledgePublicationResponse(
+  path: string,
+  init: RequestInit | undefined,
+  publishedChecksums: Map<string, string>,
+): Promise<Response> {
+  const content = requestJsonBody(init)?.content;
+  if (typeof content !== "string") {
+    throw new Error("Mock canonical publication requires string source content");
+  }
+  const checksum = await computeHash(content);
+  publishedChecksums.set(path, checksum);
+  return Response.json({ ...canonicalKnowledgeFixtureReceipt, path, checksum });
+}
 
 function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
   if (
@@ -86,6 +151,7 @@ async function expectedReportArtifact(report: EvalReport, sourcePath: string, pa
 }
 import {
   createKnowledgeEventLogger,
+  createKnowledgeRuntimeProgressBridge,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
   projectWorkflowRedisConfig,
@@ -100,7 +166,10 @@ import type { WorkflowNode, WorkflowRun } from "#veryfront/workflow/types.ts";
 import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
-import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  getActiveRunEventSink,
+  runWithMandatoryRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
@@ -180,6 +249,44 @@ function createProjectRunEventToken(input: {
       }),
     )
   }.signature`;
+}
+
+function createKnowledgeIngestEventToken(input: {
+  runId: string;
+  projectId: string;
+  canonicalRunId?: string;
+  attemptId?: string;
+}): string {
+  return createProjectRunEventToken({
+    runId: input.runId,
+    projectId: input.projectId,
+    canonicalRunId: input.canonicalRunId ?? "12121212-1212-4121-8121-121212121212",
+    ...(input.attemptId === undefined ? {} : { attemptId: input.attemptId }),
+  });
+}
+
+function createKnowledgeObservationResponder(
+  body: Parameters<typeof createKnowledgeIngestEventToken>[0],
+) {
+  const canonicalRunId = body.canonicalRunId ?? "12121212-1212-4121-8121-121212121212";
+  let cursor = 0;
+  return (url: string, init?: RequestInit): Response | undefined => {
+    if (new URL(url).pathname !== `/runs/${canonicalRunId}/events`) return undefined;
+    const observed = observeFetchRequestInit(init);
+    assertEquals(observed.method, "POST");
+    assertEquals(
+      new Headers(observed.headers).get("authorization"),
+      `Bearer ${createKnowledgeIngestEventToken(body)}`,
+    );
+    const events = requestJsonBody(init)?.events;
+    if (!Array.isArray(events)) throw new Error("Expected event batch");
+    cursor += events.length;
+    return Response.json({
+      run_id: canonicalRunId,
+      latest_event_id: cursor,
+      appended_count: events.length,
+    });
+  };
 }
 
 function createEvalTransportModel(input: {
@@ -286,6 +393,135 @@ describe("createKnowledgeEventLogger", () => {
 
     assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
     assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+
+  it("emits bounded sanitized runtime progress through the mandatory sink", async () => {
+    const lines: string[] = [];
+    const events: unknown[] = [];
+    const sink = (event: unknown) => {
+      events.push(event);
+    };
+
+    const bridge = runWithMandatoryRunEventSink(sink, () => createKnowledgeRuntimeProgressBridge());
+    assertExists(bridge);
+    const logger = createKnowledgeEventLogger(
+      lines,
+      "Knowledge ingest logs were truncated",
+      bridge,
+    );
+
+    await runWithMandatoryRunEventSink(sink, async () => {
+      logger.info("Knowledge source extraction progress", {
+        phase: "pdf_page_completed",
+        progress_unit: "page",
+        progress_current: 1,
+        progress_total: 3,
+        source_ordinal: 2,
+        source_count: 3,
+        source_type: "pdf",
+        source_name: "secret-contract.pdf",
+        remote_path: "knowledge/private/secret-contract.md",
+        content: "private document body",
+        authorization: "Bearer secret-token",
+        token: "secret-token",
+        error: "private parser detail",
+      });
+      logger.info("Knowledge source extraction progress", {
+        phase: "pdf_page_completed",
+        progress_unit: "page",
+        progress_current: 2,
+        progress_total: 3,
+        source_ordinal: 2,
+        source_count: 3,
+        source_type: "pdf",
+      });
+      logger.info("Knowledge source extraction progress", {
+        phase: "pdf_page_completed",
+        progress_unit: "page",
+        progress_current: 3,
+        progress_total: 3,
+        source_ordinal: 2,
+        source_count: 3,
+        source_type: "pdf",
+      });
+      await bridge.flush();
+    });
+
+    assertEquals(events, [{
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "knowledge_ingest_progress",
+      value: {
+        version: 1,
+        phase: "pdf_page_completed",
+        source_ordinal: 2,
+        source_count: 3,
+        source_type: "pdf",
+        progress: { unit: "page", current: 1, total: 3 },
+      },
+    }, {
+      type: "RUNTIME_EVENT_RECORDED",
+      runtime: "veryfront",
+      kind: "knowledge_ingest_progress",
+      value: {
+        version: 1,
+        phase: "pdf_page_completed",
+        source_ordinal: 2,
+        source_count: 3,
+        source_type: "pdf",
+        progress: { unit: "page", current: 3, total: 3 },
+      },
+    }]);
+    assertStringIncludes(lines[0] ?? "", "secret-contract.pdf");
+    const durable = JSON.stringify(events);
+    assertEquals(durable.includes("secret-contract"), false);
+    assertEquals(durable.includes("secret-token"), false);
+    assertEquals(durable.includes("private document body"), false);
+    assertEquals(durable.includes("private parser detail"), false);
+  });
+  it("joins all pending progress writes before reporting persistence failure", async () => {
+    let rejectFirst!: (error: Error) => void;
+    let resolveSecond!: () => void;
+    let writes = 0;
+    const failure = new Error("Persistence failed");
+    const sink = () =>
+      ++writes === 1
+        ? new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject;
+        })
+        : new Promise<void>((resolve) => {
+          resolveSecond = resolve;
+        });
+    const bridge = runWithMandatoryRunEventSink(sink, () => createKnowledgeRuntimeProgressBridge());
+    assertExists(bridge);
+    for (const phase of ["file_processing", "file_completed"]) {
+      bridge.record("info", "Progress", {
+        phase,
+        source_ordinal: 1,
+        source_count: 1,
+        source_type: "markdown",
+        progress_current: 1,
+        progress_total: 1,
+      });
+    }
+    let settled = false;
+    const flushed = bridge.flush().then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error) => {
+        settled = true;
+        return error;
+      },
+    );
+    rejectFirst(failure);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(settled, false);
+    resolveSecond();
+    assertEquals(await flushed, failure);
   });
 });
 
@@ -2361,7 +2597,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         runId: "run_knowledge_default",
         kind: "task",
         target: "task:knowledge-ingest",
-        projectId: "proj-1",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
         ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
         ...(runtimeTargetKind === "preview_branch"
           ? { runtimeTargetBranchId: "branch-proof" }
@@ -2372,12 +2609,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           branch_id: "untrusted-config-branch",
         },
       };
+      const respondObservation = createKnowledgeObservationResponder(body);
       const signed = await signedRequest(
         "/api/control-plane/runs/run_knowledge_default/execute",
         body,
-        { "x-token": "test-token" },
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+        },
       );
       const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const indexUrls: string[] = [];
+      const publishedChecksums = new Map<string, string>();
 
       const result = await withMockFetch(
         (async (input, init) => {
@@ -2386,6 +2630,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input instanceof Request
             ? input.url
             : input.toString();
+          const observation = respondObservation(url, init);
+          if (observation) return observation;
+          const headers = new Headers(observeFetchRequestInit(init).headers);
+          assertEquals(
+            headers.get("X-Veryfront-Run-Event-Token"),
+            url.endsWith("/index") || url.includes("/files/knowledge%2Fguide.md")
+              ? createKnowledgeIngestEventToken(body)
+              : null,
+          );
+          if (url.endsWith("/index")) indexUrls.push(url);
+          const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
+          if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("Accept"),
@@ -2398,15 +2654,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/guide.md",
+            init,
+            publishedChecksums,
+          );
         }) as typeof fetch,
         async () =>
           await new ProjectRunExecuteHandler().handle(
             signed.request,
-            createCtx(signed.publicKeyPem),
+            Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
           ),
       );
 
@@ -2420,6 +2677,761 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
       );
       assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+      assertEquals(indexUrls.map((url) => new URL(url).pathname), [
+        `/projects/demo-project/branches/${
+          runtimeTargetKind === "preview_branch" ? "branch-proof" : "main"
+        }/files/knowledge%2Fguide.md/index`,
+      ]);
+    });
+  }
+
+  for (
+    const hostile of [
+      { name: "a project env file", envFile: true, base: "https://93.184.216.34" },
+      { name: "a plaintext host API", envFile: false, base: "http://api.example.test" },
+      // Deno tests read this as the boot-configured API, which other host credentials accept.
+      {
+        name: "a boot-configured plaintext host API",
+        envFile: false,
+        base: "http://127.0.0.1:4000",
+      },
+    ]
+  ) {
+    it(`never sends the knowledge writer credential to ${hostile.name} origin`, async () => {
+      const body = {
+        runId: "run_knowledge_origin",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
+        runtimeTargetKind: "main_branch",
+        config: { paths: ["uploads/guide.md"], slug: "guide" },
+      };
+      const respondObservation = createKnowledgeObservationResponder(body);
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_origin/execute",
+        body,
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+        },
+      );
+      const calls: Array<{ url: string; writer: string | null }> = [];
+      const publishedChecksums = new Map<string, string>();
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: hostile.base, VERYFRONT_API_URL: "" },
+        async () => {
+          if (hostile.envFile) markEnvFileValue("VERYFRONT_API_BASE_URL");
+          try {
+            return await withMockFetch(
+              (async (input, init) => {
+                const url = typeof input === "string"
+                  ? input
+                  : input instanceof Request
+                  ? input.url
+                  : input.toString();
+                const observation = respondObservation(url, init);
+                if (observation) return observation;
+                calls.push({
+                  url,
+                  writer: new Headers(observeFetchRequestInit(init).headers).get(
+                    "X-Veryfront-Run-Event-Token",
+                  ),
+                });
+                const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
+                if (indexed) return indexed;
+                if (url.endsWith("/uploads/uploads%2Fguide.md")) {
+                  return new Response("# Guide\n\nOrigin-bound knowledge.", {
+                    status: 200,
+                    headers: { "Content-Type": "application/octet-stream" },
+                  });
+                }
+                return await canonicalKnowledgePublicationResponse(
+                  "knowledge/guide.md",
+                  init,
+                  publishedChecksums,
+                );
+              }) as typeof fetch,
+              async () =>
+                await new ProjectRunExecuteHandler().handle(
+                  signed.request,
+                  Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+                ),
+            );
+          } finally {
+            if (hostile.envFile) clearEnvFileValueSource("VERYFRONT_API_BASE_URL");
+          }
+        },
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      const hostileOrigin = new URL(hostile.base).origin;
+      assertEquals(
+        calls.filter((call) => new URL(call.url).origin === hostileOrigin),
+        [],
+        "the API client must not use the steerable or plaintext origin",
+      );
+      for (const call of calls.filter((call) => call.writer !== null)) {
+        assertEquals(new URL(call.url).origin, "https://api.veryfront.com");
+      }
+      if (hostile.envFile) {
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(calls.filter((call) => call.writer !== null).length, 2);
+      } else {
+        assertEquals(payload.success, false, JSON.stringify(payload));
+        assertStringIncludes(payload.error, "HTTPS");
+      }
+    });
+  }
+
+  for (const runtimeTargetKind of ["main_branch", "preview_branch"] as const) {
+    for (
+      const knowledgePath of [
+        "knowledge/imports/acme",
+        "docs/imports/acme",
+        "Knowledge/imports/acme",
+      ]
+    ) {
+      const encodedSourcePath = encodeURIComponent(`${knowledgePath}/guide.md`);
+      it(`preserves OKF metadata and canonical destination authority (${runtimeTargetKind}, ${knowledgePath})`, async () => {
+        const body = {
+          runId: "run_knowledge_default",
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "77777777-7777-4777-8777-777777777777",
+          canonicalRunId: "12121212-1212-4121-8121-121212121212",
+          ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
+          ...(runtimeTargetKind === "preview_branch"
+            ? { runtimeTargetBranchId: "branch-proof" }
+            : {}),
+          config: {
+            path_prefix: "uploads/acme",
+            okf_bundle: true,
+            knowledge_path: knowledgePath,
+            branch_id: "untrusted-config-branch",
+          },
+        };
+        const respondObservation = createKnowledgeObservationResponder(body);
+        const signed = await signedRequest(
+          "/api/control-plane/runs/run_knowledge_default/execute",
+          body,
+          {
+            "x-token": "test-token",
+            ...(knowledgePath.startsWith("knowledge/")
+              ? { "X-Veryfront-Inference-Token": "managed-embedding-fixture" }
+              : {}),
+            "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+          },
+        );
+        const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const publishedChecksums = new Map<string, string>();
+        let indexCalls = 0;
+        let embeddingCalls = 0;
+
+        const result = await withMockFetch(
+          (async (input, init) => {
+            const url = typeof input === "string"
+              ? input
+              : input instanceof Request
+              ? input.url
+              : input.toString();
+            const observation = respondObservation(url, init);
+            if (observation) return observation;
+            const headers = new Headers(observeFetchRequestInit(init).headers);
+            assertEquals(
+              headers.has("X-Veryfront-Run-Event-Token"),
+              knowledgePath.startsWith("knowledge/") &&
+                (url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`)),
+            );
+            assertEquals(
+              headers.get("Authorization"),
+              url.endsWith("/embeddings")
+                ? "Bearer managed-embedding-fixture"
+                : "Bearer test-token",
+            );
+            assertEquals(new URL(url).origin, "https://api.veryfront.com");
+            if (new URL(url).pathname === "/projects/demo-project/uploads") {
+              return Response.json({
+                data: [{ type: "file", path: "uploads/acme/guide.md" }],
+                page_info: { next: null },
+              });
+            }
+            const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
+            if (indexed) {
+              if (url.endsWith("/index")) indexCalls++;
+              if (url.endsWith("/embeddings")) embeddingCalls++;
+              return indexed;
+            }
+            if (url.endsWith("/projects/demo-project/uploads/uploads%2Facme%2Fguide.md")) {
+              assertEquals(
+                new Headers(observeFetchRequestInit(init).headers).get("Accept"),
+                "application/octet-stream",
+              );
+              return new Response(
+                "---\ntype: knowledge\ntitle: Guide\n---\n# Guide\n\nCancellation-safe knowledge.",
+                {
+                  status: 200,
+                  headers: { "Content-Type": "application/octet-stream" },
+                },
+              );
+            }
+            assertStringIncludes(
+              url,
+              `/projects/demo-project/files/${encodedSourcePath}`,
+            );
+            uploads.push({ url, body: requestJsonBody(init) ?? {} });
+            return await canonicalKnowledgePublicationResponse(
+              `${knowledgePath}/guide.md`,
+              init,
+              publishedChecksums,
+            );
+          }) as typeof fetch,
+          async () =>
+            await new ProjectRunExecuteHandler().handle(
+              signed.request,
+              Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+            ),
+        );
+
+        assertExists(result.response);
+        const payload = await result.response.json();
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(payload.result.summary.ingested_count, 1);
+        assertEquals(uploads.length, 1);
+        assertEquals(indexCalls, knowledgePath.startsWith("knowledge/") ? 1 : 0);
+        assertEquals(embeddingCalls, knowledgePath.startsWith("knowledge/") ? 1 : 0);
+        assertEquals(uploads[0]!.body.metadata, {
+          _veryfront: { okf: { bundle_root_path: knowledgePath } },
+        });
+        assertEquals(
+          new URL(uploads[0]!.url).searchParams.get("branch_id"),
+          runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
+        );
+        assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+      });
+    }
+  }
+
+  for (
+    const { branch, path, legacyChecksum } of [undefined, "33333333-3333-4333-8333-333333333333"]
+      .flatMap(
+        (branch) =>
+          ["knowledge/existing.md", "knowledge/Concept.MD"].flatMap((path) =>
+            [false, true].map((legacyChecksum) => ({ branch, path, legacyChecksum }))
+          ),
+      )
+  ) {
+    it(`indexes an existing canonical version without publication (${branch ?? "main"}, ${path}, legacy=${legacyChecksum})`, async () => {
+      const content =
+        "---\r\ntype: knowledge\r\ntitle: Existing\r\nrelated: [other.md]\r\n---\r\n\r\nUnicode 🌱 searchable body.";
+      const checksum = await computeHash(content);
+      const receipt = { ...canonicalKnowledgeFixtureReceipt, checksum, path };
+      const posts: unknown[] = [];
+      let reads = 0;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const body = {
+          runId: `run_existing_${attempt}`,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "77777777-7777-4777-8777-777777777777",
+          canonicalRunId: "12121212-1212-4121-8121-121212121212",
+          runtimeTargetKind: branch ? "preview_branch" : "main_branch",
+          ...(branch ? { runtimeTargetBranchId: branch } : {}),
+          config: {
+            mode: "index_existing_canonical",
+            file_path: path,
+            file_id: receipt.file_id,
+            expected_version_id: receipt.version_id,
+            checksum: legacyChecksum ? null : checksum,
+          },
+        };
+        const signed = await signedRequest(
+          `/api/control-plane/runs/run_existing_${attempt}/execute`,
+          body,
+          {
+            "x-token": "test-token",
+            "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+            "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+          },
+        );
+        const sealed = sealIngressCredentials(signed.request);
+        sealed.headers.set("X-Veryfront-Run-Event-Token", "mutable-substitute");
+        const result = await withMockFetch(
+          async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            const observed = observeFetchRequestInit(init);
+            if (url.pathname === `/runs/${body.canonicalRunId}/events`) {
+              assertEquals(
+                new Headers(observed.headers).get("authorization"),
+                `Bearer ${createKnowledgeIngestEventToken(body)}`,
+              );
+              const events = requestJsonBody(init)?.events;
+              if (!Array.isArray(events)) throw new Error("Expected event batch");
+              return Response.json({
+                run_id: body.canonicalRunId,
+                latest_event_id: events.length,
+                appended_count: events.length,
+              });
+            }
+
+            assertEquals(
+              new Headers(observed.headers).get("X-Veryfront-Run-Event-Token"),
+              url.pathname.endsWith("/index") ? createKnowledgeIngestEventToken(body) : null,
+            );
+            if (url.pathname.endsWith("/embeddings")) {
+              assertEquals(
+                new Headers(observed.headers).get("authorization"),
+                "Bearer managed-embedding-fixture",
+              );
+              return canonicalKnowledgeIndexResponse(url.toString(), init)!;
+            }
+            assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+            if (url.pathname.endsWith("/index")) {
+              assertEquals(observed.method, "POST");
+              assertStringIncludes(url.pathname, `/branches/${branch ?? "main"}/files/`);
+              const body = requestJsonBody(init)!;
+              assertEquals(body.expected_version_id, receipt.version_id);
+              const chunks = body.chunks as Array<
+                {
+                  content: string;
+                  start_offset: number;
+                  end_offset: number;
+                  metadata: Record<string, unknown>;
+                }
+              >;
+              for (const item of chunks) {
+                assertEquals(content.slice(item.start_offset, item.end_offset), item.content);
+                assertEquals(item.metadata.source, path);
+              }
+              posts.push(body);
+              return Response.json({
+                ...receipt,
+                checksum: legacyChecksum ? null : checksum,
+                indexed_chunk_count: chunks.length,
+                model: body.model,
+              });
+            }
+            assertEquals(
+              observed.method,
+              "GET",
+              "existing-version mode must never publish or upload",
+            );
+            assertEquals(url.pathname, `/projects/demo-project/files/${encodeURIComponent(path)}`);
+            assertEquals(url.searchParams.get("branch_id"), branch ?? null);
+            reads++;
+            return Response.json({
+              id: receipt.file_id,
+              version_id: receipt.version_id,
+              path,
+              checksum: legacyChecksum ? null : checksum,
+              content,
+            });
+          },
+          () =>
+            new ProjectRunExecuteHandler().handle(
+              sealed,
+              Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+            ),
+        );
+        assertExists(result.response);
+        const payload = await result.response.json();
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(payload.result.version_id, receipt.version_id);
+        assertEquals(payload.result.checksum, checksum);
+      }
+      assertEquals(reads, 2);
+      assertEquals(posts.length, 2);
+      assertEquals(posts[0], posts[1], "retry submits the identical complete set for one version");
+    });
+  }
+
+  for (const mismatch of ["id", "version_id", "path", "checksum", "content"] as const) {
+    it(`rejects an existing canonical ${mismatch} mismatch before provider execution`, async () => {
+      const content = "---\ntype: knowledge\n---\nCanonical body";
+      const checksum = await computeHash(content);
+      const path = "knowledge/existing.md";
+      const body = {
+        runId: "run_existing_stale",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
+        runtimeTargetKind: "main_branch",
+        config: {
+          mode: "index_existing_canonical",
+          file_path: path,
+          file_id: canonicalKnowledgeFixtureReceipt.file_id,
+          expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          checksum,
+        },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_existing_stale/execute",
+        body,
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+        },
+      );
+      let cursor = 0;
+      let calls = 0;
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname === `/runs/${body.canonicalRunId}/events`) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              `Bearer ${createKnowledgeIngestEventToken(body)}`,
+            );
+            const events = requestJsonBody(init)?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            cursor += events.length;
+            return Response.json({
+              run_id: body.canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }
+          calls++;
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path,
+            content,
+            checksum,
+            [mismatch]: "mismatched",
+          });
+        },
+        () =>
+          new ProjectRunExecuteHandler().handle(
+            signed.request,
+            Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+          ),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "does not match the admitted canonical version");
+      assertEquals(calls, 1);
+    });
+  }
+
+  for (const failure of ["authority", "provider", "version_conflict"] as const) {
+    it(`fails existing canonical indexing visibly on ${failure}`, async () => {
+      const content = "---\ntype: knowledge\n---\nSearchable topic";
+      const checksum = await computeHash(content);
+      const path = "knowledge/topic.md";
+      const body = {
+        runId: "run_existing_error",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
+        runtimeTargetKind: "main_branch",
+        config: {
+          mode: "index_existing_canonical",
+          file_path: path,
+          file_id: canonicalKnowledgeFixtureReceipt.file_id,
+          expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          checksum,
+        },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_existing_error/execute",
+        body,
+        {
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+          "x-token": "test-token",
+          ...(failure === "authority" ? {} : {
+            "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          }),
+        },
+      );
+      let commits = 0;
+      let cursor = 0;
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              `Bearer ${createKnowledgeIngestEventToken(body)}`,
+            );
+            const events = requestJsonBody(init)?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            cursor += events.length;
+            return Response.json({
+              run_id: body.canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }
+          if (url.endsWith("/embeddings")) {
+            if (failure === "provider") {
+              return Response.json({
+                error: { message: "Provider unavailable", type: "provider_error" },
+              }, { status: 401 });
+            }
+            return canonicalKnowledgeIndexResponse(url, init)!;
+          }
+          if (url.endsWith("/index")) {
+            commits++;
+            return Response.json({ error: "Selected version changed" }, { status: 409 });
+          }
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path,
+            content,
+            checksum,
+          });
+        },
+        () =>
+          new ProjectRunExecuteHandler().handle(
+            signed.request,
+            Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+          ),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(
+        payload.error,
+        failure === "authority"
+          ? "managed run inference credential"
+          : failure === "provider"
+          ? "status 401"
+          : "409",
+      );
+      assertEquals(commits, failure === "version_conflict" ? 1 : 0);
+    });
+  }
+
+  for (const inferenceAvailable of [false, true]) {
+    it(`fails default knowledge indexing visibly when ${inferenceAvailable ? "the provider rejects" : "managed inference authority is absent"}`, async () => {
+      const body = {
+        runId: "run_index_unavailable",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
+        runtimeTargetKind: "main_branch",
+        config: { paths: ["uploads/topic.txt"] },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_index_unavailable/execute",
+        body,
+        {
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+          "x-token": "test-token",
+          ...(inferenceAvailable
+            ? { "X-Veryfront-Inference-Token": "managed-embedding-fixture" }
+            : {}),
+        },
+      );
+      let publications = 0;
+      let indexCommits = 0;
+      let cursor = 0;
+      const publishedChecksums = new Map<string, string>();
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              `Bearer ${createKnowledgeIngestEventToken(body)}`,
+            );
+            const events = requestJsonBody(init)?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            cursor += events.length;
+            return Response.json({
+              run_id: body.canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }
+          if (url.endsWith("/uploads/uploads%2Ftopic.txt")) {
+            return new Response("Searchable topic", {
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          if (url.endsWith("/embeddings")) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              "Bearer managed-embedding-fixture",
+            );
+            return Response.json({
+              error: { message: "Embedding provider unavailable", type: "provider_error" },
+            }, { status: 401 });
+          }
+          if (url.endsWith("/index")) {
+            indexCommits++;
+            throw new Error("Unavailable index must not commit");
+          }
+          publications++;
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/topic.md",
+            init,
+            publishedChecksums,
+          );
+        },
+        () =>
+          new ProjectRunExecuteHandler().handle(
+            signed.request,
+            Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+          ),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.result.summary.ingested_count, 0);
+      assertEquals(payload.result.summary.failed_count, 1);
+      assertEquals(payload.result.failed[0].reason, "index_error");
+      assertEquals(
+        payload.result.failed[0].published.version_id,
+        canonicalKnowledgeFixtureReceipt.version_id,
+      );
+      assertStringIncludes(
+        payload.result.failed[0].message,
+        inferenceAvailable ? "status 401" : "managed run inference credential",
+      );
+      assertEquals(publications, 1);
+      assertEquals(indexCommits, 0);
+    });
+  }
+
+  for (const existingCanonical of [false, true]) {
+    it(`settles cancelled knowledge embedding work before stop acknowledgement (${existingCanonical ? "existing canonical" : "upload"})`, async () => {
+      async function awaitEmbeddingStart(promise: Promise<void>) {
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            promise,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () => reject(new Error("default embedding did not start")),
+                1_000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(watchdog);
+        }
+      }
+      const content = "---\ntype: knowledge\n---\nSearchable topic";
+      const checksum = await computeHash(content);
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<Response>();
+      let providerSettled = false;
+      let indexCommits = 0;
+      const acknowledgements: boolean[] = [];
+      const publishedChecksums = new Map<string, string>();
+      const body = {
+        runId: "run_index_cancel",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "77777777-7777-4777-8777-777777777777",
+        canonicalRunId: "12121212-1212-4121-8121-121212121212",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "branch-proof",
+        config: existingCanonical
+          ? {
+            mode: "index_existing_canonical",
+            file_path: "knowledge/topic.md",
+            file_id: canonicalKnowledgeFixtureReceipt.file_id,
+            expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            checksum,
+          }
+          : { paths: ["uploads/topic.txt"] },
+      };
+      const respondObservation = createKnowledgeObservationResponder(body);
+      const signed = await signedRequest("/api/control-plane/runs/run_index_cancel/execute", body, {
+        "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+        "x-token": "test-token",
+        "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        "x-veryfront-run-stop-token": "opaque-stop-capability",
+      });
+      await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        const observation = respondObservation(url, init);
+        if (observation) return observation;
+        if (url.endsWith("/cancellation-ack")) {
+          acknowledgements.push(providerSettled);
+          return Response.json({ acknowledged: true });
+        }
+        if (existingCanonical && url.includes("/files/knowledge%2Ftopic.md")) {
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          assertEquals(new URL(url).searchParams.get("branch_id"), "branch-proof");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path: "knowledge/topic.md",
+            content,
+            checksum,
+          });
+        }
+        if (url.endsWith("/uploads/uploads%2Ftopic.txt")) {
+          return new Response("Searchable topic", {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        if (url.endsWith("/embeddings")) {
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            "Bearer managed-embedding-fixture",
+          );
+          started.resolve();
+          try {
+            return await settled.promise;
+          } finally {
+            providerSettled = true;
+          }
+        }
+        if (url.endsWith("/index")) {
+          indexCommits++;
+          throw new Error("Cancelled indexing must not commit");
+        }
+        return await canonicalKnowledgePublicationResponse(
+          "knowledge/topic.md",
+          init,
+          publishedChecksums,
+        );
+      }, async () => {
+        const pending = new ProjectRunExecuteHandler().handle(
+          new Request(signed.request, { signal: controller.signal }),
+          Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+        );
+        await awaitEmbeddingStart(
+          Promise.race([
+            started.promise,
+            pending.then(() => {
+              throw new Error("Run ended before embedding started");
+            }),
+          ]),
+        );
+        controller.abort(new Error("Run cancelled during embeddings"));
+        assertEquals(acknowledgements, []);
+        settled.resolve(
+          Response.json({
+            object: "list",
+            model: "text-embedding-3-small",
+            data: [{ object: "embedding", index: 0, embedding: Array(1536).fill(0.25) }],
+            usage: { prompt_tokens: 1, total_tokens: 1 },
+          }),
+        );
+        const result = await pending;
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, false);
+      });
+      assertEquals(indexCommits, 0);
+      assertEquals(acknowledgements, [true]);
     });
   }
 
@@ -2428,15 +3440,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runId: "run_knowledge_environment",
       kind: "task",
       target: "task:knowledge-ingest",
-      projectId: "proj-1",
+      projectId: "77777777-7777-4777-8777-777777777777",
+      canonicalRunId: "12121212-1212-4121-8121-121212121212",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: "environment-proof",
       config: { paths: ["uploads/guide.md"], slug: "guide" },
     };
+    const respondObservation = createKnowledgeObservationResponder(body);
     const signed = await signedRequest(
       "/api/control-plane/runs/run_knowledge_environment/execute",
       body,
-      { "x-token": "test-token" },
+      {
+        "x-token": "test-token",
+        "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+      },
     );
 
     const originalSplit = String.prototype.split;
@@ -2444,6 +3462,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const originalToLowerCase = String.prototype.toLowerCase;
     let interceptedMime = false;
     const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const publishedChecksums = new Map<string, string>();
     let result;
     try {
       result = await withMockFetch(
@@ -2453,6 +3472,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input instanceof Request
             ? input.url
             : input.toString();
+          const observation = respondObservation(url, init);
+          if (observation) return observation;
+          const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
+          if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             const observed = observeFetchRequestInit(init);
             assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
@@ -2489,15 +3512,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/guide.md",
+            init,
+            publishedChecksums,
+          );
         }) as typeof fetch,
         async () =>
           await new ProjectRunExecuteHandler().handle(
             signed.request,
-            createCtx(signed.publicKeyPem),
+            Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
           ),
       );
     } finally {
@@ -2518,30 +3542,44 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
       const sources = ["first", "second", "third"];
       const outputs = new Map<string, string>();
+      const publishedChecksums = new Map<string, string>();
       const attempts: string[] = [];
       const held = Promise.withResolvers<void>();
       const controller = new AbortController();
       let firstAttempt = true;
       let stoppedAcknowledgements = 0;
+      let respondObservation: ReturnType<typeof createKnowledgeObservationResponder> | undefined;
       const execute = async (runId: string, signal?: AbortSignal) => {
-        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        const body = {
           runId,
           kind: "task",
           target: "task:knowledge-ingest",
-          projectId: "proj-1",
+          projectId: "77777777-7777-4777-8777-777777777777",
+          canonicalRunId: "12121212-1212-4121-8121-121212121212",
           runtimeTargetKind: "preview_branch",
           runtimeTargetBranchId: "branch-retained",
           config: { paths: sources.map((name) => `uploads/${name}.md`) },
-        }, { "x-token": "test-token", "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        };
+        respondObservation = createKnowledgeObservationResponder(body);
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, body, {
+          "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+          "x-token": "test-token",
+          "x-veryfront-run-stop-token": "opaque-stop-capability",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        });
         const response = await new ProjectRunExecuteHandler().handle(
           signal ? new Request(signed.request, { signal }) : signed.request,
-          createCtx(signed.publicKeyPem),
+          Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
         );
         assertExists(response.response);
         return await response.response.json();
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        const observation = respondObservation?.(url, init);
+        if (observation) return observation;
+        const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
+        if (indexed) return indexed;
         if (url.endsWith("/cancellation-ack")) {
           stoppedAcknowledgements++;
           return Response.json({ acknowledged: true });
@@ -2574,7 +3612,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         }
         const content = String(requestJsonBody(init)?.content);
         outputs.set(path, content);
-        return Response.json({ path });
+        return await canonicalKnowledgePublicationResponse(path, init, publishedChecksums);
       }, async () => {
         const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
         if (cancel) {
@@ -9629,6 +10667,7 @@ describe("project run inference credential header", () => {
           const payload = requestJsonBody(init);
           const events = payload?.events;
           if (!Array.isArray(events)) throw new Error("Expected event batch");
+          const previousCursor = cursor;
           const runtimeContextEvents = (events as Record<string, unknown>[]).filter((event) =>
             event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
           );
@@ -9642,8 +10681,18 @@ describe("project run inference credential header", () => {
             }]);
             assertMatch(JSON.stringify(payload?.runtime_observations), /"kind":"execution_entry"/);
             assertMatch(JSON.stringify(payload?.runtime_observations), /"event_index":0/);
+            assertEquals(payload?.expected_previous_event_id, undefined);
           } else {
             assertEquals(payload?.runtime_observations, undefined);
+          }
+          if (
+            (events as Record<string, unknown>[]).some((event) =>
+              event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+            )
+          ) {
+            assertEquals(payload?.expected_previous_event_id, previousCursor);
+          } else {
+            assertEquals(payload?.expected_previous_event_id, undefined);
           }
           appended.push(...events as Record<string, unknown>[]);
           cursor += events.length;
@@ -11999,7 +13048,11 @@ describe("project run inference credential header", () => {
             }
             if (failure === "wrong-run") return Response.json({ run_id: "other-run" });
             if (failure === "invalid-capture") {
-              return Response.json({ run_id: canonicalRunId, model_call_captures: [{}] });
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 2,
+                model_call_captures: [{}],
+              });
             }
             if (failure === "invalid-json") {
               return new Response("{");
@@ -12037,6 +13090,146 @@ describe("project run inference credential header", () => {
         assertStringIncludes(payload.error, "Project run observation sink is disabled");
       }
       if (failure !== "pre-append") assertEquals(appendCalls, 2);
+    });
+  }
+
+  it("fails closed before private model observations when the execution-entry receipt has no cursor", async () => {
+    const runId = "run_model_observation_missing_cursor";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let appendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await getActiveRunEventSink()?.({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          modelCallId,
+          messages: [{ role: "user", content: [{ type: "text", text: "Exact provider input" }] }],
+          tools: [],
+        });
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          appendCalls++;
+          const payload = requestJsonBody(init);
+          assertEquals(payload?.expected_previous_event_id, undefined);
+          assertEquals(payload?.runtime_observations !== undefined, true);
+          return Response.json({
+            run_id: canonicalRunId,
+            appended_count: Array.isArray(payload?.events) ? payload.events.length : 0,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project run observation append cursor is unavailable");
+    assertEquals(appendCalls, 1);
+  });
+
+  for (
+    const [name, latestEventId] of [
+      ["missing", undefined],
+      ["fractional", 1.5],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+    ] as const
+  ) {
+    it(`fails closed before managed model dispatch when the execution-entry cursor is ${name}`, async () => {
+      const runId = `run_model_dispatch_invalid_cursor_${name}`;
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      let appendCalls = 0;
+      let modelDispatches = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          const model: ModelRuntime<ModelRuntimeCallOptions> = {
+            provider: "test",
+            modelId: "test/blocked-dispatch",
+            executionMode: "remote",
+            runtimeCapabilities: { structuredOutput: true },
+            doGenerate() {
+              modelDispatches++;
+              return Promise.resolve({
+                content: [{ type: "text", text: "unexpected" }],
+                finishReason: "stop" as const,
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+            },
+            doStream() {
+              modelDispatches++;
+              throw new Error("unexpected stream dispatch");
+            },
+          };
+          const assistant = agent({
+            id: "blocked-dispatch-probe",
+            model: "test/blocked-dispatch",
+            system: "Say never dispatched.",
+            skills: false,
+            resolveModelTransport: () => Promise.resolve({ model }),
+          });
+          await assistant.generate({ input: "Say hello." });
+          return { success: true, result: "recorded", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            appendCalls++;
+            const payload = requestJsonBody(init);
+            assertEquals(payload?.expected_previous_event_id, undefined);
+            assertEquals(payload?.runtime_observations !== undefined, true);
+            return Response.json({
+              run_id: canonicalRunId,
+              ...(latestEventId === undefined ? {} : { latest_event_id: latestEventId }),
+              appended_count: Array.isArray(payload?.events) ? payload.events.length : 0,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "Project run observation append cursor is unavailable");
+      assertEquals(appendCalls, 1);
+      assertEquals(modelDispatches, 0);
     });
   }
 
@@ -12782,7 +13975,7 @@ describe("project run inference credential header", () => {
     let result;
     try {
       const handler = new ProjectRunExecuteHandler(createDeps({
-        executeKnowledgeIngest: async ({ req }) => {
+        executeReleaseAssetBuild: async ({ req }) => {
           received = req;
           return { success: true, result: null, logs: null, duration_ms: 0 };
         },
@@ -12795,7 +13988,7 @@ describe("project run inference credential header", () => {
           runId: "run_iterate_inference",
           canonicalRunId,
           kind: "task",
-          target: "task:knowledge-ingest",
+          target: "task:release-asset-build",
           projectId,
         },
         {
@@ -12822,6 +14015,8 @@ describe("project run inference credential header", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
+    const payload = await result.response.clone().json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
     assertExists(received);
     assertEquals(received.headers.get("x-token"), "project-runtime-token");
     assertEquals(received.headers.get("x-veryfront-run-event-token"), null);
@@ -14343,6 +15538,164 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     assertEquals(receivedSignal?.aborted, true);
     assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
     assertEquals(replacedCalls, 0);
+  });
+
+  it("runs runtime ownership observer current phase before project code and stale phase after stop acknowledgement", async () => {
+    const started = Promise.withResolvers<void>();
+    const settled = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const phases: string[] = [];
+    const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
+    let readbackChecked = false;
+    let eventAppendChecked = false;
+    let heartbeatChecked = false;
+    const runId = "run_runtime_ownership_probe";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const clock = manualTaskDeadlineClock();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        createRuntimeOwnershipProbe: (hostNowMs) => {
+          assertEquals(hostNowMs, clock.now());
+          return {
+            createSession(input) {
+              assertEquals(input.request.runId, runId);
+              assertEquals(input.request.canonicalRunId, canonicalRunId);
+              assertEquals(input.request.projectId, "proj-1");
+              assertEquals(input.retainedEventToken, true);
+              assertEquals(input.eventAuthorityCanonicalRunId, canonicalRunId);
+              assertEquals(input.nowMs, clock.now());
+              assertEquals(input.canonicalBranchId, "branch-preview");
+              return {
+                beforeExecute: async () => {
+                  const readback = await input.createReadbackClient?.(new AbortController().signal)
+                    .get<{ content: string }>(
+                      "/projects/proj-1/files/knowledge%2Fcontext-runtime-host-owned-stage-probe-20261011%2Fstage-probe%2Fownership.json",
+                      { branch_id: input.canonicalBranchId ?? "" },
+                    );
+                  assertEquals(readback?.content, "owned-readback");
+                  const eventAppendClient = input.createEventAppendClient?.(
+                    new AbortController().signal,
+                  );
+                  assertExists(eventAppendClient);
+                  assertExists(eventAppendClient.post);
+                  const eventAppend = await eventAppendClient.post<{ appended_count: number }>(
+                    `/runs/${canonicalRunId}/events`,
+                    {
+                      events: [{
+                        type: "RUNTIME_EVENT_RECORDED",
+                        runtime: "veryfront",
+                        kind: "probe",
+                        value: {},
+                      }],
+                    },
+                  );
+                  assertEquals(eventAppend?.appended_count, 1);
+                  const heartbeatClient = input.createHeartbeatClient?.(
+                    new AbortController().signal,
+                  );
+                  assertExists(heartbeatClient);
+                  assertExists(heartbeatClient.post);
+                  const heartbeat = await heartbeatClient.post<{ run_id: string }>(
+                    `/runs/${canonicalRunId}/heartbeats`,
+                    { lease_duration_seconds: 60 },
+                  );
+                  assertEquals(heartbeat?.run_id, canonicalRunId);
+                  phases.push("current");
+                },
+                afterStopAcknowledged: () => {
+                  assertEquals(input.readNowMs?.(), clock.now());
+                  phases.push("stale-after-cancel");
+                  return Promise.resolve();
+                },
+              };
+            },
+          };
+        },
+        executeKnowledgeIngest: async (input) => {
+          assertEquals(phases, ["current"]);
+          assertEquals(input.req.headers.get("x-veryfront-run-event-token"), null);
+          assertEquals(input.req.headers.get("x-veryfront-run-stop-token"), null);
+          started.resolve();
+          await settled.promise;
+          return { success: false, error: "Run cancelled", duration_ms: 1 };
+        },
+      }),
+      clock,
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "branch-preview",
+    }, {
+      "x-token": "test-runtime-bearer",
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId: "proj-1",
+        canonicalRunId,
+      }),
+      "x-veryfront-run-stop-token": "opaque-stop-capability",
+    });
+
+    await withMockFetch(async (url, init) => {
+      const observed = observeFetchRequestInit(init);
+      callbacks.push({ url: String(url), init: observed });
+      const parsed = new URL(String(url));
+      if (observed.method === "GET") {
+        assertEquals(parsed.origin, "https://api.veryfront.com");
+        assertEquals(
+          parsed.pathname,
+          "/projects/proj-1/files/knowledge%2Fcontext-runtime-host-owned-stage-probe-20261011%2Fstage-probe%2Fownership.json",
+        );
+        assertEquals(parsed.searchParams.get("branch_id"), "branch-preview");
+        const headers = new Headers(observed.headers);
+        assertEquals(headers.get("authorization"), "Bearer test-runtime-bearer");
+        assertEquals(headers.has("x-veryfront-run-event-token"), false);
+        readbackChecked = true;
+        return Response.json({ content: "owned-readback", version_id: "version-readback" });
+      }
+      if (observed.method === "POST" && parsed.pathname === `/runs/${canonicalRunId}/events`) {
+        const headers = new Headers(observed.headers);
+        assertEquals(parsed.origin, "https://api.veryfront.com");
+        assertStringIncludes(headers.get("authorization") ?? "", "Bearer test.");
+        assertEquals(headers.has("x-veryfront-run-event-token"), false);
+        eventAppendChecked = true;
+        return Response.json({ appended_count: 1, latest_event_id: 1, run_id: canonicalRunId });
+      }
+      if (observed.method === "POST" && parsed.pathname === `/runs/${canonicalRunId}/heartbeats`) {
+        const headers = new Headers(observed.headers);
+        assertEquals(parsed.origin, "https://api.veryfront.com");
+        assertEquals(headers.get("authorization"), "Bearer test-runtime-bearer");
+        assertEquals(headers.has("x-veryfront-run-event-token"), false);
+        heartbeatChecked = true;
+        return Response.json({ run_id: canonicalRunId, expires_at: "2026-10-11T05:46:00.000Z" });
+      }
+      assertEquals(phases, ["current"]);
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const pending = handler.handle(
+        new Request(signed.request, { signal: controller.signal }),
+        createCtx(signed.publicKeyPem),
+      );
+      await started.promise;
+      controller.abort(new Error("Run cancelled"));
+      assertEquals(phases, ["current"]);
+      clock.advance(123);
+      settled.resolve();
+      await pending;
+    });
+
+    assertEquals(readbackChecked, true);
+    assertEquals(eventAppendChecked, true);
+    assertEquals(heartbeatChecked, true);
+    const acknowledgement = callbacks.find((callback) =>
+      new URL(callback.url).pathname === `/runs/${runId}/cancellation-ack`
+    );
+    assertExists(acknowledgement);
+    assertEquals(phases, ["current", "stale-after-cancel"]);
   });
 
   it("acknowledges a stopped task independently only after its execution settles", async () => {
@@ -16788,4 +18141,65 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     assertEquals(calls, ["first"]);
     assertEquals((await backend.getRun(runId))?.status, "cancelled");
   });
+});
+
+describe("knowledge ingest observation authority", () => {
+  for (const authority of ["missing", "mismatched", "current"]) {
+    it(`requires current authority before ingestion (${authority})`, async () => {
+      const runId = "run_knowledge_authority";
+      const projectId = "77777777-7777-4777-8777-777777777777";
+      const canonicalRunId = "88888888-8888-4888-8888-888888888888";
+      let executions = 0;
+      let cursor = 0;
+      const eventToken = createProjectRunEventToken({
+        runId: authority === "mismatched" ? "run_other" : runId,
+        projectId,
+        canonicalRunId,
+      });
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        projectId,
+        canonicalRunId,
+        kind: "task",
+        target: "task:knowledge-ingest",
+      }, {
+        "X-Veryfront-Inference-Token": "managed-knowledge-authority-fixture",
+        ...(authority === "missing" ? {} : { "x-veryfront-run-event-token": eventToken }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        executeKnowledgeIngest: async () => {
+          executions++;
+          return { success: true, result: null, logs: null, duration_ms: 0 };
+        },
+      }));
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            assertEquals(authority, "current");
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            assertEquals(url.pathname, `/runs/${canonicalRunId}/events`);
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              `Bearer ${eventToken}`,
+            );
+            const events = requestJsonBody(init)?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            cursor += events.length;
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, authority === "current", JSON.stringify(payload));
+      assertEquals(executions, authority === "current" ? 1 : 0);
+      assertEquals(cursor > 0, authority === "current");
+    });
+  }
 });

@@ -38,7 +38,7 @@
     {
       "id": "calendly__get_current_user",
       "name": "Get Current User",
-      "description": "Get the connected Calendly user, including their user URI and organization URI (needed by the other tools)",
+      "description": "Get current user",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -51,7 +51,7 @@
     {
       "id": "calendly__list_event_types",
       "name": "List Event Types",
-      "description": "List the user's or organization's event types (scheduling links)",
+      "description": "List event types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -105,7 +105,7 @@
     {
       "id": "calendly__list_scheduled_events",
       "name": "List Scheduled Events",
-      "description": "List scheduled events for a user or organization",
+      "description": "List scheduled events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -169,7 +169,7 @@
     {
       "id": "calendly__get_scheduled_event",
       "name": "Get Scheduled Event",
-      "description": "Get details of a specific scheduled event",
+      "description": "Get scheduled event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -190,7 +190,7 @@
     {
       "id": "calendly__list_event_invitees",
       "name": "List Event Invitees",
-      "description": "List invitees of a scheduled event",
+      "description": "List event invitees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -239,7 +239,7 @@
     {
       "id": "calendly__cancel_event",
       "name": "Cancel Event",
-      "description": "Cancel a scheduled event",
+      "description": "Cancel event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

@@ -28,7 +28,7 @@
     {
       "id": "buildkite__list_organizations",
       "name": "List Organizations",
-      "description": "List Buildkite organizations the token can access",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -38,7 +38,7 @@
     {
       "id": "buildkite__list_pipelines",
       "name": "List Pipelines",
-      "description": "List pipelines in an organization",
+      "description": "List pipelines",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -81,7 +81,7 @@
     {
       "id": "buildkite__get_pipeline",
       "name": "Get Pipeline",
-      "description": "Get a pipeline's configuration and build stats",
+      "description": "Get pipeline",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -105,7 +105,7 @@
     {
       "id": "buildkite__list_builds",
       "name": "List Builds",
-      "description": "List builds for a pipeline, optionally filtered by branch or state",
+      "description": "List builds",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -165,7 +165,7 @@
     {
       "id": "buildkite__get_build",
       "name": "Get Build",
-      "description": "Get a build including its jobs and their states",
+      "description": "Get build",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -195,7 +195,7 @@
     {
       "id": "buildkite__create_build",
       "name": "Create Build",
-      "description": "Trigger a new build on a pipeline",
+      "description": "Create build",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

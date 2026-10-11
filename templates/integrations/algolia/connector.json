@@ -38,7 +38,7 @@
     {
       "id": "algolia__list_indices",
       "name": "List Indices",
-      "description": "List the indices in the Algolia application",
+      "description": "List indices",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -88,7 +88,7 @@
     {
       "id": "algolia__search_index",
       "name": "Search Index",
-      "description": "Run a search query against an index",
+      "description": "Search index",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -131,7 +131,7 @@
     {
       "id": "algolia__browse_index",
       "name": "Browse Index",
-      "description": "Browse all records in an index with cursor-based pagination",
+      "description": "Browse index",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -164,7 +164,7 @@
     {
       "id": "algolia__get_object",
       "name": "Get Object",
-      "description": "Retrieve a single record from an index by objectID",
+      "description": "Get object",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -193,7 +193,7 @@
     {
       "id": "algolia__save_objects",
       "name": "Save Objects",
-      "description": "Add or update records in an index via a batch operation",
+      "description": "Save objects",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

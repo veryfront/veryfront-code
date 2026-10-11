@@ -8,6 +8,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { revokeModelRuntimeResolver } from "./model-transport.ts";
 import {
+  createProjectRunInferenceEmbeddingModel,
   createProjectRunInferenceModelResolver,
   PROJECT_RUN_INFERENCE_TOKEN_HEADER,
   runWithProjectRunInferenceCredential,
@@ -20,6 +21,31 @@ const MODEL = "veryfront-cloud/openai/gpt-test";
 const REVOKED = "Project run inference credential is no longer active";
 
 describe("agent/runtime/project-run-inference-credential", () => {
+  it("builds no embedding outside a scope or for unmanaged models", async () => {
+    assertEquals(
+      createProjectRunInferenceEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small"),
+      undefined,
+    );
+    await runWithProjectRunInferenceCredential(TOKEN, () => {
+      assertEquals(createProjectRunInferenceEmbeddingModel("local/default"), undefined);
+      return Promise.resolve();
+    });
+  });
+
+  it("revokes retained embeddings after the signed scope settles", async () => {
+    const model = await runWithProjectRunInferenceCredential(TOKEN, () =>
+      Promise.resolve(
+        createProjectRunInferenceEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small"),
+      ));
+    assertExists(model);
+    await assertRejects(
+      async () => await model.doEmbed({ values: ["document"] }),
+      TypeError,
+      REVOKED,
+    );
+    assertEquals(JSON.stringify(model).includes(TOKEN), false);
+  });
+
   it("names the execute request header", () => {
     assertEquals(PROJECT_RUN_INFERENCE_TOKEN_HEADER, "X-Veryfront-Inference-Token");
   });

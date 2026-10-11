@@ -1,4 +1,4 @@
-import { getToolResultError } from "#veryfront/tool/result.ts";
+import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
 import type { ToolResultContext } from "./tool-result-context.ts";
 
@@ -19,9 +19,19 @@ function isToolResultPart(part: MessagePart): part is ToolResultPart {
 }
 
 function shouldSkipToolResult(
-  part: Pick<ToolResultPart, "toolName">,
+  part: Pick<ToolResultPart, "toolName" | "result">,
   skippedToolNames: ReadonlySet<string>,
 ): boolean {
+  if (part.toolName === "load_skill" || part.toolName === "veryfront__load_skill") {
+    const result = part.result;
+    if (
+      typeof readToolResultOwnDataProperty(result, "skillId") === "string" &&
+      typeof readToolResultOwnDataProperty(result, "file") === "string" &&
+      typeof readToolResultOwnDataProperty(result, "content") === "string"
+    ) {
+      return false;
+    }
+  }
   return skippedToolNames.has(part.toolName);
 }
 

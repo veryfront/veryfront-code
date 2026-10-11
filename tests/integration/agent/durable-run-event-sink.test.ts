@@ -1326,25 +1326,37 @@ describe("agent/hosted/durable-run-event-sink", () => {
       assertEquals(successful.appended.length, 1);
       assertEquals(successful.isDisposed(), false);
 
-      const timedOut = mirror({
-        append: () => new Promise(() => {}),
-      });
       let guardTimer: ReturnType<typeof setTimeout> | undefined;
+      let rejectGuard: (error: Error) => void = () => {};
+      const guard = new Promise<never>((_resolve, reject) => {
+        rejectGuard = reject;
+      });
+      const timedOut = mirror({
+        append: () => {
+          // The sink starts its deadline after entering its serialization queue.
+          // Start the watchdog at that same boundary so scheduling delay cannot
+          // make the watchdog expire before the persistence deadline exists.
+          guardTimer = guardSetTimeout(
+            () => rejectGuard(new Error("captured deadline did not settle")),
+            25,
+          );
+          return new Promise(() => {});
+        },
+      });
       try {
         await assertRejects(
-          () =>
-            Promise.race([
+          () => {
+            const raced = Promise.race([
               createDurableRunEventSink({ mirror: timedOut.result, timeoutMs: 1 })({
                 type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
                 messages: [],
               }),
-              new Promise<never>((_resolve, reject) => {
-                guardTimer = guardSetTimeout(
-                  () => reject(new Error("captured deadline did not settle")),
-                  1_000,
-                );
-              }),
-            ]),
+              guard,
+            ]);
+            // Reproduce a stalled worker before the queued sink starts its timer.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+            return raced;
+          },
           DurableRunEventPersistenceError,
           "Durable run event persistence timed out",
           "the captured timeout and abort path must fail closed",
