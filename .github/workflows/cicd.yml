@@ -569,7 +569,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -601,7 +601,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -656,21 +656,21 @@ jobs:
           persist-credentials: false
       # A main run that reuses the merge-queue run merges the queue's coverage.
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download native executor coverage lcov
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-native-executor
           path: coverage-profiles/coverage-native-executor
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download integration client coverage lcov
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-integration-client
           path: coverage-profiles/coverage-integration-client
@@ -730,7 +730,7 @@ jobs:
           # Sonar reads git history for new-code and blame.
           fetch-depth: 0
       - name: Download merged Sonar coverage
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-sonar
           path: coverage
@@ -1611,7 +1611,7 @@ jobs:
           echo "Publishing RC: ${RC_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1654,7 +1654,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1824,7 +1824,7 @@ jobs:
         run: npm install --global "npm@${NPM_CLI_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1842,7 +1842,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1911,7 +1911,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Download public release assets
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: public-release-${{ github.sha }}
           path: public-release-assets
