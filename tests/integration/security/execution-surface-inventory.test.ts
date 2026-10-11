@@ -2,15 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
+import { parse } from "npm:@babel/parser@7.29.2";
 
 /**
  * Repository-wide inventory of host execution decisions, complementing the
  * handler-only check in `src/server/handlers/execution-surface-policy.test.ts`.
  *
  * It reads source, not behaviour, so an unlisted file fails by construction.
- * Matching is per file and per call shape, never by function name or line, so
- * moving code inside a file keeps the inventory valid. Moving or renaming a
- * file fails with the path to update.
+ * Each file is parsed into a TypeScript syntax tree, so comments and string,
+ * template and regular expression contents can never count or hide a guard.
+ * Counting is per file, never by function name or line, so moving code inside a
+ * file keeps the inventory valid. Moving or renaming a file fails with the path
+ * to update.
  */
 
 const REPO_ROOT = fromFileUrl(new URL("../../../", import.meta.url));
@@ -18,23 +21,26 @@ const SCANNED_ROOTS = ["src/", "cli/"];
 const README = "src/security/README.md";
 const REGISTER_HEADING = "### Host execution grant register";
 
-/**
- * A call that decides host execution, or any use of the capability flag: reads on any
- * receiver, destructuring (including aliased destructuring) and propagation keys. Type
- * annotations (`allowHostProjectCodeExecution?: boolean`) and literal grants
- * (`allowHostProjectCodeExecution: true`, tracked by the register) are not counted.
- */
-const GUARD =
-  /\b(?:requiresIsolatedProjectRuntime|isHostProjectCodeExecutionAllowed|isSharedProjectRuntime|isExplicitHostProjectCodeExecutionAllowed|isHostRealmApiExecution|isHostProjectExecutionOverrideEnabled)\s*\(|\ballowHostProjectCodeExecution\b(?!\??:\s*(?:boolean|true)\b)/g;
-/** A literal grant that bypasses those decisions. */
-const LITERAL_GRANT = /\ballowHostProjectCodeExecution\s*:\s*true\b/g;
+/** Calls that decide whether tenant code may run on the host. */
+const PREDICATES = new Set([
+  "requiresIsolatedProjectRuntime",
+  "isHostProjectCodeExecutionAllowed",
+  "isSharedProjectRuntime",
+  "isExplicitHostProjectCodeExecutionAllowed",
+  "isHostRealmApiExecution",
+  "isHostProjectExecutionOverrideEnabled",
+]);
+const FLAG = "allowHostProjectCodeExecution";
 
 /**
  * Files that decide whether tenant code may run on the host, the surface each one guards,
  * and how many guards the file holds. Counting guards per file, not lines, keeps the
  * inventory valid when code moves inside a file, while removing any one guard fails.
  */
-const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?: RegExp }> = {
+const GUARDED_SURFACES: Record<
+  string,
+  { surface: string; guards: number; countLocalProjectChecks?: boolean }
+> = {
   "src/agent/project/agent-runtime.ts": {
     surface: "Project agent runtime capability",
     guards: 2,
@@ -65,7 +71,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/eval/discovery.ts": {
     surface: "Eval discovery capability",
-    guards: 3,
+    guards: 4,
   },
   "src/rendering/context/render-context.ts": {
     surface: "Render context capability",
@@ -173,7 +179,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/server/runtime-handler/project-middleware.ts": {
     surface: "Project middleware",
-    guards: 10,
+    guards: 13,
   },
   "src/server/runtime-handler/project-runtime-context.ts": {
     surface: "Project runtime context capability",
@@ -197,7 +203,7 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   },
   "src/task/discovery.ts": {
     surface: "Task discovery capability",
-    guards: 5,
+    guards: 6,
   },
   "src/task/project-runtime.ts": {
     surface: "Task project runtime capability",
@@ -218,13 +224,9 @@ const GUARDED_SURFACES: Record<string, { surface: string; guards: number; guard?
   "src/server/handlers/request/openapi.handler.ts": {
     surface: "Runtime OpenAPI generation",
     guards: 1,
-    guard: /\bisLocalProject\s*!==\s*true\b/g,
+    countLocalProjectChecks: true,
   },
 };
-
-function countGuards(code: string, pattern: RegExp = GUARD): number {
-  return code.match(new RegExp(pattern.source, "g"))?.length ?? 0;
-}
 
 /** Definitions of the predicates themselves are not surfaces. */
 const PREDICATE_DEFINITIONS = new Set([
@@ -233,179 +235,155 @@ const PREDICATE_DEFINITIONS = new Set([
   "src/security/sandbox/worker-pool.ts",
 ]);
 
-/**
- * Remove comments and the text of string and template literals, keeping `${...}`
- * template expressions as code. Line breaks are kept so line filtering still works.
- */
-function maskNonCode(source: string): string {
-  let result = "";
-  let index = 0;
-  // Last significant code character and identifier, to tell a regular expression
-  // literal from division.
-  let previous = "";
-  let previousWord = "";
-  // For each open parenthesis, whether it holds a control condition such as
-  // `if (...)`, after which a slash starts a regular expression.
-  const parentheses: boolean[] = [];
-  // Brace depth of the enclosing code for each open template expression.
-  const templateDepths: number[] = [];
-  let depth = 0;
+interface SourceAnalysis {
+  /** Predicate calls and uses of the capability flag in runtime code. */
+  guards: number;
+  /** Literal `allowHostProjectCodeExecution: true` grants, in values or types. */
+  grants: number;
+  /** `isLocalProject !== true` checks. */
+  localProjectChecks: number;
+}
 
-  /** Mask template text up to its closing backtick or the next `${`. */
-  const scanTemplateText = () => {
-    while (index < source.length) {
-      const char = source[index]!;
-      if (char === "\\") {
-        index += 2;
-        continue;
+type SyntaxNode = { type: string; [key: string]: unknown };
+
+const SKIPPED_KEYS = new Set([
+  "loc",
+  "start",
+  "end",
+  "range",
+  "extra",
+  "leadingComments",
+  "trailingComments",
+  "innerComments",
+  "comments",
+  "tokens",
+]);
+/** Subtrees that only describe types. Inside them, only literal-true grants count. */
+const TYPE_ONLY_NODES = new Set([
+  "TSTypeAnnotation",
+  "TSInterfaceDeclaration",
+  "TSTypeAliasDeclaration",
+  "TSTypeParameterDeclaration",
+  "TSTypeParameterInstantiation",
+  "TSDeclareFunction",
+  "TSDeclareMethod",
+]);
+
+function isNode(value: unknown): value is SyntaxNode {
+  return value !== null && typeof value === "object" &&
+    typeof (value as SyntaxNode).type === "string";
+}
+
+function nameOf(node: unknown): string | undefined {
+  if (!isNode(node)) return undefined;
+  if (node.type === "Identifier") return node.name as string;
+  if (node.type === "StringLiteral") return node.value as string;
+  return undefined;
+}
+
+function isTrue(node: unknown): boolean {
+  return isNode(node) && node.type === "BooleanLiteral" && node.value === true;
+}
+
+/**
+ * Count guards and grants in one source file from its syntax tree. Runtime code counts
+ * every call of a predicate and every use of the flag: reads on any receiver, negations,
+ * comparisons, conditions, destructuring and propagation keys. Class property
+ * declarations and type positions are not uses. A property `allowHostProjectCodeExecution:
+ * true`, in a value or a type, is a literal grant.
+ */
+function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
+  const ast = parse(source, {
+    sourceType: "module",
+    allowAwaitOutsideFunction: true,
+    allowReturnOutsideFunction: true,
+    errorRecovery: false,
+    plugins: tsx
+      ? ["typescript", "jsx", "decorators-legacy", "importAttributes"]
+      : ["typescript", "decorators-legacy", "importAttributes"],
+  });
+  const result: SourceAnalysis = { guards: 0, grants: 0, localProjectChecks: 0 };
+
+  const visitChildren = (node: SyntaxNode, inType: boolean, skip?: unknown) => {
+    for (const [key, value] of Object.entries(node)) {
+      if (SKIPPED_KEYS.has(key) || value === skip) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) if (isNode(item)) visit(item, inType);
+      } else if (isNode(value)) {
+        visit(value, inType);
       }
-      if (char === "`") {
-        result += "`";
-        index++;
-        return;
-      }
-      if (char === "$" && source[index + 1] === "{") {
-        result += "${";
-        index += 2;
-        templateDepths.push(depth);
-        depth = 0;
-        return;
-      }
-      if (char === "\n") result += "\n";
-      index++;
     }
   };
 
-  while (index < source.length) {
-    const char = source[index]!;
-    const next = source[index + 1];
-    if (char === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") index++;
-      continue;
+  const visit = (node: SyntaxNode, inType: boolean): void => {
+    if (TYPE_ONLY_NODES.has(node.type)) inType = true;
+    if (inType) {
+      if (
+        node.type === "TSPropertySignature" && nameOf(node.key) === FLAG &&
+        isNode(node.typeAnnotation) && isNode(node.typeAnnotation.typeAnnotation) &&
+        node.typeAnnotation.typeAnnotation.type === "TSLiteralType" &&
+        isTrue(node.typeAnnotation.typeAnnotation.literal)
+      ) result.grants++;
+      visitChildren(node, true);
+      return;
     }
-    if (char === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      const comment = source.slice(index, end < 0 ? source.length : end + 2);
-      result += comment.replace(/[^\n]/g, "");
-      index += comment.length;
-      continue;
-    }
-    if (char === "/" && startsRegExp(previous, previousWord)) {
-      // Mask the literal up to its unescaped closing slash outside a character class.
-      let end = index + 1;
-      let inClass = false;
-      while (end < source.length && source[end] !== "\n") {
-        const current = source[end]!;
-        if (current === "\\") {
-          end += 2;
-          continue;
+    switch (node.type) {
+      case "CallExpression":
+      case "OptionalCallExpression": {
+        const callee = node.callee;
+        const name = isNode(callee) &&
+            (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
+            !callee.computed
+          ? nameOf(callee.property)
+          : nameOf(callee);
+        if (name !== undefined && PREDICATES.has(name)) result.guards++;
+        break;
+      }
+      case "Identifier":
+        if (node.name === FLAG) result.guards++;
+        break;
+      case "ObjectProperty":
+        if (nameOf(node.key) === FLAG && !node.computed) {
+          if (isTrue(node.value)) {
+            result.grants++;
+            return;
+          }
+          // A shorthand property is one use; a keyed one is a use plus its value.
+          result.guards++;
+          if (node.shorthand) return;
+          visitChildren(node, false, node.key);
+          return;
         }
-        if (current === "[") inClass = true;
-        else if (current === "]") inClass = false;
-        else if (current === "/" && !inClass) break;
-        end++;
-      }
-      end++;
-      while (end < source.length && /[a-z]/.test(source[end]!)) end++;
-      result += "/ /";
-      index = end;
-      previous = "/";
-      previousWord = "";
-      continue;
+        break;
+      case "ClassProperty":
+      case "ClassAccessorProperty":
+        if (nameOf(node.key) === FLAG) {
+          visitChildren(node, false, node.key);
+          return;
+        }
+        break;
+      case "BinaryExpression":
+        if (
+          node.operator === "!==" &&
+          [node.left, node.right].some((side) =>
+            isNode(side) &&
+            (side.type === "MemberExpression" || side.type === "OptionalMemberExpression"
+              ? nameOf(side.property) === "isLocalProject"
+              : nameOf(side) === "isLocalProject")
+          ) &&
+          [node.left, node.right].some(isTrue)
+        ) result.localProjectChecks++;
+        break;
     }
-    if (char === '"' || char === "'") {
-      // Quoted strings end at a line break, so an unrecognized quote can mask
-      // at most the rest of its line.
-      let end = index + 1;
-      while (end < source.length && source[end] !== char && source[end] !== "\n") {
-        end += source[end] === "\\" ? 2 : 1;
-      }
-      result += char + char;
-      index = end + 1;
-      previous = char;
-      previousWord = "";
-      continue;
-    }
-    if (char === "`") {
-      result += "`";
-      index++;
-      scanTemplateText();
-      previous = "`";
-      previousWord = "";
-      continue;
-    }
-    if (char === "{") depth++;
-    if (char === "}") {
-      if (depth === 0 && templateDepths.length > 0) {
-        result += "}";
-        index++;
-        depth = templateDepths.pop()!;
-        scanTemplateText();
-        previous = "`";
-        previousWord = "";
-        continue;
-      }
-      depth--;
-    }
-    result += char;
-    index++;
-    if (char === "(") {
-      parentheses.push(CONTROL_KEYWORDS.has(previousWord));
-    } else if (char === ")" && parentheses.pop()) {
-      // After a control condition a statement follows, so treat it like an opening.
-      previous = "{";
-      previousWord = "";
-      continue;
-    }
-    if (/[\w$]/.test(char)) {
-      previousWord = /[\w$]/.test(previous) ? previousWord + char : char;
-      previous = char;
-    } else if (!/\s/.test(char)) {
-      previous = char;
-      previousWord = "";
-    }
-  }
+    visitChildren(node, false);
+  };
+
+  visit(ast.program as unknown as SyntaxNode, false);
   return result;
 }
 
-/** Keywords whose parenthesized condition is followed by a statement. */
-const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
-
-/** Keywords after which a slash starts a regular expression, not a division. */
-const REGEXP_KEYWORDS = new Set([
-  "return",
-  "typeof",
-  "case",
-  "do",
-  "else",
-  "in",
-  "of",
-  "new",
-  "delete",
-  "void",
-  "throw",
-  "instanceof",
-  "yield",
-  "await",
-]);
-
-/** A slash after an operator, opening bracket, keyword or nothing starts a regular expression. */
-function startsRegExp(previous: string, previousWord: string): boolean {
-  if (previous === "") return true;
-  if (previousWord) return REGEXP_KEYWORDS.has(previousWord);
-  return !/[\w$)\]}]/.test(previous);
-}
-
-/** Drop comments and imports so only real code counts. */
-function codeOf(source: string): string {
-  return maskNonCode(source)
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("import "))
-    .join("\n");
-}
-
-async function readSources(): Promise<Map<string, string>> {
-  const sources = new Map<string, string>();
+async function readSources(): Promise<Map<string, SourceAnalysis>> {
+  const sources = new Map<string, SourceAnalysis>();
   async function walk(relativeDir: string): Promise<void> {
     for await (const entry of Deno.readDir(`${REPO_ROOT}${relativeDir}`)) {
       const relativePath = `${relativeDir}${entry.name}`;
@@ -417,15 +395,24 @@ async function readSources(): Promise<Map<string, string>> {
         !/\.tsx?$/.test(entry.name) || /\.(?:test|test-helpers)\.tsx?$/.test(entry.name) ||
         entry.name.endsWith(".d.ts")
       ) continue;
-      sources.set(relativePath, codeOf(await Deno.readTextFile(`${REPO_ROOT}${relativePath}`)));
+      const text = await Deno.readTextFile(`${REPO_ROOT}${relativePath}`);
+      // A file that never names a predicate or the flag cannot count; skip parsing it.
+      if (!text.includes(FLAG) && ![...PREDICATES].some((name) => text.includes(name))) {
+        continue;
+      }
+      try {
+        sources.set(relativePath, analyzeSource(text, entry.name.endsWith(".tsx")));
+      } catch (error) {
+        throw new Error(`Could not parse ${relativePath}`, { cause: error });
+      }
     }
   }
   for (const root of SCANNED_ROOTS) await walk(root);
   return sources;
 }
 
-let cachedSources: Promise<Map<string, string>> | undefined;
-function sources(): Promise<Map<string, string>> {
+let cachedSources: Promise<Map<string, SourceAnalysis>> | undefined;
+function sources(): Promise<Map<string, SourceAnalysis>> {
   cachedSources ??= readSources();
   return cachedSources;
 }
@@ -460,8 +447,8 @@ describe("execution surface inventory", () => {
   it("lists every file that decides host execution", async () => {
     const all = await sources();
     const unlisted = [...all.entries()]
-      .filter(([path, code]) =>
-        countGuards(code) > 0 && !(path in GUARDED_SURFACES) &&
+      .filter(([path, analysis]) =>
+        analysis.guards > 0 && !(path in GUARDED_SURFACES) &&
         !PREDICATE_DEFINITIONS.has(path)
       )
       .map(([path]) => path)
@@ -478,11 +465,11 @@ describe("execution surface inventory", () => {
     const all = await sources();
     const changed = Object.entries(GUARDED_SURFACES)
       .map(([path, entry]) => {
-        const code = all.get(path);
-        // A custom guard adds to the canonical matcher; it never replaces it.
-        const found = code === undefined
+        const analysis = all.get(path);
+        // Local-project checks add to the canonical count; they never replace it.
+        const found = analysis === undefined
           ? "missing file"
-          : countGuards(code) + (entry.guard ? countGuards(code, entry.guard) : 0);
+          : analysis.guards + (entry.countLocalProjectChecks ? analysis.localProjectChecks : 0);
         return { path, expected: entry.guards, found };
       })
       .filter(({ expected, found }) => found !== expected);
@@ -500,7 +487,7 @@ describe("execution surface inventory", () => {
     const register = await readRegister();
     const grantCounts = new Map(
       [...all.entries()]
-        .map(([path, code]) => [path, countGuards(code, LITERAL_GRANT)] as const)
+        .map(([path, analysis]) => [path, analysis.grants] as const)
         .filter(([, count]) => count > 0),
     );
     const grants = [...grantCounts.keys()].toSorted();
@@ -536,7 +523,8 @@ describe("execution surface inventory", () => {
     );
   });
 
-  it("counts guards only in code, not in comments or string and template text", () => {
+  it("counts guards only in code, not in comments, strings, templates or regular expressions", () => {
+    const guards = (source: string) => analyzeSource(source, false).guards;
     const source = [
       "/*",
       "if (requiresIsolatedProjectRuntime(ctx)) return;",
@@ -547,44 +535,41 @@ describe("execution surface inventory", () => {
       "log(`isSharedProjectRuntime( ${requiresIsolatedProjectRuntime(ctx)} done`);",
     ].join("\n");
     // Counted: the call on line 4 and the call inside the template expression.
-    assertEquals(countGuards(codeOf(source)), 2);
+    assertEquals(guards(source), 2);
     // A quote inside a regular expression literal does not hide the code after it.
     assertEquals(
-      countGuards(
-        codeOf(`const quoted = /["']/.test(value); allowHostProjectCodeExecution && run();`),
-      ),
+      guards(`const quoted = /["']/.test(value); allowHostProjectCodeExecution && run();`),
       1,
     );
+    assertEquals(guards(`const pattern = /requiresIsolatedProjectRuntime\\(/;`), 0);
+    // A regular expression after a control condition is still a regular expression.
     assertEquals(
-      countGuards(codeOf(`return /requiresIsolatedProjectRuntime\\(/.test(text);`)),
-      0,
-    );
-    // A regular expression after a control condition is still recognized.
-    assertEquals(
-      countGuards(
-        codeOf(`if (ready) /["']/.test(value); allowHostProjectCodeExecution && run();`),
-      ),
-      1,
-    );
-    // A call's closing parenthesis still ends an expression, so this is division.
-    assertEquals(
-      countGuards(codeOf("const r = count(items) / 2; isSharedProjectRuntime(ctx);")),
+      guards(`if (ready) /["']/.test(value); allowHostProjectCodeExecution && run();`),
       1,
     );
     // Division is not a regular expression.
     assertEquals(
-      countGuards(codeOf("const half = total / 2; isSharedProjectRuntime(ctx); const q = a / b;")),
+      guards("const r = count(items) / 2; isSharedProjectRuntime(ctx); const q = a / b;"),
       1,
     );
   });
 
-  it("counts aliased destructuring and propagation, not type annotations", () => {
-    const source = [
-      "const { allowHostProjectCodeExecution: allowed } = options;",
-      "run({ allowHostProjectCodeExecution: options.allowHostProjectCodeExecution });",
-      "interface Options { allowHostProjectCodeExecution?: boolean }",
-      "const grant = { allowHostProjectCodeExecution: true };",
-    ].join("\n");
-    assertEquals(countGuards(codeOf(source)), 3);
+  it("counts every runtime use of the flag, not type annotations or class declarations", () => {
+    const analysis = analyzeSource(
+      [
+        "const { allowHostProjectCodeExecution: allowed } = options;",
+        "run({ allowHostProjectCodeExecution: options.allowHostProjectCodeExecution });",
+        "if (!options?.allowHostProjectCodeExecution) stop();",
+        "const flag = options.allowHostProjectCodeExecution === true ? 1 : 0;",
+        "interface Options { allowHostProjectCodeExecution?: boolean }",
+        "class Holder { readonly allowHostProjectCodeExecution: boolean = false; }",
+        "const grant = { allowHostProjectCodeExecution: true };",
+        "type Grant = { allowHostProjectCodeExecution: true };",
+      ].join("\n"),
+      false,
+    );
+    // Destructuring (1), propagation key and read (2), negation (1), comparison (1).
+    assertEquals(analysis.guards, 5);
+    assertEquals(analysis.grants, 2);
   });
 });

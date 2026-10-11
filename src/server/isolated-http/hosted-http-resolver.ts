@@ -216,7 +216,7 @@ function isProjectBoundServiceCredential(
     const binary = atob(base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "="));
     claims = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(
-        Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+        Uint8Array.from(binary, (character) => character.codePointAt(0)!),
       ),
     );
   } catch {
