@@ -17,7 +17,7 @@ import { parse } from "npm:@babel/parser@7.29.2";
  *
  * Supported forms, and the only ones this test claims to see:
  * - direct predicate calls, including `receiver.predicate(...)` and calls through a
- *   fallback or wrapper such as `(override ?? predicate)()`;
+ *   fallback or wrapper such as `(override ?? predicate)()` or `(<T> predicate)()`;
  * - predicates imported under another name (`import { p as q }`);
  * - local aliases (`const q = p`), member aliases (`const q = policy.p`) and
  *   destructured aliases (`const { p: q } = policy`), transitively;
@@ -25,7 +25,8 @@ import { parse } from "npm:@babel/parser@7.29.2";
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
  * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
  *   `as` / `satisfies` assertion types, class fields and constructor parameter properties
- *   initialized to `true`, and `true` wrapped in `as const`, `<const>` or parentheses.
+ *   initialized to or typed as `true`, and `true` wrapped in `as const`, `<const>` or
+ *   parentheses.
  *
  * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
  * other modules) is out of scope: the runtime guards, not this test, enforce
@@ -358,6 +359,7 @@ function calleeNames(callee: unknown): string[] {
     case "TSNonNullExpression":
     case "TSAsExpression":
     case "TSSatisfiesExpression":
+    case "TSTypeAssertion":
       return calleeNames(callee.expression);
     default:
       return [];
@@ -535,7 +537,15 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
         if (propertyName(node.key, node.computed) === FLAG) {
           // `allowHostProjectCodeExecution = true` on a class is a literal grant; any
           // other declaration is not a use, but its initializer is still code.
-          if (isTrue(node.value)) {
+          // So is a `declare` or `abstract` field typed as the literal `true`.
+          const annotation = isNode(node.typeAnnotation)
+            ? node.typeAnnotation.typeAnnotation
+            : undefined;
+          if (
+            isTrue(node.value) ||
+            (isNode(annotation) && annotation.type === "TSLiteralType" &&
+              isTrue(annotation.literal))
+          ) {
             result.grants++;
             return;
           }
@@ -762,9 +772,10 @@ describe("execution surface inventory", () => {
           "(useFake ? fake : requiresIsolatedProjectRuntime)(ctx);",
           "(0, isSharedProjectRuntime)(ctx);",
           "policy.isHostRealmApiExecution!(true);",
+          "(<typeof requiresIsolatedProjectRuntime> requiresIsolatedProjectRuntime)(ctx);",
         ].join("\n"),
       ),
-      4,
+      5,
     );
     // An unrelated local with an unrelated name stays uncounted.
     assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
@@ -796,6 +807,9 @@ describe("execution surface inventory", () => {
         "class ParameterOff { constructor(readonly allowHostProjectCodeExecution = false) {} }",
         "class ParameterType { constructor(public allowHostProjectCodeExecution: true) {} }",
         "class ParameterBool { constructor(public allowHostProjectCodeExecution: boolean) {} }",
+        "class Declared { declare readonly allowHostProjectCodeExecution: true; }",
+        "abstract class Contract { abstract allowHostProjectCodeExecution: true; }",
+        "class Typed { allowHostProjectCodeExecution: boolean = false; }",
         "const constGrant = { allowHostProjectCodeExecution: true as const };",
       ].join("\n"),
       false,
@@ -805,8 +819,8 @@ describe("execution surface inventory", () => {
     assertEquals(analysis.guards, 7);
     // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, class
     // and accessor fields initialized to `true` (also `as const` and `<const>`), a
-    // constructor parameter property defaulting to or typed as `true`, and `true as const`
-    // in a value.
-    assertEquals(analysis.grants, 13);
+    // constructor parameter property defaulting to or typed as `true`, `declare` and
+    // `abstract` fields typed as `true`, and `true as const` in a value.
+    assertEquals(analysis.grants, 15);
   });
 });
