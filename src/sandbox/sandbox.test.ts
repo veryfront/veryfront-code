@@ -2300,7 +2300,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.heartbeat(),
         Error,
-        "Sandbox heartbeat failed: 503 upstream timeout",
+        "Sandbox heartbeat failed: 503",
       );
     });
   });
@@ -2375,7 +2375,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.close(),
         Error,
-        "Delete sandbox failed: 503 delete failed",
+        "Delete sandbox failed: 503",
       );
     });
   });
@@ -2622,7 +2622,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.readFile("notes.txt"),
         Error,
-        "Sandbox heartbeat failed: 503 heartbeat failed",
+        "Sandbox heartbeat failed: 503",
       );
 
       assertEquals(sandbox.isActive, false);
@@ -4284,11 +4284,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");
@@ -4359,11 +4360,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");

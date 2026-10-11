@@ -548,7 +548,7 @@ export class LazySandbox {
             }
           }
 
-          throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
+          throw await createSandboxHttpError(res, "Sandbox heartbeat failed");
         }
 
         this.lastHeartbeatAt = Date.now();
@@ -818,7 +818,7 @@ export class LazySandbox {
           return;
         }
 
-        lastFailure = `${res.status} ${await res.text()}`;
+        lastFailure = (await createSandboxHttpError(res, "Runtime readiness failed")).message;
         if (!RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES.has(res.status)) {
           break;
         }

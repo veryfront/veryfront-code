@@ -1,4 +1,5 @@
 import { REQUEST_ERROR, type VeryfrontError } from "#veryfront/errors";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 
 const MAX_SANDBOX_ERROR_BODY_BYTES = 8 * 1024;
@@ -19,11 +20,13 @@ function responseProblem(text: string, status: number): Record<string, unknown> 
   for (const key of ["type", "title", "slug", "category"] as const) {
     const field = problem[key];
     if (typeof field !== "string" || field.length === 0 || field.length > 2048) return undefined;
-    projected[key] = field;
+    projected[key] = sanitizeBoundedDiagnosticText(field);
   }
   for (const key of ["detail", "instance", "suggestion"] as const) {
     const field = problem[key];
-    if (typeof field === "string" && field.length <= 4096) projected[key] = field;
+    if (typeof field === "string" && field.length <= 4096) {
+      projected[key] = sanitizeBoundedDiagnosticText(field);
+    }
   }
   if (Array.isArray(problem.errors) && problem.errors.length <= 50) {
     const errors: Record<string, string>[] = [];
@@ -32,7 +35,9 @@ function responseProblem(text: string, status: number): Record<string, unknown> 
       const fields: Record<string, string> = {};
       for (const key of ["field", "message", "code"]) {
         const field = (item as Record<string, unknown>)[key];
-        if (typeof field === "string" && field.length <= 1024) fields[key] = field;
+        if (typeof field === "string" && field.length <= 1024) {
+          fields[key] = sanitizeBoundedDiagnosticText(field);
+        }
       }
       errors.push(fields);
     }
@@ -66,7 +71,7 @@ export async function createSandboxHttpError(
   const problem = truncated ? undefined : responseProblem(text, response.status);
   return REQUEST_ERROR.create({
     status: response.status,
-    detail: `${operation}: ${response.status}${text ? ` ${text}` : ""}${
+    detail: `${operation}: ${response.status}${problem ? ` ${JSON.stringify(problem)}` : ""}${
       truncated ? " [truncated]" : ""
     }`,
     context: problem

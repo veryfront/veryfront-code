@@ -6,7 +6,11 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { Sandbox } from "../../../src/sandbox/sandbox.ts";
 import { currentSandboxCleanupPolicy } from "../../../src/sandbox/proxy-routes.ts";
@@ -118,4 +122,46 @@ describe("Sandbox HTTP error projection", () => {
       assertStringIncludes(error.cause.message, "cleanup canceled");
     });
   }
+  it("LazySandbox heartbeat preserves HTTP status and problem details when cleanup is disabled", async () => {
+    let heartbeats = 0;
+    const denied = { ...problem, status: 403, slug: "authorization-denied", category: "AUTH" };
+    installMockFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/sandboxes" && observeFetchRequestInit(init).method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "lazy-fixture",
+            endpoint: options.apiUrl,
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          { status: 201 },
+        );
+      }
+      if (path.endsWith("/heartbeat")) {
+        return heartbeats++ === 0
+          ? new Response(JSON.stringify({ ok: true }), { status: 200 })
+          : new Response(JSON.stringify(denied), { status: 403 });
+      }
+      if (path.endsWith("/readyz")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fixture request ${path}`);
+    });
+    const sandbox = Sandbox.createLazy({
+      ...options,
+      projectReference: "fixture-project",
+      deleteOnClose: false,
+    });
+    try {
+      await sandbox.ensure();
+      const error = await rejected(() => sandbox.heartbeat(true));
+      assertEquals(error.status, 403);
+      assertEquals(error.context, { responseProblem: denied });
+      assertEquals(sandbox.id, "lazy-fixture");
+    } finally {
+      await sandbox.close();
+    }
+  });
 });

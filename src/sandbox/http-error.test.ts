@@ -64,14 +64,14 @@ describe("Sandbox response problem projection", () => {
     assertEquals(error.status, 403);
     assertEquals(error.context, undefined);
   });
-  it("keeps malformed server bodies visible without inventing a problem", async () => {
+  it("omits unstructured server bodies while preserving HTTP failure status", async () => {
     const error = await createSandboxHttpError(
       new Response("gateway unavailable", { status: 503 }),
       "Request failed",
     );
     assertEquals(error.status, 503);
     assertEquals(error.context, undefined);
-    assertStringIncludes(error.detail ?? "", "gateway unavailable");
+    assertEquals(error.detail, "Request failed: 503");
   });
   it("keeps unreadable response bodies visible as a cause", async () => {
     const error = await createSandboxHttpError(
@@ -108,5 +108,35 @@ describe("Sandbox response problem projection", () => {
     assertEquals(error.status, 403);
     assertInstanceOf(error.cause, Error);
     assertStringIncludes(error.cause.message, "caller canceled");
+  });
+  it("never exposes unknown response fields in public diagnostics", async () => {
+    const error = await createSandboxHttpError(
+      response({
+        ...problem,
+        credentials: "opaque-credential",
+        customerData: "private-customer-data",
+        debug: "internal-debug-data",
+      }),
+      "Request failed",
+    );
+    const publicError = JSON.stringify({
+      message: error.message,
+      detail: error.detail,
+      context: error.context,
+    });
+    for (const value of ["opaque-credential", "private-customer-data", "internal-debug-data"]) {
+      assertEquals(publicError.includes(value), false, value);
+    }
+  });
+  it("redacts credentials inside allowlisted canonical diagnostic fields", async () => {
+    const error = await createSandboxHttpError(
+      response({ ...problem, detail: "Authorization: Bearer private-fixture-token" }),
+      "Request failed",
+    );
+    assertEquals(
+      JSON.stringify({ message: error.message, detail: error.detail, context: error.context })
+        .includes("private-fixture-token"),
+      false,
+    );
   });
 });
