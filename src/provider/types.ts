@@ -186,6 +186,8 @@ export interface ModelRuntimeCallOptions {
   stopSequences?: readonly string[];
   tools?: readonly ModelRuntimeToolDefinition[];
   toolChoice?: unknown;
+  /** Allow parallel provider tool calls. Omission retains the provider default. */
+  parallelToolCalls?: boolean;
   seed?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;

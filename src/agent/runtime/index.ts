@@ -4015,6 +4015,9 @@ export class AgentRuntime {
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             ...(temperature === undefined ? {} : { temperature }),
+            ...(this.config.parallelToolCalls === undefined
+              ? {}
+              : { parallelToolCalls: this.config.parallelToolCalls }),
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
@@ -5283,6 +5286,9 @@ export class AgentRuntime {
           experimental_repairToolCall: repairToolCall,
           maxOutputTokens,
           ...(temperature === undefined ? {} : { temperature }),
+          ...(this.config.parallelToolCalls === undefined
+            ? {}
+            : { parallelToolCalls: this.config.parallelToolCalls }),
           ...(headers ? { headers } : {}),
           ...(providerOptions ? { providerOptions } : {}),
           ...(reasoning ? { reasoning } : {}),

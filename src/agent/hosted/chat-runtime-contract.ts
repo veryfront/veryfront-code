@@ -135,6 +135,7 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   agentId?: string;
   model?: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps?: number;
   maxOutputTokens?: number;
   allowedTools?: string[];

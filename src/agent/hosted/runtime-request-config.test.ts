@@ -745,3 +745,21 @@ it("explicit hosted grants require own data configuration and array entries", ()
   assertEquals(hasExplicitHostedToolName({ tools: entries }, name), false);
   assertEquals(reads, 0);
 });
+
+it("authored parallel tool control does not alter allowed tool intersection", () => {
+  for (const value of [false, true, undefined]) {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools: ["read_file"] } },
+      agentConfig: {
+        parallelToolCalls: value,
+        tools: ["read_file", "write_file"],
+        deniedTools: ["write_file"],
+        skills: false,
+      },
+      resolveModelId: (id) => id,
+    });
+    assertEquals(result.requestedParallelToolCalls, value);
+    assertEquals(Object.hasOwn(result, "requestedParallelToolCalls"), value !== undefined);
+    assertEquals(result.requestedAllowedTools, ["read_file"]);
+  }
+});

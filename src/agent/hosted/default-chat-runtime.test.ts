@@ -2413,3 +2413,54 @@ it("default hosted runtime executes a hidden trusted loader alias without exposi
     clearModelProviders();
   }
 });
+
+it("hosted runtime retains authored parallel tool control with unchanged tool grants", async () => {
+  clearModelProviders();
+  const seen: Array<{ value: unknown; present: boolean }> = [];
+  registerModelProvider(
+    "test",
+    () => ({
+      provider: "test",
+      modelId: "test/control",
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options: unknown) {
+        if (!options || typeof options !== "object") throw new Error("Expected provider options");
+        seen.push({
+          value: "parallelToolCalls" in options ? options.parallelToolCalls : undefined,
+          present: Object.hasOwn(options, "parallelToolCalls"),
+        });
+        return Promise.resolve({ stream: createTextStream() });
+      },
+    }),
+  );
+  try {
+    for (const value of [false, true, undefined]) {
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+        options: {
+          projectId: "project-control",
+          authToken: "fixture-token",
+          instructions: "Fixture instructions.",
+          model: "test/control",
+          allowedTools: [],
+          parallelToolCalls: value,
+        },
+        config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+        buildLocalTools: () => ({}),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+      await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) { /* Drain provider dispatch. */ }
+      });
+      assertEquals(seen.at(-1), { value, present: value !== undefined });
+    }
+    assertEquals(seen.length, 3);
+  } finally {
+    clearModelProviders();
+  }
+});

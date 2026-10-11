@@ -333,6 +333,9 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(typeof system === "string" ? {} : { system }),
     model: config.model,
     ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+    ...(config.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: config.parallelToolCalls }),
     ...(config.thinking === undefined ? {} : { thinking: config.thinking }),
     maxSteps: config.maxSteps,
     ...(config.providerTools ? { providerTools: config.providerTools } : {}),

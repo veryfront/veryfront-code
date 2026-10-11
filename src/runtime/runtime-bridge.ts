@@ -131,6 +131,7 @@ type GenerateTextOptions = {
   topK?: number;
   stopSequences?: string[];
   toolChoice?: unknown;
+  parallelToolCalls?: boolean;
   seed?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
@@ -153,6 +154,7 @@ type StreamTextOptions = {
   topK?: number;
   stopSequences?: string[];
   toolChoice?: unknown;
+  parallelToolCalls?: boolean;
   seed?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
@@ -786,6 +788,9 @@ function buildDirectModelOptions(
     stopSequences: options.stopSequences,
     ...(tools ? { tools } : {}),
     ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+    ...(options.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: options.parallelToolCalls }),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
     ...(options.frequencyPenalty !== undefined
