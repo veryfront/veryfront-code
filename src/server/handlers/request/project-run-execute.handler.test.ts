@@ -43,6 +43,10 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
@@ -63,6 +67,41 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+
+// Provider HTTP fixtures exercise real gateway/model execution, not real model quality.
+const canonicalKnowledgeFixtureReceipt = {
+  file_id: "11111111-1111-4111-8111-111111111111",
+  version_id: "22222222-2222-4222-8222-222222222222",
+  checksum: "fixture-checksum",
+};
+function canonicalKnowledgeIndexResponse(url: string, init?: RequestInit): Response | undefined {
+  const body = requestJsonBody(init);
+  if (url.endsWith("/embeddings")) {
+    const inputs = Array.isArray(body?.input) ? body.input : [body?.input];
+    return Response.json({
+      object: "list",
+      model: "text-embedding-3-small",
+      data: inputs.map((_value, index) => ({
+        object: "embedding",
+        index,
+        embedding: Array(1536).fill(0.25),
+      })),
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+  }
+  if (url.endsWith("/index")) {
+    const path = decodeURIComponent(
+      new URL(url).pathname.split("/files/")[1]?.slice(0, -"/index".length) ?? "",
+    );
+    return Response.json({
+      ...canonicalKnowledgeFixtureReceipt,
+      path,
+      indexed_chunk_count: Array.isArray(body?.chunks) ? body.chunks.length : 0,
+      model: body?.model,
+    });
+  }
+  return undefined;
+}
 
 function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
   if (
@@ -2375,9 +2414,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const signed = await signedRequest(
         "/api/control-plane/runs/run_knowledge_default/execute",
         body,
-        { "x-token": "test-token" },
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": "knowledge-attempt-writer",
+        },
       );
       const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+      const indexUrls: string[] = [];
 
       const result = await withMockFetch(
         (async (input, init) => {
@@ -2386,6 +2430,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input instanceof Request
             ? input.url
             : input.toString();
+          const headers = new Headers(observeFetchRequestInit(init).headers);
+          assertEquals(
+            headers.get("X-Veryfront-Run-Event-Token"),
+            url.endsWith("/index") || url.includes("/files/knowledge%2Fguide.md")
+              ? "knowledge-attempt-writer"
+              : null,
+          );
+          if (url.endsWith("/index")) indexUrls.push(url);
+          const indexed = canonicalKnowledgeIndexResponse(url, init);
+          if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("Accept"),
@@ -2398,10 +2452,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/guide.md" }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }) as typeof fetch,
         async () =>
           await new ProjectRunExecuteHandler().handle(
@@ -2420,6 +2477,637 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
       );
       assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+      assertEquals(indexUrls.map((url) => new URL(url).pathname), [
+        `/projects/demo-project/branches/${
+          runtimeTargetKind === "preview_branch" ? "branch-proof" : "main"
+        }/files/knowledge%2Fguide.md/index`,
+      ]);
+    });
+  }
+
+  for (
+    const hostile of [
+      { name: "a project env file", envFile: true, base: "https://93.184.216.34" },
+      { name: "a plaintext host API", envFile: false, base: "http://api.example.test" },
+      // Deno tests read this as the boot-configured API, which other host credentials accept.
+      {
+        name: "a boot-configured plaintext host API",
+        envFile: false,
+        base: "http://127.0.0.1:4000",
+      },
+    ]
+  ) {
+    it(`never sends the knowledge writer credential to ${hostile.name} origin`, async () => {
+      const body = {
+        runId: "run_knowledge_origin",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
+        config: { paths: ["uploads/guide.md"], slug: "guide" },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_knowledge_origin/execute",
+        body,
+        {
+          "x-token": "test-token",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+          "X-Veryfront-Run-Event-Token": "knowledge-attempt-writer",
+        },
+      );
+      const calls: Array<{ url: string; writer: string | null }> = [];
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: hostile.base, VERYFRONT_API_URL: "" },
+        async () => {
+          if (hostile.envFile) markEnvFileValue("VERYFRONT_API_BASE_URL");
+          try {
+            return await withMockFetch(
+              (async (input, init) => {
+                const url = typeof input === "string"
+                  ? input
+                  : input instanceof Request
+                  ? input.url
+                  : input.toString();
+                calls.push({
+                  url,
+                  writer: new Headers(observeFetchRequestInit(init).headers).get(
+                    "X-Veryfront-Run-Event-Token",
+                  ),
+                });
+                const indexed = canonicalKnowledgeIndexResponse(url, init);
+                if (indexed) return indexed;
+                if (url.endsWith("/uploads/uploads%2Fguide.md")) {
+                  return new Response("# Guide\n\nOrigin-bound knowledge.", {
+                    status: 200,
+                    headers: { "Content-Type": "application/octet-stream" },
+                  });
+                }
+                return Response.json({
+                  ...canonicalKnowledgeFixtureReceipt,
+                  path: "knowledge/guide.md",
+                });
+              }) as typeof fetch,
+              async () =>
+                await new ProjectRunExecuteHandler().handle(
+                  signed.request,
+                  createCtx(signed.publicKeyPem),
+                ),
+            );
+          } finally {
+            if (hostile.envFile) clearEnvFileValueSource("VERYFRONT_API_BASE_URL");
+          }
+        },
+      );
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      const hostileOrigin = new URL(hostile.base).origin;
+      assertEquals(
+        calls.filter((call) => new URL(call.url).origin === hostileOrigin),
+        [],
+        "the API client must not use the steerable or plaintext origin",
+      );
+      for (const call of calls.filter((call) => call.writer !== null)) {
+        assertEquals(new URL(call.url).origin, "https://api.veryfront.com");
+      }
+      if (hostile.envFile) {
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(calls.filter((call) => call.writer !== null).length, 2);
+      } else {
+        assertEquals(payload.success, false, JSON.stringify(payload));
+        assertStringIncludes(payload.error, "HTTPS");
+      }
+    });
+  }
+
+  for (const runtimeTargetKind of ["main_branch", "preview_branch"] as const) {
+    for (
+      const knowledgePath of [
+        "knowledge/imports/acme",
+        "docs/imports/acme",
+        "Knowledge/imports/acme",
+      ]
+    ) {
+      const encodedSourcePath = encodeURIComponent(`${knowledgePath}/guide.md`);
+      it(`preserves OKF metadata and canonical destination authority (${runtimeTargetKind}, ${knowledgePath})`, async () => {
+        const body = {
+          runId: "run_knowledge_default",
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          ...(runtimeTargetKind === undefined ? {} : { runtimeTargetKind }),
+          ...(runtimeTargetKind === "preview_branch"
+            ? { runtimeTargetBranchId: "branch-proof" }
+            : {}),
+          config: {
+            path_prefix: "uploads/acme",
+            okf_bundle: true,
+            knowledge_path: knowledgePath,
+            branch_id: "untrusted-config-branch",
+          },
+        };
+        const signed = await signedRequest(
+          "/api/control-plane/runs/run_knowledge_default/execute",
+          body,
+          {
+            "x-token": "test-token",
+            ...(knowledgePath.startsWith("knowledge/")
+              ? { "X-Veryfront-Inference-Token": "managed-embedding-fixture" }
+              : {}),
+            "X-Veryfront-Run-Event-Token": "knowledge-attempt-writer",
+          },
+        );
+        const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+        let indexCalls = 0;
+        let embeddingCalls = 0;
+
+        const result = await withMockFetch(
+          (async (input, init) => {
+            const url = typeof input === "string"
+              ? input
+              : input instanceof Request
+              ? input.url
+              : input.toString();
+            const headers = new Headers(observeFetchRequestInit(init).headers);
+            assertEquals(
+              headers.has("X-Veryfront-Run-Event-Token"),
+              knowledgePath.startsWith("knowledge/") &&
+                (url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`)),
+            );
+            assertEquals(
+              headers.get("Authorization"),
+              url.endsWith("/embeddings")
+                ? "Bearer managed-embedding-fixture"
+                : "Bearer test-token",
+            );
+            assertEquals(new URL(url).origin, "https://api.veryfront.com");
+            if (new URL(url).pathname === "/projects/demo-project/uploads") {
+              return Response.json({
+                data: [{ type: "file", path: "uploads/acme/guide.md" }],
+                page_info: { next: null },
+              });
+            }
+            const indexed = canonicalKnowledgeIndexResponse(url, init);
+            if (indexed) {
+              if (url.endsWith("/index")) indexCalls++;
+              if (url.endsWith("/embeddings")) embeddingCalls++;
+              return indexed;
+            }
+            if (url.endsWith("/projects/demo-project/uploads/uploads%2Facme%2Fguide.md")) {
+              assertEquals(
+                new Headers(observeFetchRequestInit(init).headers).get("Accept"),
+                "application/octet-stream",
+              );
+              return new Response(
+                "---\ntype: knowledge\ntitle: Guide\n---\n# Guide\n\nCancellation-safe knowledge.",
+                {
+                  status: 200,
+                  headers: { "Content-Type": "application/octet-stream" },
+                },
+              );
+            }
+            assertStringIncludes(
+              url,
+              `/projects/demo-project/files/${encodedSourcePath}`,
+            );
+            uploads.push({ url, body: requestJsonBody(init) ?? {} });
+            return new Response(
+              JSON.stringify({
+                ...canonicalKnowledgeFixtureReceipt,
+                path: `${knowledgePath}/guide.md`,
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+          }) as typeof fetch,
+          async () =>
+            await new ProjectRunExecuteHandler().handle(
+              signed.request,
+              createCtx(signed.publicKeyPem),
+            ),
+        );
+
+        assertExists(result.response);
+        const payload = await result.response.json();
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(payload.result.summary.ingested_count, 1);
+        assertEquals(uploads.length, 1);
+        assertEquals(indexCalls, knowledgePath.startsWith("knowledge/") ? 1 : 0);
+        assertEquals(embeddingCalls, knowledgePath.startsWith("knowledge/") ? 1 : 0);
+        assertEquals(uploads[0]!.body.metadata, {
+          _veryfront: { okf: { bundle_root_path: knowledgePath } },
+        });
+        assertEquals(
+          new URL(uploads[0]!.url).searchParams.get("branch_id"),
+          runtimeTargetKind === "preview_branch" ? "branch-proof" : null,
+        );
+        assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+      });
+    }
+  }
+
+  for (
+    const { branch, path, legacyChecksum } of [undefined, "33333333-3333-4333-8333-333333333333"]
+      .flatMap(
+        (branch) =>
+          ["knowledge/existing.md", "knowledge/Concept.MD"].flatMap((path) =>
+            [false, true].map((legacyChecksum) => ({ branch, path, legacyChecksum }))
+          ),
+      )
+  ) {
+    it(`indexes an existing canonical version without publication (${branch ?? "main"}, ${path}, legacy=${legacyChecksum})`, async () => {
+      const content =
+        "---\r\ntype: knowledge\r\ntitle: Existing\r\nrelated: [other.md]\r\n---\r\n\r\nUnicode 🌱 searchable body.";
+      const checksum = await computeHash(content);
+      const receipt = { ...canonicalKnowledgeFixtureReceipt, checksum, path };
+      const posts: unknown[] = [];
+      let reads = 0;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const signed = await signedRequest(
+          `/api/control-plane/runs/run_existing_${attempt}/execute`,
+          {
+            runId: `run_existing_${attempt}`,
+            kind: "task",
+            target: "task:knowledge-ingest",
+            projectId: "proj-1",
+            runtimeTargetKind: branch ? "preview_branch" : "main_branch",
+            ...(branch ? { runtimeTargetBranchId: branch } : {}),
+            config: {
+              mode: "index_existing_canonical",
+              file_path: path,
+              file_id: receipt.file_id,
+              expected_version_id: receipt.version_id,
+              checksum: legacyChecksum ? null : checksum,
+            },
+          },
+          {
+            "x-token": "test-token",
+            "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+            "X-Veryfront-Run-Event-Token": "knowledge-attempt-writer",
+          },
+        );
+        const sealed = sealIngressCredentials(signed.request);
+        sealed.headers.set("X-Veryfront-Run-Event-Token", "mutable-substitute");
+        const result = await withMockFetch(
+          async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            const observed = observeFetchRequestInit(init);
+            assertEquals(
+              new Headers(observed.headers).get("X-Veryfront-Run-Event-Token"),
+              url.pathname.endsWith("/index") ? "knowledge-attempt-writer" : null,
+            );
+            if (url.pathname.endsWith("/embeddings")) {
+              assertEquals(
+                new Headers(observed.headers).get("authorization"),
+                "Bearer managed-embedding-fixture",
+              );
+              return canonicalKnowledgeIndexResponse(url.toString(), init)!;
+            }
+            assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
+            if (url.pathname.endsWith("/index")) {
+              assertEquals(observed.method, "POST");
+              assertStringIncludes(url.pathname, `/branches/${branch ?? "main"}/files/`);
+              const body = requestJsonBody(init)!;
+              assertEquals(body.expected_version_id, receipt.version_id);
+              const chunks = body.chunks as Array<
+                {
+                  content: string;
+                  start_offset: number;
+                  end_offset: number;
+                  metadata: Record<string, unknown>;
+                }
+              >;
+              for (const item of chunks) {
+                assertEquals(content.slice(item.start_offset, item.end_offset), item.content);
+                assertEquals(item.metadata.source, path);
+              }
+              posts.push(body);
+              return Response.json({
+                ...receipt,
+                checksum: legacyChecksum ? null : checksum,
+                indexed_chunk_count: chunks.length,
+                model: body.model,
+              });
+            }
+            assertEquals(
+              observed.method,
+              "GET",
+              "existing-version mode must never publish or upload",
+            );
+            assertEquals(url.pathname, `/projects/demo-project/files/${encodeURIComponent(path)}`);
+            assertEquals(url.searchParams.get("branch_id"), branch ?? null);
+            reads++;
+            return Response.json({
+              id: receipt.file_id,
+              version_id: receipt.version_id,
+              path,
+              checksum: legacyChecksum ? null : checksum,
+              content,
+            });
+          },
+          () => new ProjectRunExecuteHandler().handle(sealed, createCtx(signed.publicKeyPem)),
+        );
+        assertExists(result.response);
+        const payload = await result.response.json();
+        assertEquals(payload.success, true, JSON.stringify(payload));
+        assertEquals(payload.result.version_id, receipt.version_id);
+        assertEquals(payload.result.checksum, checksum);
+      }
+      assertEquals(reads, 2);
+      assertEquals(posts.length, 2);
+      assertEquals(posts[0], posts[1], "retry submits the identical complete set for one version");
+    });
+  }
+
+  for (const mismatch of ["id", "version_id", "path", "checksum", "content"] as const) {
+    it(`rejects an existing canonical ${mismatch} mismatch before provider execution`, async () => {
+      const content = "---\ntype: knowledge\n---\nCanonical body";
+      const checksum = await computeHash(content);
+      const path = "knowledge/existing.md";
+      const signed = await signedRequest("/api/control-plane/runs/run_existing_stale/execute", {
+        runId: "run_existing_stale",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
+        config: {
+          mode: "index_existing_canonical",
+          file_path: path,
+          file_id: canonicalKnowledgeFixtureReceipt.file_id,
+          expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          checksum,
+        },
+      }, { "x-token": "test-token", "X-Veryfront-Inference-Token": "managed-embedding-fixture" });
+      let calls = 0;
+      const result = await withMockFetch(
+        async (_input, init) => {
+          calls++;
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path,
+            content,
+            checksum,
+            [mismatch]: "mismatched",
+          });
+        },
+        () => new ProjectRunExecuteHandler().handle(signed.request, createCtx(signed.publicKeyPem)),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "does not match the admitted canonical version");
+      assertEquals(calls, 1);
+    });
+  }
+
+  for (const failure of ["authority", "provider", "version_conflict"] as const) {
+    it(`fails existing canonical indexing visibly on ${failure}`, async () => {
+      const content = "---\ntype: knowledge\n---\nSearchable topic";
+      const checksum = await computeHash(content);
+      const path = "knowledge/topic.md";
+      const signed = await signedRequest("/api/control-plane/runs/run_existing_error/execute", {
+        runId: "run_existing_error",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
+        config: {
+          mode: "index_existing_canonical",
+          file_path: path,
+          file_id: canonicalKnowledgeFixtureReceipt.file_id,
+          expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          checksum,
+        },
+      }, {
+        "x-token": "test-token",
+        ...(failure === "authority" ? {} : {
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        }),
+      });
+      let commits = 0;
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (url.endsWith("/embeddings")) {
+            if (failure === "provider") {
+              return Response.json({
+                error: { message: "Provider unavailable", type: "provider_error" },
+              }, { status: 401 });
+            }
+            return canonicalKnowledgeIndexResponse(url, init)!;
+          }
+          if (url.endsWith("/index")) {
+            commits++;
+            return Response.json({ error: "Selected version changed" }, { status: 409 });
+          }
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path,
+            content,
+            checksum,
+          });
+        },
+        () => new ProjectRunExecuteHandler().handle(signed.request, createCtx(signed.publicKeyPem)),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(
+        payload.error,
+        failure === "authority"
+          ? "managed run inference credential"
+          : failure === "provider"
+          ? "status 401"
+          : "409",
+      );
+      assertEquals(commits, failure === "version_conflict" ? 1 : 0);
+    });
+  }
+
+  for (const inferenceAvailable of [false, true]) {
+    it(`fails default knowledge indexing visibly when ${inferenceAvailable ? "the provider rejects" : "managed inference authority is absent"}`, async () => {
+      const signed = await signedRequest("/api/control-plane/runs/run_index_unavailable/execute", {
+        runId: "run_index_unavailable",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "main_branch",
+        config: { paths: ["uploads/topic.txt"] },
+      }, {
+        "x-token": "test-token",
+        ...(inferenceAvailable
+          ? { "X-Veryfront-Inference-Token": "managed-embedding-fixture" }
+          : {}),
+      });
+      let publications = 0;
+      let indexCommits = 0;
+      const result = await withMockFetch(
+        async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (url.endsWith("/uploads/uploads%2Ftopic.txt")) {
+            return new Response("Searchable topic", {
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+          if (url.endsWith("/embeddings")) {
+            assertEquals(
+              new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+              "Bearer managed-embedding-fixture",
+            );
+            return Response.json({
+              error: { message: "Embedding provider unavailable", type: "provider_error" },
+            }, { status: 401 });
+          }
+          if (url.endsWith("/index")) {
+            indexCommits++;
+            throw new Error("Unavailable index must not commit");
+          }
+          publications++;
+          return Response.json({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/topic.md" });
+        },
+        () => new ProjectRunExecuteHandler().handle(signed.request, createCtx(signed.publicKeyPem)),
+      );
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.result.summary.ingested_count, 0);
+      assertEquals(payload.result.summary.failed_count, 1);
+      assertEquals(payload.result.failed[0].reason, "index_error");
+      assertEquals(
+        payload.result.failed[0].published.version_id,
+        canonicalKnowledgeFixtureReceipt.version_id,
+      );
+      assertStringIncludes(
+        payload.result.failed[0].message,
+        inferenceAvailable ? "status 401" : "managed run inference credential",
+      );
+      assertEquals(publications, 1);
+      assertEquals(indexCommits, 0);
+    });
+  }
+
+  for (const existingCanonical of [false, true]) {
+    it(`settles cancelled knowledge embedding work before stop acknowledgement (${existingCanonical ? "existing canonical" : "upload"})`, async () => {
+      async function awaitEmbeddingStart(promise: Promise<void>) {
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            promise,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () => reject(new Error("default embedding did not start")),
+                1_000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(watchdog);
+        }
+      }
+      const content = "---\ntype: knowledge\n---\nSearchable topic";
+      const checksum = await computeHash(content);
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<Response>();
+      let providerSettled = false;
+      let indexCommits = 0;
+      const acknowledgements: boolean[] = [];
+      const signed = await signedRequest("/api/control-plane/runs/run_index_cancel/execute", {
+        runId: "run_index_cancel",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "branch-proof",
+        config: existingCanonical
+          ? {
+            mode: "index_existing_canonical",
+            file_path: "knowledge/topic.md",
+            file_id: canonicalKnowledgeFixtureReceipt.file_id,
+            expected_version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            checksum,
+          }
+          : { paths: ["uploads/topic.txt"] },
+      }, {
+        "x-token": "test-token",
+        "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        "x-veryfront-run-stop-token": "opaque-stop-capability",
+      });
+      await withMockFetch(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/cancellation-ack")) {
+          acknowledgements.push(providerSettled);
+          return Response.json({ acknowledged: true });
+        }
+        if (existingCanonical && url.includes("/files/knowledge%2Ftopic.md")) {
+          assertEquals(observeFetchRequestInit(init).method, "GET");
+          assertEquals(new URL(url).searchParams.get("branch_id"), "branch-proof");
+          return Response.json({
+            id: canonicalKnowledgeFixtureReceipt.file_id,
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            path: "knowledge/topic.md",
+            content,
+            checksum,
+          });
+        }
+        if (url.endsWith("/uploads/uploads%2Ftopic.txt")) {
+          return new Response("Searchable topic", {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+        if (url.endsWith("/embeddings")) {
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            "Bearer managed-embedding-fixture",
+          );
+          started.resolve();
+          try {
+            return await settled.promise;
+          } finally {
+            providerSettled = true;
+          }
+        }
+        if (url.endsWith("/index")) {
+          indexCommits++;
+          throw new Error("Cancelled indexing must not commit");
+        }
+        return Response.json({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/topic.md" });
+      }, async () => {
+        const pending = new ProjectRunExecuteHandler().handle(
+          new Request(signed.request, { signal: controller.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        await awaitEmbeddingStart(
+          Promise.race([
+            started.promise,
+            pending.then(() => {
+              throw new Error("Run ended before embedding started");
+            }),
+          ]),
+        );
+        controller.abort(new Error("Run cancelled during embeddings"));
+        assertEquals(acknowledgements, []);
+        settled.resolve(
+          Response.json({
+            object: "list",
+            model: "text-embedding-3-small",
+            data: [{ object: "embedding", index: 0, embedding: Array(1536).fill(0.25) }],
+            usage: { prompt_tokens: 1, total_tokens: 1 },
+          }),
+        );
+        const result = await pending;
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, false);
+      });
+      assertEquals(indexCommits, 0);
+      assertEquals(acknowledgements, [true]);
     });
   }
 
@@ -2436,7 +3124,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const signed = await signedRequest(
       "/api/control-plane/runs/run_knowledge_environment/execute",
       body,
-      { "x-token": "test-token" },
+      { "x-token": "test-token", "X-Veryfront-Inference-Token": "managed-embedding-fixture" },
     );
 
     const originalSplit = String.prototype.split;
@@ -2453,6 +3141,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input instanceof Request
             ? input.url
             : input.toString();
+          const indexed = canonicalKnowledgeIndexResponse(url, init);
+          if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             const observed = observeFetchRequestInit(init);
             assertEquals(new Headers(observed.headers).get("authorization"), "Bearer test-token");
@@ -2489,10 +3179,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/guide.md" }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }) as typeof fetch,
         async () =>
           await new ProjectRunExecuteHandler().handle(
@@ -2532,7 +3225,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           runtimeTargetKind: "preview_branch",
           runtimeTargetBranchId: "branch-retained",
           config: { paths: sources.map((name) => `uploads/${name}.md`) },
-        }, { "x-token": "test-token", "x-veryfront-run-stop-token": "opaque-stop-capability" });
+        }, {
+          "x-token": "test-token",
+          "x-veryfront-run-stop-token": "opaque-stop-capability",
+          "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+        });
         const response = await new ProjectRunExecuteHandler().handle(
           signal ? new Request(signed.request, { signal }) : signed.request,
           createCtx(signed.publicKeyPem),
@@ -2542,6 +3239,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        const indexed = canonicalKnowledgeIndexResponse(url, init);
+        if (indexed) return indexed;
         if (url.endsWith("/cancellation-ack")) {
           stoppedAcknowledgements++;
           return Response.json({ acknowledged: true });
@@ -2574,7 +3273,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         }
         const content = String(requestJsonBody(init)?.content);
         outputs.set(path, content);
-        return Response.json({ path });
+        return Response.json({ ...canonicalKnowledgeFixtureReceipt, path });
       }, async () => {
         const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
         if (cancel) {

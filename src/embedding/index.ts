@@ -29,9 +29,11 @@ export {
 export type {
   ChunkOptions,
   Embedding,
+  EmbeddingCallOptions,
   EmbeddingConfig,
   RagChunk,
   RagDocumentMeta,
+  RagDocumentScope,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,

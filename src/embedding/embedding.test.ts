@@ -35,6 +35,69 @@ describe("embedding", () => {
     clearEmbeddingProviders();
   });
 
+  it("forwards per-call cancellation to single and batched providers", async () => {
+    const controller = new AbortController();
+    const signals: Array<AbortSignal | undefined> = [];
+    registerEmbeddingProvider("test", () => ({
+      ...recordingEmbeddingModel([]),
+      doEmbed({ values, abortSignal }) {
+        signals.push(abortSignal);
+        return Promise.resolve({ embeddings: values.map(() => [1]) });
+      },
+    }));
+    const embedder = embedding({ model: "test/demo" });
+    await embedder.embed("query", { signal: controller.signal });
+    await embedder.embedMany(["document"], { signal: controller.signal });
+    assertEquals(signals, [controller.signal, controller.signal]);
+  });
+
+  it("waits for uncancellable work and stops before the next embedding batch", async () => {
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let calls = 0;
+    let settled = false;
+    registerEmbeddingProvider("test", () => ({
+      ...recordingEmbeddingModel([]),
+      async doEmbed({ values }) {
+        calls++;
+        started.resolve();
+        await release.promise;
+        return { embeddings: values.map(() => [1]) };
+      },
+    }));
+    const embedder = embedding({ model: "test/demo", batchSize: 1 });
+    const result = embedder.embedMany(["first", "second"], { signal: controller.signal });
+    const rejection = assertRejects(() => result, DOMException, "cancelled");
+    result.then(() => {
+      settled = true;
+    }, () => {
+      settled = true;
+    });
+    await started.promise;
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await Promise.resolve();
+    assertEquals(settled, false, "cancellation must await active provider work");
+    release.resolve();
+    await rejection;
+    assertEquals(calls, 1, "cancellation must stop subsequent batches");
+  });
+
+  it("rejects already cancelled calls before dispatch, including empty batches", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("test", () => recordingEmbeddingModel(calls));
+    const embedder = embedding({ model: "test/demo" });
+    const signal = AbortSignal.abort(new DOMException("cancelled", "AbortError"));
+    for (const [method, value] of [[embedder.embed, "query"], [embedder.embedMany, []]] as const) {
+      await assertRejects(
+        () => Reflect.apply(method, embedder, [value, { signal }]),
+        DOMException,
+        "cancelled",
+      );
+    }
+    assertEquals(calls, []);
+  });
+
   it("rejects whitespace-only input even when queryPrefix is configured", async () => {
     registerEmbeddingProvider("test", () =>
       ({

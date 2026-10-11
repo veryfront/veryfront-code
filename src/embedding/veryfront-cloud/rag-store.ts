@@ -23,6 +23,7 @@ import {
 } from "./document-parts.ts";
 import type {
   RagDocumentMeta,
+  RagDocumentScope,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
@@ -57,6 +58,7 @@ interface CloudUpsertChunksResponse {
 }
 
 interface CloudSearchResponse {
+  document_scope_version?: 1;
   data: Array<{
     chunk: {
       file_path: string;
@@ -736,6 +738,33 @@ async function writeDocumentContent(
   return pendingCleanupPaths;
 }
 
+function buildSearchRequestBody(
+  vector: number[],
+  dimension: SupportedDimension,
+  limit: number,
+  threshold: number,
+  documentScope?: RagDocumentScope,
+): Record<string, unknown> {
+  return {
+    vector,
+    dimension,
+    limit,
+    threshold,
+    ...(documentScope ? { document_scope: documentScope } : {}),
+  };
+}
+
+function assertScopedSearchApplied(
+  response: CloudSearchResponse | null,
+  documentScope: RagDocumentScope | undefined,
+): void {
+  if (documentScope && response?.document_scope_version !== 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Veryfront Cloud RAG search did not acknowledge document scope application.",
+    });
+  }
+}
+
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
   return embedding({
     model: config.model,
@@ -917,14 +946,17 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
         getSearchPath(context),
         {
           method: "POST",
-          body: JSON.stringify({
+          body: JSON.stringify(buildSearchRequestBody(
             vector,
             dimension,
             limit,
-            threshold: options?.threshold ?? 0,
-          }),
+            options?.threshold ?? 0,
+            options?.documentScope,
+          )),
         },
       );
+
+      assertScopedSearchApplied(response, options?.documentScope);
 
       const results = (response?.data ?? [])
         .filter((result) =>

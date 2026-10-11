@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontApiDownloadOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
@@ -146,6 +147,7 @@ import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES } from "#veryfront/workflow/limits.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import {
+  createProjectRunInferenceEmbeddingModel,
   PROJECT_RUN_INFERENCE_TOKEN_HEADER,
   runWithProjectRunInferenceCredential,
 } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
@@ -530,6 +532,7 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
     signal: AbortSignal;
+    eventToken?: string;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
     request: ProjectRunExecuteRequest;
@@ -2348,7 +2351,7 @@ interface RuntimeApiClient {
     params?: Record<string, string>,
     options?: { signal?: AbortSignal },
   ): Promise<T>;
-  post<T>(path: string, body?: unknown): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T>;
   put<T>(
     path: string,
     body?: unknown,
@@ -3601,13 +3604,38 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
+const CanonicalKnowledgeSourcePath = /^\/projects\/[^/]+\/files\/knowledge%2[fF][^?]+(?:\?[^#]*)?$/;
+const CanonicalKnowledgeIndexPath =
+  /^\/projects\/[^/]+\/branches\/[^/]+\/files\/knowledge%2[fF][^/]+\/index$/;
+const RuntimeRegExpExec = RegExp.prototype.exec;
+
+function requireCanonicalWriterHttps(apiUrl: string): string {
+  const scheme = ReflectApply(StringPrototypeSlice, apiUrl, [0, 8]) as string;
+  if (ReflectApply(StringPrototypeToLowerCase, scheme, []) !== "https://") {
+    throw new TypeError("The knowledge writer credential requires an HTTPS API endpoint");
+  }
+  return apiUrl;
+}
+
 function createRuntimeApiClient(
   req: Request,
   ctx: HandlerContext,
   defaultSignal?: AbortSignal,
+  canonicalWriterAuthority = false,
+  retainedWriterToken?: string,
 ): RuntimeApiClient {
-  const apiUrl = getEnvironmentConfig().apiBaseUrl;
+  // A client that may carry the current-attempt writer credential uses the
+  // host-owned HTTPS origin; project env files cannot select it, and a
+  // boot-configured HTTP API origin does not extend to this credential.
+  const apiUrl = canonicalWriterAuthority
+    ? requireCanonicalWriterHttps(
+      requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl()),
+    )
+    : getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
+  // The execution request no longer carries the event token; it is retained
+  // by the handler and passed in explicitly.
+  const writerToken = canonicalWriterAuthority ? retainedWriterToken ?? null : null;
   if (!token) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
@@ -3627,6 +3655,10 @@ function createRuntimeApiClient(
       url.searchParams.set(key, value);
     }
 
+    const canonicalMutation = (method === "PUT" &&
+      ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeSourcePath, [path]) !== null) ||
+      (method === "POST" &&
+        ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeIndexPath, [path]) !== null);
     const response = await send(
       url.toString(),
       createNativeRequestInit(undefined, {
@@ -3635,6 +3667,9 @@ function createRuntimeApiClient(
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
           "Content-Type": "application/json",
+          ...(writerToken && canonicalMutation
+            ? { "X-Veryfront-Run-Event-Token": writerToken }
+            : {}),
         },
         body: body === undefined ? undefined : capturedArtifactJsonStringify(body),
         signal,
@@ -3691,8 +3726,8 @@ function createRuntimeApiClient(
     ): Promise<T> {
       return requestJson<T>("GET", path, undefined, params, options?.signal);
     },
-    post<T>(path: string, body?: unknown): Promise<T> {
-      return requestJson<T>("POST", path, body);
+    post<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
+      return requestJson<T>("POST", path, body, undefined, options?.signal);
     },
     put<T>(
       path: string,
@@ -3864,10 +3899,17 @@ async function executeKnowledgeIngestRun(input: {
   ctx: HandlerContext;
   req: Request;
   signal: AbortSignal;
+  eventToken?: string;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx, input.signal);
+  const client = createRuntimeApiClient(
+    input.req,
+    input.ctx,
+    input.signal,
+    true,
+    input.eventToken,
+  );
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
@@ -3885,6 +3927,101 @@ async function executeKnowledgeIngestRun(input: {
     } = await import("#cli/commands/knowledge/command");
     const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
     const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
+    const { indexKnowledgeDocument } = await import(
+      "../../../../cli/commands/knowledge/indexing.ts"
+    );
+
+    const { createEmbeddingFacade } = await import("#veryfront/embedding/embedding.ts");
+    const { getDefaultVeryfrontCloudEmbeddingModel } = await import(
+      "#veryfront/platform/cloud/resolver.ts"
+    );
+
+    const outputDestination = resolveKnowledgeOutputDestination(input.request);
+    const indexCanonical: typeof indexKnowledgeDocument = (indexInput) =>
+      runWithVeryfrontCloudContextAsync({
+        projectSlug: projectReference,
+        serviceLayer: "cloud",
+      }, () => {
+        const modelId = getDefaultVeryfrontCloudEmbeddingModel();
+        const model = createProjectRunInferenceEmbeddingModel(modelId);
+        if (!model) {
+          throw new Error("Knowledge indexing requires a managed run inference credential.");
+        }
+        return indexKnowledgeDocument({
+          ...indexInput,
+          embedder: createEmbeddingFacade({}, modelId, model),
+        });
+      });
+
+    // Lifecycle work indexes an admitted immutable version without publishing again.
+    // The branch comes only from the signed runtime target, never the task config.
+    if (getOwnDataProperty(config, "mode") === "index_existing_canonical") {
+      const path = getOwnDataProperty(config, "file_path");
+      const fileId = getOwnDataProperty(config, "file_id");
+      const versionId = getOwnDataProperty(config, "expected_version_id");
+      const checksum = getOwnDataProperty(config, "checksum");
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (
+        typeof path !== "string" || path.length === 0 ||
+        typeof fileId !== "string" || !uuid.test(fileId) ||
+        typeof versionId !== "string" || !uuid.test(versionId) ||
+        (checksum !== null &&
+          (typeof checksum !== "string" || !/^[0-9a-f]{64}$/i.test(checksum)))
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail:
+            "Existing canonical indexing requires file_path, file_id, expected_version_id, and SHA-256 checksum (or explicit null for a legacy version).",
+        });
+      }
+      const selected = await client.get<unknown>(
+        `/projects/${encodeURIComponent(projectReference)}/files/${encodeURIComponent(path)}`,
+        outputDestination ? { branch_id: outputDestination.branchId } : undefined,
+        { signal: input.signal },
+      );
+      input.signal.throwIfAborted();
+      if (!isRecord(selected)) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      const content = getOwnDataProperty(selected, "content");
+      if (
+        getOwnDataProperty(selected, "id") !== fileId ||
+        getOwnDataProperty(selected, "version_id") !== versionId ||
+        getOwnDataProperty(selected, "path") !== path ||
+        typeof content !== "string"
+      ) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      const selectedChecksum = getOwnDataProperty(selected, "checksum");
+      const computedChecksum = await computeHash(content);
+      const legacyChecksum = checksum === null &&
+        (selectedChecksum === null || selectedChecksum === undefined);
+      if (
+        !legacyChecksum &&
+        (selectedChecksum !== checksum || computedChecksum !== checksum)
+      ) {
+        throw new Error("File read does not match the admitted canonical version.");
+      }
+      input.signal.throwIfAborted();
+      const localPath = `${outputDir}/canonical.md`;
+      await Deno.writeTextFile(localPath, content);
+      input.signal.throwIfAborted();
+      const receipt = await indexCanonical({
+        client,
+        projectSlug: projectReference,
+        branch: outputDestination?.branchId ?? "main",
+        published: { path, file_id: fileId, version_id: versionId, checksum: computedChecksum },
+        ...(legacyChecksum ? { checksumAcknowledgement: "legacy-null" as const } : {}),
+        localPath,
+        signal: input.signal,
+      });
+      input.signal.throwIfAborted();
+      return {
+        success: true,
+        result: { kind: "canonical_knowledge_index", mode: "index_existing_canonical", ...receipt },
+        logs: null,
+        duration_ms: Date.now() - startedAt,
+      };
+    }
 
     const uploadIds = getStringArrayConfig(config, ["upload_ids", "uploadIds"]);
     const paths = getStringArrayConfig(config, ["paths", "upload_paths", "uploadPaths"]);
@@ -3905,7 +4042,6 @@ async function executeKnowledgeIngestRun(input: {
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
     const okfBundle = getOwnDataProperty(config, "okf_bundle") === true ||
       getOwnDataProperty(config, "okfBundle") === true;
-    const outputDestination = resolveKnowledgeOutputDestination(input.request);
 
     if (uploadPaths.length > 0 && pathPrefix) {
       throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
@@ -3964,7 +4100,9 @@ async function executeKnowledgeIngestRun(input: {
       outputDir,
       runParser: runKnowledgeParser,
       eventLogger: createKnowledgeEventLogger(logLines),
-      uploadKnowledgeFile: (remotePath, localPath) =>
+      destinationBranch: outputDestination?.branchId ?? "main",
+      indexKnowledgeDocument: indexCanonical,
+      uploadKnowledgeFile: (remotePath, localPath, metadata) =>
         putRemoteFileFromLocal(
           client,
           projectReference,
@@ -3972,6 +4110,7 @@ async function executeKnowledgeIngestRun(input: {
           localPath,
           input.signal,
           outputDestination,
+          metadata,
         ),
       signal: input.signal,
     });
@@ -4955,7 +5094,13 @@ async function executeProjectRun(
               case "task:eval":
                 return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
               case "task:knowledge-ingest":
-                return await deps.executeKnowledgeIngest({ request, ctx, req, signal });
+                return await deps.executeKnowledgeIngest({
+                  request,
+                  ctx,
+                  req,
+                  signal,
+                  eventToken: retainedEventToken,
+                });
               case "task:release-asset-build":
                 return await deps.executeReleaseAssetBuild({ request, ctx, req, signal });
               case "task:dependency-artifact-build":

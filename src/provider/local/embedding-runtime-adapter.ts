@@ -29,8 +29,11 @@ export function createLocalEmbeddingModel(modelId?: string): EmbeddingRuntime {
     maxEmbeddingsPerCall: undefined,
     supportsParallelCalls: false,
 
-    async doEmbed({ values }: { values: string[] }) {
+    async doEmbed({ values, abortSignal }) {
+      abortSignal?.throwIfAborted();
       const embeddings = await embedTexts(resolvedId, values);
+      // Local inference cannot be interrupted. Await it before acknowledging cancellation.
+      abortSignal?.throwIfAborted();
       return { embeddings, usage: { tokens: 0 }, rawResponse: undefined, warnings: [] };
     },
   };

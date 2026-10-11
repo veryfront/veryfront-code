@@ -26,6 +26,7 @@ import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
   RagDocumentMeta,
+  RagDocumentScope,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -34,7 +35,7 @@ import type {
 import { exists, readDir, readTextFile } from "#veryfront/platform/compat/index.ts";
 import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
@@ -137,7 +138,7 @@ export interface NormalizedProjectKnowledgeScopeSelector {
 }
 
 /** Per-call options for project knowledge retrieval. */
-export interface ProjectKnowledgeRetrieveOptions extends RagSearchOptions {
+export interface ProjectKnowledgeRetrieveOptions extends Omit<RagSearchOptions, "documentScope"> {
   maxQueryChars?: number;
 }
 
@@ -610,6 +611,47 @@ function getRagDocumentManifestPath(
   config: ProjectKnowledgeConfig,
 ): string {
   return getRagSourceManifestPath(document.source, config);
+}
+
+function resolveRuntimePath(path: string): string {
+  const posixPath = toPosixPath(path);
+  if (isAbsolute(posixPath)) return stripTrailingSlash(posixPath);
+  return stripTrailingSlash(toPosixPath(join(cwd(), posixPath)));
+}
+
+function createHostedDocumentScope(
+  config: ProjectKnowledgeConfig,
+): RagDocumentScope | undefined {
+  if (config.scope === undefined) return undefined;
+  const scope = normalizeProjectKnowledgeScopeSelector(config.scope);
+  const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
+  const scopePayload: RagDocumentScope = {
+    version: 1,
+    path_flavor: "posix",
+    include_all: scope.includeAll,
+    includes: scope.includes,
+    excludes: scope.excludes,
+    content_dir: stripTrailingSlash(toPosixPath(contentDir)),
+    resolved_content_dir: resolveRuntimePath(resolveProjectPath(config.projectDir, contentDir)),
+  };
+
+  if (config.projectDir !== undefined) {
+    scopePayload.project_dir = stripTrailingSlash(toPosixPath(config.projectDir));
+    scopePayload.resolved_project_dir = resolveRuntimePath(config.projectDir);
+  }
+
+  return scopePayload;
+}
+
+function assertNoCallerDocumentScopeOption(
+  options: ProjectKnowledgeRetrieveOptions | undefined,
+): void {
+  if (options !== undefined && objectHasOwn(options, "documentScope")) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail:
+        "projectKnowledge retrieves document scope from configuration; per-call documentScope is not supported.",
+    });
+  }
 }
 
 function filterRagResultsByScope(
@@ -1314,8 +1356,10 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
     options?: RagSearchOptions,
   ): Promise<RagSearchResult[]> {
     if (!normalizedQuery) return [];
+    assertNoCallerDocumentScopeOption(options);
     if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) return [];
     const requestedTopK = options?.topK ?? config.topK ?? DEFAULT_TOP_K;
+    const documentScope = createHostedDocumentScope(config);
     const storeTopK = config.scope === undefined
       ? requestedTopK
       : Math.max(requestedTopK, SCOPED_RAG_SEARCH_MIN_TOP_K);
@@ -1323,6 +1367,7 @@ export function projectKnowledge(config: ProjectKnowledgeConfig = {}): ProjectKn
       topK: storeTopK,
       threshold: options?.threshold ?? config.threshold,
       filterDocument: createRagDocumentScopePredicate(config, options?.filterDocument),
+      documentScope,
     });
     return filterRagResultsByScope(results, config).slice(0, requestedTopK);
   }
