@@ -1090,27 +1090,50 @@ function createMessageFinishMetadataEvent(
     value.totalUsage = usageMetadata;
   }
 
-  if (objectHasOwn(event, "object")) {
-    const encoding = objectHasOwn(event, "objectEncoding") && event.objectEncoding === "snapshot"
-      ? "snapshot"
-      : "value";
-    value.object = createMessageFinishObjectObservation(event.object, undefined, encoding);
-    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
-      const { object: _object, ...baseValue } = value;
-      value.object = createMessageFinishObjectObservationWithinDurableBudget(
-        baseValue,
-        event.object,
-        encoding,
-      );
-    }
-  }
+  const hasObject = objectHasOwn(event, "object");
+  const object = hasObject ? event.object : undefined;
+  const encoding = hasObject && objectHasOwn(event, "objectEncoding") &&
+      event.objectEncoding === "snapshot"
+    ? "snapshot"
+    : "value";
+  const objectSnapshot = hasObject
+    ? createMessageFinishObjectObservation(object, undefined, encoding)
+    : undefined;
+  if (hasObject) value.object = objectSnapshot;
 
   if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
-    if (objectHasOwn(value, "finishReason")) {
-      value.finishReason = createTruncatedMessageFinishScalarObservation(
+    const { object: _object, ...baseValue } = value;
+    const truncateFinishReason = () => {
+      const reason = createTruncatedMessageFinishScalarObservation(
         "finishReason",
         "serialized_budget_exhausted",
       );
+      baseValue.finishReason = reason;
+      value.finishReason = reason;
+    };
+    const budgetObject = () => {
+      value.object = objectSnapshot;
+      if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+        value.object = createMessageFinishObjectObservationWithinDurableBudget(
+          baseValue,
+          object,
+          encoding,
+        );
+      }
+    };
+    // Avoid searching against metadata that cannot fit even without output.
+    if (
+      typeof baseValue.finishReason === "string" &&
+      !isMessageFinishMetadataValueWithinDurableBudget(baseValue)
+    ) truncateFinishReason();
+    if (hasObject) budgetObject();
+    if (
+      !isMessageFinishMetadataValueWithinDurableBudget(value) &&
+      typeof baseValue.finishReason === "string"
+    ) {
+      truncateFinishReason();
+      // Reconsider the original output after metadata releases its byte budget.
+      if (hasObject) budgetObject();
     }
     if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
       value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
