@@ -34,6 +34,31 @@ function setup(
   });
 }
 describe("runtime source API authorization", () => {
+  it("accepts the proxy routing environment bound and refuses oversized metadata", async () => {
+    const environments = [
+      environment,
+      ...Array.from({ length: 999 }, (_, index) => ({
+        id: `40000000-4000-4000-8000-${String(index).padStart(12, "0")}`,
+        name: `environment-${index}`,
+        active_release_id: authority.releaseId,
+      })),
+    ];
+    const selected = { ...project, environments };
+    const run = (value: unknown) =>
+      setup(async (url) =>
+        Response.json(
+          String(url).includes("/releases/") ? source : value,
+        )
+      )(authority, signal());
+    await run(selected);
+    await assertRejects(() =>
+      run({
+        ...selected,
+        environments: [...environments, { ...environment, id: authority.projectId }],
+      })
+    );
+    await assertRejects(() => run({ ...selected, extra: "x".repeat(512 * 1024) }));
+  });
   it("checks exact caller source access before using the host-only project reader", async () => {
     const calls: string[] = [];
     const authorize = setup(async (url, init) => {

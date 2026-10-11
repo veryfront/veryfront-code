@@ -28,7 +28,7 @@ export interface InstalledHttpBrokerOptions {
   /** Check current project/environment/release authority against the source API on every request. */
   authorize(authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
   maxActive: number;
-  /** Executor lifetime after authorization, including preparation and streamed response; 1ms–24h, default 75s. Align with the host request timeout and allocator policy. */
+  /** Executor lifetime after authorization, including preparation and streamed response; 1ms through 24h, default 75s. Align with the host request timeout and allocator policy. */
   requestLifetimeMs?: number;
 }
 

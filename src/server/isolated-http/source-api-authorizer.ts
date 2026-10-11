@@ -3,7 +3,9 @@ import { snapshotInstalledProjectHttpBinding } from "../runtime-handler/installe
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
 
 const SOURCE_RESPONSE_BYTES = 16 * 1024;
-const PROJECT_RESPONSE_BYTES = 64 * 1024;
+// Match the bounded project metadata accepted by proxy routing.
+const PROJECT_RESPONSE_BYTES = 512 * 1024;
+const MAX_PROJECT_ENVIRONMENTS = 1_000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const unavailable = () => new Error("Runtime source authorization failed");
 
@@ -113,7 +115,8 @@ export function createRuntimeSourceAuthorizer(options: {
       if (
         !project || typeof project !== "object" || Array.isArray(project) ||
         project.id !== binding.projectId || project.slug !== binding.projectSlug ||
-        !Array.isArray(project.environments) || project.environments.length > 256
+        !Array.isArray(project.environments) ||
+        project.environments.length > MAX_PROJECT_ENVIRONMENTS
       ) throw unavailable();
       const environments = project.environments.filter((entry: unknown) =>
         entry && typeof entry === "object" &&
