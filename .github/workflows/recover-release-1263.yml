@@ -25,7 +25,7 @@ jobs:
           test "$(gh api repos/veryfront/veryfront-code/git/ref/tags/v0.1.1263 --jq .object.sha)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
           test "$(gh api repos/veryfront/veryfront-code/actions/runs/35751966714 --jq .head_sha)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
           gh api --paginate 'repos/veryfront/veryfront-code/actions/runs/35751966714/jobs?filter=latest&per_page=100' --jq '.jobs[] | {name,conclusion}' | jq -s -e 'any(.[]; .name == "quality gate (registry)" and .conclusion == "success") and any(.[]; .name == "dispatch release" and .conclusion == "skipped")'
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           run-id: 35751966714
           github-token: ${{ github.token }}
