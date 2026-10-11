@@ -1,4 +1,5 @@
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import {
@@ -168,8 +169,22 @@ function createScopedHostedModelBroker(
       return {
         assertActive,
         run<T>(operation: () => T): T {
-          input.skillObservation?.observePrompt(request.options.prompt);
-          return runWithVeryfrontCloudModelCallCapture({ receipt, assertActive }, operation);
+          const dispatched = runWithVeryfrontCloudModelCallCapture(
+            { receipt, assertActive },
+            operation,
+          );
+          const observation = input.skillObservation;
+          if (!observation) return dispatched;
+          const observe = () => observation.observePrompt(request.options.prompt);
+          // Count the prompt only once the provider accepted the request.
+          if (!(dispatched instanceof Promise)) {
+            observe();
+            return dispatched;
+          }
+          return chainPrivatePromise(dispatched, (value) => {
+            observe();
+            return value;
+          }) as T;
         },
       };
     },
