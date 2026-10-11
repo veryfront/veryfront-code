@@ -133,6 +133,34 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("does not let a request authorized earlier replace a newer generation", async () => {
+    const stale = fixture(() => new Response("stale"));
+    stale.input.session.request.requestedAt -= 1_000;
+    const current = fixture(() => new Response("current"));
+    current.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 2 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), current.input)).text(),
+        "current",
+      );
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example"), stale.input),
+        Error,
+        "newer generation",
+      );
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), current.input)).text(),
+        "current",
+      );
+      assertEquals(stale.calls, []);
+      assertEquals(current.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("releases a generation stopped with requests in flight as canceled", async () => {
     const old = fixture(() => new Response(new ReadableStream<Uint8Array>({})));
     const next = fixture(() => new Response("new"));

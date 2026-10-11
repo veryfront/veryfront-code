@@ -13,6 +13,7 @@ import {
   type HostedExecutorSessionPoolOptions,
 } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
+import { SERVICE_OVERLOADED } from "#veryfront/errors";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { RenderGenerationPool } from "#veryfront/rendering/render-generation-pool.ts";
@@ -111,6 +112,8 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   const contexts = new WeakMap<Request, HostedHttpGenerationRequest>();
   /** Current pool key of each project environment's generation. */
   const scopes = new Map<string, Readonly<WorkerGenerationIdentity>>();
+  /** Latest authorization time of a request served by each environment's current generation. */
+  const authorizedAt = new Map<string, number>();
   /** Generations whose executor was constructed. */
   const constructed = new Set<string>();
   /** Pending retries of retirements whose release was not confirmed. */
@@ -119,7 +122,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   let stopped = false;
 
   function retire(key: Readonly<WorkerGenerationIdentity>, retryDelayMs = 1_000): void {
-    if (scopes.get(key.scopeId)?.generationId === key.generationId) scopes.delete(key.scopeId);
+    forget(key);
     void generations.retire(key).then(() => {
       constructed.delete(key.generationId);
     }, () => {
@@ -136,16 +139,36 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     });
   }
 
-  function currentKey(identity: Readonly<WorkerGenerationIdentity>) {
+  function forget(key: Readonly<WorkerGenerationIdentity>): void {
+    if (scopes.get(key.scopeId)?.generationId !== key.generationId) return;
+    scopes.delete(key.scopeId);
+    authorizedAt.delete(key.scopeId);
+  }
+
+  function currentKey(identity: Readonly<WorkerGenerationIdentity>, requestedAt: number) {
     const current = scopes.get(identity.scopeId);
-    if (current?.generationId.startsWith(`${identity.generationId}:`)) return current;
-    // A new generation for this environment: drain the previous one.
-    if (current) retire(current);
+    const latest = authorizedAt.get(identity.scopeId) ?? requestedAt;
+    if (current?.generationId.startsWith(`${identity.generationId}:`)) {
+      authorizedAt.set(identity.scopeId, Math.max(latest, requestedAt));
+      return current;
+    }
+    if (current) {
+      // A request authorized before the current generation's latest request must not
+      // replace it: resolutions can complete out of order during a release change.
+      if (requestedAt < latest) {
+        throw SERVICE_OVERLOADED.create({
+          detail: "A newer generation serves this project environment",
+        });
+      }
+      // A new generation for this environment: drain the previous one.
+      retire(current);
+    }
     const key = Object.freeze({
       scopeId: identity.scopeId,
       generationId: `${identity.generationId}:${++epoch}`,
     });
     scopes.set(key.scopeId, key);
+    authorizedAt.set(key.scopeId, requestedAt);
     return key;
   }
 
@@ -156,7 +179,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     tracing = input.tracing,
   ): Promise<Response> {
     request.signal.throwIfAborted();
-    const key = currentKey(identity);
+    const key = currentKey(identity, input.allocation.requestedAt);
     const admitted = new Request(request, { signal: request.signal });
     contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
     try {
@@ -171,10 +194,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       );
     } catch (error) {
       // A generation that was never constructed has no executor to retire it later.
-      if (
-        !constructed.has(key.generationId) &&
-        scopes.get(key.scopeId)?.generationId === key.generationId
-      ) scopes.delete(key.scopeId);
+      if (!constructed.has(key.generationId)) forget(key);
       throw error;
     }
 
