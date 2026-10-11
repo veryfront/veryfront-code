@@ -1,4 +1,7 @@
 import { assertEquals, assertExists, assertStrictEquals } from "#std/assert";
+import type ReactDOMClient from "./react-dom-client.ts";
+import type ReactDOMServer from "./react-dom-server.ts";
+import type ReactDOM from "./react-dom.ts";
 import type React from "./react.ts";
 import * as ReactShim from "./react.ts";
 import { cloneElement, createElement, createRef, useLayoutEffect, useReducer } from "./react.ts";
@@ -33,4 +36,32 @@ Deno.test("react shim exports every upstream runtime export", async () => {
     Object.keys(upstream).toSorted(),
   );
   assertStrictEquals(ReactShim.default, upstream.default);
+});
+
+Deno.test("React DOM shims preserve upstream defaults and exports", async () => {
+  const client = await import("./react-dom-client.ts");
+  const server = await import("./react-dom-server.ts");
+  const dom = await import("./react-dom.ts");
+  const createRoot: typeof ReactDOMClient.createRoot = client.default.createRoot;
+  const renderToString: typeof ReactDOMServer.renderToString = server.default.renderToString;
+  const createPortal: typeof ReactDOM.createPortal = dom.default.createPortal;
+  assertStrictEquals(createRoot, client.createRoot);
+  assertStrictEquals(renderToString, server.renderToString);
+  assertStrictEquals(createPortal, dom.createPortal);
+  const config = JSON.parse(await Deno.readTextFile(new URL("./deno.json", import.meta.url))) as {
+    imports: Record<string, string>;
+  };
+  for (
+    const [shim, alias] of [
+      [client, "@veryfront/react-dom-client-upstream"],
+      [server, "@veryfront/react-dom-server-upstream"],
+      [dom, "@veryfront/react-dom-upstream"],
+    ] as const
+  ) {
+    const target = config.imports[alias];
+    assertExists(target);
+    const upstream = await import(target);
+    assertEquals(Object.keys(shim).toSorted(), Object.keys(upstream).toSorted());
+    assertStrictEquals(shim.default, upstream.default);
+  }
 });

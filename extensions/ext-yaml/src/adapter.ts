@@ -1,4 +1,5 @@
-import { isNode, parseAllDocuments, visit } from "yaml";
+// @deno-types="yaml"
+import { isNode, parseAllDocuments, visit } from "./yaml-runtime.generated.js";
 import {
   createSkillDocumentParserProvider,
   createYamlParserProvider,

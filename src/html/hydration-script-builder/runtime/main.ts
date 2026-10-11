@@ -51,8 +51,8 @@ const env: HydrationRuntimeEnv = {
   createRoot: (container: unknown) => createRoot(container as HTMLElement),
   importModule: (moduleUrl: string) => import(moduleUrl) as Promise<ModuleNamespace>,
   useRouterFromModule,
-  setTimeout: (handler: () => void, timeout?: number) => setTimeout(handler, timeout),
-  clearTimeout: (id: number) => clearTimeout(id),
+  setTimeout: (handler: () => void, timeout?: number) => window.setTimeout(handler, timeout),
+  clearTimeout: (id: number) => window.clearTimeout(id),
 };
 
 const logging = createLogging(runtimeWindow);

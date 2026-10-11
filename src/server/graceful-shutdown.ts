@@ -113,7 +113,7 @@ async function runCleanupStep(
     | { status: "failed"; error: unknown }
     | { status: "timeout" };
 
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const outcome = await Promise.race<CleanupOutcome>([
     actionPromise.then(
       () => ({ status: "completed" }),

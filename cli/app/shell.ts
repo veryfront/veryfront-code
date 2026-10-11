@@ -82,7 +82,7 @@ export function createApp(config: AppConfig): App {
 
   let state = createInitialState();
   let running = false;
-  let spinnerInterval: number | null = null;
+  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
 
   const isInteractiveMode = !config.headless && isInteractive() && isStdoutTTY();
   const keyEnv: KeyEnv = { suggestProjectName: generateRandomSlug };
