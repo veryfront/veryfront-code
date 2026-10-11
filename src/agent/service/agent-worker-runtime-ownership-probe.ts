@@ -2,6 +2,7 @@ import type { Embedding } from "#veryfront/embedding/index.ts";
 import { createEmbeddingFacade } from "#veryfront/embedding/embedding.ts";
 import { createVeryfrontCloudInferenceEmbeddingModel } from "#veryfront/embedding/veryfront-cloud/provider.ts";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const PROBE_ENABLED = "VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_STAGE";
@@ -144,7 +145,8 @@ interface RetainedCanonicalSourceIndexProof {
   indexRequestHash: string;
   indexResponseHash: string;
   content: string;
-  indexBody: unknown;
+  sourceWire: string;
+  indexWire: string;
   readAuthToken: string;
   indexStateHash: string;
   beforeHash: string;
@@ -354,12 +356,12 @@ function buildProbeRequestUrl(apiUrl: string, path: string): string {
   return RuntimeReflectApply(RuntimeURLPrototypeHrefGet, url, []) as string;
 }
 
-async function requestJson(
+async function requestJsonWire(
   input: AgentWorkerRuntimeOwnershipProbeClaimInput,
   method: "GET" | "POST" | "PUT",
   path: string,
   token: string,
-  body?: unknown,
+  bodyWire?: string,
   extraHeaders?: Record<string, string>,
 ): Promise<{ status: number; ok: boolean; body: unknown }> {
   if (pastProbeDeadline(input)) {
@@ -374,9 +376,27 @@ async function requestJson(
       "Content-Type": "application/json",
       ...extraHeaders,
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: bodyWire,
   });
   return { status: response.status, ok: response.ok, body: await readResponseBody(response) };
+}
+
+async function requestJson(
+  input: AgentWorkerRuntimeOwnershipProbeClaimInput,
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  token: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<{ status: number; ok: boolean; body: unknown }> {
+  return await requestJsonWire(
+    input,
+    method,
+    path,
+    token,
+    body === undefined ? undefined : privateJsonStringify(body),
+    extraHeaders,
+  );
 }
 
 type InstrumentedProbeInput = AgentWorkerRuntimeOwnershipProbeClaimInput & {
@@ -559,16 +579,16 @@ async function readEventSnapshot(
 async function retryEventAppendForCursor(
   input: AgentWorkerRuntimeOwnershipProbeClaimInput,
   token: string,
-  body: unknown,
+  bodyWire: string,
   idempotencyKey: string,
 ): Promise<number | undefined> {
   try {
-    const retried = await requestJson(
+    const retried = await requestJsonWire(
       input,
       "POST",
       eventPath(input.run.canonicalRunId),
       token,
-      body,
+      bodyWire,
       { "Idempotency-Key": idempotencyKey },
     );
     return retried.ok ? readLatestExternalEventSequence(retried.body) : undefined;
@@ -887,13 +907,14 @@ async function publishCanonicalSourceAndIndex(
   const path = sourcePath(activation, input, identity);
   const content = sourceContent(activation, input, identity, path);
   const sourceHash = await computeHash(content);
+  const sourceWire = privateJsonStringify({ content });
   const source = sourceApiPath(activation, path);
-  const published = await requestJson(
+  const published = await requestJsonWire(
     input,
     "PUT",
     source,
     input.credentials.authToken,
-    { content },
+    sourceWire,
   );
   if (!published.ok) {
     throw new Error(`canonical source write failed with HTTP ${published.status}`);
@@ -914,13 +935,14 @@ async function publishCanonicalSourceAndIndex(
     throw new Error("canonical source readback did not include an immutable file id");
   }
   const indexBody = await canonicalIndexBody(input, versionId, content);
-  const indexRequestHash = await safeHash(indexBody);
-  const indexed = await requestJson(
+  const indexWire = privateJsonStringify(indexBody);
+  const indexRequestHash = await computeHash(indexWire);
+  const indexed = await requestJsonWire(
     input,
     "POST",
     sourceIndexApiPath(activation, path),
     input.credentials.runEventToken,
-    indexBody,
+    indexWire,
   );
   if (!indexed.ok) {
     throw new Error(`canonical index commit failed with HTTP ${indexed.status}`);
@@ -967,7 +989,8 @@ async function publishCanonicalSourceAndIndex(
       indexRequestHash,
       indexResponseHash,
       content,
-      indexBody,
+      sourceWire,
+      indexWire,
       readAuthToken: input.credentials.authToken,
       indexStateHash,
       beforeHash,
@@ -994,15 +1017,16 @@ async function proveCanonicalSourceIndexReplayDenied(
   const path = sourcePath(activation, input, identity);
   const content = sourceContent(activation, input, identity, path);
   const sourceHash = await computeHash(content);
+  const sourceWire = privateJsonStringify({ content });
   const source = sourceApiPath(activation, path);
   const generationHeaders = workerGenerationHeaders(replayCredentials);
 
-  const published = await requestJson(
+  const published = await requestJsonWire(
     input,
     "PUT",
     source,
     input.credentials.authToken,
-    { content },
+    sourceWire,
   );
   if (!published.ok) {
     throw new Error(`canonical replay source setup failed with HTTP ${published.status}`);
@@ -1020,13 +1044,14 @@ async function proveCanonicalSourceIndexReplayDenied(
     throw new Error("canonical replay source setup did not include an immutable file id");
   }
   const indexBody = await canonicalIndexBody(input, versionId, content);
-  const indexRequestHash = await safeHash(indexBody);
-  const indexed = await requestJson(
+  const indexWire = privateJsonStringify(indexBody);
+  const indexRequestHash = await computeHash(indexWire);
+  const indexed = await requestJsonWire(
     input,
     "POST",
     sourceIndexApiPath(activation, path),
     input.credentials.runEventToken,
-    indexBody,
+    indexWire,
   );
   if (!indexed.ok) {
     throw new Error(`canonical replay index setup failed with HTTP ${indexed.status}`);
@@ -1058,20 +1083,20 @@ async function proveCanonicalSourceIndexReplayDenied(
     indexStateHash,
   });
 
-  const replaySource = await requestJson(
+  const replaySource = await requestJsonWire(
     input,
     "PUT",
     source,
     replayCredentials.authToken,
-    { content },
+    sourceWire,
     generationHeaders,
   );
-  const replayIndex = await requestJson(
+  const replayIndex = await requestJsonWire(
     input,
     "POST",
     sourceIndexApiPath(activation, path),
     replayCredentials.runEventToken,
-    indexBody,
+    indexWire,
     generationHeaders,
   );
   const afterReadback = await requestJson(input, "GET", source, input.credentials.authToken);
@@ -1125,20 +1150,20 @@ async function proveRetainedCanonicalSourceIndexReplayDenied(
   deniedByStatus: boolean;
 }> {
   const generationHeaders = workerGenerationHeaders(replayCredentials);
-  const replaySource = await requestJson(
+  const replaySource = await requestJsonWire(
     input,
     "PUT",
     sourceApiPath(activation, proof.sourcePath),
     replayCredentials.authToken,
-    { content: proof.content },
+    proof.sourceWire,
     generationHeaders,
   );
-  const replayIndex = await requestJson(
+  const replayIndex = await requestJsonWire(
     input,
     "POST",
     sourceIndexApiPath(activation, proof.sourcePath),
     replayCredentials.runEventToken,
-    proof.indexBody,
+    proof.indexWire,
     generationHeaders,
   );
   const afterReadback = await requestJson(
@@ -1259,7 +1284,7 @@ async function currentWriteIndex(
   }
   let committedLatestExternalEventSequence: number | undefined;
   let appendAttempted = false;
-  let retryAppendBody: unknown;
+  let retryAppendWire: string | undefined;
   let retryAppendIdempotencyKey: string | undefined;
   try {
     const instrumented = withActivation(activation, input);
@@ -1313,15 +1338,15 @@ async function currentWriteIndex(
       identity,
       "claim",
     );
-    retryAppendBody = appendBody;
+    retryAppendWire = privateJsonStringify(appendBody);
     retryAppendIdempotencyKey = appendIdempotencyKey;
     appendAttempted = true;
-    const appended = await requestJson(
+    const appended = await requestJsonWire(
       instrumented,
       "POST",
       eventPath(input.run.canonicalRunId),
       input.credentials.runEventToken,
-      appendBody,
+      retryAppendWire,
       { "Idempotency-Key": appendIdempotencyKey },
     );
     if (!appended.ok) {
@@ -1347,7 +1372,7 @@ async function currentWriteIndex(
       committedLatestExternalEventSequence = await retryEventAppendForCursor(
         instrumented,
         input.credentials.runEventToken,
-        appendBody,
+        retryAppendWire,
         appendIdempotencyKey,
       );
     }
@@ -1398,11 +1423,11 @@ async function currentWriteIndex(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
     if (appendAttempted) {
-      if (retryAppendBody !== undefined && retryAppendIdempotencyKey !== undefined) {
+      if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
         committedLatestExternalEventSequence = await retryEventAppendForCursor(
           withActivation(activation, input),
           input.credentials.runEventToken,
-          retryAppendBody,
+          retryAppendWire,
           retryAppendIdempotencyKey,
         );
         if (committedLatestExternalEventSequence !== undefined) {
@@ -1435,7 +1460,7 @@ async function replacedGenerationDenied(
   }
   let committedLatestExternalEventSequence: number | undefined;
   let appendOutcomeAmbiguous = false;
-  let retryAppendBody: unknown;
+  let retryAppendWire: string | undefined;
   let retryAppendIdempotencyKey: string | undefined;
   try {
     const instrumented = withActivation(activation, input);
@@ -1473,15 +1498,15 @@ async function replacedGenerationDenied(
       staleIdentity,
       "renew",
     );
-    retryAppendBody = appendBody;
+    retryAppendWire = privateJsonStringify(appendBody);
     retryAppendIdempotencyKey = appendIdempotencyKey;
     appendOutcomeAmbiguous = true;
-    const denied = await requestJson(
+    const denied = await requestJsonWire(
       instrumented,
       "POST",
       eventPath(input.run.canonicalRunId),
       input.previousCredentials.runEventToken,
-      appendBody,
+      retryAppendWire,
       { "Idempotency-Key": appendIdempotencyKey },
     );
     appendOutcomeAmbiguous = false;
@@ -1492,7 +1517,7 @@ async function replacedGenerationDenied(
       committedLatestExternalEventSequence = await retryEventAppendForCursor(
         instrumented,
         input.previousCredentials.runEventToken,
-        appendBody,
+        retryAppendWire,
         appendIdempotencyKey,
       );
     }
@@ -1549,11 +1574,11 @@ async function replacedGenerationDenied(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
     if (appendOutcomeAmbiguous) {
-      if (retryAppendBody !== undefined && retryAppendIdempotencyKey !== undefined) {
+      if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
         committedLatestExternalEventSequence = await retryEventAppendForCursor(
           withActivation(activation, input),
           input.previousCredentials.runEventToken,
-          retryAppendBody,
+          retryAppendWire,
           retryAppendIdempotencyKey,
         );
         if (committedLatestExternalEventSequence !== undefined) {

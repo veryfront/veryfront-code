@@ -13,6 +13,7 @@ import {
   createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
 } from "#veryfront/agent/service/agent-worker-runtime-ownership-probe.ts";
 import { createExternalAgentWorkerClient } from "#veryfront/agent/service/external-worker-client.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
 const publicRunId = "run_public";
@@ -129,7 +130,7 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
   return (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    options.calls?.push(request);
+    options.calls?.push(request.clone());
     options.paths?.push(`${request.method} ${url.pathname}${url.search}`);
     const authorization = request.headers.get("Authorization") ?? "";
     const replayCredential = authorization.includes("old") || authorization.includes("expired");
@@ -477,6 +478,182 @@ it("records canonical source, index and event proof without leaking claim creden
   assertEquals(receiptJson.includes("writer"), false);
   assertEquals(receiptJson.includes("auth"), false);
   assertEquals(receiptJson.includes("header."), false);
+});
+
+it("keeps canonical request bytes and receipt hashes stable when JSON serialization is poisoned", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const captures: Array<{ method: string; path: string; authorization: string; wire: string }> = [];
+  const currentCredentials = credentials();
+  const expiredCredentials = credentials("-expired");
+  const originalStringify = JSON.stringify;
+  const originalParse = JSON.parse;
+  const originalToJsonDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+  let sourceContent = "";
+  const indexedEvents: unknown[] = [];
+  const jsonResponse = (body: unknown, init?: ResponseInit) => {
+    const currentToJsonDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    if (originalToJsonDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, "toJSON");
+    } else {
+      Object.defineProperty(Object.prototype, "toJSON", originalToJsonDescriptor);
+    }
+    try {
+      return new Response(originalStringify(body), {
+        ...init,
+        headers: { "Content-Type": "application/json", ...init?.headers },
+      });
+    } finally {
+      if (currentToJsonDescriptor === undefined) {
+        Reflect.deleteProperty(Object.prototype, "toJSON");
+      } else {
+        Object.defineProperty(Object.prototype, "toJSON", currentToJsonDescriptor);
+      }
+    }
+  };
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    const authorization = request.headers.get("Authorization") ?? "";
+    const path = url.pathname;
+    const readWire = async () => {
+      const wire = await request.text();
+      captures.push({ method: request.method, path, authorization, wire });
+      assertEquals(wire.includes("poisoned"), false);
+      return wire;
+    };
+    if (request.method === "PUT" && path.includes("/files/")) {
+      const wire = await readWire();
+      if (authorization.includes("expired")) {
+        return jsonResponse({ error: "stale generation" }, { status: 403 });
+      }
+      const body = originalParse(wire) as { content?: unknown };
+      sourceContent = String(body.content ?? "");
+      return jsonResponse({
+        id: "11111111-1111-4111-8111-111111111111",
+        version_id: "22222222-2222-4222-8222-222222222222",
+        path: decodeURIComponent(path.split("/files/")[1] ?? ""),
+        checksum: "source-checksum",
+        content: sourceContent,
+      });
+    }
+    if (request.method === "GET" && path.includes("/files/")) {
+      return jsonResponse({
+        id: "11111111-1111-4111-8111-111111111111",
+        version_id: "22222222-2222-4222-8222-222222222222",
+        path: decodeURIComponent(path.split("/files/")[1] ?? ""),
+        checksum: "source-checksum",
+        content: sourceContent,
+      });
+    }
+    if (request.method === "POST" && path.endsWith("/index")) {
+      const wire = await readWire();
+      if (authorization.includes("expired")) {
+        return jsonResponse({ error: "stale generation" }, { status: 403 });
+      }
+      const index = originalParse(wire) as {
+        expected_version_id?: unknown;
+        model?: { name?: unknown; dimension?: unknown };
+        chunks?: Array<{ vector?: unknown[] }>;
+      };
+      assertEquals(index.expected_version_id, "22222222-2222-4222-8222-222222222222");
+      assertEquals(index.model?.name, "text-embedding-3-small");
+      assertEquals(index.model?.dimension, 1536);
+      assertEquals(index.chunks?.[0]?.vector?.length, 1536);
+      return jsonResponse({
+        file_id: "11111111-1111-4111-8111-111111111111",
+        version_id: "22222222-2222-4222-8222-222222222222",
+        path: decodeURIComponent(path.split("/files/")[1]?.slice(0, -"/index".length) ?? ""),
+        checksum: "source-checksum",
+        indexed_chunk_count: 1,
+        model: index.model,
+      });
+    }
+    if (request.method === "POST" && path.endsWith("/knowledge/index-status")) {
+      const wire = await readWire();
+      const paths = (originalParse(wire) as { paths?: unknown[] }).paths ?? [];
+      return jsonResponse({
+        data: paths.map((item) => ({
+          path: item,
+          file_id: "11111111-1111-4111-8111-111111111111",
+          file_version_id: "22222222-2222-4222-8222-222222222222",
+          index_ready: true,
+        })),
+      });
+    }
+    if (request.method === "POST" && path.endsWith("/events")) {
+      const wire = await readWire();
+      if (authorization.includes("expired")) {
+        return jsonResponse({ error: "stale generation" }, { status: 403 });
+      }
+      indexedEvents.push(...((originalParse(wire) as { events?: unknown[] }).events ?? []));
+      return jsonResponse({ latest_external_event_sequence: 2 });
+    }
+    if (request.method === "GET" && path.endsWith("/events")) {
+      return jsonResponse({ data: indexedEvents, page_info: { next: null } });
+    }
+    return jsonResponse({ error: "unexpected request" }, { status: 500 });
+  };
+
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+
+  try {
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        return { poisoned: true };
+      },
+    });
+    JSON.stringify = (() => '{"poisoned":true}') as typeof JSON.stringify;
+
+    const claimResult = await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch,
+      workerId,
+      run: probeRun(),
+      credentials: currentCredentials,
+      embedder: managedTestEmbedder(),
+    });
+    await probe.afterLeaseLost({
+      apiUrl: "https://api.example.test",
+      fetch,
+      workerId,
+      run: probeRun(),
+      credentials: expiredCredentials,
+      embedder: managedTestEmbedder(),
+    });
+
+    assertEquals(claimResult?.latestExternalEventSequence, 2);
+    assertEquals(receipts[0]?.status, "ok");
+    assertEquals(receipts[1]?.status, "ok");
+    const sourceWrites = captures.filter((capture) =>
+      capture.method === "PUT" && capture.path.includes("/files/")
+    );
+    const indexWrites = captures.filter((capture) =>
+      capture.method === "POST" && capture.path.endsWith("/index")
+    );
+    const currentSource = sourceWrites.find((capture) => capture.authorization === "Bearer auth")!;
+    const replaySource = sourceWrites.find((capture) =>
+      capture.authorization === "Bearer auth-expired"
+    )!;
+    const currentIndex = indexWrites.find((capture) => capture.authorization === "Bearer writer")!;
+    const replayIndex = indexWrites.find((capture) =>
+      capture.authorization === "Bearer writer-expired"
+    )!;
+    assertEquals(replaySource.wire, currentSource.wire);
+    assertEquals(replayIndex.wire, currentIndex.wire);
+    assertEquals(receipts[0]?.indexRequestHash, await computeHash(currentIndex.wire));
+    assertEquals(receipts[1]?.indexRequestHash, await computeHash(currentIndex.wire));
+  } finally {
+    JSON.stringify = originalStringify;
+    if (originalToJsonDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, "toJSON");
+    } else {
+      Object.defineProperty(Object.prototype, "toJSON", originalToJsonDescriptor);
+    }
+  }
 });
 
 it("rejects embeddings that would overflow the float32 index vector schema", async () => {
