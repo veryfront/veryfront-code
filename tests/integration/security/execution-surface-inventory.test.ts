@@ -509,6 +509,16 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
           ? parameter.left
           : parameter;
         if (nameOf(declared) === FLAG) {
+          // `public allowHostProjectCodeExecution: true` is a literal grant in a type.
+          const annotation = isNode(declared) && isNode(declared.typeAnnotation)
+            ? declared.typeAnnotation.typeAnnotation
+            : undefined;
+          if (
+            isNode(annotation) && annotation.type === "TSLiteralType" && isTrue(annotation.literal)
+          ) {
+            result.grants++;
+            return;
+          }
           if (isNode(parameter) && parameter.type === "AssignmentPattern") {
             if (isTrue(parameter.right)) {
               result.grants++;
@@ -784,6 +794,8 @@ describe("execution surface inventory", () => {
         "class Angle { allowHostProjectCodeExecution = <const> true; }",
         "class Parameter { constructor(public allowHostProjectCodeExecution = true) {} }",
         "class ParameterOff { constructor(readonly allowHostProjectCodeExecution = false) {} }",
+        "class ParameterType { constructor(public allowHostProjectCodeExecution: true) {} }",
+        "class ParameterBool { constructor(public allowHostProjectCodeExecution: boolean) {} }",
         "const constGrant = { allowHostProjectCodeExecution: true as const };",
       ].join("\n"),
       false,
@@ -793,7 +805,8 @@ describe("execution surface inventory", () => {
     assertEquals(analysis.guards, 7);
     // Identifier, type, quoted and computed keys, `as` / `satisfies` assertion types, class
     // and accessor fields initialized to `true` (also `as const` and `<const>`), a
-    // constructor parameter property defaulting to `true`, and `true as const` in a value.
-    assertEquals(analysis.grants, 12);
+    // constructor parameter property defaulting to or typed as `true`, and `true as const`
+    // in a value.
+    assertEquals(analysis.grants, 13);
   });
 });
