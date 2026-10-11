@@ -594,6 +594,14 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
           return;
         }
         break;
+      case "VariableDeclarator":
+        // `const allowHostProjectCodeExecution = true` feeds a later shorthand
+        // `{ allowHostProjectCodeExecution }`; the initialization is the grant.
+        if (nameOf(node.id) === FLAG && isTrue(node.init)) {
+          result.grants++;
+          return;
+        }
+        break;
       case "AssignmentPattern":
         // A parameter default `(allowHostProjectCodeExecution = true) => ...` is a grant.
         if (nameOf(node.left) === FLAG && isTrue(node.right)) {
@@ -964,6 +972,20 @@ describe("execution surface inventory", () => {
     // (`=` and `??=`), destructuring defaults (2), a parameter default, and getters
     // returning `true` (2).
     assertEquals(analysis.grants, 22);
+  });
+
+  it("counts a true-initialized binding passed by shorthand as a grant", () => {
+    const analysis = analyzeSource(
+      [
+        "const allowHostProjectCodeExecution = true;",
+        "run({ allowHostProjectCodeExecution });",
+        "let other = false;",
+      ].join("\n"),
+      "ts",
+    );
+    // The initialization is the grant; the shorthand property is one use.
+    assertEquals(analysis.grants, 1);
+    assertEquals(analysis.guards, 1);
   });
 
   it("parses JavaScript sources, including JSX", () => {
