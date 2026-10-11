@@ -133,6 +133,27 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("releases a generation stopped with requests in flight as canceled", async () => {
+    const old = fixture(() => new Response(new ReadableStream<Uint8Array>({})));
+    const next = fixture(() => new Response("new"));
+    next.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 2, drainTimeoutMs: 0 });
+    try {
+      const pending = await broker.fetch(new Request("https://app.example/old"), old.input);
+      const outcome = pending.text().then(() => "completed", () => "failed");
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example/new"), next.input)).text(),
+        "new",
+      );
+      await old.releaseEntered.promise;
+      assertEquals(old.calls, ["allocate", "install", "release:canceled"]);
+      assertEquals(await outcome, "failed");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("fails an aborted request without retiring its executor", async () => {
     const entered = Promise.withResolvers<void>();
     const f = fixture(async (request) => {

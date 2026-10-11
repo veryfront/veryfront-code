@@ -256,7 +256,8 @@ export function createHostedHttpGenerationExecutor(
       lifetime.abort();
       return;
     }
-    const result = await session.close("completed");
+    // Requests still in flight here were cut short by a forced stop.
+    const result = await session.close(active > 0 ? "canceled" : "completed");
     lifetime.abort();
     if (result.release !== "reaper-required") return;
     // The session's bounded release attempt was not acknowledged. Ask the allocator.
