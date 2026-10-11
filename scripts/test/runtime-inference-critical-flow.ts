@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import {
   allocatePort,
   assertCondition,
@@ -436,7 +437,7 @@ export const { GET, POST } = createWorkflowHandler(workflows, {
 
 interface ProviderState {
   received: string[];
-  server: Deno.HttpServer;
+  server: { shutdown(): Promise<void> };
   abort(): void;
   closed: Promise<void>;
   validationFailure(): Error | undefined;
@@ -613,17 +614,13 @@ export async function waitForProviderCancellation(
   }
 }
 
-function startProvider(
+export async function startProvider(
   agentMarker: string,
   workflowMarker: string,
   mode: ProviderMode,
-): ProviderState {
+): Promise<ProviderState> {
   const received: string[] = [];
-  const controller = new AbortController();
-  let resolveClosed!: () => void;
-  const closed = new Promise<void>((resolve) => {
-    resolveClosed = resolve;
-  });
+  let cleaning = false;
   let validationFailure: Error | undefined;
   let cancellationEvidence: string | undefined;
   let resolveCancellation!: (evidence: string) => void;
@@ -631,75 +628,135 @@ function startProvider(
     resolveCancellation = resolve;
   });
   const pendingResponses = new Set<() => void>();
-  const recordCancellation = (evidence: string) => {
-    cancellationEvidence ??= evidence;
+  const recordCancellation = () => {
+    cancellationEvidence ??=
+      "client connection closed pending provider response";
     resolveCancellation(cancellationEvidence);
   };
-  const server = Deno.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    signal: controller.signal,
-    onListen: () => {},
-  }, async (request) => {
-    let validated: { marker: string; stream: boolean };
-    try {
-      validated = await validateAnthropicRequestMarkers(request.clone(), [
-        agentMarker,
-        workflowMarker,
-      ]);
-    } catch (error) {
-      validationFailure = error instanceof Error
-        ? error
-        : new Error(String(error));
-      return Response.json({ error: validationFailure.message }, {
-        status: 400,
-      });
-    }
-    const { marker, stream } = validated;
-    received.push(marker);
-
-    if (marker === agentMarker || mode === "respond") {
-      return stream
-        ? anthropicStreamResponse(marker)
-        : anthropicJsonResponse(marker);
-    }
-
-    return await new Promise<Response>((resolve) => {
-      const release = () => resolve(new Response(null, { status: 499 }));
-      const onClientAbort = () => {
-        recordCancellation("client connection aborted provider request");
-      };
-      pendingResponses.add(release);
-      controller.signal.addEventListener("abort", release, { once: true });
-      if (request.signal.aborted) {
-        onClientAbort();
-      } else {
-        request.signal.addEventListener("abort", onClientAbort, {
-          once: true,
-        });
+  const rememberFailure = (error: unknown) => {
+    validationFailure = error instanceof Error
+      ? error
+      : new Error(String(error));
+  };
+  const nativeServer = createServer((incoming, outgoing) => {
+    let blackHole = false;
+    const release = () => {
+      if (!outgoing.destroyed && !outgoing.writableEnded) {
+        outgoing.writeHead(499);
+        outgoing.end();
+      }
+    };
+    outgoing.once("close", () => {
+      pendingResponses.delete(release);
+      // A completed response, server cleanup, and request-body completion
+      // cannot supply physical client cancellation evidence.
+      if (blackHole && !cleaning && !outgoing.writableEnded) {
+        recordCancellation();
       }
     });
+    const handle = async () => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of incoming) chunks.push(new Uint8Array(chunk));
+      const length = chunks.reduce(
+        (total, chunk) => total + chunk.byteLength,
+        0,
+      );
+      const body = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      const headers = new Headers();
+      for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+        headers.append(
+          incoming.rawHeaders[index]!,
+          incoming.rawHeaders[index + 1]!,
+        );
+      }
+      const request = new Request(
+        new URL(incoming.url ?? "/", "http://127.0.0.1"),
+        {
+          method: incoming.method,
+          headers,
+          ...(incoming.method === "GET" || incoming.method === "HEAD"
+            ? {}
+            : { body }),
+        },
+      );
+      let result: Response;
+      try {
+        const { marker, stream } = await validateAnthropicRequestMarkers(
+          request,
+          [
+            agentMarker,
+            workflowMarker,
+          ],
+        );
+        received.push(marker);
+        if (marker !== agentMarker && mode === "black-hole") {
+          blackHole = true;
+          pendingResponses.add(release);
+          return; // Preserve the black hole before response headers are written.
+        }
+        result = stream
+          ? anthropicStreamResponse(marker)
+          : anthropicJsonResponse(marker);
+      } catch (error) {
+        rememberFailure(error);
+        result = Response.json({ error: validationFailure!.message }, {
+          status: 400,
+        });
+      }
+      const bytes = new Uint8Array(await result.arrayBuffer());
+      if (outgoing.destroyed) return;
+      const responseHeaders = Object.fromEntries(result.headers);
+      outgoing.writeHead(result.status, responseHeaders);
+      outgoing.end(bytes);
+    };
+    void handle().catch((error) => {
+      rememberFailure(error);
+      outgoing.destroy();
+    });
   });
-
-  server.finished.finally(resolveClosed);
-
+  const closed = new Promise<void>((resolve) =>
+    nativeServer.once("close", resolve)
+  );
+  nativeServer.on("error", rememberFailure);
+  await new Promise<void>((resolve, reject) => {
+    nativeServer.once("error", reject);
+    nativeServer.listen(0, "127.0.0.1", () => {
+      nativeServer.off("error", reject);
+      resolve();
+    });
+  });
+  const address = nativeServer.address();
+  if (address === null || typeof address === "string") {
+    nativeServer.close();
+    throw new Error("Provider did not expose its native loopback address");
+  }
+  const abort = () => {
+    cleaning = true;
+    for (const release of pendingResponses) release();
+    pendingResponses.clear();
+  };
+  let shutdown: Promise<void> | undefined;
   return {
     received,
-    server,
-    abort() {
-      controller.abort();
-      for (const release of pendingResponses) release();
-      pendingResponses.clear();
+    server: {
+      shutdown() {
+        abort();
+        return shutdown ??= new Promise<void>((resolve, reject) => {
+          nativeServer.close((error) => error ? reject(error) : resolve());
+        });
+      },
     },
+    abort,
     closed,
-    validationFailure() {
-      return validationFailure;
-    },
-    cancellationEvidence() {
-      return cancellationEvidence;
-    },
+    validationFailure: () => validationFailure,
+    cancellationEvidence: () => cancellationEvidence,
     cancellation,
-    url: new URL(`http://127.0.0.1:${server.addr.port}/v1`),
+    url: new URL(`http://127.0.0.1:${address.port}/v1`),
   };
 }
 
@@ -887,7 +944,11 @@ async function assertRuntimeJourney(
   const scenarioId = `${runtime}-${crypto.randomUUID()}`;
   const agentMarker = `runtime-critical-agent-${scenarioId}`;
   const workflowMarker = `runtime-critical-workflow-${scenarioId}`;
-  const provider = startProvider(agentMarker, workflowMarker, providerMode);
+  const provider = await startProvider(
+    agentMarker,
+    workflowMarker,
+    providerMode,
+  );
   let server:
     | ReturnType<typeof startDevServer>
     | undefined;
