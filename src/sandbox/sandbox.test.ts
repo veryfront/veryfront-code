@@ -3016,50 +3016,54 @@ describe("Sandbox", () => {
       );
     });
 
-    it("replaces an expired retained temporary workspace after the control plane confirms it is gone", async () => {
-      mockFetch([
-        jsonResponse({
-          id: "expired-temporary",
-          endpoint: "https://old.test",
-          status: "running",
-          workspace_storage: "ephemeral",
-          ttl_mode: "default",
-        }),
-        jsonResponse({ ok: true }),
-        textResponse("Sandbox not found", 404),
-        jsonResponse({
-          id: "replacement-temporary",
-          endpoint: "https://new.test",
-          status: "running",
-          workspace_storage: "ephemeral",
-          ttl_mode: "default",
-        }),
-        jsonResponse({ ok: true }),
-      ]);
-      const sandbox = Sandbox.createLazy({
-        authToken: "token",
-        apiUrl: "https://api.test.com",
-        projectReference: "project",
-        deleteOnClose: false,
+    for (const body of ["Sandbox not found", ""]) {
+      it(`replaces an expired retained temporary workspace after ${body ? "a text" : "an empty"} 404 body`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "expired-temporary",
+            endpoint: "https://old.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+          textResponse(body, 404),
+          jsonResponse({
+            id: "replacement-temporary",
+            endpoint: "https://new.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+        ]);
+        const sandbox = Sandbox.createLazy({
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          projectReference: "project",
+          deleteOnClose: false,
+        });
+
+        await sandbox.ensure();
+        await sandbox.close();
+        assertEquals(sandbox.id, "expired-temporary");
+
+        await sandbox.ensure();
+        assertEquals(sandbox.id, "replacement-temporary");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+          )
+            .length,
+          2,
+        );
+        assertEquals(
+          fetchCalls.filter((call) => call.url.endsWith("/sandboxes/expired-temporary")).length,
+          1,
+        );
+        await sandbox.close();
       });
-
-      await sandbox.ensure();
-      await sandbox.close();
-      assertEquals(sandbox.id, "expired-temporary");
-
-      await sandbox.ensure();
-      assertEquals(sandbox.id, "replacement-temporary");
-      assertEquals(
-        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
-          .length,
-        2,
-      );
-      assertEquals(
-        fetchCalls.filter((call) => call.url.endsWith("/sandboxes/expired-temporary")).length,
-        1,
-      );
-      await sandbox.close();
-    });
+    }
 
     it("keeps a retained temporary workspace cached after a transient reconnect failure", async () => {
       mockFetch([

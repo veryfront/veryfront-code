@@ -13,7 +13,8 @@ import {
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
-import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import {
@@ -275,9 +276,7 @@ export class LazySandbox {
                 body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
               });
               if (!response.ok) {
-                throw REQUEST_ERROR.create({
-                  detail: `Sandbox command failed: ${response.status}`,
-                });
+                throw await createSandboxHttpError(response, "Sandbox command failed", signal);
               }
               return parseSandboxCommandResult(await response.json());
             },
@@ -355,7 +354,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Read file failed");
     }
 
     return await readSandboxFileContent(res);
@@ -376,9 +375,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Write files failed");
     }
     const result = await res.json();
     const paths = files.map((file) => file.path);
@@ -405,9 +402,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Start background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.kind);
@@ -430,9 +425,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -452,9 +445,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command output failed");
     }
 
     const json = await res.json();
@@ -482,7 +473,7 @@ export class LazySandbox {
       }`;
       const res = await this.#fetchControl(url, { headers: this.#authHeaders() }, route.kind);
       if (!res.ok) {
-        throw REQUEST_ERROR.create({ detail: `List background commands failed: ${res.status}` });
+        throw await createSandboxHttpError(res, "List background commands failed");
       }
       return res.json();
     };
@@ -510,9 +501,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Cancel background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -695,9 +684,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to create sandbox");
     }
 
     const session = await res.json();
@@ -772,9 +759,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to get sandbox");
     }
 
     return await res.json() as SandboxSessionRecord;
@@ -953,7 +938,7 @@ export class LazySandbox {
     // A 404 means no sandbox is available to this client; cleanup is idempotent.
     // Other denials and server failures must preserve the handle for retry.
     if (!response.ok && response.status !== 404) {
-      throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
+      throw await createSandboxHttpError(response, "Delete sandbox failed");
     }
   }
 
@@ -1069,7 +1054,7 @@ export class LazySandbox {
           continue;
         }
 
-        throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+        throw await createSandboxHttpError(res, "Exec failed");
       } catch (error) {
         if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
           throw error;
@@ -1224,11 +1209,7 @@ function isRetryableExecStartError(error: unknown): boolean {
 }
 
 function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
-  if (!(error instanceof Error)) return false;
-  const detail = "detail" in error && typeof error.detail === "string"
-    ? error.detail
-    : error.message;
-  return detail.startsWith(`Failed to get sandbox: ${status} `);
+  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status;
 }
 
 /**
