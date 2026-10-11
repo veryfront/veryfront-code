@@ -1088,6 +1088,27 @@ describe("canonical connection methods", () => {
     });
   });
 
+  it("rejects a connected status that lacks either connection ID", async () => {
+    for (
+      const ids of [
+        { connection_id: null, connection_generation_id: generationId },
+        { connection_id: connectionId, connection_generation_id: null },
+        { connection_id: null, connection_generation_id: null },
+      ]
+    ) {
+      await withConnectionFetch(
+        () => Response.json({ integration: "github", scope: "user", connected: true, ...ids }),
+        async () => {
+          const client = await createIntegrationClient(context);
+          await assertRejects(
+            () => client.getConnectionStatus("github", "user"),
+            IntegrationApiError,
+          );
+        },
+      );
+    }
+  });
+
   it("deletes one connection on the canonical path and reports provider revocation", async () => {
     const requests: Array<{ method?: string; path: string; query: string }> = [];
     await withConnectionFetch((url, init) => {

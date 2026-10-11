@@ -435,7 +435,7 @@ function buildOauthConnectUrl(
   // default to the personal connection, as the SDK connect flow does.
   const query = projectId
     ? `?project_reference=${nativeEncodeURIComponent(projectId)}&scope=user`
-    : "";
+    : "?scope=user";
 
   try {
     if (!urlOriginGetter) {

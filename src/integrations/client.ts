@@ -678,10 +678,9 @@ export async function createIntegrationClient(
         (item) =>
           typeof item.connected === "boolean" && item.integration === name &&
           item.scope === scope &&
-          (item.connection_id === null || uuid(item.connection_id)) &&
-          (item.connection_generation_id === null || uuid(item.connection_generation_id)) &&
-          (item.connected ||
-            (item.connection_id === null && item.connection_generation_id === null)),
+          (item.connected
+            ? uuid(item.connection_id) && uuid(item.connection_generation_id)
+            : item.connection_id === null && item.connection_generation_id === null),
       );
       return Object.freeze({
         integration: name,
