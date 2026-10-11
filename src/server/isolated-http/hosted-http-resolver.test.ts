@@ -498,6 +498,7 @@ describe("hosted HTTP resolver", () => {
     createHostedHttpResolver(options({ sourceImageRepository: "registry.example:1/source" }));
     createHostedHttpResolver(options({ sourceImageRepository: "ghcr.io/team/source__x.y-z" }));
     createHostedHttpResolver(options({ sourceImageRepository: "source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "a".repeat(255) }));
     for (
       const repository of [
         "registry.example:99999/team/source",
@@ -511,6 +512,7 @@ describe("hosted HTTP resolver", () => {
         "ghcr.io/Team/source",
         "-registry.example/source",
         "registry.example:5000:1/source",
+        "a".repeat(256),
         "",
         "ghcr.io/veryfront/tenant-source:latest",
         "registry.example:5000/team/source:v1",

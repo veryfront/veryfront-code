@@ -205,7 +205,7 @@ const isRegistryLabel = (label: string) =>
  * then path components of lowercase alphanumerics joined by `.`, `_`, `__` or dashes.
  */
 function isImageRepository(repository: string): boolean {
-  if (repository.length === 0 || repository.length > 256) return false;
+  if (repository.length === 0 || repository.length > 255) return false;
   const parts = repository.split("/");
   const first = parts[0]!;
   if (parts.length > 1 && (first.includes(".") || first.includes(":") || first === "localhost")) {
