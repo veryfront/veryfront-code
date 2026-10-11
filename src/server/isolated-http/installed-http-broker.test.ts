@@ -34,6 +34,35 @@ function fixture(
 }
 
 describe("installed HTTP broker", () => {
+  it("retains authorizer-owned raw work after a deadline refusal", async () => {
+    const work = Promise.withResolvers<void>();
+    let pending = 0;
+    const authorize = Object.defineProperties(async () => {
+      pending = 1;
+      throw new Error("deadline");
+    }, {
+      pending: { get: () => pending },
+      settled: { get: () => pending ? work.promise : Promise.resolve() },
+    });
+    const b = fixture(authorize);
+    let done = false;
+    const settled = b.settled.then(() => {
+      done = true;
+    });
+    try {
+      await assertRejects(() => b.hostedHttp.resolve(authority, new AbortController().signal));
+      const notice = await b.shutdown();
+      assertEquals(notice.pending, 1);
+      for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+      assertEquals(done, false);
+      work.resolve();
+      await settled;
+      assertEquals(done, true);
+    } finally {
+      work.resolve();
+      await b.shutdown();
+    }
+  });
   it("uses the configured bounded lifetime for long requests and streams", async () => {
     const f = createHostedHttpFixture(() => new Response("A"));
     const options = {

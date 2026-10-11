@@ -34,6 +34,75 @@ function setup(
   });
 }
 describe("runtime source API authorization", () => {
+  it("holds finite credential admission until cancelled raw reads retire", async () => {
+    const reader = Promise.withResolvers<string>();
+    let calls = 0;
+    const authorize = createRuntimeSourceAuthorizer({
+      baseUrl: "https://api.example",
+      timeoutMs: 5,
+      maxPendingCredentialReads: 1,
+      fetch: async (url) => Response.json(String(url).includes("/releases/") ? source : project),
+      readProjectToken: () => ++calls === 1 ? reader.promise : Promise.resolve("host-reader"),
+    });
+    try {
+      await assertRejects(() => authorize(authority, signal()));
+      await assertRejects(() => authorize(authority, signal()));
+      assertEquals(calls, 1);
+      assertEquals(authorize.pending, 1);
+      reader.resolve("host-reader");
+      await authorize.settled;
+      await authorize(authority, signal());
+      assertEquals(calls, 2);
+      for (const maxPendingCredentialReads of [0, 1.5, 65, Infinity]) {
+        assertThrows(
+          () =>
+            createRuntimeSourceAuthorizer({
+              baseUrl: "https://api.example",
+              maxPendingCredentialReads,
+              readProjectToken,
+            }),
+          TypeError,
+        );
+      }
+    } finally {
+      reader.resolve("host-reader");
+      await authorize.settled;
+    }
+  });
+  it("enforces the credential deadline while retaining raw reader settlement", async () => {
+    const reader = Promise.withResolvers<string>();
+    const authorize = createRuntimeSourceAuthorizer({
+      baseUrl: "https://api.example",
+      timeoutMs: 5,
+      fetch: async () => Response.json(source),
+      readProjectToken: () => reader.promise,
+    });
+    const attempt = authorize(authority, signal());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        attempt.then(() => "allowed", () => "denied"),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve("stuck"), 50);
+        }),
+      ]);
+      assertEquals(result, "denied");
+      assertEquals(authorize.pending, 1);
+      let settled = false;
+      const owned = authorize.settled.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      assertEquals(settled, false);
+      reader.resolve("host-reader");
+      await owned;
+      assertEquals(authorize.pending, 0);
+    } finally {
+      clearTimeout(timer);
+      reader.resolve("host-reader");
+      await attempt.catch(() => {});
+    }
+  });
   it("accepts the proxy routing environment bound and refuses oversized metadata", async () => {
     const environments = [
       environment,

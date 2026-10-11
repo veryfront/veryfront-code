@@ -26,7 +26,12 @@ export interface InstalledHttpBrokerOptions {
   allocator: HostedExecutorSessionOptions["allocator"];
   connectTransport: HostedExecutorSessionOptions["connectTransport"];
   /** Check current project/environment/release authority against the source API on every request. */
-  authorize(authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
+  authorize: {
+    (authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
+    /** Underlying host IO may outlive a refused request and remains owned through shutdown. */
+    readonly pending?: number;
+    readonly settled?: Promise<void>;
+  };
   maxActive: number;
   /** Executor lifetime after authorization, including preparation and streamed response; 1ms through 24h, default 75s. Align with the host request timeout and allocator policy. */
   requestLifetimeMs?: number;
@@ -98,6 +103,7 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     if (registry.has(key)) throw new TypeError("Duplicate installed HTTP identity");
     registry.set(key, { image: parsedImage.data, configuration });
   }
+  const authorizationOwner = options.authorize;
   const authorize = options.authorize.bind(options);
   const allocator = options.allocator;
   const connectTransport = options.connectTransport;
@@ -176,13 +182,18 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
       return broker.active;
     },
     get settled() {
-      return Promise.all([broker.settled, authorizationDrain.promise]).then(() => {});
+      return Promise.all([broker.settled, authorizationDrain.promise])
+        .then(() => authorizationOwner.settled)
+        .then(() => {});
     },
     async shutdown() {
       owner.abort();
       if (pendingAuthorizations === 0) authorizationDrain.resolve();
       const notice = await broker.shutdown();
-      return { ...notice, pending: notice.pending + pendingAuthorizations };
+      return {
+        ...notice,
+        pending: notice.pending + Math.max(pendingAuthorizations, authorizationOwner.pending ?? 0),
+      };
     },
   };
 }

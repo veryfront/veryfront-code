@@ -13,6 +13,8 @@ const unavailable = () => new Error("Runtime source authorization failed");
 export function createRuntimeSourceAuthorizer(options: {
   baseUrl: string;
   timeoutMs?: number;
+  /** Raw host credential reads retain their reservation until settlement; 1 through 64, default 16. */
+  maxPendingCredentialReads?: number;
   /** Host-only project-read credential. Never use the caller's source grant to read environments. */
   readProjectToken(projectId: string, signal: AbortSignal): Promise<string>;
   /** Host-owned transport injection; production defaults to verified native HTTPS fetch. */
@@ -27,12 +29,36 @@ export function createRuntimeSourceAuthorizer(options: {
   const fetch = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 5000;
   const readProjectToken = options.readProjectToken;
+  const maxPendingCredentialReads = options.maxPendingCredentialReads ?? 16;
   if (
     typeof fetch !== "function" || typeof readProjectToken !== "function" ||
     !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
-    timeoutMs > 30_000
+    timeoutMs > 30_000 || !Number.isSafeInteger(maxPendingCredentialReads) ||
+    maxPendingCredentialReads < 1 || maxPendingCredentialReads > 64
   ) {
     throw new TypeError("Invalid runtime source authorization limits");
+  }
+  const credentialReads = new Set<Promise<string>>();
+  async function readCredential(projectId: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
+    if (credentialReads.size >= maxPendingCredentialReads) throw unavailable();
+    const raw = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return readProjectToken(projectId, signal);
+    });
+    credentialReads.add(raw);
+    void raw.then(() => credentialReads.delete(raw), () => credentialReads.delete(raw));
+    let abort: () => void = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(unavailable());
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    try {
+      return await Promise.race([raw, cancelled]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
   async function readJson(url: URL, token: string, maximum: number, signal: AbortSignal) {
     const response = await fetch(url, {
@@ -63,7 +89,10 @@ export function createRuntimeSourceAuthorizer(options: {
     if (truncated || new TextEncoder().encode(text).byteLength > maximum) throw unavailable();
     return JSON.parse(text);
   }
-  return async (authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void> => {
+  const authorize = async (
+    authority: HostedHttpRequestAuthority,
+    signal: AbortSignal,
+  ): Promise<void> => {
     const binding = snapshotInstalledProjectHttpBinding({
       projectId: authority.projectId,
       projectSlug: authority.projectSlug,
@@ -101,7 +130,7 @@ export function createRuntimeSourceAuthorizer(options: {
         )
       ) throw unavailable();
       combined.throwIfAborted();
-      const projectToken = await readProjectToken(binding.projectId, combined);
+      const projectToken = await readCredential(binding.projectId, combined);
       combined.throwIfAborted();
       if (typeof projectToken !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(projectToken)) {
         throw unavailable();
@@ -135,4 +164,9 @@ export function createRuntimeSourceAuthorizer(options: {
       lifetime.abort();
     }
   };
+  // A deadline releases admission, but never claims that uncooperative host IO has retired.
+  return Object.defineProperties(authorize, {
+    pending: { get: () => credentialReads.size },
+    settled: { get: () => Promise.allSettled([...credentialReads]).then(() => {}) },
+  }) as typeof authorize & { readonly pending: number; readonly settled: Promise<void> };
 }
