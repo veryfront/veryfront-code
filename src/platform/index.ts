@@ -113,4 +113,13 @@ export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";
 export { enhanceAdapterWithFS, isExtendedFSAdapter } from "./adapters/fs/index.ts";
 
 // Adapters: API client
-export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";
+export {
+  type DependencyMetadataHistory,
+  type DependencyMetadataHistoryEntry,
+  type DependencyResolution,
+  type DependencySkipReason,
+  type GetDependencyHistoryInput,
+  type ResolveDependenciesInput,
+  VeryfrontApiClient,
+  type VeryfrontApiDependencies,
+} from "./adapters/veryfront-api-client/index.ts";
