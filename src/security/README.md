@@ -527,8 +527,9 @@ updated.
 
 The hosted ingress refuses these surfaces with a non-cacheable
 `project-execution-unavailable` 503. They never fall back to host execution. A
-refused WebSocket upgrade receives a 503 without a body and no 101 response; on
-Node.js the upgrade transport then closes the connection.
+refused WebSocket upgrade never receives a 101 response. On Node.js, the only
+runtime that supports this feature, the upgrade transport does not send the 503:
+it closes the connection, so the client observes a dropped connection.
 
 | Surface                                             | Status                                                   |
 | --------------------------------------------------- | -------------------------------------------------------- |
