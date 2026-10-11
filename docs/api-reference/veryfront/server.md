@@ -145,6 +145,32 @@ import {
 | `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. `projectTracing` binds collector settings to the installed project/environment and imports executor spans under the broker's request parent. Collector credentials stay on the broker.                                                                                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts)  |
 | `HostedHttpRequestAuthority`      | Trusted edge selection. The resolver must authorize these values against the source API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-ingress.ts) |
 
+### `veryfront/server/http-resolver`
+
+```ts
+import {
+  buildHostedHttpGenerationBindingInput,
+  createHostedHttpResolver,
+  createHostedHttpSourceRecordLookup,
+} from "veryfront/server/http-resolver";
+```
+
+#### Functions
+
+| Name                                    | Description                                                                                                                                                                                                                                                                                                                                                                                                         | Source                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `buildHostedHttpGenerationBindingInput` | Derive the authorized parts of a render generation binding from one resolved input. The digest-pinned tenant-source image is the source snapshot identity. Framework, runtime, dependency, artifact and execution-policy identities come from the image receipt and operator policy, which this resolver does not observe.                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+| `createHostedHttpResolver`              | Build the hosted HTTP `resolve()` callback. Each call authorizes the project, its slug, the named environment and its active release with the request's source token, binds the published tenant-source image to that exact project release, and then reads the authorized project environment. Any mismatch rejects; the ingress turns rejection into a non-cacheable unavailable response with no host execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+| `createHostedHttpSourceRecordLookup`    | Serve publication records produced by the tenant-source lookup from a host-owned snapshot. Records are indexed by exact project and release; differing records for one release are refused. The resolver binds `image` to the authorized project release, and the executor session refuses an allocation whose running image differs from that digest.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+
+#### Types
+
+| Name                               | Description                                                                                     | Source                                                                                                           |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `HostedHttpGenerationBindingInput` | Immutable generation identity inputs known after authorization, for generation-bound executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+| `HostedHttpResolverApi`            | Veryfront API reads, each authenticated with the request's source token.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+| `HostedHttpResolverOptions`        |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-resolver.ts) |
+
 ### `veryfront/server/http-runtime`
 
 ```ts
