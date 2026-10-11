@@ -31,6 +31,23 @@ describe("server/utils/request-host", () => {
   });
 
   describe("getEffectiveRequestHost", () => {
+    it("normalizes letter case and a trailing root dot for every caller", () => {
+      const request = (host: string, forwarded?: string) =>
+        new Request("https://127.0.0.1/", {
+          headers: forwarded ? { host, "x-forwarded-host": forwarded } : { host },
+        });
+      assertEquals(
+        getEffectiveRequestHost(request("PROJECT.PRODUCTION.VERYFRONT.COM")),
+        "project.production.veryfront.com",
+      );
+      assertEquals(getEffectiveRequestHost(request("Example.COM.:8443")), "example.com:8443");
+      assertEquals(
+        getEffectiveRequestHost(request("internal", "App.Preview.Example.com."), undefined, true),
+        "app.preview.example.com",
+      );
+      assertEquals(getEffectiveRequestHost(request("[::1]:3000")), "[::1]:3000");
+    });
+
     it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = new Request("http://127.0.0.1:3000/test", {
         headers: {

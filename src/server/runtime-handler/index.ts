@@ -777,6 +777,7 @@ export function createVeryfrontHandler(
               environmentId: headers.environmentId,
               environmentName: headers.environmentName,
               mode: parseProxyEnvironment(headers.environment ?? null),
+              hostMode: reqCtx.mode,
               proxyTrusted,
               sourceToken: reqCtx.token,
             });

@@ -37,6 +37,8 @@ export function createRequestContext(
   // the operator explicitly trusts forwarded headers.
   const trustProxy = options.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  // The effective host is normalized (lowercase, no trailing root dot), so
+  // `PROJECT.PREVIEW.EXAMPLE.` is still a preview host.
   const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;

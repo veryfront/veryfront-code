@@ -526,6 +526,19 @@ updated.
 | `VERYFRONT_HOSTED_HTTP_ISOLATION`                      | `veryfront serve` production renderers in proxy mode | Off by default. Node.js 22 or newer only. Refuses to start while `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` is set or on another runtime |
 | `security/sandbox/worker-pool.ts` host-realm admission | Worker pool when the operator grant is set           | Follows the operator grant                                                                                                             |
 
+### Surfaces refused under hosted HTTP isolation
+
+The hosted ingress refuses these surfaces with a non-cacheable
+`project-execution-unavailable` 503. They never fall back to host execution. A
+refused WebSocket upgrade receives a 503 without a body and no 101 response; on
+Node.js the upgrade transport then closes the connection.
+
+| Surface                                             | Status                                                   |
+| --------------------------------------------------- | -------------------------------------------------------- |
+| Preview mode, including Markdown preview            | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| Component snippets (`GET /@/`, `GET /@components/`) | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| WebSocket upgrades, including preview HMR           | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+
 ### Host execution grant register
 
 Each file below passes the literal `allowHostProjectCodeExecution: true` the listed
