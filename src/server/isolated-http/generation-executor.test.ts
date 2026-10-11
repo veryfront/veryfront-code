@@ -263,6 +263,36 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("honors each caller's owner signal on a warm executor", async () => {
+    const f = fixture(() => new Response("served"));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      const owner = new AbortController();
+      owner.abort(new Error("Owner stopped"));
+      await assertRejects(
+        () =>
+          broker.fetch(new Request("https://app.example"), {
+            ...f.input,
+            session: { ...f.input.session, ownerSignal: owner.signal },
+          }),
+        Error,
+        "Owner stopped",
+      );
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("fails an aborted request without retiring its executor", async () => {
     const entered = Promise.withResolvers<void>();
     const f = fixture(async (request) => {

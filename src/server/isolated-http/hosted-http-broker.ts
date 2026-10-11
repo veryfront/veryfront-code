@@ -186,9 +186,12 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     identity: Readonly<WorkerGenerationIdentity>,
     tracing = input.tracing,
   ): Promise<Response> {
-    request.signal.throwIfAborted();
+    // Each caller's owner signal bounds its own request, also on a warm executor.
+    const owner = input.session.ownerSignal;
+    const signal = owner ? AbortSignal.any([request.signal, owner]) : request.signal;
+    signal.throwIfAborted();
     const key = currentKey(identity, input.allocation.requestedAt);
-    const admitted = new Request(request, { signal: request.signal });
+    const admitted = new Request(request, { signal });
     contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
     try {
       const response = await generations.render(admitted, key, create);
@@ -196,7 +199,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       return completeOnResponseBodyConsumption(
         response,
         () => {},
-        request.signal,
+        signal,
         { highWaterMark: 0 },
         { errorOnAbort: true },
       );
