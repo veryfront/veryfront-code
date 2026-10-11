@@ -324,6 +324,40 @@ describe("hosted executor model dispatch", () => {
     }
   });
 
+  it("does not record a prompt the provider rejected before accepting it", async () => {
+    const observed: unknown[] = [];
+    let attempts = 0;
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => ({
+        ...model(() => {}),
+        doGenerate() {
+          attempts++;
+          return Promise.reject(new Error("synthetic provider setup failure"));
+        },
+      }),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await assertRejects(async () => await runtime.doGenerate({ prompt }));
+      assertEquals(attempts, 1);
+      assertEquals(observed, []);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("dispatches project calls against the current cursor-only API before capture activation", async () => {
     let dispatches = 0;
     let appends = 0;
