@@ -117,7 +117,8 @@ export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): strin
     input.allocation.owner,
     input.allocation.source,
     input.configuration ?? null,
-    input.headerOptions.denyHeaders ?? null,
+    // The request filter lowercases and deduplicates these names, so compare them that way.
+    [...new Set(input.headerOptions.denyHeaders?.map((name) => name.toLowerCase()))].sort(),
   ]);
 }
 
@@ -167,6 +168,10 @@ export function createHostedHttpGenerationExecutor(
 
   function start(): Promise<void> {
     const allocation = input.allocation;
+    const admissible = allocation.hardDeadlineAt - Date.now() - retireBeforeDeadlineMs;
+    if (admissible <= 0) {
+      throw new Error("HTTP executor allocation is inside its retirement window");
+    }
     const owner = input.session.ownerSignal;
     const started = sessions.start({
       ...input.session,
@@ -201,7 +206,7 @@ export function createHostedHttpGenerationExecutor(
     else started.signal.addEventListener("abort", retire, { once: true });
     deadlineTimer = setTimeout(
       retire,
-      timerDelay(allocation.hardDeadlineAt - Date.now() - retireBeforeDeadlineMs),
+      timerDelay(admissible),
     );
     return (async () => {
       channel = await started.ready;

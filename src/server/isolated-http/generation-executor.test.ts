@@ -320,6 +320,42 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("shares an executor between equivalent header policies", async () => {
+    const f = fixture(() => new Response("served"));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      for (const denyHeaders of [["X-Internal", "x-other"], ["x-other", "x-internal", "X-OTHER"]]) {
+        const response = await broker.fetch(new Request("https://app.example"), {
+          ...f.input,
+          headers: { denyHeaders },
+        });
+        assertEquals(await response.text(), "served");
+      }
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("does not allocate an executor inside its retirement window", async () => {
+    const f = fixture(() => new Response("unreachable"));
+    f.input.session.request.prepareDeadlineAt = Date.now() + 3_000;
+    f.input.session.request.hardDeadlineAt = Date.now() + 4_000;
+    const broker = createHostedHttpBroker({ maxActive: 1, drainTimeoutMs: 10_000 });
+    try {
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example"), f.input),
+        Error,
+        "retirement window",
+      );
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("requires bounded generation limits", () => {
     for (
       const options of [
