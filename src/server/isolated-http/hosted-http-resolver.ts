@@ -180,6 +180,15 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
   return allowPath ? trimTrailingSlashes(value) : url.origin;
 }
 
+/** A publication record's origin in the same canonical form as the configured one. */
+function canonicalSourceOrigin(value: string): string | undefined {
+  try {
+    return httpsOrigin(value, "source API origin", false);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Claims of the edge proxy's project source credential (client credentials, no options). */
 const SOURCE_CREDENTIAL_CLAIMS = new Set(["userId", "scope", "projectId", "iat", "exp"]);
 /** The API's default scopes for the veryfront-server client; nothing else is accepted. */
@@ -465,7 +474,7 @@ export function createHostedHttpResolver(
     if (
       !parsed.success || parsed.data.project_id !== authority.projectId ||
       parsed.data.release_id !== authority.releaseId ||
-      trimTrailingSlashes(parsed.data.api_origin) !== sourceApiOrigin ||
+      canonicalSourceOrigin(parsed.data.api_origin) !== sourceApiOrigin ||
       !parsed.data.image.startsWith(`${repository}@sha256:`)
     ) throw refuse("Published source does not match the authorized project release");
     return parsed.data.image;

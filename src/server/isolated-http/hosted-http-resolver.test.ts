@@ -606,6 +606,37 @@ describe("hosted HTTP resolver", () => {
       lookupSourceImage: () => Promise.resolve(record({ api_origin: `${SOURCE_API}/` })),
     }));
     assertEquals((await trailing(authority, signal())).session.expectedImage, IMAGE);
+    // An explicit default port names the same origin on either side.
+    for (
+      const [configured, published] of [
+        [`${SOURCE_API}:443`, `${SOURCE_API}:443`],
+        [SOURCE_API, `${SOURCE_API}:443/`],
+        [`${SOURCE_API}:443`, SOURCE_API],
+      ]
+    ) {
+      const resolveDefaultPort = createHostedHttpResolver(options({
+        sourceApiOrigin: configured,
+        lookupSourceImage: () => Promise.resolve(record({ api_origin: published })),
+      }));
+      assertEquals(
+        (await resolveDefaultPort(authority, signal())).session.expectedImage,
+        IMAGE,
+        `${configured} / ${published}`,
+      );
+    }
+    // A different port or a path is a different origin.
+    for (
+      const published of [
+        `${SOURCE_API}:8443`,
+        `${SOURCE_API}/api`,
+        "http://source-api.veryfront.test",
+      ]
+    ) {
+      const resolveOther = createHostedHttpResolver(options({
+        lookupSourceImage: () => Promise.resolve(record({ api_origin: published })),
+      }));
+      await assertRejects(() => resolveOther(authority, signal()), Error, "", published);
+    }
   });
 
   it("refuses a release with no publication record and an aborted lookup", async () => {
