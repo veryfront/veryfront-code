@@ -207,11 +207,13 @@ const SOURCE_CREDENTIAL_SCOPES = new Set([
 
 const REPOSITORY_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
 const isRegistryLabel = (label: string) =>
-  /^[a-z0-9-]+$/.test(label) && !label.startsWith("-") && !label.endsWith("-");
+  label.length <= 63 && /^[a-z0-9-]+$/.test(label) && !label.startsWith("-") &&
+  !label.endsWith("-");
 
 /**
  * A container image repository without tag or digest, following the distribution
- * reference grammar: an optional registry host (DNS labels, optional TCP port 1-65535),
+ * reference grammar: an optional registry host (DNS labels of at most 63 characters, at
+ * most 253 in total, optional TCP port 1-65535),
  * then path components of lowercase alphanumerics joined by `.`, `_`, `__` or dashes.
  */
 function isImageRepository(repository: string): boolean {
@@ -220,7 +222,10 @@ function isImageRepository(repository: string): boolean {
   const first = parts[0]!;
   if (parts.length > 1 && (first.includes(".") || first.includes(":") || first === "localhost")) {
     const [host, port, ...extra] = first.split(":");
-    if (extra.length > 0 || !host?.split(".").every(isRegistryLabel)) {
+    if (
+      extra.length > 0 || host === undefined || host.length > 253 ||
+      !host.split(".").every(isRegistryLabel)
+    ) {
       return false;
     }
     if (port !== undefined) {

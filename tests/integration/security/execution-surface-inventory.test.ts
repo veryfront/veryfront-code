@@ -393,7 +393,8 @@ function calleeNames(callee: unknown): string[] {
 
 /**
  * The predicate names plus every local alias of one in this file: `import { p as q }`,
- * `const q = p` and `const { p: q } = module`. Aliases of aliases resolve too.
+ * `const q = p`, `const { p: q } = module`, a default `(q = p) => ...` and a later
+ * `q = p`. Aliases of aliases resolve too.
  */
 function predicateAliases(program: SyntaxNode): Set<string> {
   const names = new Set(PREDICATES);
@@ -403,6 +404,19 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       const imported = nameOf(node.imported);
       const local = nameOf(node.local);
       if (imported !== undefined && local !== undefined) links.push([imported, local]);
+    } else if (
+      (node.type === "AssignmentPattern" || node.type === "AssignmentExpression") &&
+      isNode(node.left) && node.left.type === "Identifier"
+    ) {
+      // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`.
+      const source = unwrapExpression(node.right);
+      const from = isNode(source) && source.type === "Identifier"
+        ? source.name as string
+        : isNode(source) &&
+            (source.type === "MemberExpression" || source.type === "OptionalMemberExpression")
+        ? propertyName(source.property, source.computed)
+        : undefined;
+      if (from !== undefined) links.push([from, node.left.name as string]);
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
       // `const q = p as Guard`, `const q = (policy.p)!`: aliases through transparent wrappers.
       const init = unwrapExpression(node.init);
@@ -961,6 +975,20 @@ describe("execution surface inventory", () => {
     // (`=` and `??=`), destructuring defaults (2), a parameter default, and getters
     // returning `true` (2).
     assertEquals(analysis.grants, 22);
+  });
+
+  it("resolves predicate aliases from parameter defaults and assignments", () => {
+    const analysis = analyzeSource(
+      [
+        "function run(check = requiresIsolatedProjectRuntime) { return check(ctx); }",
+        "let later;",
+        "later = policy.isSharedProjectRuntime;",
+        "later(ctx);",
+      ].join("\n"),
+      "ts",
+    );
+    // `check(ctx)` and `later(ctx)`.
+    assertEquals(analysis.guards, 2);
   });
 
   it("counts a true-initialized binding passed by shorthand as a grant", () => {
