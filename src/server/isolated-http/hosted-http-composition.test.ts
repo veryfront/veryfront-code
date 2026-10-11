@@ -619,6 +619,31 @@ describe("hosted HTTP host composition", () => {
     }
   });
 
+  it("wipes the host file read buffer and returns no copy when close fails", async () => {
+    const buffers: Uint8Array[] = [];
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset > 0) return Promise.resolve({ bytesRead: 0 });
+        buffer.fill(0x6b, 0, 16);
+        return Promise.resolve({ bytesRead: 16 });
+      },
+      close() {
+        return Promise.reject(new Error("close failed"));
+      },
+    };
+    await assertRejects(
+      () =>
+        readHostFilePrefix("/host/configuration-key", {
+          maxBytes: 64,
+          open: () => Promise.resolve(handle),
+        }),
+      Error,
+      "close failed",
+    );
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+  });
+
   it("detaches a broker token read that never settles", async () => {
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();

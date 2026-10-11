@@ -245,16 +245,20 @@ export async function readHostFilePrefix(
   const buffer = new Uint8Array(limit);
   try {
     let length = 0;
-    while (length < limit) {
-      options.signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(buffer, length, limit - length, null);
-      if (bytesRead === 0) break;
-      length += bytesRead;
+    try {
+      while (length < limit) {
+        options.signal?.throwIfAborted();
+        const { bytesRead } = await handle.read(buffer, length, limit - length, null);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+    } finally {
+      await handle.close();
     }
+    // Copy only after the handle closed, so a failed close leaves no second copy.
     return buffer.slice(0, length);
   } finally {
     buffer.fill(0);
-    await handle.close();
   }
 }
 
