@@ -281,6 +281,19 @@ function nameOf(node: unknown): string | undefined {
   return undefined;
 }
 
+/** A property name written as an identifier, a string, or a computed string literal. */
+function propertyName(key: unknown, computed: unknown): string | undefined {
+  if (!computed) return nameOf(key);
+  if (isNode(key) && key.type === "StringLiteral") return key.value as string;
+  if (
+    isNode(key) && key.type === "TemplateLiteral" && Array.isArray(key.expressions) &&
+    key.expressions.length === 0 && Array.isArray(key.quasis)
+  ) {
+    return (key.quasis[0] as { value?: { cooked?: string } } | undefined)?.value?.cooked;
+  }
+  return undefined;
+}
+
 function isTrue(node: unknown): boolean {
   return isNode(node) && node.type === "BooleanLiteral" && node.value === true;
 }
@@ -319,7 +332,7 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
     if (TYPE_ONLY_NODES.has(node.type)) inType = true;
     if (inType) {
       if (
-        node.type === "TSPropertySignature" && nameOf(node.key) === FLAG &&
+        node.type === "TSPropertySignature" && propertyName(node.key, node.computed) === FLAG &&
         isNode(node.typeAnnotation) && isNode(node.typeAnnotation.typeAnnotation) &&
         node.typeAnnotation.typeAnnotation.type === "TSLiteralType" &&
         isTrue(node.typeAnnotation.typeAnnotation.literal)
@@ -342,8 +355,13 @@ function analyzeSource(source: string, tsx: boolean): SourceAnalysis {
       case "Identifier":
         if (node.name === FLAG) result.guards++;
         break;
+      case "MemberExpression":
+      case "OptionalMemberExpression":
+        // `options["allowHostProjectCodeExecution"]` is a read like `options.allowHost...`.
+        if (node.computed && propertyName(node.property, true) === FLAG) result.guards++;
+        break;
       case "ObjectProperty":
-        if (nameOf(node.key) === FLAG && !node.computed) {
+        if (propertyName(node.key, node.computed) === FLAG) {
           if (isTrue(node.value)) {
             result.grants++;
             return;
@@ -565,11 +583,16 @@ describe("execution surface inventory", () => {
         "class Holder { readonly allowHostProjectCodeExecution: boolean = false; }",
         "const grant = { allowHostProjectCodeExecution: true };",
         "type Grant = { allowHostProjectCodeExecution: true };",
+        'const quoted = { "allowHostProjectCodeExecution": true };',
+        'const computed = { ["allowHostProjectCodeExecution"]: true };',
+        'if (options["allowHostProjectCodeExecution"]) run();',
       ].join("\n"),
       false,
     );
-    // Destructuring (1), propagation key and read (2), negation (1), comparison (1).
-    assertEquals(analysis.guards, 5);
-    assertEquals(analysis.grants, 2);
+    // Destructuring (1), propagation key and read (2), negation (1), comparison (1),
+    // computed read (1).
+    assertEquals(analysis.guards, 6);
+    // Identifier, type, quoted and computed keys.
+    assertEquals(analysis.grants, 4);
   });
 });
