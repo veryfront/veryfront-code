@@ -1,4 +1,4 @@
-import { readProxyResponseJson, settleProxyResponseBody } from "../../proxy/response-body.ts";
+import { readProxyResponseJson, settleProxyResponseBody } from "#veryfront/proxy/response-body.ts";
 import { snapshotInstalledProjectHttpBinding } from "../runtime-handler/installed-project.ts";
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
 
