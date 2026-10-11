@@ -30,16 +30,45 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 function readCanonicalDescendantCounts(
   value: unknown,
-): { total: number; active: number } | undefined {
+): { total: number; active: number; hasFailures: boolean } | undefined {
   if (!record(value)) return undefined;
   const descendants = value.descendants;
+  if (descendants === undefined) {
+    return value.descendant_count === undefined && value.active_descendant_count === undefined
+      ? { total: 0, active: 0, hasFailures: false }
+      : undefined;
+  }
   if (!record(descendants)) return undefined;
   const total = descendants.total;
   const active = descendants.active;
+  const hasFailures = descendants.has_failures;
   return typeof total === "number" && Number.isSafeInteger(total) && total >= 0 &&
-      typeof active === "number" && Number.isSafeInteger(active) && active >= 0
-    ? { total, active }
+      typeof active === "number" && Number.isSafeInteger(active) && active >= 0 &&
+      typeof hasFailures === "boolean"
+    ? { total, active, hasFailures }
     : undefined;
+}
+function readStableParentProjection(value: unknown, projectId: string): unknown | undefined {
+  if (
+    !record(value) || value.project_id !== projectId || typeof value.id !== "string" ||
+    typeof value.status !== "string"
+  ) {
+    return undefined;
+  }
+  const descendants = readCanonicalDescendantCounts(value);
+  if (descendants === undefined) return undefined;
+  return {
+    id: value.id,
+    project_id: value.project_id,
+    status: value.status,
+    parent_run_id: typeof value.parent_run_id === "string" || value.parent_run_id === null
+      ? value.parent_run_id
+      : undefined,
+    root_run_id: typeof value.root_run_id === "string" || value.root_run_id === null
+      ? value.root_run_id
+      : undefined,
+    descendants,
+  };
 }
 
 /** Prepare one legitimate task invocation while current; later POST /runs directly with its retained issuer authority. */
@@ -65,9 +94,14 @@ export function createRuntimeOwnershipChildProbe(
         `${input.canonicalRunId}:${request.sourcePath}:owned-child-proof`,
       )}`;
       const events = input.createEvents(signal);
-      const acknowledgement: unknown = await events.post(`${runPath}/events`, {
-        events: [{ type: "STEP_STARTED", stepId: invocation }],
-      }, { signal });
+      const startKey = `task-child-start:${await computeHash(
+        `${input.canonicalRunId}:${request.sourcePath}:owned-child-proof:start`,
+      )}`;
+      const acknowledgement: unknown = await events.postRaw(
+        `${runPath}/events`,
+        privateJsonStringify({ events: [{ type: "STEP_STARTED", stepId: invocation }] }),
+        { signal, idempotencyKey: startKey },
+      );
       if (!record(acknowledgement) || acknowledgement.appended_count !== 1) {
         throw new Error("Owned child invocation was not acknowledged");
       }
@@ -84,10 +118,8 @@ export function createRuntimeOwnershipChildProbe(
       throw new Error("No current owned child invocation receipt");
     }
     const before: unknown = await reader.get(runPath, undefined, { signal });
-    const beforeDescendants = readCanonicalDescendantCounts(before);
-    if (
-      !record(before) || before.project_id !== input.projectId || beforeDescendants === undefined
-    ) {
+    const beforeProjection = readStableParentProjection(before, input.projectId);
+    if (beforeProjection === undefined) {
       throw new Error("Child lineage readback is incomplete");
     }
     let rejected = false;
@@ -105,16 +137,12 @@ export function createRuntimeOwnershipChildProbe(
     }
     if (!rejected) throw new Error("Child creation was accepted after cancellation");
     const after: unknown = await reader.get(runPath, undefined, { signal });
-    const afterDescendants = readCanonicalDescendantCounts(after);
-    if (
-      !record(after) || after.project_id !== input.projectId || afterDescendants === undefined ||
-      afterDescendants.total !== beforeDescendants.total ||
-      afterDescendants.active !== beforeDescendants.active
-    ) {
+    const afterProjection = readStableParentProjection(after, input.projectId);
+    if (afterProjection === undefined) {
       throw new Error("Denied child creation changed parent state or lineage");
     }
-    const beforeHash = await computeHash(privateJsonStringify(before)),
-      afterHash = await computeHash(privateJsonStringify(after));
+    const beforeHash = await computeHash(privateJsonStringify(beforeProjection)),
+      afterHash = await computeHash(privateJsonStringify(afterProjection));
     if (beforeHash !== afterHash) {
       throw new Error("Denied child creation changed parent state or lineage");
     }
