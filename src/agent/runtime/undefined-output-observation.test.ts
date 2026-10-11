@@ -45,6 +45,7 @@ it("records unsupported undefined transformed output while preserving public obj
     type: "message-finish",
     finishReason: "stop",
     totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    objectEncoding: "snapshot",
     object: {
       captureStatus: "unsupported",
       reasons: ["unsupported_undefined"],

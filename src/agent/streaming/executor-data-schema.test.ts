@@ -100,6 +100,20 @@ describe("agent/streaming/executor-data-schema", () => {
     );
   });
 
+  it("preserves explicit snapshot encoding and rejects unknown encodings", () => {
+    const event = {
+      type: "message-finish",
+      objectEncoding: "snapshot",
+      object: {
+        captureStatus: "unsupported",
+        reasons: ["unsupported_bigint"],
+        value: "[unsupported bigint]",
+      },
+    };
+    assertEquals(parseExecutorDataEvent(event), event);
+    assertThrows(() => parseExecutorDataEvent({ ...event, objectEncoding: "unknown" }));
+  });
+
   it("accepts the one-hour cache-write share on finish usage", () => {
     const event = {
       type: "message-finish",
