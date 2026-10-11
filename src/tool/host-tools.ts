@@ -5,6 +5,7 @@ import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { inheritProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -136,10 +137,12 @@ function normalizeExecutionContext(
     ? context.toolCallId
     : (options.generateToolCallId ?? defaultToolCallId)(toolName);
 
-  return {
+  const normalized = {
     ...(isRecord(context) ? context : {}),
     toolCallId,
   };
+  inheritProviderObservedSkillBodies(context, normalized);
+  return normalized;
 }
 
 /** Create tools from host definitions. */

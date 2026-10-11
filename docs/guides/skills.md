@@ -106,6 +106,11 @@ hosted chat can read only a reference listed by that skill through
 accepted for existing callers. Hosted chat does not execute skill scripts
 directly.
 
+Read the skill's load result before selecting a reference path. Hosted chat
+rejects a reference read in the same step as the skill's first body load. Retry
+the reference in the next step using a listed path. Direct SDK calls can load a
+body and then read a reference sequentially.
+
 Use the skill ID returned by `load_skill` and an exact path from its `references`
 list. Read one reference at a time:
 

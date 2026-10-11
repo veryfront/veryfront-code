@@ -10,6 +10,11 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
+  type ProviderObservedSkillBody,
+  setProviderObservedSkillBodies,
+} from "#veryfront/tool/provider-observed-skill-bodies.ts";
+import type { ExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
+import {
   type AdmitExecutorToolCall,
   runWithToolCallAdmissionReceipt,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
@@ -77,8 +82,11 @@ export function createExecutorToolBroker(options: {
   limits?: Partial<ExecutorToolLimits>;
   /** Trusted private writer hook; absent preserves the released tool path. */
   admitToolCall?: AdmitExecutorToolCall;
+  /** Host-owned record of skill bodies the brokered model requests delivered. */
+  skillObservation?: ExecutorSkillObservation;
 }): ReadonlyMap<string, ExecutorOperation> {
   const limits = executorToolLimits(options.limits);
+  const skillObservation = options.skillObservation;
   const admitToolCall = options.admitToolCall;
   if (admitToolCall !== undefined && typeof admitToolCall !== "function") {
     throw new TypeError("Invalid tool-call admission hook");
@@ -263,6 +271,7 @@ export function createExecutorToolBroker(options: {
             ...call?.projectContext,
           }
           : capability.context,
+        observedSkillBodies: skillObservation?.observedSkillBodies() ?? [],
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
         correlation: request,
@@ -276,10 +285,13 @@ export function createExecutorToolBroker(options: {
       });
       assertCall();
       if (mode === "execute") {
-        yield executorToolJson({
-          type: "result",
-          result: executorToolJson(result === undefined ? null : result, limits.maxResultBytes),
-        });
+        const delivered = executorToolJson(
+          result === undefined ? null : result,
+          limits.maxResultBytes,
+        );
+        yield executorToolJson({ type: "result", result: delivered });
+        // Resuming after yield means the channel drained the validated result frame.
+        if (call) skillObservation?.recordToolResult(call.toolName, call.toolCallId, delivered);
       } else {
         if (
           !isArray(result) || result.length > limits.maxToolsPerSource ||
@@ -347,6 +359,7 @@ export function createExecutorToolBroker(options: {
 async function* callWithProgress(options: {
   invoke(context: ToolExecutionContext): Promise<unknown>;
   context: ToolExecutionContext;
+  observedSkillBodies: readonly ProviderObservedSkillBody[];
   publisher: ToolExecutionContext["publishDataEvent"];
   publisherReceiver: ToolExecutionContext;
   correlation: Pick<ExecutorToolCall, "toolCallId" | "progressToken">;
@@ -466,6 +479,8 @@ async function* callWithProgress(options: {
       }
     },
   };
+  // Only host-verified observations count; executor-side state never crosses the channel.
+  setProviderObservedSkillBodies(context, options.observedSkillBodies);
   const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
