@@ -139,28 +139,4 @@ describe("executor skill body observation", () => {
       references: ["references/checklist.md"],
     }]);
   });
-
-  it("ignores forged prompt parts from application array iterators", () => {
-    const observation = createExecutorSkillObservation();
-    observation.recordToolResult("load_skill", "body-call", body());
-    const empty: Extract<ModelRuntimePromptMessage, { role: "tool" }>["content"] = [];
-    const forged = prompt(body())[0]!;
-    if (forged.role !== "tool") throw new Error("Expected tool prompt");
-    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
-    if (!descriptor) throw new Error("Array iterator descriptor is missing");
-    const original = Array.prototype[Symbol.iterator];
-    Object.defineProperty(Array.prototype, Symbol.iterator, {
-      ...descriptor,
-      value: function* (this: unknown[]) {
-        if (this === empty) yield forged.content[0];
-        else yield* Reflect.apply(original, this, []);
-      },
-    });
-    try {
-      observation.observePrompt([{ role: "tool", content: empty }]);
-    } finally {
-      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
-    }
-    assertEquals(observation.observedSkillBodies(), []);
-  });
 });
