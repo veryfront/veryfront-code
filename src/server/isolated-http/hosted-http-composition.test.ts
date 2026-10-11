@@ -619,6 +619,43 @@ describe("hosted HTTP host composition", () => {
     }
   });
 
+  it("wipes the host file read buffer when a later read stalls, and again if it finishes", async () => {
+    const buffers: Uint8Array[] = [];
+    let finishStalledRead: (() => void) | undefined;
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset === 0) {
+          buffer.fill(0x6b, 0, 16);
+          return Promise.resolve({ bytesRead: 16 });
+        }
+        return new Promise<{ bytesRead: number }>((resolve) => {
+          finishStalledRead = () => {
+            buffer.fill(0x6b, 16, 32);
+            resolve({ bytesRead: 16 });
+          };
+        });
+      },
+      close: () => Promise.resolve(),
+    };
+    await assertRejects(
+      () =>
+        readHostFilePrefix("/host/configuration-key", {
+          maxBytes: 64,
+          readTimeoutMs: 10,
+          open: () => Promise.resolve(handle),
+        }),
+      DOMException,
+      "timed out",
+    );
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+
+    // The stalled read finishes later and writes into the buffer; it is wiped again.
+    finishStalledRead!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+  });
+
   it("wipes the host file read buffer and returns no copy when close fails", async () => {
     const buffers: Uint8Array[] = [];
     const handle = {

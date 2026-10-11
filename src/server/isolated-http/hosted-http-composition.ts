@@ -244,6 +244,8 @@ export async function readHostFilePrefix(
     open?: (path: string, flags: "r") => Promise<HostFileHandle>;
     /** @internal Bound for closing the handle; shortened in hermetic tests. */
     closeTimeoutMs?: number;
+    /** @internal Bound for one read of the handle; shortened in hermetic tests. */
+    readTimeoutMs?: number;
   },
 ): Promise<Uint8Array> {
   options.signal?.throwIfAborted();
@@ -260,7 +262,22 @@ export async function readHostFilePrefix(
     let length = 0;
     while (length < limit) {
       options.signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(buffer, length, limit - length, null);
+      const reading = handle.read(buffer, length, limit - length, null);
+      let bytesRead: number;
+      try {
+        ({ bytesRead } = await settleWithin(
+          reading,
+          options.signal ?? new AbortController().signal,
+          options.readTimeoutMs ?? HOST_FILE_READ_TIMEOUT_MS,
+        ));
+      } catch (error) {
+        // A read that is still pending can fill the buffer later; wipe it again then.
+        const wipe = () => {
+          buffer.fill(0);
+        };
+        reading.then(wipe, wipe);
+        throw error;
+      }
       if (bytesRead === 0) break;
       length += bytesRead;
     }
