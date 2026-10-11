@@ -28,10 +28,22 @@ export function getEffectiveRequestHost(
 ): string {
   if (trustProxy) {
     const forwarded = parseForwardedHost(req.headers.get("x-forwarded-host"));
-    if (forwarded) return forwarded;
+    if (forwarded) return normalizeHost(forwarded);
   }
-  return req.headers.get("host") ??
-    (url ?? new URL(req.url)).host;
+  return normalizeHost(req.headers.get("host") ?? (url ?? new URL(req.url)).host);
+}
+
+/**
+ * DNS names are case-insensitive and may carry a trailing root dot. Lowercase the host
+ * and drop that dot, keeping any port, so every caller parses the same name.
+ */
+function normalizeHost(host: string): string {
+  const lower = host.toLowerCase();
+  const portStart = lower.startsWith("[") ? lower.indexOf("]:") + 1 : lower.lastIndexOf(":");
+  const hasPort = portStart > 0 && /^:\d+$/.test(lower.slice(portStart));
+  const name = hasPort ? lower.slice(0, portStart) : lower;
+  const port = hasPort ? lower.slice(portStart) : "";
+  return (name.endsWith(".") ? name.slice(0, -1) : name) + port;
 }
 
 /**

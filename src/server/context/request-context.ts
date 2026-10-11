@@ -24,16 +24,6 @@ export interface CreateRequestContextOptions {
   allowHostTokenFallback?: boolean;
 }
 
-/** Lowercase a host and drop a trailing root dot from its name, keeping any port. */
-function normalizeHost(host: string): string {
-  const lower = host.toLowerCase();
-  const portStart = lower.startsWith("[") ? lower.indexOf("]:") + 1 : lower.lastIndexOf(":");
-  const hasPort = portStart > 0 && /^:\d+$/.test(lower.slice(portStart));
-  const name = hasPort ? lower.slice(0, portStart) : lower;
-  const port = hasPort ? lower.slice(portStart) : "";
-  return (name.endsWith(".") ? name.slice(0, -1) : name) + port;
-}
-
 export function createRequestContext(
   req: Request,
   options: CreateRequestContextOptions = {},
@@ -47,9 +37,9 @@ export function createRequestContext(
   // the operator explicitly trusts forwarded headers.
   const trustProxy = options.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  // DNS names are case-insensitive and may carry a trailing root dot. Normalize
-  // before deriving mode, so `PROJECT.PREVIEW.EXAMPLE.` is still a preview host.
-  const effectiveHost = normalizeHost(getEffectiveRequestHost(req, undefined, trustProxy));
+  // The effective host is normalized (lowercase, no trailing root dot), so
+  // `PROJECT.PREVIEW.EXAMPLE.` is still a preview host.
+  const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 
