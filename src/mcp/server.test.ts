@@ -825,6 +825,41 @@ describe("mcp/server", () => {
     );
   });
 
+  it("revalidates output against a contract changed in place after first use", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const outputSchema: JsonSchema = {
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    };
+    const mutable = tool({
+      id: "test:mutable-output",
+      description: "Has a contract edited after registration",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      outputSchema,
+      execute: async () => ({ value: "saved" }),
+    });
+    registerTool("test:mutable-output", mutable);
+    const call = async (id: number) =>
+      (await server.handleRequest({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "test:mutable-output", arguments: {} },
+      })).result as { isError: boolean };
+    assertEquals((await call(1)).isError, false);
+    (mutable.outputSchemaJson!.properties as Record<string, JsonSchema>).value = { type: "number" };
+    const listed = await server.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const advertised = (listed.result as { tools: ToolListEntry[] }).tools.find((entry) =>
+      entry.name === "test:mutable-output"
+    );
+    assertEquals(advertised?.outputSchema?.properties, { value: { type: "number" } });
+    assertEquals((await call(3)).isError, true);
+  });
+
   it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {
     const server = createMCPServer({
       enabled: true,

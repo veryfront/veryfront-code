@@ -34,31 +34,36 @@ function mcpOutputSchema(tool: Tool) {
 
 interface CompiledOutputContract {
   validator: SchemaValidator;
-  source: unknown;
+  content: string;
   check: JsonSchemaValidationFunction | null;
 }
 
 const compiledOutputContracts = new WeakMap<Tool, CompiledOutputContract>();
 
-// Compiles a tool's JSON output contract once per validator and schema.
-// Returns undefined when no compiler is available and null when the contract
-// does not compile; compiler messages never reach MCP clients.
+// Compiles a tool's JSON output contract once per validator and schema
+// content, so a schema edited in place is recompiled before its next use. The
+// validator compiles a private snapshot of that content. Returns undefined when
+// no compiler is available and null when the contract does not compile;
+// compiler messages never reach MCP clients.
 function compileOutputContract(tool: Tool): JsonSchemaValidationFunction | null | undefined {
   const validator = resolve<SchemaValidator>("SchemaValidator");
   if (!validator.compileJsonSchema) return undefined;
-  const source = tool.outputSchemaJson ?? tool.outputSchema;
-  if (source === undefined) return undefined;
+  if (tool.outputSchemaJson === undefined && tool.outputSchema === undefined) return undefined;
+  let content: string;
+  try {
+    content = JSON.stringify(tool.outputSchemaJson ?? zodToJsonSchema(tool.outputSchema!));
+  } catch {
+    return null;
+  }
   const cached = compiledOutputContracts.get(tool);
-  if (cached?.validator === validator && cached.source === source) return cached.check;
+  if (cached?.validator === validator && cached.content === content) return cached.check;
   let check: JsonSchemaValidationFunction | null;
   try {
-    check = validator.compileJsonSchema(
-      tool.outputSchemaJson ?? zodToJsonSchema(tool.outputSchema!),
-    );
+    check = validator.compileJsonSchema(JSON.parse(content));
   } catch {
     check = null;
   }
-  compiledOutputContracts.set(tool, { validator, source, check });
+  compiledOutputContracts.set(tool, { validator, content, check });
   return check;
 }
 
