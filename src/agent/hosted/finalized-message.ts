@@ -410,6 +410,8 @@ export function buildFinalizedMessageState(
     ? assignFallbackTextOccurrences(persistedTextParts, fallbackTextParts, consumeSearchStep)
     : [];
   let fallbackTextIndex = 0;
+  let remainingFallbackReasoning =
+    finalStepFallbackParts.filter((part) => part.type === "reasoning").length;
   const recoveredFallbackParts: ChatUiMessage["parts"] = [];
   let hasPlacedMissingText = false;
   const missingFallbackParts = finalStepFallbackParts.flatMap((fallbackPart) => {
@@ -474,18 +476,21 @@ export function buildFinalizedMessageState(
       return missingTextParts;
     }
     if (fallbackPart.type === "reasoning") {
-      let matchingIndex = unmatchedPersistedReasoningParts.findIndex((part) =>
-        hasSameReasoningContent(part, fallbackPart)
+      remainingFallbackReasoning -= 1;
+      const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
+        openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
+          compatibleReasoningCompletion(part, fallbackPart)
+          ? [index]
+          : []
       );
-      if (matchingIndex < 0) {
-        const compatible = unmatchedPersistedReasoningParts.flatMap((part, index) =>
-          openReasoningId(part, input.mirroredToolChunkState) !== undefined &&
-            compatibleReasoningCompletion(part, fallbackPart)
-            ? [index]
-            : []
+      // The last final-step reasoning belongs to the latest block. Complete the
+      // open one before an earlier closed block that merely has the same content.
+      let matchingIndex = remainingFallbackReasoning === 0 && compatible.length === 1
+        ? compatible[0]!
+        : unmatchedPersistedReasoningParts.findIndex((part) =>
+          hasSameReasoningContent(part, fallbackPart)
         );
-        if (compatible.length === 1) matchingIndex = compatible[0]!;
-      }
+      if (matchingIndex < 0 && compatible.length === 1) matchingIndex = compatible[0]!;
       if (matchingIndex < 0) {
         recoveredFallbackParts.push(fallbackPart);
         return [fallbackPart];

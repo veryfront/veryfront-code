@@ -2178,3 +2178,75 @@ Deno.test("pending tool completes from agreeing duplicate final-step results", (
     output: { ok: true },
   }]);
 });
+
+Deno.test("the last final-step reasoning completes the open block over an earlier closed exact match", () => {
+  const closed = { type: "reasoning" as const, text: "think", state: "done" as const };
+  const open = { type: "reasoning" as const, text: "thi", state: "streaming" as const };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "a", delta: "think" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-end", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "b" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "b", delta: "thi" });
+  const finalStep = {
+    response: {
+      messages: [{ role: "assistant", content: [{ type: "reasoning", text: "think" }] }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [closed, open] },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [closed, {
+    ...open,
+    text: "think",
+    state: "done" as const,
+  }]);
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [{ type: "reasoning-delta", id: "b", delta: "nk" }, { type: "reasoning-end", id: "b" }],
+  );
+});
+
+Deno.test("earlier final-step reasoning still takes its closed exact match before the open block", () => {
+  const closed = { type: "reasoning" as const, text: "think", state: "done" as const };
+  const open = { type: "reasoning" as const, text: "thi", state: "streaming" as const };
+  const mirrored = createMirroredToolChunkState();
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "a", delta: "think" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-end", id: "a" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-start", id: "b" });
+  recordMirroredToolChunkState(mirrored, { type: "reasoning-delta", id: "b", delta: "thi" });
+  const finalStep = {
+    response: {
+      messages: [{
+        role: "assistant",
+        content: [{ type: "reasoning", text: "think" }, {
+          type: "reasoning",
+          text: "thinking more",
+        }],
+      }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage: { id: "m", role: "assistant", parts: [closed, open] },
+    isAborted: false,
+    finalStep,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(state.sanitizedFinalizedMessage.parts, [closed, {
+    ...open,
+    text: "thinking more",
+    state: "done" as const,
+  }]);
+});
