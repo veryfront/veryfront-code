@@ -425,6 +425,13 @@ export function createHostedHttpResolver(
       typeof session.allocator[operation] !== "function"
     )
   ) throw new TypeError("Hosted HTTP resolver requires a host executor session");
+  // The executor session rejects these limits at dispatch; refuse them at setup instead.
+  for (const name of ["pollIntervalMs", "requestTimeoutMs", "cleanupTimeoutMs"] as const) {
+    const value = session[name];
+    if (
+      value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 30_000)
+    ) throw new TypeError("Hosted HTTP resolver requires bounded executor session limits");
+  }
   const prepareMs = limit(
     options.prepareTimeoutMs,
     DEFAULT_PREPARE_TIMEOUT_MS,
