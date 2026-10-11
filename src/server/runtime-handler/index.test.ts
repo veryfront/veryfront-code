@@ -437,6 +437,9 @@ describe("server/runtime-handler/index", () => {
         const response = await handler(new Request("http://ordinary.example.com/diagnostics"));
         assertEquals(response.status, 500);
         assertEquals(executedEnvironment, expected);
+        const started = entries.find((entry) => entry.message === "Request started");
+        assertEquals(started?.message, "Request started");
+        assertEquals(started?.environment, undefined);
         const error = entries.find((entry) => entry.message === "Standalone execution failed");
         assertEquals(error?.environment, expected);
         const requestSpan = spans.find((span) => span.name === "GET /diagnostics");

@@ -811,7 +811,7 @@ export function createVeryfrontHandler(
           setProjectAttributes(
             spanInfo.span,
             projectRes.projectSlug,
-            projectRes.proxyEnv,
+            isProxyMode ? projectRes.proxyEnv : undefined,
             preparedRequest.loggerFacts.environment,
           );
 

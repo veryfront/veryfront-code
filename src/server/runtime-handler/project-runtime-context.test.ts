@@ -15,6 +15,11 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  getRequestLogger,
+  runWithRequestContextAsync,
+} from "#veryfront/utils/logger/request-context.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
@@ -309,7 +314,8 @@ describe("prepareProjectRequest", () => {
       );
       assertEquals(attributes["http.host"], prepared.loggerFacts.domain);
       assertEquals(attributes["veryfront.project_slug"], "demo");
-      assertEquals(attributes["veryfront.environment"], trustForwarded ? "preview" : "production");
+      assertEquals(prepared.loggerFacts.environment, undefined);
+      assertEquals(attributes["veryfront.environment"], "unknown");
     }
   });
 
@@ -1567,6 +1573,55 @@ describe("resolveProjectRuntimeContext", () => {
       entry.message === "No active release found (proxy mode)"
     );
     assertEquals(warning?.context?.host, "remote-project.production.veryfront.com");
+  });
+
+  it("withholds a standalone environment when adapter resolution fails before execution", async () => {
+    const req = new Request("http://ordinary.example.com/diagnostics");
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: false,
+    });
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    let environmentResolved = false;
+    await assertRejects(
+      () =>
+        runWithRequestContextAsync({
+          requestId: "adapter-failure",
+          logger: getBaseLogger("SERVER").child({ environment: prepared.loggerFacts.environment }),
+        }, () =>
+          resolveProjectRuntimeContext(makeRuntimeContextInput({
+            req,
+            url: new URL(req.url),
+            headers: prepared.headers,
+            requestContext: prepared.requestContext,
+            isProxyMode: false,
+            defaultEnvironment: "preview",
+            projectIdentity: {
+              projectSlug: "diagnostics",
+              projectId: undefined,
+              releaseId: undefined,
+              environmentName: undefined,
+              proxyEnv: undefined,
+              parsedDomain: defaultParsedDomain,
+            },
+            onEnvironmentResolved: () => {
+              environmentResolved = true;
+            },
+            profileAdapter: () => {
+              getRequestLogger()?.error("Adapter resolution failed");
+              throw new Error("Adapter resolution failed");
+            },
+          }))),
+      Error,
+      "Adapter resolution failed",
+    );
+    assertEquals(prepared.requestContext.mode, "production");
+    assertEquals(environmentResolved, false);
+    const error = entries.find((entry) => entry.message === "Adapter resolution failed");
+    assertExists(error);
+    assertEquals(error.environment, undefined);
   });
 
   it("notifies environment resolution before source policy access and later failures", async () => {

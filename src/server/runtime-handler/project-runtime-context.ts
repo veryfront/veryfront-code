@@ -236,8 +236,10 @@ export async function prepareProjectRequest(
     proxyTrust: { proxyTrusted, forwardedHeadersTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
-      environment: parseProxyEnvironment(headers.environment ?? null) ??
-        (identityHeadersTrusted ? requestContext.mode : undefined),
+      // Standalone defaults can change during runtime resolution.
+      environment: isProxyMode && identityHeadersTrusted
+        ? parseProxyEnvironment(headers.environment ?? null) ?? requestContext.mode
+        : undefined,
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,
       releaseId: headers.releaseId,
