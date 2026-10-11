@@ -100,7 +100,7 @@ function parseListBranchesResponse(value: unknown): ListBranchesResponse {
   return { data, ...(next ? { page_info: { next } } : {}) };
 }
 
-async function resolveBranchIdByName(input: IndexKnowledgeDocumentInput): Promise<string> {
+async function findBranchIdByName(input: IndexKnowledgeDocumentInput): Promise<string | undefined> {
   let cursor: string | undefined;
   let match: BranchListItem | undefined;
   do {
@@ -125,11 +125,7 @@ async function resolveBranchIdByName(input: IndexKnowledgeDocumentInput): Promis
     match = exact[0] ?? match;
     cursor = response.page_info?.next;
   } while (cursor);
-  if (!match) {
-    throw new Error(
-      "Branch lookup did not return the requested branch for empty canonical indexing.",
-    );
-  }
+  if (!match) return undefined;
   if (!UUID.test(match.id)) {
     throw new Error("Branch lookup returned an invalid branch id for empty canonical indexing.");
   }
@@ -139,8 +135,12 @@ async function resolveBranchIdByName(input: IndexKnowledgeDocumentInput): Promis
 async function buildPreviewBranchLookupTarget(input: IndexKnowledgeDocumentInput) {
   const branch = input.branch;
   if (branch === "main") return { kind: "preview_branch", branch_id: null };
+  const namedBranchId = await findBranchIdByName(input);
+  if (namedBranchId) return { kind: "preview_branch", branch_id: namedBranchId };
   if (UUID.test(branch)) return { kind: "preview_branch", branch_id: branch };
-  return { kind: "preview_branch", branch_id: await resolveBranchIdByName(input) };
+  throw new Error(
+    "Branch lookup did not return the requested branch for empty canonical indexing.",
+  );
 }
 
 function requirePublishedCanonicalVersion(

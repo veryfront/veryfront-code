@@ -301,7 +301,55 @@ it("resolves named branches before accepting empty canonical source readiness", 
   }
 });
 
-it("uses an explicit branch id directly when accepting empty canonical source readiness", async () => {
+it("prefers UUID-shaped branch names before accepting empty canonical source readiness", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "");
+    const emptyChecksum = await computeHash(await Deno.readTextFile(localPath));
+    const uuidShapedBranchName = "44444444-4444-4444-8444-444444444444";
+    let branchLookupParams: Record<string, string> | undefined;
+    let statusBody: unknown;
+    await indexKnowledgeDocument({
+      client: createMockClient({
+        get: async (_path, params) => {
+          branchLookupParams = params;
+          return {
+            data: [{ id: branchId, name: uuidShapedBranchName }],
+            page_info: {},
+          };
+        },
+        post: async (_path, body) => {
+          statusBody = body;
+          return {
+            data: [{
+              path: published.path,
+              file_id: fileId,
+              file_version_id: versionId,
+              index_ready: true,
+            }],
+          };
+        },
+      }),
+      projectSlug: "project",
+      branch: uuidShapedBranchName,
+      published: { ...published, checksum: emptyChecksum },
+      localPath,
+      embedder: embedder(() => {
+        throw new Error("empty source must not embed");
+      }),
+    });
+    assertEquals(branchLookupParams, { search: uuidShapedBranchName, limit: "100" });
+    assertEquals(statusBody, {
+      paths: [published.path],
+      lookup_target: { kind: "preview_branch", branch_id: branchId },
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("falls back to an explicit branch id when accepting empty canonical source readiness", async () => {
   const root = await makeTempDir();
   try {
     const localPath = `${root}/empty.md`;
@@ -335,7 +383,7 @@ it("uses an explicit branch id directly when accepting empty canonical source re
         throw new Error("empty source must not embed");
       }),
     });
-    assertEquals(lookups, 0);
+    assertEquals(lookups, 1);
     assertEquals(statusBody, {
       paths: [published.path],
       lookup_target: { kind: "preview_branch", branch_id: branchId },
