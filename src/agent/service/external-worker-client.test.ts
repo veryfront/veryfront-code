@@ -110,6 +110,22 @@ function throwingProbe(
   };
 }
 
+function cursorProbe(
+  phase: "afterClaim" | "afterRenew",
+  latestExternalEventSequence: number,
+): AgentWorkerRuntimeOwnershipProbe {
+  return {
+    afterClaim: phase === "afterClaim"
+      ? () => Promise.resolve({ latestExternalEventSequence })
+      : () => Promise.resolve(),
+    afterRenew: phase === "afterRenew"
+      ? () => Promise.resolve({ latestExternalEventSequence })
+      : () => Promise.resolve(),
+    afterLeaseLost: () => Promise.resolve(),
+    afterCancelled: () => Promise.resolve(),
+  };
+}
+
 function authorization(call: FetchCall): string | null {
   return new Headers(call[1]?.headers).get("Authorization");
 }
@@ -376,28 +392,73 @@ describe("external agent worker client", () => {
     assertEquals(requestBody(calls[2]!), { status: "completed", output: null });
   });
 
-  it("fails a claim when the ownership probe loses the committed append cursor", async () => {
-    const { calls, fetchImpl } = fetchSequence(jsonResponse(claim()));
+  it("does not demote fatal probe cursor errors when String.includes is replaced", async () => {
+    const originalIncludes = String.prototype.includes;
+    Object.defineProperty(String.prototype, "includes", {
+      configurable: true,
+      value: () => false,
+    });
+    try {
+      const { fetchImpl } = fetchSequence(jsonResponse(claim()));
+      const client = createExternalAgentWorkerClient({
+        apiUrl: API_URL,
+        authToken: API_TOKEN,
+        fetch: fetchImpl,
+        ownershipProbe: throwingProbe(
+          "afterClaim",
+          "Agent worker runtime ownership probe append outcome is ambiguous",
+        ),
+      });
+
+      let rejected = false;
+      try {
+        await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+      } catch (error) {
+        rejected = true;
+        assertEquals(
+          error instanceof Error && error.message ===
+              "Agent worker runtime ownership probe append outcome is ambiguous",
+          true,
+        );
+      }
+      assertEquals(rejected, true);
+    } finally {
+      Object.defineProperty(String.prototype, "includes", {
+        configurable: true,
+        value: originalIncludes,
+      });
+    }
+  });
+
+  it("preserves a claim when the ownership probe returns a reconciled append cursor", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ appended: true }),
+    );
     const client = createExternalAgentWorkerClient({
       apiUrl: API_URL,
       authToken: API_TOKEN,
       fetch: fetchImpl,
-      ownershipProbe: throwingProbe(
-        "afterClaim",
-        "Agent worker runtime ownership probe append cursor is unavailable",
-      ),
+      ownershipProbe: cursorProbe("afterClaim", 2),
     });
 
-    await assertRejects(
-      () => client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 }),
-      Error,
-      "append cursor is unavailable",
-    );
-    assertEquals(calls.length, 1);
+    const claimed = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    assertEquals(claimed?.latest_external_event_sequence, 2);
+    await client.appendRunEvents({
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      events: [{ type: "PROBE_RECONCILED" }],
+      expectedPreviousExternalEventSequence: claimed?.latest_external_event_sequence,
+    });
+
+    assertEquals(requestBody(calls[1]!), {
+      events: [{ type: "PROBE_RECONCILED" }],
+      expected_previous_external_event_sequence: 2,
+    });
   });
 
-  it("fails a renewal when the ownership probe loses the committed stale generation outcome", async () => {
-    const { calls, fetchImpl } = fetchSequence(
+  it("preserves a renewal when the ownership probe returns a reconciled stale-generation cursor", async () => {
+    const { fetchImpl } = fetchSequence(
       jsonResponse(claim()),
       jsonResponse({
         ...claim(),
@@ -408,24 +469,17 @@ describe("external agent worker client", () => {
       apiUrl: API_URL,
       authToken: API_TOKEN,
       fetch: fetchImpl,
-      ownershipProbe: throwingProbe(
-        "afterRenew",
-        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
-      ),
+      ownershipProbe: cursorProbe("afterRenew", 9),
     });
 
     await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
-    await assertRejects(
-      () =>
-        client.renewLease({
-          workerId: WORKER_ID,
-          runId: RUN_ID,
-          leaseDurationSeconds: 30,
-        }),
-      Error,
-      "stale generation outcome is ambiguous",
-    );
-    assertEquals(calls.length, 2);
+    const renewed = await client.renewLease({
+      workerId: WORKER_ID,
+      runId: RUN_ID,
+      leaseDurationSeconds: 30,
+    });
+
+    assertEquals(renewed?.latest_external_event_sequence, 9);
   });
 
   it("preserves terminal completion when afterTerminal probe observation fails", async () => {

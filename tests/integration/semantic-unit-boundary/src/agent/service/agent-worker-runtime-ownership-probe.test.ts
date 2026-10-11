@@ -103,7 +103,11 @@ function probeRun() {
 type ClaimFetchOptions = {
   calls?: Request[];
   paths?: string[];
-  failEventAppend?: "missing-cursor" | "reject";
+  failEventAppend?:
+    | "missing-cursor"
+    | "reject"
+    | "missing-cursor-retry-reject"
+    | "missing-cursor-retry-timeout";
   failEventReadback?: boolean;
   paginatedReadback?: boolean;
   wrongIndexVersion?: boolean;
@@ -117,9 +121,11 @@ type ClaimFetchOptions = {
 
 function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
   const indexedEvents: unknown[] = [];
+  const completedEventAppends = new Set<string>();
   let sourceContent = "";
   let postedEvent = false;
   let eventReadCount = 0;
+  let eventAppendFailures = 0;
   return (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -217,6 +223,15 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
     }
     if (request.method === "POST" && url.pathname.endsWith("/events")) {
       postedEvent = true;
+      const eventIdempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
+      if (
+        eventIdempotencyKey !== undefined &&
+        completedEventAppends.has(eventIdempotencyKey) &&
+        options.failEventAppend !== "missing-cursor-retry-reject" &&
+        options.failEventAppend !== "missing-cursor-retry-timeout"
+      ) {
+        return Promise.resolve(Response.json({ latest_external_event_sequence: 2 }));
+      }
       if (options.denyReplayEvent && replayCredential) {
         if (options.replayEventDenial === "authority-409") {
           return Promise.resolve(
@@ -235,14 +250,37 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
           Response.json({ error: "stale or expired worker generation" }, { status: 403 }),
         );
       }
-      if (options.failEventAppend === "reject") {
+      if (options.failEventAppend === "reject" && eventAppendFailures++ === 0) {
         return Promise.reject(new TypeError("connection closed"));
       }
-      if (options.failEventAppend === "missing-cursor") {
-        return Promise.resolve(Response.json({ ok: true }));
+      if (
+        options.failEventAppend === "missing-cursor-retry-reject" ||
+        options.failEventAppend === "missing-cursor-retry-timeout"
+      ) {
+        if (eventAppendFailures++ === 0) {
+          return request.json().then((body) => {
+            indexedEvents.push(...((body as { events?: unknown[] }).events ?? []));
+            if (eventIdempotencyKey !== undefined) completedEventAppends.add(eventIdempotencyKey);
+            return Response.json({ ok: true });
+          });
+        }
+        if (options.failEventAppend === "missing-cursor-retry-timeout") {
+          return Promise.reject(
+            new DOMException("Probe operation deadline exceeded", "TimeoutError"),
+          );
+        }
+        return Promise.reject(new TypeError("retry connection closed"));
+      }
+      if (options.failEventAppend === "missing-cursor" && eventAppendFailures++ === 0) {
+        return request.json().then((body) => {
+          indexedEvents.push(...((body as { events?: unknown[] }).events ?? []));
+          if (eventIdempotencyKey !== undefined) completedEventAppends.add(eventIdempotencyKey);
+          return Response.json({ ok: true });
+        });
       }
       return request.json().then((body) => {
         indexedEvents.push(...((body as { events?: unknown[] }).events ?? []));
+        if (eventIdempotencyKey !== undefined) completedEventAppends.add(eventIdempotencyKey);
         return Response.json({ latest_external_event_sequence: 2 });
       });
     }
@@ -265,6 +303,7 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
 
 it("does not expose private proof material through replaced Object or Map intrinsics", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const calls: Request[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     activation,
     (receipt) => receipts.push(receipt),
@@ -274,6 +313,7 @@ it("does not expose private proof material through replaced Object or Map intrin
   const originalParse = JSON.parse;
   const originalAtob = globalThis.atob;
   const originalSplit = String.prototype.split;
+  const originalReplace = String.prototype.replace;
   const originalReplaceAll = String.prototype.replaceAll;
   let exposedPrivateMaterial = false;
   const markIfPrivate = (value: unknown) => {
@@ -306,6 +346,14 @@ it("does not expose private proof material through replaced Object or Map intrin
       return Reflect.apply(originalSplit, this, [separator, limit]) as string[];
     },
   });
+  Object.defineProperty(String.prototype, "replace", {
+    configurable: true,
+    value(this: string, searchValue: string | RegExp, replaceValue: string) {
+      markIfPrivate(String(this));
+      markIfPrivate([searchValue, replaceValue]);
+      return "https://attacker.example.test";
+    },
+  });
   Object.defineProperty(String.prototype, "replaceAll", {
     configurable: true,
     value(this: string, searchValue: string | RegExp, replaceValue: string) {
@@ -317,7 +365,7 @@ it("does not expose private proof material through replaced Object or Map intrin
   try {
     await probe.afterClaim({
       apiUrl: "https://api.example.test",
-      fetch: claimProofFetch(),
+      fetch: claimProofFetch({ calls }),
       workerId,
       run: probeRun(),
       credentials: credentials(),
@@ -332,6 +380,10 @@ it("does not expose private proof material through replaced Object or Map intrin
       configurable: true,
       value: originalSplit,
     });
+    Object.defineProperty(String.prototype, "replace", {
+      configurable: true,
+      value: originalReplace,
+    });
     Object.defineProperty(String.prototype, "replaceAll", {
       configurable: true,
       value: originalReplaceAll,
@@ -340,6 +392,39 @@ it("does not expose private proof material through replaced Object or Map intrin
 
   assertEquals(receipts[0]?.status, "ok");
   assertEquals(exposedPrivateMaterial, false);
+  assertEquals(
+    calls.every((call) => new URL(call.url).origin === "https://api.example.test"),
+    true,
+  );
+});
+
+it("redacts account and execution identifiers from the default receipt log", async () => {
+  const originalInfo = console.info;
+  const logged: unknown[] = [];
+  console.info = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation);
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch(),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    console.info = originalInfo;
+  }
+
+  const logJson = JSON.stringify(logged);
+  assert(logJson.includes("canonical-source-index"));
+  assertEquals(logJson.includes(uuid), false);
+  assertEquals(logJson.includes(workerId), false);
+  assertEquals(logJson.includes(publicRunId), false);
+  assertEquals(logJson.includes(canonicalRunId), false);
+  assertEquals(logJson.includes("knowledge/agent-worker-runtime-ownership-probe-20261011"), false);
 });
 
 it("records canonical source, index and event proof without leaking claim credentials", async () => {
@@ -707,63 +792,104 @@ it("does not fail renewal after an explicit stale generation denial when readbac
   assertEquals(receipts.at(-1)?.errorType, "Error");
 });
 
-it("fails renewal when a stale generation write commits without a cursor", async () => {
+it("reconciles renewal cursor when a stale generation write commits without a cursor", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const calls: Request[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     activation,
     (receipt) => receipts.push(receipt),
   );
 
-  await assertRejects(
-    () =>
-      probe.afterRenew({
-        apiUrl: "https://api.example.test",
-        fetch: claimProofFetch({ denyReplayCredentials: true, failEventAppend: "missing-cursor" }),
-        workerId,
-        run: probeRun(),
-        credentials: credentials("-new"),
-        previousCredentials: {
-          authToken: "old-auth",
-          runEventToken: "old",
-          runTerminalToken: terminalToken(),
-        },
-        embedder: managedTestEmbedder(),
-      }),
-    Error,
-    "append cursor is unavailable",
-  );
+  const result = await probe.afterRenew({
+    apiUrl: "https://api.example.test",
+    fetch: claimProofFetch({
+      calls,
+      denyReplayCredentials: true,
+      failEventAppend: "missing-cursor",
+    }),
+    workerId,
+    run: probeRun(),
+    credentials: credentials("-new"),
+    previousCredentials: {
+      authToken: "old-auth",
+      runEventToken: "old",
+      runTerminalToken: terminalToken(),
+    },
+    embedder: managedTestEmbedder(),
+  });
 
-  assertEquals(receipts[0]?.reason, "append-cursor-unavailable");
+  const eventPosts = calls.filter((request) =>
+    request.method === "POST" && new URL(request.url).pathname.endsWith("/events")
+  );
+  assertEquals(result?.latestExternalEventSequence, 2);
+  assertEquals(eventPosts.length, 2);
+  assertEquals(
+    eventPosts[0]?.headers.get("Idempotency-Key"),
+    eventPosts[1]?.headers.get("Idempotency-Key"),
+  );
+  assertEquals(
+    eventPosts[0]?.headers.get("Idempotency-Key")?.startsWith("agent-worker-event:"),
+    true,
+  );
 });
 
-it("fails renewal when the stale generation write outcome is ambiguous", async () => {
+it("reconciles renewal cursor when the stale generation write outcome is ambiguous", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     activation,
     (receipt) => receipts.push(receipt),
   );
 
-  await assertRejects(
-    () =>
-      probe.afterRenew({
-        apiUrl: "https://api.example.test",
-        fetch: claimProofFetch({ denyReplayCredentials: true, failEventAppend: "reject" }),
-        workerId,
-        run: probeRun(),
-        credentials: credentials("-new"),
-        previousCredentials: {
-          authToken: "old-auth",
-          runEventToken: "old",
-          runTerminalToken: terminalToken(),
-        },
-        embedder: managedTestEmbedder(),
-      }),
-    Error,
-    "stale generation outcome is ambiguous",
-  );
+  const result = await probe.afterRenew({
+    apiUrl: "https://api.example.test",
+    fetch: claimProofFetch({ denyReplayCredentials: true, failEventAppend: "reject" }),
+    workerId,
+    run: probeRun(),
+    credentials: credentials("-new"),
+    previousCredentials: {
+      authToken: "old-auth",
+      runEventToken: "old",
+      runTerminalToken: terminalToken(),
+    },
+    embedder: managedTestEmbedder(),
+  });
 
+  assertEquals(result?.latestExternalEventSequence, 2);
   assertEquals(receipts[0]?.status, "error");
 });
+
+for (
+  const failEventAppend of [
+    "missing-cursor-retry-reject",
+    "missing-cursor-retry-timeout",
+  ] as const
+) {
+  it(`fails closed when renewal cursor reconciliation retry fails with ${failEventAppend}`, async () => {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+
+    await assertRejects(
+      () =>
+        probe.afterRenew({
+          apiUrl: "https://api.example.test",
+          fetch: claimProofFetch({
+            denyReplayCredentials: true,
+            failEventAppend,
+          }),
+          workerId,
+          run: probeRun(),
+          credentials: credentials("-new"),
+          previousCredentials: {
+            authToken: "old-auth",
+            runEventToken: "old",
+            runTerminalToken: terminalToken(),
+          },
+          embedder: managedTestEmbedder(),
+        }),
+      Error,
+      "ownership probe append outcome is ambiguous",
+    );
+  });
+}
 
 it("proves expired or lost lease authority is denied without exposing the retained token", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
@@ -939,8 +1065,11 @@ it("proves cancelled child creation denial through the canonical runs route", as
   assertEquals(receipts[0]?.phase, "cancelled-child-denial");
   assertEquals(receipts[0]?.status, "ok");
   assertEquals(calls[1]?.url, "https://api.example.test/runs");
+  const idempotencyKey = calls[1]?.headers.get("Idempotency-Key") ?? "";
   assertEquals(calls[1]?.headers.get("Authorization"), "Bearer auth");
   assertEquals(calls[1]?.headers.get("X-Veryfront-Run-Terminal-Token"), terminalToken());
+  assertEquals(idempotencyKey.startsWith("agent-worker-child:"), true);
+  assert(idempotencyKey.length <= 128);
   assertEquals(await calls[1]?.json(), {
     project_id: uuid,
     target: { type: "task", id: "agent-worker-runtime-ownership-probe" },
@@ -949,6 +1078,34 @@ it("proves cancelled child creation denial through the canonical runs route", as
     title: "agent worker runtime ownership stale child denial probe",
     input: { probe: "agent-worker-runtime-ownership", probeId: "stage-probe" },
   });
+});
+
+it("keeps cancelled child idempotency keys within the runs API limit", async () => {
+  const calls: Request[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    { ...activation, probeId: "a".repeat(64) },
+    () => {},
+  );
+
+  await probe.afterCancelled({
+    apiUrl: "https://api.example.test",
+    fetch: (input, init) => {
+      const request = new Request(input, init);
+      calls.push(request);
+      if (request.method === "POST" && new URL(request.url).pathname === "/runs") {
+        return Promise.resolve(Response.json({ error: "parent cancelled" }, { status: 409 }));
+      }
+      return Promise.resolve(Response.json({ data: [{ id: 1, toolCallId: "tool-call-1" }] }));
+    },
+    workerId,
+    run: probeRun(),
+    credentials: credentials(),
+    embedder: managedTestEmbedder(),
+  });
+
+  const idempotencyKey = calls[1]?.headers.get("Idempotency-Key") ?? "";
+  assertEquals(idempotencyKey.startsWith("agent-worker-child:"), true);
+  assert(idempotencyKey.length <= 128);
 });
 
 it("does not accept an unrelated child idempotency conflict as cancellation proof", async () => {
@@ -1373,29 +1530,37 @@ it("external worker client clears lost authority before awaiting lease-loss prob
   );
 });
 
-it("fails the claim when the probe append cursor is unavailable", async () => {
+it("reconciles claim cursor when the probe append cursor is unavailable", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const calls: Request[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     activation,
     (receipt) => receipts.push(receipt),
   );
 
-  await assertRejects(
-    () =>
-      probe.afterClaim({
-        apiUrl: "https://api.example.test",
-        fetch: claimProofFetch({ failEventAppend: "missing-cursor" }),
-        workerId,
-        run: probeRun(),
-        credentials: credentials(),
-        embedder: managedTestEmbedder(),
-      }),
-    Error,
-    "append cursor is unavailable",
-  );
+  const result = await probe.afterClaim({
+    apiUrl: "https://api.example.test",
+    fetch: claimProofFetch({ calls, failEventAppend: "missing-cursor" }),
+    workerId,
+    run: probeRun(),
+    credentials: credentials(),
+    embedder: managedTestEmbedder(),
+  });
 
-  assertEquals(receipts[0]?.status, "error");
-  assertEquals(receipts[0]?.reason, "append-cursor-unavailable");
+  const eventPosts = calls.filter((request) =>
+    request.method === "POST" && new URL(request.url).pathname.endsWith("/events")
+  );
+  assertEquals(result?.latestExternalEventSequence, 2);
+  assertEquals(receipts[0]?.status, "ok");
+  assertEquals(eventPosts.length, 2);
+  assertEquals(
+    eventPosts[0]?.headers.get("Idempotency-Key"),
+    eventPosts[1]?.headers.get("Idempotency-Key"),
+  );
+  assertEquals(
+    eventPosts[0]?.headers.get("Idempotency-Key")?.startsWith("agent-worker-event:"),
+    true,
+  );
 });
 
 it("does not send mutation requests after the probe deadline expires", async () => {
@@ -1426,7 +1591,7 @@ it("does not send mutation requests after the probe deadline expires", async () 
   assertEquals(receipts[0]?.reason, "operation-deadline-exceeded");
 });
 
-it("fails the claim when the probe append outcome is ambiguous", async () => {
+it("reconciles claim cursor when the probe append outcome is ambiguous", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const paths: string[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
@@ -1434,24 +1599,91 @@ it("fails the claim when the probe append outcome is ambiguous", async () => {
     (receipt) => receipts.push(receipt),
   );
 
-  await assertRejects(
-    () =>
-      probe.afterClaim({
-        apiUrl: "https://api.example.test",
-        fetch: claimProofFetch({ paths, failEventAppend: "reject" }),
-        workerId,
-        run: probeRun(),
-        credentials: credentials(),
-        embedder: managedTestEmbedder(),
-      }),
-    Error,
-    "probe append outcome is ambiguous",
-  );
+  const result = await probe.afterClaim({
+    apiUrl: "https://api.example.test",
+    fetch: claimProofFetch({ paths, failEventAppend: "reject" }),
+    workerId,
+    run: probeRun(),
+    credentials: credentials(),
+    embedder: managedTestEmbedder(),
+  });
 
+  assertEquals(result?.latestExternalEventSequence, 2);
   assert(paths.some((path) => path === `POST /runs/${canonicalRunId}/events`));
   assertEquals(receipts[0]?.phase, "canonical-source-index");
   assertEquals(receipts[0]?.status, "error");
 });
+
+it("keeps fatal claim cursor classification when String.includes is replaced", async () => {
+  const originalIncludes = String.prototype.includes;
+  let caughtMessage: string | undefined;
+  Object.defineProperty(String.prototype, "includes", {
+    configurable: true,
+    value: () => false,
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+    const fixtureFetch = claimProofFetch({ failEventAppend: "missing-cursor-retry-reject" });
+    const fetchWithWorkingFixture = ((input, init) => {
+      Object.defineProperty(String.prototype, "includes", {
+        configurable: true,
+        value: originalIncludes,
+      });
+      try {
+        return fixtureFetch(input, init);
+      } finally {
+        Object.defineProperty(String.prototype, "includes", {
+          configurable: true,
+          value: () => false,
+        });
+      }
+    }) as typeof fetch;
+
+    try {
+      await probe.afterClaim({
+        apiUrl: "https://api.example.test",
+        fetch: fetchWithWorkingFixture,
+        workerId,
+        run: probeRun(),
+        credentials: credentials(),
+        embedder: managedTestEmbedder(),
+      });
+    } catch (error) {
+      caughtMessage = error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    Object.defineProperty(String.prototype, "includes", {
+      configurable: true,
+      value: originalIncludes,
+    });
+  }
+  assertEquals(caughtMessage, "Agent worker runtime ownership probe append outcome is ambiguous");
+});
+
+for (
+  const failEventAppend of [
+    "missing-cursor-retry-reject",
+    "missing-cursor-retry-timeout",
+  ] as const
+) {
+  it(`fails closed when claim cursor reconciliation retry fails with ${failEventAppend}`, async () => {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+
+    await assertRejects(
+      () =>
+        probe.afterClaim({
+          apiUrl: "https://api.example.test",
+          fetch: claimProofFetch({ failEventAppend }),
+          workerId,
+          run: probeRun(),
+          credentials: credentials(),
+          embedder: managedTestEmbedder(),
+        }),
+      Error,
+      "ownership probe append outcome is ambiguous",
+    );
+  });
+}
 
 it("returns the committed cursor when event append readback fails", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];

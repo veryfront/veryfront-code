@@ -7,6 +7,7 @@ import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentWorkerRuntimeOwnershipProbe,
   type AgentWorkerRuntimeOwnershipProbeCredentials,
+  type AgentWorkerRuntimeOwnershipProbeResult,
   type AgentWorkerRuntimeOwnershipProbeRun,
   createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
 } from "./agent-worker-runtime-ownership-probe.ts";
@@ -192,13 +193,17 @@ const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
+const stringIncludes = String.prototype.includes;
+function errorMessageIncludes(error: unknown, expected: string): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && (apply(stringIncludes, message, [expected]) as boolean);
+}
 
 function isOwnershipProbeCursorFailure(error: unknown): boolean {
-  return error instanceof Error && (
-    error.message.includes("ownership probe append cursor is unavailable") ||
-    error.message.includes("ownership probe append outcome is ambiguous") ||
-    error.message.includes("ownership probe stale generation outcome is ambiguous")
-  );
+  return errorMessageIncludes(error, "ownership probe append cursor is unavailable") ||
+    errorMessageIncludes(error, "ownership probe append outcome is ambiguous") ||
+    errorMessageIncludes(error, "ownership probe stale generation outcome is ambiguous");
 }
 
 const WorkerClaimSchema = lazySchema(
@@ -402,6 +407,20 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   ): Promise<T | undefined> {
     try {
       return await operation();
+    } catch {
+      return undefined;
+    }
+  }
+
+  async #observeOwnershipProbeCursor(
+    operation: () =>
+      | Promise<AgentWorkerRuntimeOwnershipProbeResult | void>
+      | AgentWorkerRuntimeOwnershipProbeResult
+      | void,
+  ): Promise<number | undefined> {
+    try {
+      const result = await operation();
+      return result?.latestExternalEventSequence;
     } catch (error) {
       if (isOwnershipProbeCursorFailure(error)) throw error;
       return undefined;
@@ -422,21 +441,19 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     );
     if (response.run && response.credentials) {
       const responseCredentials = response.credentials;
-      const probeRun = this.#probeRun(response.run, responseCredentials);
-      const probeResult = await this.#observeOwnershipProbe(() =>
-        this.#ownershipProbe?.afterClaim({
-          apiUrl: this.#apiUrl,
-          fetch: this.#fetch,
-          workerId: input.workerId,
-          run: probeRun,
-          credentials: this.#probeCredentials(responseCredentials),
-        })
-      );
-      response.run = this.#withProbeCursor(
-        response.run,
-        probeResult?.latestExternalEventSequence,
-      );
       apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
+      const probeRun = this.#probeRun(response.run, responseCredentials);
+      const probeCursor = await this.#observeOwnershipProbeCursor(
+        () =>
+          this.#ownershipProbe?.afterClaim({
+            apiUrl: this.#apiUrl,
+            fetch: this.#fetch,
+            workerId: input.workerId,
+            run: probeRun,
+            credentials: this.#probeCredentials(responseCredentials),
+          }),
+      );
+      response.run = this.#withProbeCursor(response.run, probeCursor);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
         workerId: input.workerId,
         run: response.run,
@@ -470,22 +487,20 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       const responseCredentials = response.credentials;
       const probeRun = this.#probeRun(response.run, responseCredentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
-      const probeResult = await this.#observeOwnershipProbe(() =>
-        this.#ownershipProbe?.afterRenew({
-          apiUrl: this.#apiUrl,
-          fetch: this.#fetch,
-          workerId: input.workerId,
-          run: probeRun,
-          credentials: this.#probeCredentials(responseCredentials),
-          previousCredentials: previousCredentials
-            ? this.#probeCredentials(previousCredentials)
-            : undefined,
-        })
+      const probeCursor = await this.#observeOwnershipProbeCursor(
+        () =>
+          this.#ownershipProbe?.afterRenew({
+            apiUrl: this.#apiUrl,
+            fetch: this.#fetch,
+            workerId: input.workerId,
+            run: probeRun,
+            credentials: this.#probeCredentials(responseCredentials),
+            previousCredentials: previousCredentials
+              ? this.#probeCredentials(previousCredentials)
+              : undefined,
+          }),
       );
-      response.run = this.#withProbeCursor(
-        response.run,
-        probeResult?.latestExternalEventSequence,
-      );
+      response.run = this.#withProbeCursor(response.run, probeCursor);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
         workerId: input.workerId,
         run: response.run,

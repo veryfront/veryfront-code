@@ -26,7 +26,9 @@ const RuntimeJSONParse = JSON.parse;
 const RuntimeJSONstringify = JSON.stringify;
 const RuntimeObjectKeys = Object.keys;
 const RuntimeMathFround = Math.fround;
+const RuntimeStringPrototypeReplace = String.prototype.replace;
 const RuntimeStringPrototypeReplaceAll = String.prototype.replaceAll;
+const RuntimeStringPrototypeIncludes = String.prototype.includes;
 const RuntimeStringPrototypeSplit = String.prototype.split;
 const RuntimeReflectApply = Reflect.apply;
 const RuntimeMapPrototypeClear = Map.prototype.clear;
@@ -34,6 +36,9 @@ const RuntimeMapPrototypeDelete = Map.prototype.delete;
 const RuntimeMapPrototypeGet = Map.prototype.get;
 const RuntimeMapPrototypeSet = Map.prototype.set;
 const RuntimeEncodeURIComponent = encodeURIComponent;
+const RuntimeURL = URL;
+const RuntimeURLPrototypeOriginGet = Object.getOwnPropertyDescriptor(URL.prototype, "origin")!.get!;
+const RuntimeURLPrototypeHrefGet = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
 const CANONICAL_KNOWLEDGE_BRANCH = "main";
 const CANONICAL_KNOWLEDGE_MODEL = {
   name: "text-embedding-3-small",
@@ -336,6 +341,18 @@ function workerGenerationHeaders(
   return { "X-Veryfront-Worker-Generation": generation };
 }
 
+function buildProbeRequestUrl(apiUrl: string, path: string): string {
+  const base = RuntimeReflectApply(RuntimeStringPrototypeReplace, apiUrl, [/\/$/, ""]) as string;
+  const baseUrl = new RuntimeURL(base);
+  const url = new RuntimeURL(`${base}${path}`);
+  const baseOrigin = RuntimeReflectApply(RuntimeURLPrototypeOriginGet, baseUrl, []) as string;
+  const urlOrigin = RuntimeReflectApply(RuntimeURLPrototypeOriginGet, url, []) as string;
+  if (urlOrigin !== baseOrigin) {
+    throw new Error("Agent worker runtime ownership probe URL origin changed");
+  }
+  return RuntimeReflectApply(RuntimeURLPrototypeHrefGet, url, []) as string;
+}
+
 async function requestJson(
   input: AgentWorkerRuntimeOwnershipProbeClaimInput,
   method: "GET" | "POST" | "PUT",
@@ -348,7 +365,7 @@ async function requestJson(
     throw new DOMException("Probe operation deadline exceeded", "TimeoutError");
   }
   const signal = RuntimeAbortSignalTimeout(inputTimeout(input));
-  const response = await input.fetch(`${input.apiUrl.replace(/\/$/, "")}${path}`, {
+  const response = await input.fetch(buildProbeRequestUrl(input.apiUrl, path), {
     method,
     signal,
     headers: {
@@ -440,6 +457,13 @@ function isEventPage(body: unknown): boolean {
     RuntimeArrayIsArray((body as { data?: unknown }).data);
 }
 
+function errorMessageIncludes(error: unknown, expected: string): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" &&
+    (RuntimeReflectApply(RuntimeStringPrototypeIncludes, message, [expected]) as boolean);
+}
+
 function readLatestExternalEventSequence(body: unknown): number | undefined {
   if (body === null || typeof body !== "object") return undefined;
   const direct =
@@ -525,6 +549,41 @@ async function readEventSnapshot(
     containsIdentity,
     reason: "event-pagination-limit",
   };
+}
+
+async function retryEventAppendForCursor(
+  input: AgentWorkerRuntimeOwnershipProbeClaimInput,
+  token: string,
+  body: unknown,
+  idempotencyKey: string,
+): Promise<number | undefined> {
+  try {
+    const retried = await requestJson(
+      input,
+      "POST",
+      eventPath(input.run.canonicalRunId),
+      token,
+      body,
+      { "Idempotency-Key": idempotencyKey },
+    );
+    return retried.ok ? readLatestExternalEventSequence(retried.body) : undefined;
+  } catch (error) {
+    throw new Error("Agent worker runtime ownership probe append outcome is ambiguous", {
+      cause: error,
+    });
+  }
+}
+
+async function probeEventIdempotencyKey(
+  activation: AgentWorkerRuntimeOwnershipProbeActivation,
+  input: AgentWorkerRuntimeOwnershipProbeClaimInput,
+  identity: string,
+  phase: string,
+): Promise<string> {
+  const hash = await computeHash(
+    `${activation.probeId}:${input.workerId}:${input.run.canonicalRunId}:${identity}:${phase}`,
+  );
+  return `agent-worker-event:${hash}`;
 }
 
 function eventPath(canonicalRunId: string): string {
@@ -1194,6 +1253,8 @@ async function currentWriteIndex(
   }
   let committedLatestExternalEventSequence: number | undefined;
   let appendAttempted = false;
+  let retryAppendBody: unknown;
+  let retryAppendIdempotencyKey: string | undefined;
   try {
     const instrumented = withActivation(activation, input);
     const before = await readEventSnapshot(
@@ -1239,13 +1300,23 @@ async function currentWriteIndex(
       });
       return;
     }
+    const appendBody = { events: [event] };
+    const appendIdempotencyKey = await probeEventIdempotencyKey(
+      activation,
+      input,
+      identity,
+      "claim",
+    );
+    retryAppendBody = appendBody;
+    retryAppendIdempotencyKey = appendIdempotencyKey;
     appendAttempted = true;
     const appended = await requestJson(
       instrumented,
       "POST",
       eventPath(input.run.canonicalRunId),
       input.credentials.runEventToken,
-      { events: [event] },
+      appendBody,
+      { "Idempotency-Key": appendIdempotencyKey },
     );
     if (!appended.ok) {
       sink({
@@ -1266,6 +1337,14 @@ async function currentWriteIndex(
       return;
     }
     committedLatestExternalEventSequence = readLatestExternalEventSequence(appended.body);
+    if (committedLatestExternalEventSequence === undefined) {
+      committedLatestExternalEventSequence = await retryEventAppendForCursor(
+        instrumented,
+        input.credentials.runEventToken,
+        appendBody,
+        appendIdempotencyKey,
+      );
+    }
     if (committedLatestExternalEventSequence === undefined) {
       sink({
         ...base,
@@ -1302,7 +1381,10 @@ async function currentWriteIndex(
     });
     return { latestExternalEventSequence: committedLatestExternalEventSequence };
   } catch (error) {
-    if (error instanceof Error && error.message.includes("append cursor is unavailable")) {
+    if (
+      errorMessageIncludes(error, "append cursor is unavailable") ||
+      errorMessageIncludes(error, "append outcome is ambiguous")
+    ) {
       throw error;
     }
     sink({ ...base, status: "error", errorType: classifyError(error) });
@@ -1310,6 +1392,17 @@ async function currentWriteIndex(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
     if (appendAttempted) {
+      if (retryAppendBody !== undefined && retryAppendIdempotencyKey !== undefined) {
+        committedLatestExternalEventSequence = await retryEventAppendForCursor(
+          withActivation(activation, input),
+          input.credentials.runEventToken,
+          retryAppendBody,
+          retryAppendIdempotencyKey,
+        );
+        if (committedLatestExternalEventSequence !== undefined) {
+          return { latestExternalEventSequence: committedLatestExternalEventSequence };
+        }
+      }
       throw new Error("Agent worker runtime ownership probe append outcome is ambiguous");
     }
   }
@@ -1336,6 +1429,8 @@ async function replacedGenerationDenied(
   }
   let committedLatestExternalEventSequence: number | undefined;
   let appendOutcomeAmbiguous = false;
+  let retryAppendBody: unknown;
+  let retryAppendIdempotencyKey: string | undefined;
   try {
     const instrumented = withActivation(activation, input);
     const before = await readEventSnapshot(
@@ -1354,29 +1449,47 @@ async function replacedGenerationDenied(
       staleIdentity,
       input.previousCredentials,
     );
+    const appendBody = {
+      events: [{
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: "veryfront",
+        kind: "veryfront.agent_worker.runtime_ownership.stale_generation",
+        value: {
+          probe: "agent-worker-runtime-ownership",
+          probeId: activation.probeId,
+          staleIdentity,
+        },
+      }],
+    };
+    const appendIdempotencyKey = await probeEventIdempotencyKey(
+      activation,
+      input,
+      staleIdentity,
+      "renew",
+    );
+    retryAppendBody = appendBody;
+    retryAppendIdempotencyKey = appendIdempotencyKey;
     appendOutcomeAmbiguous = true;
     const denied = await requestJson(
       instrumented,
       "POST",
       eventPath(input.run.canonicalRunId),
       input.previousCredentials.runEventToken,
-      {
-        events: [{
-          type: "RUNTIME_EVENT_RECORDED",
-          runtime: "veryfront",
-          kind: "veryfront.agent_worker.runtime_ownership.stale_generation",
-          value: {
-            probe: "agent-worker-runtime-ownership",
-            probeId: activation.probeId,
-            staleIdentity,
-          },
-        }],
-      },
+      appendBody,
+      { "Idempotency-Key": appendIdempotencyKey },
     );
     appendOutcomeAmbiguous = false;
     committedLatestExternalEventSequence = denied.ok
       ? readLatestExternalEventSequence(denied.body)
       : undefined;
+    if (denied.ok && committedLatestExternalEventSequence === undefined) {
+      committedLatestExternalEventSequence = await retryEventAppendForCursor(
+        instrumented,
+        input.previousCredentials.runEventToken,
+        appendBody,
+        appendIdempotencyKey,
+      );
+    }
     if (denied.ok && committedLatestExternalEventSequence === undefined) {
       sink({
         ...base,
@@ -1419,7 +1532,10 @@ async function replacedGenerationDenied(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes("append cursor is unavailable")) {
+    if (
+      errorMessageIncludes(error, "append cursor is unavailable") ||
+      errorMessageIncludes(error, "append outcome is ambiguous")
+    ) {
       throw error;
     }
     sink({ ...base, status: "error", errorType: classifyError(error) });
@@ -1427,6 +1543,17 @@ async function replacedGenerationDenied(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
     if (appendOutcomeAmbiguous) {
+      if (retryAppendBody !== undefined && retryAppendIdempotencyKey !== undefined) {
+        committedLatestExternalEventSequence = await retryEventAppendForCursor(
+          withActivation(activation, input),
+          input.previousCredentials.runEventToken,
+          retryAppendBody,
+          retryAppendIdempotencyKey,
+        );
+        if (committedLatestExternalEventSequence !== undefined) {
+          return { latestExternalEventSequence: committedLatestExternalEventSequence };
+        }
+      }
       throw new Error("Agent worker runtime ownership probe stale generation outcome is ambiguous");
     }
   }
@@ -1510,6 +1637,16 @@ async function expiredLeaseDenied(
   }
 }
 
+async function cancelledChildIdempotencyKey(
+  activation: AgentWorkerRuntimeOwnershipProbeActivation,
+  input: AgentWorkerRuntimeOwnershipProbeCancelledInput,
+): Promise<string> {
+  const hash = await computeHash(
+    `${activation.probeId}:${input.workerId}:${input.run.runId}:cancelled-child`,
+  );
+  return `agent-worker-child:${hash}`;
+}
+
 async function cancelledChildDenied(
   activation: AgentWorkerRuntimeOwnershipProbeActivation,
   sink: AgentWorkerRuntimeOwnershipProbeReceiptSink,
@@ -1555,8 +1692,7 @@ async function cancelledChildDenied(
         input: { probe: "agent-worker-runtime-ownership", probeId: activation.probeId },
       },
       {
-        "Idempotency-Key":
-          `${activation.probeId}:${input.workerId}:${input.run.runId}:cancelled-child`,
+        "Idempotency-Key": await cancelledChildIdempotencyKey(activation, input),
         "X-Veryfront-Run-Terminal-Token": input.credentials.runTerminalToken,
       },
     );
@@ -1585,8 +1721,24 @@ async function cancelledChildDenied(
   }
 }
 
+function redactReceiptForDefaultLog(
+  receipt: AgentWorkerRuntimeOwnershipProbeReceipt,
+): AgentWorkerRuntimeOwnershipProbeReceipt {
+  return {
+    ...receipt,
+    projectId: receipt.projectId === undefined ? undefined : "[redacted]",
+    workerId: "[redacted]",
+    runId: "[redacted]",
+    canonicalRunId: "[redacted]",
+    sourcePath: receipt.sourcePath === undefined ? undefined : "[redacted]",
+  };
+}
+
 function defaultReceiptSink(receipt: AgentWorkerRuntimeOwnershipProbeReceipt): void {
-  console.info("[agent-worker-runtime-ownership-probe] receipt", receipt);
+  console.info(
+    "[agent-worker-runtime-ownership-probe] receipt",
+    redactReceiptForDefaultLog(receipt),
+  );
 }
 
 export function createAgentWorkerRuntimeOwnershipProbe(
