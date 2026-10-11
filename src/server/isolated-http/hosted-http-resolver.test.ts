@@ -333,6 +333,38 @@ describe("hosted HTTP resolver", () => {
         ],
         ["credential without scopes", jwt({ userId: SERVICE_ACCOUNT_ID, projectId: PROJECT_ID })],
         ["opaque API key", "vf_api_key_0123456789abcdef"],
+        [
+          "run-event writer credential",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            serviceAccountId: SERVICE_ACCOUNT_ID,
+            actorType: "service_account",
+            tokenUse: "run_event_writer",
+            scope: ["projects:read", "runs:write"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "run-write scope without purpose claims",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read", "runs:write"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "managed source read claims",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            tokenUse: "managed_source_read",
+            scope: ["projects:read", "files:read"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "scopes without projects:read",
+          jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["files:read"], projectId: PROJECT_ID }),
+        ],
         ["malformed payload", "header.not-base64!.signature"],
       ] as const
     ) {
@@ -347,6 +379,52 @@ describe("hosted HTTP resolver", () => {
       }));
       await assertRejects(() => resolve({ ...authority, sourceToken }, signal()), Error, "", name);
       assertEquals([fake.calls, lookups], [[], []], name);
+    }
+  });
+
+  it("accepts the edge proxy credential with its standard claims and default scopes", async () => {
+    const token = jwt({
+      userId: SERVICE_ACCOUNT_ID,
+      scope: [
+        "projects:read",
+        "components:read",
+        "files:read",
+        "pages:read",
+        "users:read",
+        "conversations:read",
+        "cache:read",
+        "cache:write",
+        "cache:delete",
+      ],
+      projectId: PROJECT_ID,
+      iat: 1_700_000_000,
+      exp: 1_700_604_800,
+    });
+    const resolve = createHostedHttpResolver(options());
+    const resolved = await resolve({ ...authority, sourceToken: token }, signal());
+    assertEquals(resolved.session.expectedImage, IMAGE);
+  });
+
+  it("accepts a registry host with a port and refuses tags and digests in the repository", () => {
+    createHostedHttpResolver(
+      options({ sourceImageRepository: "registry.example:5000/team/source" }),
+    );
+    createHostedHttpResolver(options({ sourceImageRepository: "localhost:5000/source" }));
+    for (
+      const repository of [
+        "ghcr.io/veryfront/tenant-source:latest",
+        "registry.example:5000/team/source:v1",
+        `ghcr.io/veryfront/tenant-source@sha256:${"a".repeat(64)}`,
+        "registry.example:5000",
+        "source:123",
+      ]
+    ) {
+      assertThrows(
+        () => createHostedHttpResolver(options({ sourceImageRepository: repository })),
+        TypeError,
+        undefined,
+        repository,
+      );
     }
   });
 

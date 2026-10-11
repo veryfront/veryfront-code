@@ -240,6 +240,10 @@ const PREDICATE_DEFINITIONS = new Set([
 function maskNonCode(source: string): string {
   let result = "";
   let index = 0;
+  // Last significant code character and identifier, to tell a regular expression
+  // literal from division.
+  let previous = "";
+  let previousWord = "";
   // Brace depth of the enclosing code for each open template expression.
   const templateDepths: number[] = [];
   let depth = 0;
@@ -283,21 +287,48 @@ function maskNonCode(source: string): string {
       index += comment.length;
       continue;
     }
+    if (char === "/" && startsRegExp(previous, previousWord)) {
+      // Mask the literal up to its unescaped closing slash outside a character class.
+      let end = index + 1;
+      let inClass = false;
+      while (end < source.length && source[end] !== "\n") {
+        const current = source[end]!;
+        if (current === "\\") {
+          end += 2;
+          continue;
+        }
+        if (current === "[") inClass = true;
+        else if (current === "]") inClass = false;
+        else if (current === "/" && !inClass) break;
+        end++;
+      }
+      end++;
+      while (end < source.length && /[a-z]/.test(source[end]!)) end++;
+      result += "/ /";
+      index = end;
+      previous = "/";
+      previousWord = "";
+      continue;
+    }
     if (char === '"' || char === "'") {
-      // Quoted strings end at a line break, so a quote inside a regular
-      // expression literal can mask at most the rest of its line.
+      // Quoted strings end at a line break, so an unrecognized quote can mask
+      // at most the rest of its line.
       let end = index + 1;
       while (end < source.length && source[end] !== char && source[end] !== "\n") {
         end += source[end] === "\\" ? 2 : 1;
       }
       result += char + char;
       index = end + 1;
+      previous = char;
+      previousWord = "";
       continue;
     }
     if (char === "`") {
       result += "`";
       index++;
       scanTemplateText();
+      previous = "`";
+      previousWord = "";
       continue;
     }
     if (char === "{") depth++;
@@ -307,14 +338,48 @@ function maskNonCode(source: string): string {
         index++;
         depth = templateDepths.pop()!;
         scanTemplateText();
+        previous = "`";
+        previousWord = "";
         continue;
       }
       depth--;
     }
     result += char;
     index++;
+    if (/[\w$]/.test(char)) {
+      previousWord = /[\w$]/.test(previous) ? previousWord + char : char;
+      previous = char;
+    } else if (!/\s/.test(char)) {
+      previous = char;
+      previousWord = "";
+    }
   }
   return result;
+}
+
+/** Keywords after which a slash starts a regular expression, not a division. */
+const REGEXP_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "case",
+  "do",
+  "else",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "instanceof",
+  "yield",
+  "await",
+]);
+
+/** A slash after an operator, opening bracket, keyword or nothing starts a regular expression. */
+function startsRegExp(previous: string, previousWord: string): boolean {
+  if (previous === "") return true;
+  if (previousWord) return REGEXP_KEYWORDS.has(previousWord);
+  return !/[\w$)\]}]/.test(previous);
 }
 
 /** Drop comments and imports so only real code counts. */
@@ -469,6 +534,22 @@ describe("execution surface inventory", () => {
     ].join("\n");
     // Counted: the call on line 4 and the call inside the template expression.
     assertEquals(countGuards(codeOf(source)), 2);
+    // A quote inside a regular expression literal does not hide the code after it.
+    assertEquals(
+      countGuards(
+        codeOf(`const quoted = /["']/.test(value); allowHostProjectCodeExecution && run();`),
+      ),
+      1,
+    );
+    assertEquals(
+      countGuards(codeOf(`return /requiresIsolatedProjectRuntime\\(/.test(text);`)),
+      0,
+    );
+    // Division is not a regular expression.
+    assertEquals(
+      countGuards(codeOf("const half = total / 2; isSharedProjectRuntime(ctx); const q = a / b;")),
+      1,
+    );
   });
 
   it("counts aliased destructuring and propagation, not type annotations", () => {

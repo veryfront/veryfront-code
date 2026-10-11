@@ -89,7 +89,7 @@ function apiFetch(state: ApiState = {}) {
         }),
       );
     }
-    if (url.startsWith(`${API}/projects/${PROJECT_ID}/environment-variables?`)) {
+    if (url.startsWith(`${API}/projects/project-a/environment-variables?`)) {
       return Promise.resolve(
         state.variables ?? Response.json({
           data: [

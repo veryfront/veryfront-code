@@ -147,10 +147,11 @@ function createVeryfrontApi(apiBaseUrl: string): HostedHttpResolverApi {
       }, signal);
     },
     readEnvironment(authority, signal) {
-      // The exact project ID addresses every read, so all of them target one project.
+      // The slug was bound to the exact project ID by the project check, and the
+      // management read authorizes the environment ID for the source credential.
       return fetchProjectEnvVars(
         apiBaseUrl,
-        authority.projectId,
+        authority.projectSlug,
         authority.environmentId,
         authority.sourceToken,
         signal,
@@ -179,11 +180,28 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
   return allowPath ? trimTrailingSlashes(value) : url.origin;
 }
 
+/** Claims of the edge proxy's project source credential (client credentials, no options). */
+const SOURCE_CREDENTIAL_CLAIMS = new Set(["userId", "scope", "projectId", "iat", "exp"]);
+/** The API's default scopes for the veryfront-server client; nothing else is accepted. */
+const SOURCE_CREDENTIAL_SCOPES = new Set([
+  "projects:read",
+  "components:read",
+  "files:read",
+  "pages:read",
+  "users:read",
+  "conversations:read",
+  "cache:read",
+  "cache:write",
+  "cache:delete",
+]);
+
 /**
- * Accept only a project-bound service credential for exactly `projectId`. This reads
- * the JWT payload without verifying the signature; the API verifies every credential.
- * Opaque credentials, user sessions and credentials without a project are refused
- * here, before any API call.
+ * Accept only the edge proxy's project source credential for exactly `projectId`: a JWT
+ * whose claims are exactly `userId` (the configured service account), `scope` (a subset of
+ * the client's default scopes that includes `projects:read`), `projectId`, `iat` and `exp`.
+ * Credentials with any other claim, such as `tokenUse`, `actorType` or `serviceAccountId`,
+ * or any other scope, such as `runs:write` or a user-scoped grant, are refused. This reads
+ * the payload without verifying the signature; the API verifies every credential.
  */
 function isProjectBoundServiceCredential(
   token: string,
@@ -205,12 +223,13 @@ function isProjectBoundServiceCredential(
     return false;
   }
   if (claims === null || typeof claims !== "object" || Array.isArray(claims)) return false;
-  const { projectId: claimedProject, userId, scope } = claims as Record<string, unknown>;
-  const scopes = typeof scope === "string" ? scope.split(" ") : scope;
+  const record = claims as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => SOURCE_CREDENTIAL_CLAIMS.has(key))) return false;
+  const { projectId: claimedProject, userId, scope } = record;
   return typeof claimedProject === "string" && claimedProject === projectId &&
     typeof userId === "string" && userId === serviceAccountId &&
-    Array.isArray(scopes) &&
-    scopes.every((entry) => typeof entry === "string" && !entry.startsWith("user_read_id_"));
+    Array.isArray(scope) && scope.includes("projects:read") &&
+    scope.every((entry) => typeof entry === "string" && SOURCE_CREDENTIAL_SCOPES.has(entry));
 }
 
 function limit(value: number | undefined, fallback: number, maximum: number, name: string) {
@@ -337,7 +356,11 @@ export function createHostedHttpResolver(
   const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
   const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
   const repository = options.sourceImageRepository;
-  if (typeof repository !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,255}$/.test(repository)) {
+  // An optional registry host with port, then path components. Tags and digests are refused.
+  if (
+    typeof repository !== "string" || repository.length > 256 ||
+    !/^[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5}(?=\/))?(?:\/[a-z0-9][a-z0-9._-]*)*$/.test(repository)
+  ) {
     throw new TypeError("Hosted HTTP resolver requires a source image repository");
   }
   const serviceAccountId = options.serviceAccountId;
