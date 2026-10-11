@@ -216,6 +216,65 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("retries an unconfirmed retirement and keeps its capacity until release is confirmed", async () => {
+    const a = fixture(() => new Response("a"));
+    const release = a.input.session.allocator.release;
+    a.input.session.allocator.release = () =>
+      Promise.reject(new Error("synthetic allocator outage"));
+    const b = fixture(() => new Response("b"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 1, idleTimeoutMs: 10 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), a.input)).text(),
+        "a",
+      );
+      while (broker.generations > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      await assertRejects(
+        () => broker.fetch(new Request("https://b.example"), b.input),
+        Error,
+        "capacity",
+      );
+      assertEquals(b.calls, []);
+      a.input.session.allocator.observe = (binding, signal) =>
+        release(binding, "completed", signal);
+      let served: string | undefined;
+      for (let attempt = 0; attempt < 60 && served === undefined; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        served = await broker.fetch(new Request("https://b.example"), b.input).then(
+          (response) => response.text(),
+          () => undefined,
+        );
+      }
+      assertEquals(served, "b");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("forgets an environment whose generation was not admitted", async () => {
+    const a = fixture(() => new Response("a"));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), a.input)).text(),
+        "a",
+      );
+      for (let index = 0; index < 5; index++) {
+        const other = fixture(() => new Response("other"), undefined, `project-${index}`);
+        await assertRejects(
+          () => broker.fetch(new Request("https://other.example"), other.input),
+          Error,
+          "capacity",
+        );
+      }
+      assertEquals(broker.generations, 1);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("requires bounded generation limits", () => {
     for (
       const options of [

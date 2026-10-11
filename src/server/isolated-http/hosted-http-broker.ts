@@ -71,6 +71,9 @@ export interface HostedHttpBrokerOptions extends HostedExecutorSessionPoolOption
   executionPolicyId?: string;
 }
 
+/** Upper bound on the delay between retries of an unconfirmed retirement. */
+const MAX_RETIREMENT_RETRY_MS = 60_000;
+
 function bounded(value: number, minimum: number, maximum: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
     throw new TypeError(`Hosted HTTP broker requires a bounded ${name}`);
@@ -107,12 +110,29 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
   const contexts = new WeakMap<Request, HostedHttpGenerationRequest>();
   /** Current pool key of each project environment's generation. */
   const scopes = new Map<string, Readonly<WorkerGenerationIdentity>>();
+  /** Generations whose executor was constructed. */
+  const constructed = new Set<string>();
+  /** Pending retries of retirements whose release was not confirmed. */
+  const retries = new Map<string, ReturnType<typeof setTimeout>>();
   let epoch = 0;
+  let stopped = false;
 
-  function retire(key: Readonly<WorkerGenerationIdentity>): void {
+  function retire(key: Readonly<WorkerGenerationIdentity>, retryDelayMs = 1_000): void {
     if (scopes.get(key.scopeId)?.generationId === key.generationId) scopes.delete(key.scopeId);
-    // Failed cleanup keeps the generation's capacity reserved in the pool.
-    void generations.retire(key).catch(() => {});
+    void generations.retire(key).then(() => {
+      constructed.delete(key.generationId);
+    }, () => {
+      // An unconfirmed release keeps the generation's capacity reserved. Retry until the
+      // allocator confirms it; shutdown retries every remaining generation itself.
+      if (stopped || retries.has(key.generationId)) return;
+      retries.set(
+        key.generationId,
+        setTimeout(() => {
+          retries.delete(key.generationId);
+          retire(key, Math.min(retryDelayMs * 2, MAX_RETIREMENT_RETRY_MS));
+        }, retryDelayMs),
+      );
+    });
   }
 
   function currentKey(identity: Readonly<WorkerGenerationIdentity>) {
@@ -138,7 +158,19 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const key = currentKey(identity);
     const admitted = new Request(request, { signal: request.signal });
     contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
-    return await generations.render(admitted, key, (owned) => {
+    try {
+      return await generations.render(admitted, key, create);
+    } catch (error) {
+      // A generation that was never constructed has no executor to retire it later.
+      if (
+        !constructed.has(key.generationId) &&
+        scopes.get(key.scopeId)?.generationId === key.generationId
+      ) scopes.delete(key.scopeId);
+      throw error;
+    }
+
+    function create(owned: Readonly<WorkerGenerationIdentity>) {
+      constructed.add(owned.generationId);
       const executor = createHostedHttpGenerationExecutor({
         input,
         sessions,
@@ -154,17 +186,24 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         maxConcurrentRenders: perExecutor,
         drainTimeoutMs,
       });
-    });
+    }
   }
 
   return {
     get active() {
       return sessions.active;
     },
+    /** Project environments with a generation that admits requests. */
+    get generations() {
+      return scopes.size;
+    },
     get settled() {
       return sessions.settled;
     },
     shutdown() {
+      stopped = true;
+      for (const timer of retries.values()) clearTimeout(timer);
+      retries.clear();
       // Session shutdown cancels every allocation now; generation cleanup then confirms it.
       const result = sessions.shutdown();
       void generations.close().catch(() => {});
