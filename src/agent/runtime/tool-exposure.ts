@@ -344,12 +344,10 @@ function snapshotSearchableTool(
       tool,
       "description",
     ]) as PropertyDescriptor | undefined;
-    const parameters = includeParameterDescriptions
-      ? ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        tool,
-        "parameters",
-      ]) as PropertyDescriptor | undefined
-      : undefined;
+    const parameters = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      tool,
+      "parameters",
+    ]) as PropertyDescriptor | undefined;
     if (
       !isOwnDataPropertyDescriptor(name) || typeof name.value !== "string" ||
       name.value.length === 0 ||
@@ -364,7 +362,7 @@ function snapshotSearchableTool(
       status,
       normalizedName: normalizeSearchText(name.value),
       normalizedDescription: normalizeSearchText(description.value),
-      parameterDescriptions: parameters
+      parameterDescriptions: includeParameterDescriptions && parameters
         ? snapshotSchemaDescriptions(parameters.value, budget) ?? []
         : [],
     };
@@ -457,7 +455,7 @@ export function listToolExposure(input: {
     pushPrivateArray(entries, {
       name: entry.name,
       description: entry.description.length > 240
-        ? `${privateTextSlice(entry.description, 0, 240)}...`
+        ? `${privateTextSlice(entry.description, 0, previewEnd(entry.description, 240))}...`
         : entry.description,
       status: entry.status === "available" ? "available" : "deferred",
     });
@@ -692,6 +690,12 @@ function rankToolExposureMatches(input: {
   return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
 }
 
+/** Keep a preview cut from splitting a UTF-16 surrogate pair. */
+function previewEnd(text: string, limit: number): number {
+  const last = privateTextCharCodeAt(text, limit - 1);
+  return last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit;
+}
+
 /** Create fresh run-local tool exposure state. */
 export function createToolExposureState(
   loadedToolNames: Iterable<string> = [],
@@ -726,7 +730,6 @@ export function createToolSearchDefinition(): ToolDefinition {
     parameters: {
       type: "object",
       additionalProperties: false,
-      oneOf: [{ required: ["query"] }, { required: ["inventory"] }],
       properties: {
         query: {
           type: "string",

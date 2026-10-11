@@ -7,6 +7,8 @@
  * text. Validators without JSON Schema compilation omit output contracts;
  * native schemas still validate results, and raw schemas retain text-only results.
  * Contracts without a root object type retain text-only results but are still validated.
+ * Contracts that do not compile are omitted from discovery; native schemas still
+ * validate text-only results, and raw schemas fail calls with a generic error.
  *
  * @module mcp
  *

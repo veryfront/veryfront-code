@@ -3,7 +3,10 @@ import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool/types.ts";
 import { resolve } from "#veryfront/extensions/contracts.ts";
-import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type {
+  JsonSchemaValidationFunction,
+  SchemaValidator,
+} from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { resourcePatternToUriTemplate } from "#veryfront/resource/pattern.ts";
@@ -29,6 +32,40 @@ function mcpOutputSchema(tool: Tool) {
   return outputSchema?.type === "object" ? outputSchema : undefined;
 }
 
+interface CompiledOutputContract {
+  validator: SchemaValidator;
+  source: unknown;
+  check: JsonSchemaValidationFunction | null;
+}
+
+const compiledOutputContracts = new WeakMap<Tool, CompiledOutputContract>();
+
+// Compiles a tool's JSON output contract once per validator and schema.
+// Returns undefined when no compiler is available and null when the contract
+// does not compile; compiler messages never reach MCP clients.
+function compileOutputContract(tool: Tool): JsonSchemaValidationFunction | null | undefined {
+  const validator = resolve<SchemaValidator>("SchemaValidator");
+  if (!validator.compileJsonSchema) return undefined;
+  const source = tool.outputSchemaJson ?? tool.outputSchema;
+  if (source === undefined) return undefined;
+  const cached = compiledOutputContracts.get(tool);
+  if (cached?.validator === validator && cached.source === source) return cached.check;
+  let check: JsonSchemaValidationFunction | null;
+  try {
+    check = validator.compileJsonSchema(
+      tool.outputSchemaJson ?? zodToJsonSchema(tool.outputSchema!),
+    );
+  } catch {
+    check = null;
+  }
+  compiledOutputContracts.set(tool, { validator, source, check });
+  return check;
+}
+
+function invalidOutputContract(tool: Tool): Error {
+  return new Error(`Tool "${tool.id}" has an invalid output contract`);
+}
+
 // MCP only advertises output schemas whose root is `type: "object"`. Contracts
 // it cannot advertise (primitives, arrays, combinators) are still enforced, so
 // a declared schema never lets a nonconforming result through as plain text.
@@ -41,9 +78,10 @@ async function validateUnadvertisedOutput(tool: Tool, result: unknown): Promise<
     return validation.data;
   }
   if (tool.outputSchemaJson === undefined) return result;
-  const validator = resolve<SchemaValidator>("SchemaValidator");
-  if (!validator.compileJsonSchema) return result;
-  const validation = await validator.compileJsonSchema(tool.outputSchemaJson)(result);
+  const check = compileOutputContract(tool);
+  if (check === undefined) return result;
+  if (check === null) throw invalidOutputContract(tool);
+  const validation = await check(result);
   if (!validation.success) {
     throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
   }
@@ -52,7 +90,11 @@ async function validateUnadvertisedOutput(tool: Tool, result: unknown): Promise<
 
 async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
   const outputSchema = mcpOutputSchema(tool);
-  if (outputSchema === undefined) {
+  const check = outputSchema === undefined ? undefined : compileOutputContract(tool);
+  // Discovery omits a contract that does not compile, so such a tool returns a
+  // text-only result. A native schema still validates it; a raw JSON contract
+  // that cannot compile fails closed with a generic error.
+  if (outputSchema === undefined || check === null) {
     const output = await validateUnadvertisedOutput(tool, result);
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], isError: false };
   }
@@ -72,9 +114,8 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
     if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
       throw new Error(`Tool "${tool.id}" must serialize an object for its MCP output contract`);
     }
-    const validator = resolve<SchemaValidator>("SchemaValidator");
-    if (validator.compileJsonSchema) {
-      const contractValidation = await validator.compileJsonSchema(outputSchema)(snapshot);
+    if (check) {
+      const contractValidation = await check(snapshot);
       if (!contractValidation.success) {
         throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
       }
@@ -90,14 +131,13 @@ async function formatToolResult(tool: Tool, result: unknown): Promise<Record<str
       isError: false,
     };
   }
-  const validator = resolve<SchemaValidator>("SchemaValidator");
-  if (!validator.compileJsonSchema) {
+  if (check === undefined) {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
   }
   if (result === null || typeof result !== "object" || Array.isArray(result)) {
     throw new Error(`Tool "${tool.id}" must return an object for its MCP output contract`);
   }
-  const validation = await validator.compileJsonSchema(outputSchema)(result);
+  const validation = await check(result);
   if (!validation.success) {
     throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
   }
@@ -435,16 +475,9 @@ export class MCPServer {
         inputSchema: tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
       };
       const outputSchema = mcpOutputSchema(tool);
-      if (outputSchema !== undefined) {
-        const validator = resolve<SchemaValidator>("SchemaValidator");
-        if (validator.compileJsonSchema) {
-          try {
-            validator.compileJsonSchema(outputSchema);
-            entry.outputSchema = outputSchema;
-          } catch {
-            // An invalid output contract must not break the rest of discovery.
-          }
-        }
+      // An invalid output contract is omitted and must not break the rest of discovery.
+      if (outputSchema !== undefined && compileOutputContract(tool)) {
+        entry.outputSchema = outputSchema;
       }
       if (tool.mcp?.title) entry.title = tool.mcp.title;
       if (tool.mcp?.annotations) entry.annotations = tool.mcp.annotations;

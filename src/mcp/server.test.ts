@@ -788,6 +788,41 @@ describe("mcp/server", () => {
     assertExists(definition);
     assertEquals(Object.hasOwn(definition, "outputSchema"), false);
     assertExists(definitions.find((entry) => entry.name === "test:valid-output")?.outputSchema);
+
+    const called = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:uncompilable-output", arguments: {} },
+    });
+    const direct = called.result as { isError: boolean; content: Array<{ text: string }> };
+    assertEquals(direct.isError, true);
+    assertEquals(Object.hasOwn(direct, "structuredContent"), false);
+    assertEquals(
+      direct.content[0]?.text,
+      'Tool "test:uncompilable-output" has an invalid output contract',
+    );
+
+    const started = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "test:uncompilable-output", arguments: {}, task: {} },
+    });
+    const taskId = (started.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+    const status = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = status.result as { status: string; statusMessage?: string };
+    assertEquals(task.status, "failed");
+    assertEquals(
+      task.statusMessage,
+      'Tool "test:uncompilable-output" has an invalid output contract',
+    );
   });
 
   it("preserves configured output contracts in tools/list without inventing absent schemas", async () => {

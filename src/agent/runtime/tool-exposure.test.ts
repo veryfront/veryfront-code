@@ -11,6 +11,7 @@ import {
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
 } from "./tool-exposure.ts";
+import { sanitizeProviderToolSchema } from "./provider-tool-compat.ts";
 import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeProviderSchemaHiddenTool,
@@ -39,23 +40,37 @@ it("browses executable metadata in bounded pages without loading schemas", () =>
 
 it("browsing metadata never reads parameter schemas or lists provider-hidden tools", () => {
   const candidate = definition("get_agent", "Read an agent");
+  const accessorSchema = definition("load_agent", "Load an agent");
   let schemaReads = 0;
-  Object.defineProperty(candidate, "parameters", {
+  Object.defineProperty(accessorSchema, "parameters", {
     get() {
       schemaReads++;
       throw new Error("must not inspect schemas");
     },
   });
   const hidden = hiddenDefinition("native_hidden", "Provider-owned hidden tool");
-  const result = listToolExposure({ authorized: [candidate, hidden] });
+  const result = listToolExposure({ authorized: [candidate, accessorSchema, hidden] });
+  // query cannot load a tool whose schema is an accessor, so inventory must not list it.
   assertEquals(result.matches.map((entry) => entry.name), ["get_agent"]);
   assertEquals(schemaReads, 0);
+  assertEquals(
+    searchToolExposure({
+      query: "load_agent",
+      authorized: [accessorSchema],
+      state: createToolExposureState(),
+    }).matches,
+    [],
+  );
 });
 
 it("bounds inventory descriptions and rejects invalid pagination", () => {
   const authorized = [definition("get_agent", "x".repeat(1000))];
   const result = listToolExposure({ authorized });
   assertEquals(result.matches[0]?.description, "x".repeat(240) + "...");
+  const astral = listToolExposure({
+    authorized: [definition("get_agent", "x".repeat(239) + "\u{1F600}" + "x".repeat(10))],
+  });
+  assertEquals(astral.matches[0]?.description, "x".repeat(239) + "...");
   for (const limit of [0, 21, 1.5, Infinity]) {
     assertThrows(() => listToolExposure({ authorized, limit }));
   }
@@ -534,6 +549,24 @@ it("tool search misses when a common verb is the only match in a realistic catal
       miss: true,
     },
   );
+});
+
+it("tool_search parameters have no root combinator for any provider profile", () => {
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  for (
+    const model of [
+      "openai/gpt-5",
+      "moonshot/kimi-k2",
+      "anthropic/claude-sonnet-4",
+      "google/gemini-2.5-pro",
+    ]
+  ) {
+    const sanitized = sanitizeProviderToolSchema(parameters, { model }) as Record<string, unknown>;
+    for (const key of ["oneOf", "anyOf", "allOf"]) {
+      assertEquals(Object.hasOwn(sanitized, key), false, `${model} root ${key}`);
+    }
+    assertEquals(sanitized.type, "object");
+  }
 });
 
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
