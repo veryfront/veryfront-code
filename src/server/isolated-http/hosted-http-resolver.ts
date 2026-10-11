@@ -2,7 +2,10 @@ import { PERMISSION_DENIED, PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/err
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
-import { getHostedExecutorImageSchema } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import {
+  getHostedExecutorIdentifierSchema,
+  getHostedExecutorImageSchema,
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import type { RenderGenerationBinding } from "#veryfront/rendering/render-generation-binding.ts";
 import { fetchProjectEnvVars } from "../project-env/fetcher.ts";
@@ -418,7 +421,8 @@ export function createHostedHttpResolver(
   }
   const session = { ...options.session };
   if (
-    typeof session.expectedBrokerInstanceId !== "string" || !session.expectedBrokerInstanceId ||
+    // The same identifier rule the executor session applies to its binding.
+    !getHostedExecutorIdentifierSchema().safeParse(session.expectedBrokerInstanceId).success ||
     typeof session.connectTransport !== "function" || session.allocator === null ||
     typeof session.allocator !== "object" ||
     (["allocate", "observe", "renew", "release"] as const).some((operation) =>
