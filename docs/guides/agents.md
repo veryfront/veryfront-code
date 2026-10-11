@@ -565,10 +565,19 @@ marker object instead:
 - `reasons` lists why, for example `unsupported_object`, `unsupported_bigint`,
   `unsupported_undefined`, `unsupported_property`, `accessor_property`,
   `circular`, `max_depth`, `array_truncated` or `object_keys_truncated`.
-- `value` holds the JSON-safe part. Values that could not be captured are
-  replaced with `"[unsupported object]"` or `"[unsupported accessor]"`. The
-  snapshot keeps at most 100 array items or object keys per level, 32 levels and
-  1,000 nodes in total.
+- `value` holds the JSON-safe part. Each value that could not be captured is
+  replaced with a string placeholder:
+  - `"[unsupported bigint]"`, `"[unsupported undefined]"`,
+    `"[unsupported symbol]"` or `"[unsupported function]"` for a value of that
+    type;
+  - `"[unsupported object]"` for an object that is not a plain object or array,
+    such as a `Date`, `Map` or class instance;
+  - `"[unsupported accessor]"` for a getter or setter property;
+  - `"[circular]"` for a reference back to an enclosing value;
+  - `"[truncated nested data]"` below the depth limit.
+
+  The snapshot keeps at most 100 array items or object keys per level, 32
+  levels and 1,000 nodes in total.
 
 ## Runtime UTC context
 
