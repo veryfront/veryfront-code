@@ -18,13 +18,6 @@ import {
 import { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled } from "./hosted-http-flag.ts";
 
 export { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled };
-export {
-  buildHostedHttpGenerationBindingInput,
-  createHostedHttpResolver,
-  createHostedHttpSourceRecordLookup,
-  type HostedHttpGenerationBindingInput,
-  type HostedHttpResolverOptions,
-} from "./hosted-http-resolver.ts";
 
 const MAX_TOKEN_BYTES = 16 * 1024;
 const MAX_CA_BYTES = 256 * 1024;
