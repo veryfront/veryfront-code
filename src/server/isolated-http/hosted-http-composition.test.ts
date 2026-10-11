@@ -582,4 +582,27 @@ describe("hosted HTTP host composition", () => {
     });
     assertEquals(typeof composition.ingress.resolve, "function");
   });
+
+  it("wipes the configuration key buffer after startup succeeds or fails", async () => {
+    for (const startup of [config, { ...config, sourceImageRepository: "registry/source:tag" }]) {
+      const host = defaultFiles();
+      const keys: Uint8Array[] = [];
+      const readFile = async (path: string) => {
+        const bytes = await host.readFile(path);
+        if (path === "/host/configuration-key") keys.push(bytes);
+        return bytes;
+      };
+      const composing = createHostedHttpComposition(startup, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+      });
+      if (startup === config) await composing;
+      else await assertRejects(() => composing);
+      assertEquals(keys.length, 1);
+      assertEquals(keys[0]!.every((byte) => byte === 0), true);
+    }
+  });
 });

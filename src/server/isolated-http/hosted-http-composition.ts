@@ -411,25 +411,6 @@ export async function createHostedHttpComposition(
         ),
     )
     : undefined;
-  // The key is raw bytes: it is neither decoded as text nor trimmed.
-  const configurationKey = await readStartupFile(
-    "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-    (signal) =>
-      readBoundedBytes(
-        read,
-        "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-        config.configurationKeyFile,
-        MAX_TOKEN_BYTES,
-        signal,
-      ),
-  );
-  if (configurationKey.byteLength < 32) {
-    configurationKey.fill(0);
-    throw CONFIG_INVALID.create({
-      detail:
-        "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
-    });
-  }
   const lookupSourceImage = await createRefreshingSourceRecordLookup({
     readText: (signal) =>
       readBoundedText(
@@ -465,20 +446,46 @@ export async function createHostedHttpComposition(
       return token;
     },
   });
-  const resolve = createHostedHttpResolver({
-    apiBaseUrl: config.apiBaseUrl,
-    sourceApiOrigin: config.sourceApiOrigin,
-    sourceImageRepository: config.sourceImageRepository,
-    serviceAccountId: config.serviceAccountId,
-    configurationKey,
-    lookupSourceImage,
-    session: {
-      expectedBrokerInstanceId: config.brokerInstanceId,
-      allocator,
-      connectTransport: connectExecutorTransport,
-      cleanupTimeoutMs: SHUTDOWN_TIMEOUT_MS,
-    },
-  });
+  // The key is raw bytes: it is neither decoded as text nor trimmed.
+  const configurationKey = await readStartupFile(
+    "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+    (signal) =>
+      readBoundedBytes(
+        read,
+        "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+        config.configurationKeyFile,
+        MAX_TOKEN_BYTES,
+        signal,
+      ),
+  );
+  // The resolver snapshots the key; this buffer is wiped once that is done or startup
+  // fails, so no second copy of the secret outlives startup. The key is read last so
+  // no other startup step runs while it is held.
+  let resolve: ReturnType<typeof createHostedHttpResolver>;
+  try {
+    if (configurationKey.byteLength < 32) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
+      });
+    }
+    resolve = createHostedHttpResolver({
+      apiBaseUrl: config.apiBaseUrl,
+      sourceApiOrigin: config.sourceApiOrigin,
+      sourceImageRepository: config.sourceImageRepository,
+      serviceAccountId: config.serviceAccountId,
+      configurationKey,
+      lookupSourceImage,
+      session: {
+        expectedBrokerInstanceId: config.brokerInstanceId,
+        allocator,
+        connectTransport: connectExecutorTransport,
+        cleanupTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+      },
+    });
+  } finally {
+    configurationKey.fill(0);
+  }
   const broker = (dependencies.createBroker ?? createHostedHttpBroker)({
     maxActive: config.maxActive,
     shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
