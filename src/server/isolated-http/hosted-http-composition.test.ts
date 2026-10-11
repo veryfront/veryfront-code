@@ -377,8 +377,7 @@ describe("hosted HTTP host composition", () => {
     }
     assertEquals(reads, 2);
     stalled.resolve(JSON.stringify([record]));
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     clock = 4_000;
     assertEquals(((await lookup(request, signal)) as { image: string }).image, record.image);
     assertEquals(reads, 3);
@@ -465,8 +464,8 @@ describe("hosted HTTP host composition", () => {
     assertEquals(tokenReads, 1);
     // Once the shared read settles, the next caller starts a fresh read.
     stalled.resolve(new TextEncoder().encode("stale"));
-    await Promise.resolve();
-    await Promise.resolve();
+    // Let the shared read settle and clear itself before the next caller.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assertEquals(
       await allocatorOptions!.readBrokerToken(new AbortController().signal),
       "broker-token-3",
@@ -533,5 +532,20 @@ describe("hosted HTTP host composition", () => {
       Error,
       "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
     );
+  });
+
+  it("reads the configuration key as raw bytes, without decoding or trimming", async () => {
+    const host = defaultFiles();
+    // Not valid UTF-8, and starts and ends with whitespace bytes.
+    const key = new Uint8Array(32).map((_, index) => index === 0 || index === 31 ? 0x20 : 0xff);
+    host.files.set("/host/configuration-key", key);
+    const composition = await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      readFile: host.readFile,
+      createAllocatorClient: () => allocator,
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    assertEquals(typeof composition.ingress.resolve, "function");
   });
 });
