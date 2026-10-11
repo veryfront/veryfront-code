@@ -228,7 +228,9 @@ function normalizeLcovSource(
   const portable = source.replaceAll("\\", "/");
   // Match the cache shape only below a verified checkout root, so a checkout
   // that itself lives under a `.cache/veryfront/` directory keeps its sources.
-  const producerPrefix = prefixes.find((candidate) => portable.startsWith(candidate));
+  const producerPrefix = prefixes.find((candidate) =>
+    portable.startsWith(candidate)
+  );
   const cacheCandidate = producerPrefix
     ? `/${portable.slice(producerPrefix.length)}`
     : portable;
