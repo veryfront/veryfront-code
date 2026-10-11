@@ -137,6 +137,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   /** Whether the fork model runs through Veryfront Cloud. */
   hostedModel?: boolean;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps: number;
   effectivePrompt: string;
   forkContext?: HostedChildForkInstructionsContext;
@@ -438,6 +439,9 @@ async function executeHostedChildForkWithoutWriterAuthority<
         forkModel: input.forkModel,
         hostedModel: input.hostedModel,
         temperature: input.temperature,
+        ...(input.parallelToolCalls === undefined
+          ? {}
+          : { parallelToolCalls: input.parallelToolCalls }),
         maxSteps: input.maxSteps,
         prompt: input.effectivePrompt,
         maxContinuationSteps: input.maxContinuationSteps ?? 0,

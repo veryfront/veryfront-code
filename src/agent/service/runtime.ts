@@ -301,6 +301,9 @@ export function createAgentServiceRuntime<
       system: agentConfig.system ?? agentConfig.instructions,
       model: agentConfig.model,
       temperature: agentConfig.temperature,
+      ...(agentConfig.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: agentConfig.parallelToolCalls }),
       maxSteps: agentConfig.maxSteps,
       providerTools: normalizeAgentServiceProviderTools(
         agentConfig.providerTools,

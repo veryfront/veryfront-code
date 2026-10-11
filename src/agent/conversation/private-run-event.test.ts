@@ -260,3 +260,26 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(error.detail, "mirror unavailable");
   });
 });
+
+it("private model request validates parallel tool control strictly", () => {
+  const event = { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] };
+  for (const value of [false, true]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      true,
+    );
+  }
+  for (const value of ["false", 0, null, {}, []]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      false,
+    );
+  }
+  assertEquals(
+    isPrivateConversationRunEvent({
+      ...event,
+      request: { parallelToolCalls: false, unknown: true },
+    }),
+    false,
+  );
+});

@@ -162,6 +162,7 @@ export const getExecutorModelOptionsSchema = defineSchema((v) => {
       }).strict(),
     ])).max(MAX_ITEMS).optional(),
     toolChoice: json.optional(),
+    parallelToolCalls: v.boolean().optional(),
     seed: v.number().int().optional(),
     presencePenalty: v.number().optional(),
     frequencyPenalty: v.number().optional(),

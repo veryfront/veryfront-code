@@ -2381,3 +2381,27 @@ for (const provider of ["anthropic", "google", "openai"] as const) {
     }
   }
 }
+
+it("omits parallel tool control where native adapters ignore it", () => {
+  const options = { prompt, parallelToolCalls: false };
+  const anthropic = buildAnthropicMessagesRequest(
+    "claude-test",
+    "anthropic",
+    options,
+    false,
+    createWarningCollector(),
+  );
+  const google = buildGoogleGenerateContentRequest("google", options, createWarningCollector());
+  assertEquals(Object.hasOwn(anthropic, "parallel_tool_calls"), false);
+  assertEquals(Object.hasOwn(google, "parallel_tool_calls"), false);
+  assertEquals(
+    buildModelCallContextRequest({ provider: "anthropic", modelId: "claude-test" }, options)
+      ?.parallelToolCalls,
+    undefined,
+  );
+  assertEquals(
+    buildModelCallContextRequest({ provider: "google", modelId: "gemini-test" }, options)
+      ?.parallelToolCalls,
+    undefined,
+  );
+});

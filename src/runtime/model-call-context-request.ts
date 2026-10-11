@@ -1339,6 +1339,11 @@ function resolvePersistedControls(
     ...options,
     maxOutputTokens: resolveOpenAIMaxOutputTokens(model, options, providerOptions, transport),
     responseFormat: resolveOpenAIResponseFormat(options, providerOptions, transport),
+    parallelToolCalls: ObjectHasOwn(providerOptions, "parallel_tool_calls")
+      ? typeof providerOptions.parallel_tool_calls === "boolean"
+        ? providerOptions.parallel_tool_calls
+        : undefined
+      : options.parallelToolCalls,
     topK: numberControl(providerOptions.top_k),
     seed: ObjectHasOwn(providerOptions, "seed")
       ? numberControl(providerOptions.seed)
@@ -1542,6 +1547,7 @@ function resolveAnthropicControls(
   const effective = {
     ...options,
     responseFormat: resolveAnthropicResponseFormat(model, options),
+    parallelToolCalls: undefined,
   };
   forEachPrivateArray(
     [
@@ -1648,6 +1654,7 @@ function resolveGoogleControls(
     presencePenalty: undefined as number | undefined,
     frequencyPenalty: undefined as number | undefined,
     responseFormat: resolveGoogleResponseFormat(native, options),
+    parallelToolCalls: undefined,
     stopSequences: options.stopSequences?.length ? options.stopSequences : undefined,
   };
   if (!native) return effective;
@@ -1726,6 +1733,9 @@ function buildModelCallRequest(
   const request: ModelCallRequest = {
     ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.parallelToolCalls !== undefined
+      ? { parallelToolCalls: options.parallelToolCalls }
+      : {}),
     ...(options.topP !== undefined ? { topP: options.topP } : {}),
     ...(options.topK !== undefined ? { topK: options.topK } : {}),
     ...(options.stopSequences !== undefined
