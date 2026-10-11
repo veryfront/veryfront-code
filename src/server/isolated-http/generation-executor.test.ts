@@ -252,6 +252,41 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("stops retirement retries when its owner signal shuts the broker down", async () => {
+    const f = fixture(() => new Response("a"));
+    f.input.session.allocator.release = () =>
+      Promise.reject(new Error("synthetic allocator outage"));
+    let observations = 0;
+    const observe = f.input.session.allocator.observe;
+    f.input.session.allocator.observe = (binding, signal) => {
+      observations++;
+      return observe(binding, signal);
+    };
+    const owner = new AbortController();
+    const broker = createHostedHttpBroker({
+      maxActive: 1,
+      idleTimeoutMs: 10,
+      signal: owner.signal,
+    });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), f.input)).text(),
+        "a",
+      );
+      while (broker.generations > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+      owner.abort();
+      await broker.settled;
+      // Shutdown makes one bounded confirmation attempt; no retry follows it.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const settledObservations = observations;
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      assertEquals(observations, settledObservations);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("forgets an environment whose generation was not admitted", async () => {
     const a = fixture(() => new Response("a"));
     const broker = createHostedHttpBroker({ maxActive: 1 });

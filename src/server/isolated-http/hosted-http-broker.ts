@@ -189,6 +189,19 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     }
   }
 
+  function shutdown() {
+    stopped = true;
+    for (const timer of retries.values()) clearTimeout(timer);
+    retries.clear();
+    // Session shutdown cancels every allocation now; generation cleanup then confirms it.
+    const result = sessions.shutdown();
+    void generations.close().catch(() => {});
+    return result;
+  }
+  // An owner signal shuts down the session pool directly; stop retries and generations too.
+  options.signal?.addEventListener("abort", shutdown, { once: true });
+  if (options.signal?.aborted) shutdown();
+
   return {
     get active() {
       return sessions.active;
@@ -200,15 +213,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     get settled() {
       return sessions.settled;
     },
-    shutdown() {
-      stopped = true;
-      for (const timer of retries.values()) clearTimeout(timer);
-      retries.clear();
-      // Session shutdown cancels every allocation now; generation cleanup then confirms it.
-      const result = sessions.shutdown();
-      void generations.close().catch(() => {});
-      return result;
-    },
+    shutdown,
     async fetch(request: Request, input: HostedHttpInput): Promise<Response> {
       request.signal.throwIfAborted();
       const prepared = prepareHostedHttpInput(input);
