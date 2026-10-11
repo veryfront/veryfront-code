@@ -210,13 +210,11 @@ function isImageRepository(repository: string): boolean {
   const first = parts[0]!;
   if (parts.length > 1 && (first.includes(".") || first.includes(":") || first === "localhost")) {
     const [host, port, ...extra] = first.split(":");
-    if (
-      extra.length > 0 || !host || !host.split(".").every(isRegistryLabel)
-    ) {
+    if (extra.length > 0 || !host?.split(".").every(isRegistryLabel)) {
       return false;
     }
     if (port !== undefined) {
-      if (!/^[0-9]{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) return false;
+      if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) return false;
     }
     parts.shift();
   }
@@ -427,19 +425,18 @@ export function createHostedHttpResolver(
   let configurationKey: Promise<CryptoKey> | undefined;
   // The resolver's raw copy is wiped once the non-extractable key is imported, or the
   // import fails, so the secret is held only inside the CryptoKey afterwards.
-  const importConfigurationKey = (bytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> => {
-    const wipe = () => bytes.fill(0);
-    let importing: Promise<CryptoKey>;
+  const importConfigurationKey = async (bytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> => {
     try {
-      importing = crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, [
-        "sign",
-      ]);
-    } catch (error) {
-      wipe();
-      return Promise.reject(error);
+      return await crypto.subtle.importKey(
+        "raw",
+        bytes,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+    } finally {
+      bytes.fill(0);
     }
-    importing.then(wipe, wipe);
-    return importing;
   };
 
   async function authorizeProject(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
