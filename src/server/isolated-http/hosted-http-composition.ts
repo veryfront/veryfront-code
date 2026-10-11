@@ -26,6 +26,8 @@ const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
 /** Bound on the startup read of the allocator trust root. */
 const HOST_FILE_READ_TIMEOUT_MS = 5_000;
+/** Bound for closing a host file handle after its bytes were read. */
+const HOST_FILE_CLOSE_TIMEOUT_MS = 2_000;
 /** Bound on one broker token read, below the allocator client's 5 s request deadline. */
 const TOKEN_READ_TIMEOUT_MS = 2_000;
 /** Bound on one read of the source records file, below the resolver's 10 s deadline. */
@@ -226,8 +228,8 @@ interface HostFileHandle {
 
 /**
  * Read at most `maxBytes + 1` bytes of a host file, so an oversized file is detected
- * without loading it whole. The read buffer is wiped on every exit, so a partial read
- * of a secret that fails or is aborted leaves no copy behind.
+ * without loading it whole. The read buffer is wiped before the handle closes, and a
+ * failed or stalled close wipes the returned copy too, so no exit leaves the bytes behind.
  * @internal
  */
 export async function readHostFilePrefix(
@@ -237,29 +239,46 @@ export async function readHostFilePrefix(
     maxBytes: number;
     /** @internal Opens the file; replaced in hermetic tests. */
     open?: (path: string, flags: "r") => Promise<HostFileHandle>;
+    /** @internal Bound for closing the handle; shortened in hermetic tests. */
+    closeTimeoutMs?: number;
   },
 ): Promise<Uint8Array> {
   options.signal?.throwIfAborted();
   const limit = options.maxBytes + 1;
   const handle = await (options.open ?? open)(path, "r");
   const buffer = new Uint8Array(limit);
+  let result: Uint8Array | undefined;
+  let failed = false;
+  let failure: unknown;
   try {
     let length = 0;
-    try {
-      while (length < limit) {
-        options.signal?.throwIfAborted();
-        const { bytesRead } = await handle.read(buffer, length, limit - length, null);
-        if (bytesRead === 0) break;
-        length += bytesRead;
-      }
-    } finally {
-      await handle.close();
+    while (length < limit) {
+      options.signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(buffer, length, limit - length, null);
+      if (bytesRead === 0) break;
+      length += bytesRead;
     }
-    // Copy only after the handle closed, so a failed close leaves no second copy.
-    return buffer.slice(0, length);
+    result = buffer.slice(0, length);
+  } catch (error) {
+    failed = true;
+    failure = error;
   } finally {
+    // Wipe before closing, so a close that never settles cannot retain the bytes.
     buffer.fill(0);
   }
+  try {
+    await settleWithin(
+      handle.close(),
+      options.signal ?? new AbortController().signal,
+      options.closeTimeoutMs ?? HOST_FILE_CLOSE_TIMEOUT_MS,
+    );
+  } catch (closeError) {
+    // A failed or stalled close returns nothing, so the copy is wiped as well.
+    result?.fill(0);
+    if (!failed) throw closeError;
+  }
+  if (failed) throw failure;
+  return result!;
 }
 
 /**

@@ -644,6 +644,34 @@ describe("hosted HTTP host composition", () => {
     assertEquals(buffers[0]!.every((byte) => byte === 0), true);
   });
 
+  it("wipes the host file read buffer and stops waiting when close never settles", async () => {
+    const buffers: Uint8Array[] = [];
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset > 0) return Promise.resolve({ bytesRead: 0 });
+        buffer.fill(0x6b, 0, 16);
+        return Promise.resolve({ bytesRead: 16 });
+      },
+      close() {
+        // The buffer is already wiped when close starts.
+        assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+        return new Promise<void>(() => {});
+      },
+    };
+    await assertRejects(
+      () =>
+        readHostFilePrefix("/host/configuration-key", {
+          maxBytes: 64,
+          closeTimeoutMs: 10,
+          open: () => Promise.resolve(handle),
+        }),
+      DOMException,
+      "timed out",
+    );
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+  });
+
   it("detaches a broker token read that never settles", async () => {
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();
