@@ -34,13 +34,79 @@ function setup(
   });
 }
 describe("runtime source API authorization", () => {
+  it("cancels denied and malformed API bodies at both source and project reads", async () => {
+    for (const stage of ["source", "project"]) {
+      for (const status of [401, 403, 200]) {
+        let cancelled = 0;
+        const response = new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled++;
+            },
+          }),
+          {
+            status,
+            headers: { "content-type": status === 200 ? "text/plain" : "application/json" },
+          },
+        );
+        const authorize = setup(async (url) =>
+          stage === "project" && String(url).includes("/releases/")
+            ? Response.json(source)
+            : response
+        );
+        await assertRejects(() => authorize(authority, signal()));
+        assertEquals(cancelled, 1);
+      }
+    }
+  });
+  it("retains bounded ownership while response cancellation ignores the deadline", async () => {
+    const cancellation = Promise.withResolvers<void>();
+    let calls = 0, cancelled = 0;
+    const authorize = createRuntimeSourceAuthorizer({
+      baseUrl: "https://api.example",
+      timeoutMs: 5,
+      maxPendingOperations: 1,
+      readProjectToken,
+      fetch: async () => {
+        calls++;
+        return new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled++;
+              return cancellation.promise;
+            },
+          }),
+          { status: 403 },
+        );
+      },
+    });
+    try {
+      await assertRejects(() => authorize(authority, signal()));
+      assertEquals(cancelled, 1);
+      assertEquals(authorize.pending, 1);
+      await assertRejects(() => authorize(authority, signal()));
+      assertEquals(calls, 1);
+      let done = false;
+      const settled = authorize.settled.then(() => {
+        done = true;
+      });
+      await Promise.resolve();
+      assertEquals(done, false);
+      cancellation.resolve();
+      await settled;
+      assertEquals(authorize.pending, 0);
+    } finally {
+      cancellation.resolve();
+      await authorize.settled;
+    }
+  });
   it("holds finite credential admission until cancelled raw reads retire", async () => {
     const reader = Promise.withResolvers<string>();
     let calls = 0;
     const authorize = createRuntimeSourceAuthorizer({
       baseUrl: "https://api.example",
       timeoutMs: 5,
-      maxPendingCredentialReads: 1,
+      maxPendingOperations: 1,
       fetch: async (url) => Response.json(String(url).includes("/releases/") ? source : project),
       readProjectToken: () => ++calls === 1 ? reader.promise : Promise.resolve("host-reader"),
     });
@@ -53,12 +119,12 @@ describe("runtime source API authorization", () => {
       await authorize.settled;
       await authorize(authority, signal());
       assertEquals(calls, 2);
-      for (const maxPendingCredentialReads of [0, 1.5, 65, Infinity]) {
+      for (const maxPendingOperations of [0, 1.5, 65, Infinity]) {
         assertThrows(
           () =>
             createRuntimeSourceAuthorizer({
               baseUrl: "https://api.example",
-              maxPendingCredentialReads,
+              maxPendingOperations,
               readProjectToken,
             }),
           TypeError,

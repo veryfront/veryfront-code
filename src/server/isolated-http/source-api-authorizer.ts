@@ -1,4 +1,4 @@
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { readProxyResponseJson, settleProxyResponseBody } from "../../proxy/response-body.ts";
 import { snapshotInstalledProjectHttpBinding } from "../runtime-handler/installed-project.ts";
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
 
@@ -13,8 +13,8 @@ const unavailable = () => new Error("Runtime source authorization failed");
 export function createRuntimeSourceAuthorizer(options: {
   baseUrl: string;
   timeoutMs?: number;
-  /** Raw host credential reads retain their reservation until settlement; 1 through 64, default 16. */
-  maxPendingCredentialReads?: number;
+  /** Raw source HTTP and credential IO retain their reservation until settlement; 1 through 64, default 16. */
+  maxPendingOperations?: number;
   /** Host-only project-read credential. Never use the caller's source grant to read environments. */
   readProjectToken(projectId: string, signal: AbortSignal): Promise<string>;
   /** Host-owned transport injection; production defaults to verified native HTTPS fetch. */
@@ -29,25 +29,25 @@ export function createRuntimeSourceAuthorizer(options: {
   const fetch = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 5000;
   const readProjectToken = options.readProjectToken;
-  const maxPendingCredentialReads = options.maxPendingCredentialReads ?? 16;
+  const maxPendingOperations = options.maxPendingOperations ?? 16;
   if (
     typeof fetch !== "function" || typeof readProjectToken !== "function" ||
     !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
-    timeoutMs > 30_000 || !Number.isSafeInteger(maxPendingCredentialReads) ||
-    maxPendingCredentialReads < 1 || maxPendingCredentialReads > 64
+    timeoutMs > 30_000 || !Number.isSafeInteger(maxPendingOperations) ||
+    maxPendingOperations < 1 || maxPendingOperations > 64
   ) {
     throw new TypeError("Invalid runtime source authorization limits");
   }
-  const credentialReads = new Set<Promise<string>>();
-  async function readCredential(projectId: string, signal: AbortSignal): Promise<string> {
+  const pendingOperations = new Set<Promise<unknown>>();
+  async function ownedOperation<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
     signal.throwIfAborted();
-    if (credentialReads.size >= maxPendingCredentialReads) throw unavailable();
+    if (pendingOperations.size >= maxPendingOperations) throw unavailable();
     const raw = Promise.resolve().then(() => {
       signal.throwIfAborted();
-      return readProjectToken(projectId, signal);
+      return operation();
     });
-    credentialReads.add(raw);
-    void raw.then(() => credentialReads.delete(raw), () => credentialReads.delete(raw));
+    pendingOperations.add(raw);
+    void raw.then(() => pendingOperations.delete(raw), () => pendingOperations.delete(raw));
     let abort: () => void = () => {};
     const cancelled = new Promise<never>((_resolve, reject) => {
       abort = () => reject(unavailable());
@@ -61,34 +61,37 @@ export function createRuntimeSourceAuthorizer(options: {
     }
   }
   async function readJson(url: URL, token: string, maximum: number, signal: AbortSignal) {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "error",
-      credentials: "omit",
-      cache: "no-store",
-      signal,
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/json",
-        "accept-encoding": "identity",
-      },
-    });
-    signal.throwIfAborted();
-    const length = response.headers.get("content-length");
-    if (
-      response.status !== 200 ||
-      response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
-        "application/json" ||
-      ![null, "identity"].includes(response.headers.get("content-encoding")) ||
-      (length !== null && (!/^\d+$/.test(length) || Number(length) > maximum))
-    ) throw unavailable();
-    const { text, truncated } = await readResponseTextPrefix(response, maximum + 1, signal, {
-      fatalUtf8: true,
-    });
-    signal.throwIfAborted();
-    if (truncated || new TextEncoder().encode(text).byteLength > maximum) throw unavailable();
-    return JSON.parse(text);
+    return await ownedOperation(async () => {
+      const response = await fetch(url, {
+        method: "GET",
+        redirect: "error",
+        credentials: "omit",
+        cache: "no-store",
+        signal,
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/json",
+          "accept-encoding": "identity",
+        },
+      });
+      try {
+        signal.throwIfAborted();
+        const length = response.headers.get("content-length");
+        if (
+          response.status !== 200 ||
+          response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
+            "application/json" ||
+          ![null, "identity"].includes(response.headers.get("content-encoding")) ||
+          (length !== null && (!/^\d+$/.test(length) || Number(length) > maximum))
+        ) throw unavailable();
+        return await readProxyResponseJson(response, maximum, signal);
+      } finally {
+        if (!response.bodyUsed) await settleProxyResponseBody(response);
+      }
+    }, signal);
   }
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
   const authorize = async (
     authority: HostedHttpRequestAuthority,
     signal: AbortSignal,
@@ -121,7 +124,7 @@ export function createRuntimeSourceAuthorizer(options: {
       sourceUrl.searchParams.set("fields", "(id)");
       const source = await readJson(sourceUrl, token, SOURCE_RESPONSE_BYTES, combined);
       if (
-        !source || typeof source !== "object" || Array.isArray(source) ||
+        !isRecord(source) ||
         source.release_id !== binding.releaseId || !Array.isArray(source.data) ||
         source.data.length > 1 ||
         source.data.some((row: unknown) =>
@@ -130,7 +133,10 @@ export function createRuntimeSourceAuthorizer(options: {
         )
       ) throw unavailable();
       combined.throwIfAborted();
-      const projectToken = await readCredential(binding.projectId, combined);
+      const projectToken = await ownedOperation(
+        () => readProjectToken(binding.projectId, combined),
+        combined,
+      );
       combined.throwIfAborted();
       if (typeof projectToken !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(projectToken)) {
         throw unavailable();
@@ -142,7 +148,7 @@ export function createRuntimeSourceAuthorizer(options: {
         combined,
       );
       if (
-        !project || typeof project !== "object" || Array.isArray(project) ||
+        !isRecord(project) ||
         project.id !== binding.projectId || project.slug !== binding.projectSlug ||
         !Array.isArray(project.environments) ||
         project.environments.length > MAX_PROJECT_ENVIRONMENTS
@@ -166,7 +172,7 @@ export function createRuntimeSourceAuthorizer(options: {
   };
   // A deadline releases admission, but never claims that uncooperative host IO has retired.
   return Object.defineProperties(authorize, {
-    pending: { get: () => credentialReads.size },
-    settled: { get: () => Promise.allSettled([...credentialReads]).then(() => {}) },
+    pending: { get: () => pendingOperations.size },
+    settled: { get: () => Promise.allSettled([...pendingOperations]).then(() => {}) },
   }) as typeof authorize & { readonly pending: number; readonly settled: Promise<void> };
 }
