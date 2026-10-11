@@ -54,7 +54,6 @@ permissions:
   contents: read
 
 jobs:
-
   ci:
     name: "source check (${{ inputs.check }})"
     if: ${{ inputs.job == 'ci' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -187,7 +186,9 @@ jobs:
             tests/integration/server/shared-agent-bootstrap.test.ts \
             tests/integration/observability/project-otlp-transport-policy.test.ts \
             tests/integration/observability/project-provider.test.ts \
-            tests/integration/observability/project-http-lifecycle.test.ts
+            tests/integration/observability/project-http-lifecycle.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts \

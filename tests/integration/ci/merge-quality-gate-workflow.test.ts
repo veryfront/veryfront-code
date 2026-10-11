@@ -824,6 +824,14 @@ done
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+    );
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+    );
     assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
     assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
     const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
