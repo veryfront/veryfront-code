@@ -338,6 +338,16 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("keeps an invalid header policy apart from the valid policy it repeats", () => {
+    const f = fixture(() => new Response("unused"));
+    const valid = prepareHostedHttpInput({ ...f.input, headers: { denyHeaders: ["X-Internal"] } });
+    const invalid = prepareHostedHttpInput({
+      ...f.input,
+      headers: { denyHeaders: Array.from({ length: 33 }, () => "X-Internal") },
+    });
+    assertEquals(hostedHttpInstallationKey(valid) === hostedHttpInstallationKey(invalid), false);
+  });
+
   it("does not allocate an executor inside its retirement window", async () => {
     const f = fixture(() => new Response("unreachable"));
     f.input.session.request.prepareDeadlineAt = Date.now() + 3_000;

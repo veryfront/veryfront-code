@@ -13,6 +13,7 @@ import {
   sameHostedExecutorOwner,
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
+import { normalizeDynamicDenyHeaders } from "#veryfront/security/http/application-request.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { RenderGenerationExecutor } from "#veryfront/rendering/render-generation.ts";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
@@ -117,9 +118,8 @@ export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): strin
     input.allocation.owner,
     input.allocation.source,
     input.configuration ?? null,
-    // The request filter lowercases and deduplicates these names, so compare them that way.
-    [...new Set(input.headerOptions.denyHeaders?.map((name) => name.toLowerCase()))]
-      .sort(compareCodeUnits),
+    // Compare the policy request filtering applies; an invalid list removes every header.
+    denyPolicyKey(input.headerOptions.denyHeaders),
   ]);
 }
 
@@ -127,6 +127,11 @@ export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): strin
 function compareCodeUnits(a: string, b: string): number {
   if (a === b) return 0;
   return a < b ? -1 : 1;
+}
+
+function denyPolicyKey(names: readonly string[] | undefined): string[] | "deny-all" {
+  const normalized = normalizeDynamicDenyHeaders(names);
+  return normalized === null ? "deny-all" : [...normalized].sort(compareCodeUnits);
 }
 
 function timerDelay(value: number): number {
