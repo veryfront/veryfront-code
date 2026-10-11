@@ -277,6 +277,18 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps hosted executor intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain hosted executor intrinsic coverage`,
+      );
+    }
+  });
+
   it("keeps the cross-runtime SSR pipeline fixture in Node and Bun", async () => {
     const fixture =
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
@@ -974,6 +986,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
@@ -1004,6 +1017,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

@@ -1,8 +1,27 @@
+import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import {
+  closePrivateStream,
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
+import {
+  isAbortSignalAborted,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 /**
  * Runtime Bridge
  *
@@ -12,7 +31,13 @@ import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
-import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
+import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -28,6 +53,7 @@ import type {
   EmbeddingRuntime,
   ModelRuntime,
   ModelRuntimeGenerateResult,
+  ModelRuntimeStreamResult,
   RuntimeResponseFormat,
 } from "#veryfront/provider/types.ts";
 import {
@@ -40,29 +66,58 @@ import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/p
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   AgentRunModelCallContextEvent,
+  AgentRunRuntimeEventRecordedEvent,
   ModelCallMessage,
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
 import { getRuntimeObservationWriterBinding } from "./runtime-observation-carrier.ts";
-import {
-  type AgentRunModelCallCaptureReceipt,
-  getModelCallCaptureReceiptSchema,
-} from "./model-call-capture-receipt.ts";
+import type { AgentRunModelCallCaptureReceipt } from "./model-call-capture-receipt.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallContextMessages,
+  snapshotModelCallContextTools,
+  snapshotModelCallProviderOptions,
 } from "./model-call-context-request.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ObjectFreeze = Object.freeze;
 const ArrayIsArray = Array.isArray;
 const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
+const IntrinsicCrypto = crypto;
+const CryptoRandomUUID = IntrinsicCrypto.randomUUID;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const SymbolIterator = Symbol.iterator;
+const EmptyStructuredCloneTransferList: Transferable[] = [];
+ObjectDefineProperty(EmptyStructuredCloneTransferList, SymbolIterator, {
+  configurable: false,
+  enumerable: false,
+  value() {
+    return {
+      next() {
+        return { done: true, value: undefined };
+      },
+    };
+  },
+  writable: false,
+});
+const EmptyStructuredCloneOptions: StructuredSerializeOptions = {
+  transfer: EmptyStructuredCloneTransferList,
+};
 const logger = serverLogger.component("runtime-bridge");
+
+function cloneStructured<T>(value: T): T {
+  return ReflectApply(cloneStructuredValue, globalThis, [
+    value,
+    EmptyStructuredCloneOptions,
+  ]) as T;
+}
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -188,6 +243,7 @@ type ModelCallRequestSource = Pick<
 type DirectModelOptions = Record<string, unknown> & {
   prompt: DirectModelMessage[];
   tools?: ModelCallTool[];
+  abortSignal?: AbortSignal;
 } & ModelCallRequestSource;
 
 function readSystemProviderOptions(
@@ -752,12 +808,12 @@ function buildDirectModelOptions(
  * options validated and built for it, and the request recorded for it, match
  * the request then sent.
  */
-async function settleVeryfrontCloudModel(options: DirectTextOptions): Promise<void> {
-  if (
-    readVeryfrontCloudModelFacts(options.model) !== undefined &&
-    typeof options.model.prepare === "function"
-  ) {
-    await options.model.prepare(options.abortSignal);
+async function settleVeryfrontCloudModel(
+  model: ModelRuntime,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (readVeryfrontCloudModelFacts(model) !== undefined && typeof model.prepare === "function") {
+    await model.prepare(abortSignal);
   }
 }
 
@@ -786,7 +842,7 @@ function matchesPersistedProviderOptions(input: unknown, persisted: unknown): bo
 function hasUnsupportedExactCapturePromptProviderOptions(
   directOptions: DirectModelOptions,
 ): boolean {
-  return directOptions.prompt.some((message) => {
+  return somePrivateArray(directOptions.prompt, (message) => {
     if (message.role !== "system" || message.providerOptions === undefined) return false;
     const persisted = sanitizePersistedProviderOptions(message.providerOptions);
     return !matchesPersistedProviderOptions(message.providerOptions, persisted);
@@ -796,7 +852,7 @@ function hasUnsupportedExactCapturePromptProviderOptions(
 function hasUnsupportedExactCaptureAssistantProviderMetadata(
   directOptions: DirectModelOptions,
 ): boolean {
-  return directOptions.prompt.some((message) => {
+  return somePrivateArray(directOptions.prompt, (message) => {
     return message.role === "assistant" && message.providerMetadata !== undefined;
   });
 }
@@ -804,29 +860,84 @@ function hasUnsupportedExactCaptureAssistantProviderMetadata(
 function assertExactModelCallCaptureControlsSupported(
   directOptions: DirectModelOptions,
 ): void {
-  const unsupportedControls = [
-    "toolChoice",
-    "headers",
-    "providerOptions",
-    "responseFormat",
-    "includeRawChunks",
-  ].filter((field) => directOptions[field] !== undefined);
+  const unsupportedControls: string[] = [];
+  forEachPrivateArray(
+    [
+      "toolChoice",
+      "headers",
+      "providerOptions",
+      "includeRawChunks",
+    ] as const,
+    (field) => {
+      if (directOptions[field] !== undefined) pushPrivateArray(unsupportedControls, field);
+    },
+  );
   if (hasUnsupportedExactCapturePromptProviderOptions(directOptions)) {
-    unsupportedControls.push("system.providerOptions");
+    pushPrivateArray(unsupportedControls, "system.providerOptions");
   }
   if (hasUnsupportedExactCaptureAssistantProviderMetadata(directOptions)) {
-    unsupportedControls.push("assistant.providerMetadata");
+    pushPrivateArray(unsupportedControls, "assistant.providerMetadata");
   }
   if (unsupportedControls.length === 0) return;
   throw new DurableRunEventPersistenceError(
     `Exact model call capture does not support these provider controls: ${
-      unsupportedControls.join(", ")
+      joinPrivateArray(unsupportedControls, ", ")
     }`,
   );
 }
 
+function randomUUID(): string {
+  return ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+}
+
+const CaptureReceiptUuidPattern =
+  /^(?:00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+const CaptureReceiptFields = ["eventId", "projectId", "runId", "modelCallId"] as const;
+
+function isPropertyRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return !!value && typeof value === "object" && !ArrayIsArray(value);
+}
+
+function readCaptureReceiptStringField(
+  value: Record<PropertyKey, unknown>,
+  key: string,
+): string | undefined {
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor?.enumerable === true && ObjectHasOwn(descriptor, "value") &&
+      typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function readModelCallCaptureReceipt(
+  value: unknown,
+): AgentRunModelCallCaptureReceipt | undefined {
+  if (!isPropertyRecord(value)) return undefined;
+  const keys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
+  if (keys.length !== CaptureReceiptFields.length) return undefined;
+  for (let index = 0; index < CaptureReceiptFields.length; index++) {
+    const field = CaptureReceiptFields[index];
+    if (field === undefined || !ObjectHasOwn(value, field)) return undefined;
+  }
+  const eventId = readCaptureReceiptStringField(value, "eventId");
+  const projectId = readCaptureReceiptStringField(value, "projectId");
+  const runId = readCaptureReceiptStringField(value, "runId");
+  const modelCallId = readCaptureReceiptStringField(value, "modelCallId");
+  if (
+    !eventId || !projectId || !runId || !modelCallId ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, projectId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, runId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, modelCallId)
+  ) {
+    return undefined;
+  }
+  return { eventId, projectId, runId, modelCallId };
+}
+
 async function emitModelCallContextEvent(
-  options: DirectTextOptions,
+  model: ModelRuntime,
   directOptions: DirectModelOptions,
 ): Promise<
   | {
@@ -837,37 +948,41 @@ async function emitModelCallContextEvent(
 > {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return undefined;
-  const request = buildModelCallContextRequest(options.model, directOptions);
+  const request = buildModelCallContextRequest(model, directOptions);
   const writerBinding = getRuntimeObservationWriterBinding(sinks.mandatory);
   const writerScope = writerBinding?.scope;
   const captureEnabled = writerBinding !== undefined &&
-    readVeryfrontCloudModelFacts(options.model) !== undefined;
+    readVeryfrontCloudModelFacts(model) !== undefined;
   if (captureEnabled) {
     writerBinding.assertActive();
     assertExactModelCallCaptureControlsSupported(directOptions);
   }
-  const modelCallId = captureEnabled ? crypto.randomUUID() : undefined;
+  const modelCallId = captureEnabled ? randomUUID() : undefined;
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     ...(modelCallId ? { modelCallId } : {}),
-    ...(options.model.modelId
+    ...(model.modelId
       ? {
         model: {
-          id: options.model.modelId,
-          ...(resolveModelCallProvider(options.model)
-            ? { modelProvider: resolveModelCallProvider(options.model) }
+          id: model.modelId,
+          ...(resolveModelCallProvider(model)
+            ? { modelProvider: resolveModelCallProvider(model) }
             : {}),
         },
       }
       : {}),
     ...(request ? { request } : {}),
-    messages: sanitizeModelCallContextMessages(directOptions.prompt),
-    ...(directOptions.tools ? { tools: directOptions.tools } : {}),
+    messages: snapshotModelCallContextMessages(
+      sanitizeModelCallContextMessages(directOptions.prompt),
+    ),
+    ...(directOptions.tools ? { tools: snapshotModelCallContextTools(directOptions.tools) } : {}),
   };
 
   const assertActive = () => {
-    options.abortSignal?.throwIfAborted();
+    if (directOptions.abortSignal) {
+      throwIfAbortSignalAborted(directOptions.abortSignal);
+    }
     writerBinding?.assertActive();
   };
 
@@ -875,7 +990,7 @@ async function emitModelCallContextEvent(
     | { ok: true; event: AgentRunModelCallContextEvent }
     | { ok: false; error: unknown } => {
     try {
-      return { ok: true, event: cloneStructuredValue(event) };
+      return { ok: true, event: cloneStructured(event) };
     } catch (error) {
       const failureClass = error instanceof DOMException && error.name === "DataCloneError"
         ? "DataCloneError"
@@ -916,18 +1031,22 @@ async function emitModelCallContextEvent(
     }
     return { receipt: undefined, assertActive };
   }
-  const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
+  const receipt = readModelCallCaptureReceipt(acknowledgement);
   if (
-    !receipt.success ||
-    receipt.data.modelCallId.toLowerCase() !== modelCallId?.toLowerCase() ||
-    receipt.data.runId.toLowerCase() !== writerScope.canonicalRunId.toLowerCase() ||
-    receipt.data.projectId.toLowerCase() !== writerScope.projectId.toLowerCase()
+    receipt === undefined ||
+    modelCallId === undefined ||
+    privateTextToLowerCase(receipt.modelCallId) !== privateTextToLowerCase(modelCallId) ||
+    privateTextToLowerCase(receipt.runId) !== privateTextToLowerCase(writerScope.canonicalRunId) ||
+    privateTextToLowerCase(receipt.projectId) !== privateTextToLowerCase(writerScope.projectId)
   ) {
     throw new DurableRunEventPersistenceError(
       "Model call capture receipt is missing or invalid",
     );
   }
-  return { receipt: Object.freeze(receipt.data), assertActive };
+  return {
+    receipt: ReflectApply(ObjectFreeze, Object, [receipt]) as AgentRunModelCallCaptureReceipt,
+    assertActive,
+  };
 }
 
 function runWithModelCallCapture<T>(
@@ -943,6 +1062,72 @@ function runWithModelCallCapture<T>(
     capture ?? { receipt: undefined, assertActive() {} },
     operation,
   );
+}
+
+function resolveGenerateFailureObservation(error: unknown): AgentRunRuntimeEventRecordedEvent {
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  const knownProviderError = resolveKnownProviderTerminalError(
+    providerFailure.found ? providerFailure.cause : error,
+  );
+  const durable = buildRuntimeEventRecordedEvent({
+    runtime: "veryfront",
+    kind: "agent_error",
+    value: knownProviderError
+      ? { message: knownProviderError.message, code: knownProviderError.code }
+      : { message: "Provider stream failed" },
+  }).durable;
+  if (
+    durable.type !== "RUNTIME_EVENT_RECORDED" || typeof durable.runtime !== "string" ||
+    typeof durable.kind !== "string"
+  ) {
+    throw new TypeError("Invalid runtime event observation");
+  }
+  return {
+    type: durable.type,
+    runtime: durable.runtime,
+    kind: durable.kind,
+    value: durable.value,
+  };
+}
+
+async function emitGenerateFailureObservation(error: unknown): Promise<void> {
+  const sinks = getActiveRunEventSinks();
+  if (!sinks.mandatory && !sinks.public) return;
+  const event = resolveGenerateFailureObservation(error);
+  const mandatoryEvent = sinks.mandatory ? cloneStructured(event) : undefined;
+  const publicEvent = sinks.public && sinks.public !== sinks.mandatory
+    ? cloneStructured(event)
+    : undefined;
+  if (sinks.mandatory && mandatoryEvent) await sinks.mandatory(mandatoryEvent);
+  if (sinks.public && sinks.public !== sinks.mandatory && publicEvent) {
+    await sinks.public(publicEvent);
+  }
+}
+
+function observeGenerateFailure<T>(
+  operation: () => T | PromiseLike<T>,
+  abortSignal?: AbortSignal,
+): Promise<T> {
+  const observed = chainPrivatePromise(resolvePrivatePromise(), operation);
+  return chainPrivatePromise(observed, (value) => value, async (error) => {
+    if (!abortSignal || !isAbortSignalAborted(abortSignal)) {
+      await emitGenerateFailureObservation(error);
+    }
+    throw error;
+  });
+}
+
+function createGenerateFailureObserver(
+  abortSignal?: AbortSignal,
+): (error: unknown) => Promise<never> {
+  let observation: Promise<void> | undefined;
+  return async (error: unknown): Promise<never> => {
+    if (!abortSignal || !isAbortSignalAborted(abortSignal)) {
+      observation ??= emitGenerateFailureObservation(error);
+      await observation;
+    }
+    throw error;
+  };
 }
 
 function isDirectToolCallPart(
@@ -1238,7 +1423,7 @@ async function buildGenerateResultFromStream(
 }
 
 function materializeProviderJsonField(value: unknown): unknown {
-  return value === undefined ? undefined : cloneStructuredValue(snapshotProviderJsonValue(value, {
+  return value === undefined ? undefined : cloneStructured(snapshotProviderJsonValue(value, {
     dropUndefinedMembers: true,
   }));
 }
@@ -1259,7 +1444,7 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
   const type = read("type", true);
   if (typeof type !== "string") return { type };
 
-  if (type.startsWith("data-")) {
+  if (ReflectApply(StringPrototypeStartsWith, type, ["data-"]) === true) {
     return { type, data: materializeProviderJsonField(read("data")) };
   }
 
@@ -1364,6 +1549,56 @@ function materializeProviderStreamPart(part: unknown): unknown {
   }
 }
 
+function observeProviderStreamSourceFailures(
+  stream: ReadableStream<unknown>,
+  observeFailure: (error: unknown) => Promise<never>,
+): ReadableStream<unknown> {
+  const reader = getPrivateStreamReader(stream);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+
+  return createPrivateReadableStream<unknown>({
+    async pull(controller) {
+      try {
+        const part = await reader.read();
+        if (part.done) {
+          closePrivateStream(controller);
+          release();
+          return;
+        }
+        enqueuePrivateStream(controller, materializeProviderStreamPart(part.value));
+      } catch (error) {
+        const providerFailure = createRuntimeProviderStreamFailure(error);
+        void (async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Provider cleanup cannot replace or delay the terminal provider error.
+          } finally {
+            release();
+          }
+        })();
+        try {
+          await observeFailure(providerFailure);
+        } catch (observedError) {
+          errorPrivateStream(controller, observedError);
+        }
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+}
+
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   const reader = stream.getReader();
   let completed = false;
@@ -1416,31 +1651,87 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
   }
 }
 
+function snapshotDirectModelOptions(
+  model: ModelRuntime,
+  options: DirectModelOptions,
+): DirectModelOptions {
+  try {
+    return snapshotModelCallProviderOptions(model, options);
+  } catch (error) {
+    if (!getActiveRunEventSinks().mandatory) throw error;
+    recordErrorCount({ slug: "model-call-context-clone-failed", failure_class: "unknown" });
+    throw new DurableRunEventPersistenceError(
+      "Mandatory model call context event is not cloneable",
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
-    await settleVeryfrontCloudModel(options);
-    const directOptions = buildDirectModelOptions(options, tools);
-    const capture = await emitModelCallContextEvent(options, directOptions);
-    if (shouldGenerateViaStream(options.model)) {
-      return runWithModelCallCapture(
-        capture,
-        () => options.model.doStream(directOptions),
-      ).then(({ stream }) => buildGenerateResultFromStream(stream));
+    const model = options.model;
+    await settleVeryfrontCloudModel(model, options.abortSignal);
+    const directOptions = snapshotDirectModelOptions(
+      model,
+      buildDirectModelOptions(options, tools),
+    );
+    const generateViaStream = shouldGenerateViaStream(model);
+    const dispatchMethod = generateViaStream ? model.doStream : model.doGenerate;
+    const abortSignal = directOptions.abortSignal;
+    const capture = await emitModelCallContextEvent(model, directOptions);
+    if (generateViaStream) {
+      return observeGenerateFailure(() =>
+        runWithModelCallCapture(
+          capture,
+          () =>
+            ReflectApply(dispatchMethod, model, [directOptions]) as Promise<
+              ModelRuntimeStreamResult
+            >,
+        ).then(({ stream }) => buildGenerateResultFromStream(stream)), abortSignal);
     }
 
-    return runWithModelCallCapture(
-      capture,
-      () => options.model.doGenerate(directOptions),
-    ).then(buildDirectGenerateResult);
+    return observeGenerateFailure(() =>
+      runWithModelCallCapture(
+        capture,
+        () =>
+          ReflectApply(dispatchMethod, model, [directOptions]) as Promise<
+            ModelRuntimeGenerateResult
+          >,
+      ).then(buildDirectGenerateResult), abortSignal);
   });
 }
 
-export function streamText(options: StreamTextOptions): RuntimeStreamResult {
+function streamTextInternal(
+  options: StreamTextOptions,
+  shouldObserveStreamFailure: boolean,
+): RuntimeStreamResult {
+  let observeStreamFailure = createGenerateFailureObserver(options.abortSignal);
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
-    await settleVeryfrontCloudModel(options);
-    const directOptions = buildDirectModelOptions(options, tools);
-    const capture = await emitModelCallContextEvent(options, directOptions);
-    return runWithModelCallCapture(capture, () => options.model.doStream(directOptions));
+    const model = options.model;
+    await settleVeryfrontCloudModel(model, options.abortSignal);
+    const directOptions = snapshotDirectModelOptions(
+      model,
+      buildDirectModelOptions(options, tools),
+    );
+    const dispatchMethod = model.doStream;
+    const dispatch = () =>
+      ReflectApply(dispatchMethod, model, [directOptions]) as Promise<ModelRuntimeStreamResult>;
+    observeStreamFailure = createGenerateFailureObserver(directOptions.abortSignal);
+    const capture = await emitModelCallContextEvent(model, directOptions);
+    try {
+      const result = await runWithModelCallCapture(capture, dispatch);
+      return {
+        ...result,
+        stream: shouldObserveStreamFailure
+          ? observeProviderStreamSourceFailures(result.stream, observeStreamFailure)
+          : result.stream,
+      };
+    } catch (error) {
+      if (!shouldObserveStreamFailure) throw error;
+      return await observeStreamFailure(error);
+    }
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
   // branch is never consumed at all) and doStream rejects.
@@ -1481,6 +1772,14 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
       yield* getPrivateAsyncIterator(textDeltasFromStream(await acquire("text")));
     })(),
   };
+}
+
+export function streamText(options: StreamTextOptions): RuntimeStreamResult {
+  return streamTextInternal(options, true);
+}
+
+export function streamTextForObservedAgentRuntime(options: StreamTextOptions): RuntimeStreamResult {
+  return streamTextInternal(options, false);
 }
 
 export function embed(options: EmbedOptions) {

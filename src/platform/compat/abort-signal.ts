@@ -24,6 +24,7 @@ const abortSignalReasonGetter = getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "reason",
 )?.get;
+const abortSignalThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const eventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 
@@ -65,6 +66,11 @@ export function isAbortSignalAborted(signal: AbortSignal): boolean {
 export function getAbortSignalReason(signal: AbortSignal): unknown {
   if (typeof abortSignalReasonGetter !== "function") return undefined;
   return apply(abortSignalReasonGetter, signal, []);
+}
+
+/** Throw the native cancellation reason without consulting instance methods. */
+export function throwIfAbortSignalAborted(signal: AbortSignal): void {
+  apply(abortSignalThrowIfAborted, signal, []);
 }
 
 /** Attach one native abort listener without consulting instance methods. */

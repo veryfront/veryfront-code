@@ -54,6 +54,17 @@ export interface ModelCallModel {
   modelProvider?: string;
 }
 
+export type ModelCallResponseFormat =
+  | { type: "text" }
+  | { type: "json" }
+  | {
+    type: "json_schema";
+    name: string;
+    schema: unknown;
+    description?: string;
+    strict?: boolean;
+  };
+
 /** Provider-neutral generation controls that materially affect one model call. */
 export interface ModelCallRequest {
   maxOutputTokens?: number;
@@ -69,6 +80,7 @@ export interface ModelCallRequest {
     effort?: "low" | "medium" | "high" | "max";
     budgetTokens?: number;
   };
+  responseFormat?: ModelCallResponseFormat;
 }
 
 /**
@@ -88,8 +100,18 @@ export type AgentRunModelCallContextEvent = {
   emittedAt?: number;
 };
 
+/** Nonterminal runtime observation produced by an agent run runtime boundary. */
+export type AgentRunRuntimeEventRecordedEvent = {
+  type: "RUNTIME_EVENT_RECORDED";
+  runtime: string;
+  kind: string;
+  value: unknown;
+  elapsedMs?: number;
+  emittedAt?: number;
+};
+
 /** Event produced by an agent run runtime boundary. */
-export type AgentRunEvent = AgentRunModelCallContextEvent;
+export type AgentRunEvent = AgentRunModelCallContextEvent | AgentRunRuntimeEventRecordedEvent;
 
 /** Receives events produced within one scoped agent run execution. */
 export type AgentRunEventSink = (
@@ -103,18 +125,26 @@ export interface AgentRunEventTimingOptions {
   startedMs?: number;
 }
 
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
+const dateNow = Date.now;
+const nativePerformance = performance;
+const performanceNow = nativePerformance.now;
+const mathMax = Math.max;
+const mathRound = Math.round;
 
 /** Create one timing anchor for every event family belonging to a run. */
 export function createAgentRunEventTimingAnchor(
   options: Omit<AgentRunEventTimingOptions, "startedMs"> = {},
 ): AgentRunEventTimingOptions {
-  const nowMs = options.nowMs ?? (() => performance.now());
+  const nowMs = options.nowMs ??
+    (() => reflectApply(performanceNow, nativePerformance, []) as number);
   return {
     nowMs,
-    epochMs: options.epochMs ?? (() => Date.now()),
+    epochMs: options.epochMs ?? (() => reflectApply(dateNow, Date, []) as number),
     startedMs: nowMs(),
   };
 }
@@ -124,8 +154,9 @@ export function createTimedAgentRunEventSink(
   sink: AgentRunEventSink,
   options: AgentRunEventTimingOptions = {},
 ): AgentRunEventSink {
-  const nowMs = options.nowMs ?? (() => performance.now());
-  const epochMs = options.epochMs ?? (() => Date.now());
+  const nowMs = options.nowMs ??
+    (() => reflectApply(performanceNow, nativePerformance, []) as number);
+  const epochMs = options.epochMs ?? (() => reflectApply(dateNow, Date, []) as number);
   const startedMs = options.startedMs ?? nowMs();
   return (event) => {
     const elapsed = readOptionalTiming(event, "elapsedMs");
@@ -133,10 +164,13 @@ export function createTimedAgentRunEventSink(
     if (elapsed.present) assertValidElapsedMs(elapsed.value);
     if (emitted.present) assertValidEmittedAt(emitted.value);
 
-    const elapsedMs = elapsed.present
-      ? elapsed.value
-      : Math.max(0, Math.round(nowMs() - startedMs));
-    const emittedAt = emitted.present ? emitted.value : Math.round(epochMs());
+    const elapsedMs = elapsed.present ? elapsed.value : reflectApply(mathMax, Math, [
+      0,
+      reflectApply(mathRound, Math, [nowMs() - startedMs]),
+    ]) as number;
+    const emittedAt = emitted.present
+      ? emitted.value
+      : reflectApply(mathRound, Math, [epochMs()]) as number;
     assertValidElapsedMs(elapsedMs);
     assertValidEmittedAt(emittedAt);
 
@@ -169,13 +203,13 @@ function readOptionalTiming(
 }
 
 function assertValidElapsedMs(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsFinite(value) || value < 0) {
     throw new TypeError("elapsedMs must be a finite non-negative number");
   }
 }
 
 function assertValidEmittedAt(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsInteger(value) || value < 0) {
     throw new TypeError("emittedAt must be a non-negative integer");
   }
 }

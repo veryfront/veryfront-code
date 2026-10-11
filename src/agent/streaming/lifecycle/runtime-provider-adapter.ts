@@ -25,6 +25,14 @@ import type {
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+  return isRecord(error) && error.retryable === true;
+}
+
 export interface RuntimeStreamProviderOptions {
   availableToolNames: ReadonlySet<string> | null;
   providerExecutedToolNames: ReadonlySet<string>;
@@ -166,7 +174,7 @@ export function classifyRuntimeProviderError(
     return {
       code: known.code,
       publicMessage: known.message,
-      retryable: false,
+      retryable: isRetryableProviderError(error),
       terminal: true,
     };
   }

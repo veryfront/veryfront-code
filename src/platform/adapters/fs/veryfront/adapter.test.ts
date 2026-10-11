@@ -2449,7 +2449,63 @@ describe("VeryfrontFSAdapter", () => {
       );
     });
 
-    it("uses cold initialization as the zero-age source snapshot", async () => {
+    it("revalidates cold initialization when a strict preview request requires zero-age source", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const draftContent = listAllFilesCalls === 1 ? "pre-save" : "saved";
+        return Promise.resolve([{
+          path: "app/page.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.ensureSourceSnapshotFresh("preview-document-routing", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "a cold strict preview document must re-check the source authority after initialization",
+      );
+      assertEquals(
+        await adapter.readTextFile("app/page.tsx"),
+        "saved",
+        "strict preview config must bind to the saved source that is visible after cold start",
+      );
+    });
+
+    it("rechecks source authority after cold initialization for zero-age freshness", async () => {
       const adapter = createAdapter({
         veryfront: {
           apiBaseUrl: "https://api.example.com",
@@ -2495,8 +2551,8 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(
         listAllFilesCalls,
-        1,
-        "the listing fetched during cold initialization already satisfies this zero-age check",
+        2,
+        "a zero-age check must refresh after cold initialization",
       );
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
 
@@ -2512,8 +2568,8 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(
         listAllFilesCalls,
-        2,
-        "an invalidation must prevent the cold-initialization shortcut from accepting old authority",
+        3,
+        "an invalidation still forces a fresh source authority read",
       );
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
     });
@@ -2582,7 +2638,11 @@ describe("VeryfrontFSAdapter", () => {
 
       draftContent = "v2";
       await adapter.ensureSourceSnapshotFresh("later-strict-document", { maxAgeMs: 0 });
-      assertEquals(listAllFilesCalls, 2, "only joined cold callers may reuse initialization");
+      assertEquals(
+        listAllFilesCalls,
+        3,
+        "later zero-age callers must re-check source authority again",
+      );
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
     });
 

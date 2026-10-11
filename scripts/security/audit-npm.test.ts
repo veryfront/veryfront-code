@@ -71,7 +71,7 @@ describe("buildAuditPackageJson", () => {
 });
 
 describe("audit task", () => {
-  it("audits the independent Storybook package lock", async () => {
+  it("audits the root override manifest and independent Storybook lock", async () => {
     const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
     const workflow = await Deno.readTextFile(
       ".github/workflows/security-audit.yml",
@@ -86,6 +86,7 @@ describe("audit task", () => {
       ),
       true,
     );
+    assertEquals(pullRequestPaths.includes("package.json"), true);
     assertEquals(pullRequestPaths.includes("storybook/package.json"), true);
     assertEquals(
       pullRequestPaths.includes("storybook/package-lock.json"),

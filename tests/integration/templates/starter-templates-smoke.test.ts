@@ -32,7 +32,11 @@ describe("starter templates smoke", {
         await scaffoldTemplate(context.projectDir, templateName);
 
         const port = await context.allocatePort();
-        const server = await context.startDevServer({ port, enableHMR: false });
+        const server = await context.startDevServer({
+          port,
+          enableHMR: false,
+          readinessCheckPath: "/readyz",
+        });
 
         const response = await fetch(`http://127.0.0.1:${server.port}/`);
         assertEquals(

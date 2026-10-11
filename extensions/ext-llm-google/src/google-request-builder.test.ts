@@ -1,3 +1,4 @@
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAssistantContentPart, RuntimePromptMessage } from "veryfront/provider/shared";
@@ -2130,3 +2131,62 @@ describe("ext-llm-google/google-request-builder", () => {
     }
   });
 });
+
+for (const providerName of ["google", "google-vertex"]) {
+  it(`keeps ${providerName} native controls when managed code omits string-array iteration`, () => {
+    const options = {
+      prompt: [],
+      providerOptions: {
+        google: { generationConfig: { maxOutputTokens: 32, responseMimeType: "application/json" } },
+        [providerName]: {
+          generationConfig: { maxOutputTokens: 48, responseMimeType: "application/json" },
+        },
+      },
+    };
+    const expected = buildGoogleGenerateContentRequest(
+      providerName,
+      options,
+      createWarningCollector(),
+    );
+    const captured = buildModelCallContextRequest(
+      { provider: "google", modelId: "gemini-test" },
+      options,
+    );
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    if (!original) throw new Error("Array iterator descriptor unavailable");
+    const iterator = Array.prototype[Symbol.iterator];
+    const apply = Reflect.apply;
+    let omitted = 0;
+    let actual: ReturnType<typeof buildGoogleGenerateContentRequest> | undefined;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...original,
+      value: function (this: unknown[]) {
+        let stringsOnly = this.length > 0;
+        for (let index = 0; index < this.length; index++) {
+          if (typeof this[index] !== "string") stringsOnly = false;
+        }
+        if (stringsOnly) {
+          omitted++;
+          return {
+            next() {
+              return { done: true, value: undefined };
+            },
+          };
+        }
+        return apply(iterator, this, []);
+      },
+    });
+    try {
+      actual = buildGoogleGenerateContentRequest(providerName, options, createWarningCollector());
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, original);
+    }
+    assertEquals(actual, expected);
+    assertEquals(omitted, 0);
+    assertEquals(actual?.generationConfig?.maxOutputTokens, 48);
+    if (providerName === "google") {
+      assertEquals(captured?.maxOutputTokens, actual?.generationConfig?.maxOutputTokens);
+      assertEquals(captured?.responseFormat, { type: "json" });
+    }
+  });
+}

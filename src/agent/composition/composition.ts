@@ -7,7 +7,11 @@
  * @module
  */
 
-import { executeLocalChild, type LocalChildInvocation } from "./local-child-execution.ts";
+import {
+  executeLocalChild,
+  type LocalChildInvocation,
+  withoutAutomaticRuntimeStreamObservation,
+} from "./local-child-execution.ts";
 import type { Agent, AgentResponse } from "../types.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import {
@@ -114,12 +118,16 @@ async function runAgentAsStreamingTool(
           finalResponse = response;
         },
       };
+      const streamChild = () =>
+        control?.onEvent
+          ? withoutAutomaticRuntimeStreamObservation(() => streamAgent.stream(streamInput))
+          : streamAgent.stream(streamInput);
       const stream = await (privateRuntime
         ? runWithRetainedApplicationInferenceAdmission(
           privateRuntime,
-          () => streamAgent.stream(streamInput),
+          streamChild,
         )
-        : streamAgent.stream(streamInput));
+        : streamChild());
       let streamError: string | undefined;
       const response = stream.toDataStreamResponse();
       if (response.body) {
