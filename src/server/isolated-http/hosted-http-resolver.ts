@@ -364,10 +364,15 @@ export function createHostedHttpResolver(
   const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
   const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
   const repository = options.sourceImageRepository;
-  // An optional registry host with port, then path components. Tags and digests are refused.
+  // An optional registry host with a TCP port (1-65535), then path components. Tags and
+  // digests are refused.
+  const repositoryMatch = typeof repository === "string" && repository.length <= 256
+    ? /^[a-z0-9][a-z0-9._-]*(?::([0-9]{1,5})(?=\/))?(?:\/[a-z0-9][a-z0-9._-]*)*$/.exec(repository)
+    : null;
+  const registryPort = repositoryMatch?.[1];
   if (
-    typeof repository !== "string" || repository.length > 256 ||
-    !/^[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5}(?=\/))?(?:\/[a-z0-9][a-z0-9._-]*)*$/.test(repository)
+    !repositoryMatch ||
+    (registryPort !== undefined && !(Number(registryPort) >= 1 && Number(registryPort) <= 65535))
   ) {
     throw new TypeError("Hosted HTTP resolver requires a source image repository");
   }

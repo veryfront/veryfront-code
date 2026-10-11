@@ -460,13 +460,19 @@ describe("hosted HTTP resolver", () => {
     assertEquals(resolved.session.expectedImage, IMAGE);
   });
 
-  it("accepts a registry host with a port and refuses tags and digests in the repository", () => {
+  it("accepts a registry host with a TCP port and refuses tags, digests and invalid ports", () => {
     createHostedHttpResolver(
       options({ sourceImageRepository: "registry.example:5000/team/source" }),
     );
     createHostedHttpResolver(options({ sourceImageRepository: "localhost:5000/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "registry.example:65535/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "registry.example:1/source" }));
     for (
       const repository of [
+        "registry.example:99999/team/source",
+        "registry.example:65536/team/source",
+        "registry.example:0/team/source",
+        "registry.example:00000/team/source",
         "ghcr.io/veryfront/tenant-source:latest",
         "registry.example:5000/team/source:v1",
         `ghcr.io/veryfront/tenant-source@sha256:${"a".repeat(64)}`,
