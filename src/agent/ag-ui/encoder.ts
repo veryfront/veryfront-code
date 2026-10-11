@@ -7,6 +7,8 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 import {
   encodePrivateText,
+  privateTextCharCodeAt,
+  privateTextEndsWith,
   privateTextSlice,
   privateTextSplit,
   privateTextStartsWith,
@@ -73,7 +75,10 @@ function defaultEpochMs(): number {
   return reflectApply(dateNow, intrinsicDate, []) as number;
 }
 
-/** Event emitted for AG-UI runtime stream. */
+/**
+ * Event emitted for AG-UI runtime stream. A message-finish producer sets
+ * objectEncoding to "snapshot" only for a generated capture envelope.
+ */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
 /** Public API contract for AG-UI run finished metadata. */
@@ -142,6 +147,13 @@ export interface AgUiEncoderState {
   sawTerminalError: boolean;
   /** A manual pause closes the transport while execution waits for resume. */
   manuallyPaused?: boolean;
+  /**
+   * JSON snapshot of the `message-finish` structured output, reported as the
+   * `RunFinished` result so the event and the stored run output never carry
+   * values JSON cannot represent. Optional for the same compatibility reason
+   * as `openToolCallIds`.
+   */
+  finishObject?: { value: unknown };
   metadata: AgUiRunFinishedMetadata;
   /**
    * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
@@ -639,6 +651,7 @@ interface MessageFinishObjectSnapshot {
 }
 
 interface MessageFinishObjectSnapshotContext {
+  preserveArrayTruncationMarkers?: boolean;
   remainingBytes: number;
   remainingNodes: number;
   seen: ReturnType<typeof createPrivateWeakStore<object, true>>;
@@ -784,6 +797,25 @@ function hasRemainingEligibleMessageFinishObjectProperty<TInput extends object>(
   return false;
 }
 
+function hasMessageFinishArrayTruncationMarker(input: unknown[], length: number): boolean {
+  if (length !== MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS + 1) return false;
+  const property = objectGetOwnPropertyDescriptor(input, length - 1);
+  if (!property?.enumerable || !objectHasOwn(property, "value")) return false;
+  const value = property.value;
+  if (
+    typeof value !== "string" || !privateTextStartsWith(value, "[truncated ") ||
+    !privateTextEndsWith(value, " items]")
+  ) return false;
+  const count = privateTextSlice(value, 11, value.length - 7);
+  if (count.length === 0 || privateTextStartsWith(count, "0")) return false;
+  // Read ASCII decimal digits without the project's mutable string iterator.
+  for (let index = 0; index < count.length; index++) {
+    const code = privateTextCharCodeAt(count, index);
+    if (code < 0x30 || code > 0x39) return false;
+  }
+  return true;
+}
+
 function snapshotMessageFinishObjectValue(
   input: unknown,
   context: MessageFinishObjectSnapshotContext = {
@@ -847,7 +879,12 @@ function snapshotMessageFinishObjectValue(
       const length = typeof input.length === "number" && numberIsFinite(input.length)
         ? mathMax(0, mathRound(input.length))
         : 0;
-      const limit = mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
+      // A runtime snapshot contains up to 100 source items plus its omission
+      // marker. Keep that bounded extra entry so another snapshot preserves N.
+      const limit = context.preserveArrayTruncationMarkers &&
+          hasMessageFinishArrayTruncationMarker(input, length)
+        ? length
+        : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
       for (let index = 0; index < limit; index++) {
         const property = objectGetOwnPropertyDescriptor(
           input,
@@ -925,15 +962,74 @@ function snapshotMessageFinishObjectValue(
   }
 }
 
+function readMessageFinishObjectObservation(input: unknown): MessageFinishObjectSnapshot | null {
+  if (input === null || typeof input !== "object") return null;
+  try {
+    const prototype = objectGetPrototypeOf(input);
+    if (prototype !== null && prototype !== objectPrototype) return null;
+    if (reflectOwnKeys(input).length !== 3) return null;
+    const status = objectGetOwnPropertyDescriptor(input, "captureStatus");
+    const reasons = objectGetOwnPropertyDescriptor(input, "reasons");
+    const value = objectGetOwnPropertyDescriptor(input, "value");
+    if (
+      !status?.enumerable || !objectHasOwn(status, "value") ||
+      (status.value !== "partial" && status.value !== "unsupported") ||
+      !reasons?.enumerable || !objectHasOwn(reasons, "value") || !ArrayIsArray(reasons.value) ||
+      !value?.enumerable || !objectHasOwn(value, "value")
+    ) return null;
+    const length = objectGetOwnPropertyDescriptor(reasons.value, "length")?.value;
+    if (!numberIsInteger(length) || length < 1 || length > MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS) {
+      return null;
+    }
+    const copiedReasons: string[] = [];
+    for (let index = 0; index < length; index++) {
+      const reason = objectGetOwnPropertyDescriptor(reasons.value, index);
+      if (
+        !reason?.enumerable || !objectHasOwn(reason, "value") || typeof reason.value !== "string" ||
+        reason.value.length > 128
+      ) return null;
+      // Authored JSON can have this same shape; preserve its fields verbatim.
+      primordialArrayPush(copiedReasons, reason.value);
+    }
+    return { status: status.value, reasons: copiedReasons, value: value.value };
+  } catch {
+    // Reflection failure cannot establish a capture envelope. The ordinary
+    // snapshot path will record an unsupported-object marker if it also fails.
+    return null;
+  }
+}
+
 function createMessageFinishObjectObservation(
   object: unknown,
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
+  encoding: "value" | "snapshot" = "value",
 ): unknown {
-  const snapshot = snapshotMessageFinishObjectValue(object, {
-    remainingBytes: maxOutputBytes,
-    remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
-    seen: createPrivateWeakStore<object, true>(),
-  });
+  const existing = encoding === "snapshot" ? readMessageFinishObjectObservation(object) : null;
+  let snapshot: MessageFinishObjectSnapshot;
+  try {
+    snapshot = snapshotMessageFinishObjectValue(existing ? existing.value : object, {
+      preserveArrayTruncationMarkers: existing !== null,
+      remainingBytes: maxOutputBytes,
+      remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
+      seen: createPrivateWeakStore<object, true>(),
+    });
+  } catch {
+    snapshot = {
+      value: "[unsupported object]",
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  if (existing) {
+    for (const reason of primordialArrayValues(snapshot.reasons)) {
+      addCaptureReason(existing.reasons, reason);
+    }
+    return {
+      captureStatus: snapshot.status === "complete" ? existing.status : "partial",
+      reasons: existing.reasons,
+      value: snapshot.value,
+    };
+  }
   if (snapshot.status === "complete") return snapshot.value;
   return {
     captureStatus: snapshot.status,
@@ -945,6 +1041,7 @@ function createMessageFinishObjectObservation(
 function createMessageFinishObjectObservationWithinDurableBudget(
   baseValue: Record<string, unknown>,
   object: unknown,
+  encoding: "value" | "snapshot" = "value",
 ): unknown {
   const placeholder = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
   let best: unknown = placeholder;
@@ -956,7 +1053,7 @@ function createMessageFinishObjectObservationWithinDurableBudget(
   );
   while (low <= high) {
     const mid = mathRound((low + high) / 2);
-    const candidate = createMessageFinishObjectObservation(object, mid);
+    const candidate = createMessageFinishObjectObservation(object, mid, encoding);
     if (isMessageFinishMetadataValueWithinDurableBudget({ ...baseValue, object: candidate })) {
       best = candidate;
       low = mid + 1;
@@ -966,6 +1063,52 @@ function createMessageFinishObjectObservationWithinDurableBudget(
   }
 
   return best;
+}
+
+function fitMessageFinishMetadataWithinDurableBudget(
+  value: Record<string, unknown>,
+  object: unknown,
+  encoding: "value" | "snapshot",
+): void {
+  if (isMessageFinishMetadataValueWithinDurableBudget(value)) return;
+  const hasObject = objectHasOwn(value, "object");
+  const objectSnapshot = hasObject ? value.object : undefined;
+  const { object: _object, ...baseValue } = value;
+  const truncateFinishReason = () => {
+    const reason = createTruncatedMessageFinishScalarObservation(
+      "finishReason",
+      "serialized_budget_exhausted",
+    );
+    baseValue.finishReason = reason;
+    value.finishReason = reason;
+  };
+  const budgetObject = () => {
+    value.object = objectSnapshot;
+    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+      value.object = createMessageFinishObjectObservationWithinDurableBudget(
+        baseValue,
+        object,
+        encoding,
+      );
+    }
+  };
+  // Avoid searching against metadata that cannot fit even without output.
+  if (
+    typeof baseValue.finishReason === "string" &&
+    !isMessageFinishMetadataValueWithinDurableBudget(baseValue)
+  ) truncateFinishReason();
+  if (hasObject) budgetObject();
+  if (
+    !isMessageFinishMetadataValueWithinDurableBudget(value) &&
+    typeof baseValue.finishReason === "string"
+  ) {
+    truncateFinishReason();
+    // Reconsider the original output after metadata releases its byte budget.
+    if (hasObject) budgetObject();
+  }
+  if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
+    value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
+  }
 }
 
 function createMessageFinishMetadataEvent(
@@ -996,28 +1139,18 @@ function createMessageFinishMetadataEvent(
     value.totalUsage = usageMetadata;
   }
 
-  if (event.object !== undefined) {
-    value.object = createMessageFinishObjectObservation(event.object);
-    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
-      const { object: _object, ...baseValue } = value;
-      value.object = createMessageFinishObjectObservationWithinDurableBudget(
-        baseValue,
-        event.object,
-      );
-    }
-  }
+  const hasObject = objectHasOwn(event, "object");
+  const object = hasObject ? event.object : undefined;
+  const encoding = hasObject && objectHasOwn(event, "objectEncoding") &&
+      event.objectEncoding === "snapshot"
+    ? "snapshot"
+    : "value";
+  const objectSnapshot = hasObject
+    ? createMessageFinishObjectObservation(object, undefined, encoding)
+    : undefined;
+  if (hasObject) value.object = objectSnapshot;
 
-  if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
-    if (objectHasOwn(value, "finishReason")) {
-      value.finishReason = createTruncatedMessageFinishScalarObservation(
-        "finishReason",
-        "serialized_budget_exhausted",
-      );
-    }
-    if (!isMessageFinishMetadataValueWithinDurableBudget(value)) {
-      value.object = createTruncatedMessageFinishObjectObservation("serialized_budget_exhausted");
-    }
-  }
+  fitMessageFinishMetadataWithinDurableBudget(value, object, encoding);
 
   if (
     finishReasonMetadata !== null &&
@@ -1025,6 +1158,7 @@ function createMessageFinishMetadataEvent(
   ) {
     state.metadata.finishReason = finishReasonMetadata;
   }
+  if (objectHasOwn(value, "object")) state.finishObject = { value: value.object };
 
   if (objectKeys(value).length === 0) return [];
   return [
@@ -1745,14 +1879,25 @@ function finalizeAgUiEventsUnstamped(
   appendEncodedEvents(events, closeOpenTextEvent(state));
   appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
+  let finishObject = state.finishObject;
+  if (finishObject === undefined && response && objectHasOwn(response, "object")) {
+    let value = createMessageFinishObjectObservation(response.object);
+    if (!isMessageFinishMetadataValueWithinDurableBudget({ object: value })) {
+      value = createMessageFinishObjectObservationWithinDurableBudget({}, response.object);
+    }
+    finishObject = { value };
+  }
+
   appendEncodedEvents(events, [{
     event: "RunFinished",
     payload: {
       metadata: state.metadata,
       // A schema-bound agent's parsed `outputSchema` value, which the API stores
-      // as the run output. Absent when the agent declares no schema or the
-      // output did not parse; a parsed `null` is still reported.
-      ...(response?.object !== undefined ? { result: response.object } : {}),
+      // as the run output. The `message-finish` snapshot wins, so values JSON
+      // cannot represent arrive as the documented marker. Absent when the agent
+      // declares no schema or the output did not parse; a parsed `null` is
+      // still reported.
+      ...(finishObject !== undefined ? { result: finishObject.value } : {}),
     },
   }]);
 

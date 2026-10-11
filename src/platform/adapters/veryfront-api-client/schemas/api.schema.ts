@@ -367,6 +367,12 @@ export type ReleaseAssetManifestApiResponse = InferSchema<
   ReturnType<typeof getReleaseAssetManifestResponseSchema>
 >;
 
+const DEPENDENCY_HISTORY_ENDPOINT = {
+  method: "GET" as const,
+  path: "/projects/{projectRef}/dependencies/history?branch={branch}",
+  description: "Read up to 16 recent dependency snapshots for a project branch",
+} as const;
+
 export const API_ENDPOINTS = {
   listProjects: {
     method: "GET" as const,
@@ -378,10 +384,13 @@ export const API_ENDPOINTS = {
     path: "/projects/{projectRef}",
     description: "Get project by UUID or slug",
   },
-  readDependencyMetadataHistory: {
-    method: "GET" as const,
-    path: "/projects/{projectRef}/dependencies/history?branch={branch}",
-    description: "Read bounded prior dependency metadata for a project branch",
+  getDependencyHistory: DEPENDENCY_HISTORY_ENDPOINT,
+  /** @deprecated Use `getDependencyHistory`. */
+  readDependencyMetadataHistory: DEPENDENCY_HISTORY_ENDPOINT,
+  resolveDependencies: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/dependencies/resolve",
+    description: "Pin npm specifiers to exact versions in a project branch's package.json",
   },
   listBranchFiles: {
     method: "GET" as const,

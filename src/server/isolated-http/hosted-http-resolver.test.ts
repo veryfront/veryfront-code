@@ -659,6 +659,9 @@ describe("hosted HTTP resolver", () => {
       const invalid of [
         { apiBaseUrl: "http://api.veryfront.test" },
         { apiBaseUrl: "not a url" },
+        { apiBaseUrl: "https://api.veryfront.test/api?" },
+        { apiBaseUrl: "https://api.veryfront.test/api#" },
+        { sourceApiOrigin: "https://source.test?" },
         { sourceApiOrigin: "https://source.test/path" },
         { sourceImageRepository: "" },
         { lookupSourceImage: undefined as never },

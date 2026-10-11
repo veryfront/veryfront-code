@@ -2614,7 +2614,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       throw new TypeError("Dependency metadata history is available only for branch sources");
     }
     const branch = source.branch && source.branch !== "main" ? source.branch : null;
-    return await this.client.readDependencyMetadataHistory(branch, signal);
+    return await this.client.dependencies.getHistory({ branch, signal });
   }
 
   getPokeMetrics(): {

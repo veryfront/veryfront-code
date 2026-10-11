@@ -175,7 +175,8 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
   }
   if (
     typeof value !== "string" || url.protocol !== "https:" || url.username || url.password ||
-    url.search || url.hash || (!allowPath && url.pathname !== "/")
+    url.search || url.hash || value.includes("?") || value.includes("#") ||
+    (!allowPath && url.pathname !== "/")
   ) throw new TypeError(`Hosted HTTP resolver requires an HTTPS ${name}`);
   return allowPath ? trimTrailingSlashes(value) : url.origin;
 }

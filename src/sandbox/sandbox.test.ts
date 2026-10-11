@@ -2300,7 +2300,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.heartbeat(),
         Error,
-        "Sandbox heartbeat failed: 503 upstream timeout",
+        "Sandbox heartbeat failed: 503",
       );
     });
   });
@@ -2375,7 +2375,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.close(),
         Error,
-        "Delete sandbox failed: 503 delete failed",
+        "Delete sandbox failed: 503",
       );
     });
   });
@@ -2622,7 +2622,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.readFile("notes.txt"),
         Error,
-        "Sandbox heartbeat failed: 503 heartbeat failed",
+        "Sandbox heartbeat failed: 503",
       );
 
       assertEquals(sandbox.isActive, false);
@@ -3016,50 +3016,54 @@ describe("Sandbox", () => {
       );
     });
 
-    it("replaces an expired retained temporary workspace after the control plane confirms it is gone", async () => {
-      mockFetch([
-        jsonResponse({
-          id: "expired-temporary",
-          endpoint: "https://old.test",
-          status: "running",
-          workspace_storage: "ephemeral",
-          ttl_mode: "default",
-        }),
-        jsonResponse({ ok: true }),
-        textResponse("Sandbox not found", 404),
-        jsonResponse({
-          id: "replacement-temporary",
-          endpoint: "https://new.test",
-          status: "running",
-          workspace_storage: "ephemeral",
-          ttl_mode: "default",
-        }),
-        jsonResponse({ ok: true }),
-      ]);
-      const sandbox = Sandbox.createLazy({
-        authToken: "token",
-        apiUrl: "https://api.test.com",
-        projectReference: "project",
-        deleteOnClose: false,
+    for (const body of ["Sandbox not found", ""]) {
+      it(`replaces an expired retained temporary workspace after ${body ? "a text" : "an empty"} 404 body`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "expired-temporary",
+            endpoint: "https://old.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+          textResponse(body, 404),
+          jsonResponse({
+            id: "replacement-temporary",
+            endpoint: "https://new.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+        ]);
+        const sandbox = Sandbox.createLazy({
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          projectReference: "project",
+          deleteOnClose: false,
+        });
+
+        await sandbox.ensure();
+        await sandbox.close();
+        assertEquals(sandbox.id, "expired-temporary");
+
+        await sandbox.ensure();
+        assertEquals(sandbox.id, "replacement-temporary");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+          )
+            .length,
+          2,
+        );
+        assertEquals(
+          fetchCalls.filter((call) => call.url.endsWith("/sandboxes/expired-temporary")).length,
+          1,
+        );
+        await sandbox.close();
       });
-
-      await sandbox.ensure();
-      await sandbox.close();
-      assertEquals(sandbox.id, "expired-temporary");
-
-      await sandbox.ensure();
-      assertEquals(sandbox.id, "replacement-temporary");
-      assertEquals(
-        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
-          .length,
-        2,
-      );
-      assertEquals(
-        fetchCalls.filter((call) => call.url.endsWith("/sandboxes/expired-temporary")).length,
-        1,
-      );
-      await sandbox.close();
-    });
+    }
 
     it("keeps a retained temporary workspace cached after a transient reconnect failure", async () => {
       mockFetch([
@@ -3091,6 +3095,55 @@ describe("Sandbox", () => {
       await sandbox.ensure();
       await sandbox.close();
       await assertRejects(() => sandbox.ensure(), Error, "Failed to get sandbox: 503");
+      assertEquals(sandbox.id, "retained-temporary");
+
+      await sandbox.ensure();
+      assertEquals(sandbox.id, "retained-temporary");
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
+    });
+
+    it("keeps a retained temporary workspace cached after a reconnect heartbeat 404", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        textResponse("", 404),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        deleteOnClose: false,
+      });
+
+      await sandbox.ensure();
+      await sandbox.close();
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed: 404");
       assertEquals(sandbox.id, "retained-temporary");
 
       await sandbox.ensure();
@@ -4280,11 +4333,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");
@@ -4355,11 +4409,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");

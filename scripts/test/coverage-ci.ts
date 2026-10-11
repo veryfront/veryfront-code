@@ -27,9 +27,8 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
-const GENERATED_MDX_CACHE_PREFIX =
-  "/home/runner/.cache/veryfront/veryfront-mdx-esm/";
-const GENERATED_VERYFRONT_CACHE_PREFIX = "/home/runner/.cache/veryfront/";
+const GENERATED_VERYFRONT_CACHE_SOURCE =
+  /^(?:\/|[A-Za-z]:\/)(?:[^/]+\/)*\.cache\/veryfront\/(.+)$/;
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -221,35 +220,59 @@ export function normalizeLcovSourcePaths(
   return output.join(newline);
 }
 
+function findMostSpecificCheckoutPrefix(
+  source: string,
+  prefixes: readonly string[],
+): string | undefined {
+  let prefix: string | undefined;
+  for (const candidate of prefixes) {
+    if (
+      source.startsWith(candidate) &&
+      (!prefix || candidate.length > prefix.length)
+    ) prefix = candidate;
+  }
+  return prefix;
+}
+
+function verifyCheckoutSource(
+  relativePath: string,
+  sourceExists: (relativePath: string) => boolean,
+): NormalizedLcovSource {
+  if (!sourceExists(relativePath)) {
+    throw new Error(
+      `LCOV source path does not exist in the project: ${relativePath}`,
+    );
+  }
+  return { kind: "source", path: relativePath };
+}
+
 function normalizeLcovSource(
   source: string,
   prefixes: readonly string[],
   sourceExists: (relativePath: string) => boolean,
 ): NormalizedLcovSource {
   const portable = source.replaceAll("\\", "/");
-  if (isGeneratedVeryfrontCacheSource(portable)) {
+  // Match the cache shape only below a verified checkout root, so a checkout
+  // that itself lives under a `.cache/veryfront/` directory keeps its sources.
+  const producerPrefix = findMostSpecificCheckoutPrefix(portable, prefixes);
+  const producerRelative = producerPrefix
+    ? normalizeRelativeLcovPath(portable.slice(producerPrefix.length))
+    : undefined;
+  const cacheCandidate = producerRelative !== undefined
+    ? `/${producerRelative}`
+    : portable;
+  if (isGeneratedVeryfrontCacheSource(cacheCandidate)) {
     return { kind: "drop-generated-cache" };
   }
 
   if (!portable.startsWith("/") && !/^[A-Za-z]:\//.test(portable)) {
     const relative = normalizeRelativeLcovPath(portable);
-    if (!sourceExists(relative)) {
-      throw new Error(
-        `LCOV source path does not exist in the project: ${relative}`,
-      );
-    }
-    return { kind: "source", path: relative };
+    return verifyCheckoutSource(relative, sourceExists);
   }
 
-  const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
-  if (prefix) {
-    const relative = normalizeRelativeLcovPath(portable.slice(prefix.length));
-    if (!sourceExists(relative)) {
-      throw new Error(
-        `LCOV source path does not exist in the project: ${relative}`,
-      );
-    }
-    return { kind: "source", path: relative };
+  if (producerRelative !== undefined) {
+    const relative = producerRelative;
+    return verifyCheckoutSource(relative, sourceExists);
   }
 
   const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(
@@ -257,12 +280,7 @@ function normalizeLcovSource(
   );
   if (githubCheckout?.[2]) {
     const relative = normalizeRelativeLcovPath(githubCheckout[2]);
-    if (!sourceExists(relative)) {
-      throw new Error(
-        `LCOV source path does not exist in the project: ${relative}`,
-      );
-    }
-    return { kind: "source", path: relative };
+    return verifyCheckoutSource(relative, sourceExists);
   }
 
   const windowsGithubCheckout = /^[A-Za-z]:\/a\/([^/]+)\/\1\/(.+)$/.exec(
@@ -270,12 +288,7 @@ function normalizeLcovSource(
   );
   if (windowsGithubCheckout?.[2]) {
     const relative = normalizeRelativeLcovPath(windowsGithubCheckout[2]);
-    if (!sourceExists(relative)) {
-      throw new Error(
-        `LCOV source path does not exist in the project: ${relative}`,
-      );
-    }
-    return { kind: "source", path: relative };
+    return verifyCheckoutSource(relative, sourceExists);
   }
 
   throw new Error(
@@ -284,9 +297,11 @@ function normalizeLcovSource(
 }
 
 function isGeneratedVeryfrontCacheSource(source: string): boolean {
-  return source.startsWith(GENERATED_MDX_CACHE_PREFIX) ||
-    (source.startsWith(GENERATED_VERYFRONT_CACHE_PREFIX) &&
-      source.endsWith(".mjs"));
+  // Dot segments must reach checkout validation rather than hide a record.
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(source)) return false;
+  const cachePath = GENERATED_VERYFRONT_CACHE_SOURCE.exec(source)?.[1];
+  return cachePath !== undefined &&
+    (cachePath.startsWith("veryfront-mdx-esm/") || cachePath.endsWith(".mjs"));
 }
 
 function normalizeRelativeLcovPath(path: string): string {

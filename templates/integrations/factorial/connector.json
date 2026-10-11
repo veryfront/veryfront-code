@@ -29,7 +29,7 @@
     {
       "id": "factorial__list_employees",
       "name": "List Employees",
-      "description": "List employees in the Factorial account, with filters for name, activity status, and team",
+      "description": "List employees",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -72,7 +72,7 @@
     {
       "id": "factorial__get_employee",
       "name": "Get Employee",
-      "description": "Get a single Factorial employee record by ID",
+      "description": "Get employee",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -90,7 +90,7 @@
     {
       "id": "factorial__list_leaves",
       "name": "List Leaves",
-      "description": "List time-off leaves (absences) with filters for employee, date range, and approval status",
+      "description": "List leaves",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -145,7 +145,7 @@
     {
       "id": "factorial__create_leave",
       "name": "Create Leave",
-      "description": "Create a time-off leave (absence) for an employee, such as vacation or sick leave",
+      "description": "Create leave",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -183,7 +183,7 @@
     {
       "id": "factorial__list_teams",
       "name": "List Teams",
-      "description": "List all teams in the Factorial account, useful before filtering employees by team",
+      "description": "List teams",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -201,7 +201,7 @@
     {
       "id": "factorial__list_leave_types",
       "name": "List Leave Types",
-      "description": "List the leave types configured in the account (vacation, sick leave, ...) with their IDs — required to pick a valid leave_type_id for Create Leave",
+      "description": "List leave types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -229,7 +229,7 @@
     {
       "id": "factorial__delete_leave",
       "name": "Delete Leave",
-      "description": "Delete (cancel) a leave request by its ID",
+      "description": "Delete leave",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",

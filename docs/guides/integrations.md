@@ -10,6 +10,11 @@ and transport surfaces.
 
 ## The four parts
 
+Tool summaries use an action and resource name in at most six words, such as
+"List messages". Define them in `templates/integrations/*/connector.json`, then
+run `deno run -A scripts/build/generate-integrations-module.ts` to refresh the
+runtime catalog. Keep parameter requirements in each tool's input schema.
+
 - **Catalog:** Provider metadata, setup requirements, available tools, input
   schemas, and side-effect information.
 - **Connection:** The authenticated provider account used by managed execution.
@@ -23,7 +28,8 @@ and transport surfaces.
 - **Transport:** REST, GraphQL, MCP, the TypeScript client, and the Veryfront
   CLI all call the same hosted tools. REST, the TypeScript client, and the CLI
   also read connection inventory and start OAuth. GraphQL and MCP discover and
-  call tools but do not list connections.
+  call tools, create connect sessions, read connection status, and delete
+  connections, but do not list connections.
 
 The hosted API flow is `discover → connect → status → call`. No integration
 policy setup is required. Every surface can select an exact connection when a
@@ -313,6 +319,11 @@ If you keep the project as CommonJS, name the file `first-call.mts` and run
 
 `client.connect("gmail", { redirectUri })` starts the same OAuth handoff as the
 CLI and returns a one-time `connect_url` with an `expires_at` deadline.
+`client.createConnectSession("gmail", { scope, redirectUri })` creates the same
+one-time link as a connect session with `connectUrl` and `expiresAt`.
+`client.getConnectionStatus("gmail", scope)` reads whether the scope is
+connected, and `client.deleteConnection("gmail", connectionId, scope)` removes
+one connection and reports `providerRevoked`.
 
 ### Call with the CLI
 

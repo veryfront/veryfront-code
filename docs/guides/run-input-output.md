@@ -21,7 +21,7 @@ as input. `run.output` is the final business result.
 
 | Run kind | `run.input`                                     | Execution settings                                 | `run.output` without an output schema | `run.output` with an output schema                                          |
 | -------- | ----------------------------------------------- | -------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| Agent    | The submitted prompt, or the submitted messages | The agent definition and request options           | The final text, as a string           | The parsed, validated value                                                 |
+| Agent    | The submitted prompt, or the submitted messages | The agent definition and request options           | The final text, as a string           | A JSON snapshot of the parsed value; may contain capture markers            |
 | Workflow | The submitted value                             | None on the run                                    | The workflow context without `input`  | The parsed value `output` selects                                           |
 | Task     | The submitted value, separate from `config`     | `config`, an object the task reads as `ctx.config` | The value `run()` returns             | The parsed value `run()` returns, see [Declared schemas](#declared-schemas) |
 | Eval     | The submitted value                             | `config`, an object                                | The eval report                       | Not applicable                                                              |
@@ -43,9 +43,13 @@ stores `input: null`.
 
 The final text is the text the agent wrote after its last tool call. Text
 written before a tool call is intermediate narration and is not part of the
-output. When the agent declares `outputSchema`, the hosted runtime reports the
-parsed value as `result` on the `RunFinished` event, and the run stores that
-value instead of the text. See [Agents](./agents.md) for structured output.
+output. When the agent declares `outputSchema`, the hosted runtime reports a JSON
+snapshot of the parsed value as `result` on the `RunFinished` event, and the run
+stores that snapshot instead of the text. The snapshot equals the parsed value
+when it is plain JSON within the snapshot size limits. Otherwise it is a marker
+object with `captureStatus`, `reasons` and `value` fields. See
+[Agents](./agents.md) for structured output, the size limits and the marker
+fields.
 
 ### Workflows
 
@@ -112,22 +116,23 @@ includes it applies the task rows below. An earlier runtime treats task
 through unchanged and records no violation. Workflow and agent schemas are
 enforced as shown in every release.
 
-| Case                                                                                  | Result                                                                                                                                                                                          |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Case                                                                                  | Result                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Submitted task `input` violates `inputSchema`                                         | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.details`, and `output: null`.                                |
-| Config-only task run (no `input`) whose `config` violates `inputSchema`               | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                                                     |
-| A task's `run()` returns a value that violates `outputSchema`                         | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                                                        |
-| A task's raw JSON Schema that no registered validator can compile                     | Warns. The schema is reported as unenforced, never as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                                                                  |
-| A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                                                    |
+| Config-only task run (no `input`) whose `config` violates `inputSchema`               | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                                                      |
+| A task's `run()` returns a value that violates `outputSchema`                         | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                                                         |
+| A task's raw JSON Schema that no registered validator can compile                     | Warns. The schema is reported as unenforced, never as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                                                                   |
+| A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                                                     |
 | Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs, with `error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in `error.details`.                                                                     |
 | A workflow's final output violates `outputSchema`                                     | Fails before completion with `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in `error.details.errors`. No output is stored, `onError` runs, and `onComplete` does not. |
-| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                                                    |
-| Submitted eval `input` violates `inputSchema` | Fails before evaluation with `error.code: "INPUT_VALIDATION_FAILED"`, structured validation errors, and `output: null`. |
+| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                                                     |
+| Submitted eval `input` violates `inputSchema`                                         | Fails before evaluation with `error.code: "INPUT_VALIDATION_FAILED"`, structured validation errors, and `output: null`.                                                                          |
 
 An agent's raw JSON Schema `outputSchema` that the registered validator fails
 to compile fails the run before the model is called. When the registered
 validator has no JSON Schema compiler, the raw schema is still sent to the
-provider, but the output is not validated locally and is stored as parsed.
+provider, but the output is not validated locally. The run stores a JSON
+snapshot of the parsed result, as described in [Agents](#agents).
 
 The task rows marked "Warns" are the warning phase for task schemas. A later
 release fails those mismatches too. A recorded mismatch has this shape. A run
@@ -143,11 +148,12 @@ keeps the first mismatch detected, with at most 20 errors:
 }
 ```
 
-When a checked output is valid, the run stores the parsed value: schema
-defaults and transforms apply, and a schema that strips unknown keys strips
-them from the stored output. This applies to a task's return value on a
-runtime with task schema validation, to a workflow's `output` selection, and to
-an agent's structured result. A workflow without `output` stores its default
+For a valid checked task or selected workflow output, the run stores the
+parsed value: schema defaults and transforms apply, and a schema that strips
+unknown keys strips them from the stored output. Task schema validation must
+be available in the runtime. An agent's structured result is stored as a JSON
+snapshot of the parsed value and can contain capture markers, as described in
+[Agents](#agents). A workflow without `output` stores its default
 output unchanged, even when `outputSchema` accepts it. `ctx.input` on a task run created with `input`, and the
 workflow's steps, receive the parsed input. `run.input` keeps the input as
 submitted.
