@@ -1186,6 +1186,33 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("reports the message-finish object snapshot as the RunFinished result", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "{}" });
+    const marker = {
+      captureStatus: "unsupported",
+      reasons: ["unsupported_bigint"],
+      value: "[unsupported bigint]",
+    };
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "message-finish", object: marker });
+
+    const events = finalizeAgUiEvents(
+      state,
+      {
+        text: "{}",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        // The caller-visible value JSON cannot represent.
+        object: 12n,
+      } as unknown as Parameters<typeof finalizeAgUiEvents>[1],
+    );
+    const finished = events.find((event) => event.event === "RunFinished");
+
+    assertEquals((finished?.payload as { result?: unknown }).result, marker);
+    JSON.stringify(finished?.payload);
+  });
+
   it("records message-finish finishReason without an object", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

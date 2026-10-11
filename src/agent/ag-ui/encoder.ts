@@ -142,6 +142,13 @@ export interface AgUiEncoderState {
   sawTerminalError: boolean;
   /** A manual pause closes the transport while execution waits for resume. */
   manuallyPaused?: boolean;
+  /**
+   * JSON snapshot of the `message-finish` structured output, reported as the
+   * `RunFinished` result so the event and the stored run output never carry
+   * values JSON cannot represent. Optional for the same compatibility reason
+   * as `openToolCallIds`.
+   */
+  finishObject?: { value: unknown };
   metadata: AgUiRunFinishedMetadata;
   /**
    * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
@@ -1025,6 +1032,7 @@ function createMessageFinishMetadataEvent(
   ) {
     state.metadata.finishReason = finishReasonMetadata;
   }
+  if (objectHasOwn(value, "object")) state.finishObject = { value: value.object };
 
   if (objectKeys(value).length === 0) return [];
   return [
@@ -1750,9 +1758,15 @@ function finalizeAgUiEventsUnstamped(
     payload: {
       metadata: state.metadata,
       // A schema-bound agent's parsed `outputSchema` value, which the API stores
-      // as the run output. Absent when the agent declares no schema or the
-      // output did not parse; a parsed `null` is still reported.
-      ...(response?.object !== undefined ? { result: response.object } : {}),
+      // as the run output. The `message-finish` snapshot wins, so values JSON
+      // cannot represent arrive as the documented marker. Absent when the agent
+      // declares no schema or the output did not parse; a parsed `null` is
+      // still reported.
+      ...(state.finishObject !== undefined
+        ? { result: state.finishObject.value }
+        : response?.object !== undefined
+        ? { result: response.object }
+        : {}),
     },
   }]);
 

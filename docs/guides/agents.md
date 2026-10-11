@@ -581,6 +581,10 @@ stored value is a marker object instead:
     already holds the same object;
   - `"[truncated nested data]"` below the depth limit or after the node limit.
 
+  An array longer than 100 items keeps its first 100 items and then one extra
+  string, `"[truncated N items]"`, where `N` is the number of items left out
+  (`array_truncated`). This string is a marker, not authored data.
+
   The snapshot keeps at most 100 array items or object keys per level, 32
   levels and 1,000 nodes in total. String content is limited to 1 MiB per
   string and 1 MiB across the whole snapshot: a longer string is cut and ends

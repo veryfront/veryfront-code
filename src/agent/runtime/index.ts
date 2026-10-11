@@ -434,6 +434,7 @@ import {
 } from "./tool-result-context-tools.ts";
 
 const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
@@ -1297,7 +1298,7 @@ function snapshotOutputSchemaObservationValue(
       reasons: ["aggregate_budget_exhausted"],
     };
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
+  if (typeof value === "number" && !NumberIsFinite(value)) {
     // JSON has no NaN or Infinity; serializing them would silently store null.
     return {
       value: "[unsupported number]",
