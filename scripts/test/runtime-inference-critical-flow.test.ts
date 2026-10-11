@@ -870,7 +870,7 @@ describe("runtime inference critical-flow CI contract", () => {
     assert(
       steps.some((step) =>
         step.uses ===
-          "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" &&
+          "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1" &&
         yamlRecord(step.with, "setup-node with")["node-version"] === "24"
       ),
       "Runtime critical-flow job should install Node 24",

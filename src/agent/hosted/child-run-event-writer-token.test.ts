@@ -1034,7 +1034,8 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
-      const count = JSON.parse(String(init?.body)).events.length;
+      const count =
+        JSON.parse(String(init && "body" in init ? init.body : undefined)).events.length;
       cursor += count;
       return Response.json({
         run_id: runId,

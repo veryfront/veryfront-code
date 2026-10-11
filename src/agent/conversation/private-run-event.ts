@@ -1,25 +1,54 @@
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, VeryfrontError } from "../../errors/index.ts";
+import { everyPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import {
   AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
   isProviderReplayCheckpointEventType,
   parseProviderReplayCheckpointEvent,
 } from "#veryfront/agent/runtime/provider-replay.ts";
 
-function ownDataValue(record: object, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectKeys = Object.keys;
+const ReflectApply = Reflect.apply;
+const NumberIsFinite = Number.isFinite;
+const NumberIsInteger = Number.isInteger;
+const ModelCallIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ProviderToolIdPattern = /\./;
+const UserMediaMessagePartTypes = ["image", "file"] as const;
+const ReasoningEfforts = ["low", "medium", "high", "max"] as const;
+
+function objectKeys(value: Record<string, unknown>): string[] {
+  return ReflectApply(ObjectKeys, Object, [value]) as string[];
+}
+
+function ownPropertyDescriptor(
+  record: Record<string, unknown>,
+  key: string,
+): PropertyDescriptor | undefined {
+  return ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [record, key]) as
+    | PropertyDescriptor
+    | undefined;
+}
+
+function ownDataValue(record: Record<string, unknown>, key: string): unknown {
+  const descriptor = ownPropertyDescriptor(record, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+  return !!value && typeof value === "object" && !ArrayIsArray(value);
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
+  return everyPrivateArray(
+    objectKeys(value),
+    (key) => somePrivateArray(keys, (allowed) => allowed === key),
+  );
 }
 
 function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+  return typeof value === "number" && ReflectApply(NumberIsFinite, Number, [value]) as boolean;
 }
 
 function isModel(value: unknown): boolean {
@@ -42,6 +71,7 @@ function isRequest(value: unknown): boolean {
       "presencePenalty",
       "frequencyPenalty",
       "reasoning",
+      "responseFormat",
     ])
   ) return false;
   for (
@@ -62,22 +92,45 @@ function isRequest(value: unknown): boolean {
   if (typeof maxOutputTokens === "number" && maxOutputTokens < 0) return false;
   const stops = ownDataValue(value, "stopSequences");
   if (
-    stops !== undefined && (!Array.isArray(stops) || stops.some((item) => typeof item !== "string"))
+    stops !== undefined &&
+    (!ArrayIsArray(stops) || !everyPrivateArray(stops, (item) => typeof item === "string"))
   ) {
     return false;
   }
   const reasoning = ownDataValue(value, "reasoning");
-  if (reasoning === undefined) return true;
-  if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
-    return false;
+  if (reasoning !== undefined) {
+    if (!isRecord(reasoning) || !hasOnlyKeys(reasoning, ["enabled", "effort", "budgetTokens"])) {
+      return false;
+    }
+    const enabled = ownDataValue(reasoning, "enabled");
+    const effort = ownDataValue(reasoning, "effort");
+    const budget = ownDataValue(reasoning, "budgetTokens");
+    if (
+      (enabled !== undefined && typeof enabled !== "boolean") ||
+      (effort !== undefined &&
+        (typeof effort !== "string" ||
+          !somePrivateArray(ReasoningEfforts, (allowed) => allowed === effort))) ||
+      (budget !== undefined &&
+        (!(ReflectApply(NumberIsInteger, Number, [budget]) as boolean) || (budget as number) < 0))
+    ) {
+      return false;
+    }
   }
-  const enabled = ownDataValue(reasoning, "enabled");
-  const effort = ownDataValue(reasoning, "effort");
-  const budget = ownDataValue(reasoning, "budgetTokens");
-  return (enabled === undefined || typeof enabled === "boolean") &&
-    (effort === undefined ||
-      (typeof effort === "string" && ["low", "medium", "high", "max"].includes(effort))) &&
-    (budget === undefined || (Number.isInteger(budget) && (budget as number) >= 0));
+  const responseFormat = ownDataValue(value, "responseFormat");
+  if (responseFormat === undefined) return true;
+  if (!isRecord(responseFormat)) return false;
+  const responseType = ownDataValue(responseFormat, "type");
+  if (responseType === "text" || responseType === "json") {
+    return hasOnlyKeys(responseFormat, ["type"]);
+  }
+  return responseType === "json_schema" &&
+    hasOnlyKeys(responseFormat, ["type", "name", "schema", "description", "strict"]) &&
+    typeof ownDataValue(responseFormat, "name") === "string" &&
+    ownDataValue(responseFormat, "schema") !== undefined &&
+    (ownDataValue(responseFormat, "description") === undefined ||
+      typeof ownDataValue(responseFormat, "description") === "string") &&
+    (ownDataValue(responseFormat, "strict") === undefined ||
+      typeof ownDataValue(responseFormat, "strict") === "boolean");
 }
 
 function isMessage(value: unknown): boolean {
@@ -89,13 +142,16 @@ function isMessage(value: unknown): boolean {
       hasOnlyKeys(value, ["role", "content", "providerOptions"]) &&
       isPersistedProviderOptions(ownDataValue(value, "providerOptions"));
   }
-  if (!Array.isArray(content) || !hasOnlyKeys(value, ["role", "content"])) return false;
-  return content.every((part) => {
+  if (!ArrayIsArray(content) || !hasOnlyKeys(value, ["role", "content"])) return false;
+  return everyPrivateArray(content, (part) => {
     if (!isRecord(part)) return false;
     if (role === "user") {
       return ownDataValue(part, "type") === "text"
         ? hasOnlyKeys(part, ["type", "text"]) && typeof ownDataValue(part, "text") === "string"
-        : ["image", "file"].includes(String(ownDataValue(part, "type"))) &&
+        : somePrivateArray(
+          UserMediaMessagePartTypes,
+          (type) => type === ownDataValue(part, "type"),
+        ) &&
           hasOnlyKeys(part, ["type", "mediaType", "url", "filename"]) &&
           typeof ownDataValue(part, "mediaType") === "string" &&
           typeof ownDataValue(part, "url") === "string" &&
@@ -131,7 +187,7 @@ function isMessage(value: unknown): boolean {
 function isPersistedProviderOptions(value: unknown): boolean {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
-  return Object.keys(value).every((key) => {
+  return everyPrivateArray(objectKeys(value), (key) => {
     if (key === "") return false;
     const bucket = ownDataValue(value, key);
     if (!isRecord(bucket) || !hasOnlyKeys(bucket, ["cacheControl"])) return false;
@@ -152,11 +208,12 @@ function isTool(value: unknown): boolean {
       (ownDataValue(value, "description") === undefined ||
         typeof ownDataValue(value, "description") === "string");
   }
+  const id = ownDataValue(value, "id");
   return ownDataValue(value, "type") === "provider" &&
     hasOnlyKeys(value, ["type", "name", "id", "args"]) &&
     typeof ownDataValue(value, "name") === "string" &&
-    typeof ownDataValue(value, "id") === "string" &&
-    String(ownDataValue(value, "id")).includes(".") &&
+    typeof id === "string" &&
+    testPrivateRegExp(ProviderToolIdPattern, id) &&
     isRecord(ownDataValue(value, "args"));
 }
 
@@ -169,7 +226,7 @@ const LEGACY_AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CON
  * event. Either spelling of a renamed private type maps to its past-tense name.
  */
 export function getCanonicalPrivateConversationRunEventType(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const type = ownDataValue(value, "type");
   if (
     type === AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE ||
@@ -183,7 +240,9 @@ export function getCanonicalPrivateConversationRunEventType(value: unknown): str
 }
 
 /** Return whether an event declares the private durable run-event discriminator. */
-export function hasPrivateConversationRunEventType(value: unknown): value is object {
+export function hasPrivateConversationRunEventType(
+  value: unknown,
+): value is Record<string, unknown> {
   return getCanonicalPrivateConversationRunEventType(value) !== undefined;
 }
 
@@ -202,20 +261,18 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
     }
   }
   const messages = ownDataValue(value, "messages");
-  if (!Array.isArray(messages) || !messages.every(isMessage)) return false;
-  const modelCallIdDescriptor = Object.getOwnPropertyDescriptor(value, "modelCallId");
+  if (!ArrayIsArray(messages) || !everyPrivateArray(messages, isMessage)) return false;
+  const modelCallIdDescriptor = ownPropertyDescriptor(value, "modelCallId");
   if (
     modelCallIdDescriptor !== undefined &&
     (!("value" in modelCallIdDescriptor) || typeof modelCallIdDescriptor.value !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        modelCallIdDescriptor.value,
-      ))
+      !testPrivateRegExp(ModelCallIdPattern, modelCallIdDescriptor.value))
   ) return false;
-  const toolsDescriptor = Object.getOwnPropertyDescriptor(value, "tools");
+  const toolsDescriptor = ownPropertyDescriptor(value, "tools");
   if (
     toolsDescriptor !== undefined &&
-    (!("value" in toolsDescriptor) || !Array.isArray(toolsDescriptor.value) ||
-      !toolsDescriptor.value.every(isTool))
+    (!("value" in toolsDescriptor) || !ArrayIsArray(toolsDescriptor.value) ||
+      !everyPrivateArray(toolsDescriptor.value, isTool))
   ) return false;
   const model = ownDataValue(value, "model");
   if (model !== undefined && !isModel(model)) return false;
@@ -224,7 +281,10 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
   const elapsedMs = ownDataValue(value, "elapsedMs");
   if (elapsedMs !== undefined && (!isFiniteNumber(elapsedMs) || elapsedMs < 0)) return false;
   const emittedAt = ownDataValue(value, "emittedAt");
-  if (emittedAt !== undefined && (!Number.isInteger(emittedAt) || (emittedAt as number) < 0)) {
+  if (
+    emittedAt !== undefined &&
+    (!(ReflectApply(NumberIsInteger, Number, [emittedAt]) as boolean) || (emittedAt as number) < 0)
+  ) {
     return false;
   }
   return hasOnlyKeys(value as Record<string, unknown>, [

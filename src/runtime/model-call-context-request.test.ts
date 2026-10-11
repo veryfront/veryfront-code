@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
@@ -8,12 +8,19 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import {
+  buildModelCallContextRequest,
+  snapshotModelCallProviderOptions,
+} from "#veryfront/runtime/model-call-context-request.ts";
 import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
 import { buildOpenAIResponsesRequest } from "../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import { buildGoogleGenerateContentRequest } from "../../extensions/ext-llm-google/src/google-request-builder.ts";
+import {
+  createOpenAIModelRuntime,
+  createOpenAIResponsesRuntime,
+} from "../../extensions/ext-llm-openai/src/openai-provider.ts";
 
 const prompt: ModelRuntimeCallOptions["prompt"] = [{
   role: "user",
@@ -37,6 +44,161 @@ const samplingFields = [
 ] as const;
 
 describe("model call request projection", () => {
+  it("snapshots Google controls once for capture and the native wire builder", () => {
+    let reads = 0;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "google") return undefined;
+        reads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: { generationConfig: { maxOutputTokens: reads === 1 ? 111 : 777 } },
+        };
+      },
+    });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "google", modelId: "gemini-synthetic" },
+      { prompt, providerOptions },
+    );
+    const projected = buildModelCallContextRequest({ provider: "google" }, options);
+    const body = buildGoogleGenerateContentRequest("google", options, createWarningCollector());
+    assertEquals(projected?.maxOutputTokens, 111);
+    assertEquals(body.generationConfig?.maxOutputTokens, 111);
+    assertEquals(reads, 1);
+  });
+
+  it("preserves ignored provider buckets without evaluating accessors", () => {
+    let getterReads = 0;
+    const unused = { callback() {} };
+    const providerOptions = { openai: { max_tokens: 111 }, unused };
+    Object.defineProperty(providerOptions, "other", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        throw new Error("unused provider getter must not run");
+      },
+    });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, providerOptions },
+    );
+    const body = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.max_completion_tokens, 111);
+    assert(options.providerOptions.unused === unused);
+    assertEquals(
+      Object.getOwnPropertyDescriptor(options.providerOptions, "other"),
+      Object.getOwnPropertyDescriptor(providerOptions, "other"),
+    );
+    assertEquals(getterReads, 0);
+  });
+
+  it("preserves non-enumerable array indices used in native provider controls", () => {
+    const stop = ["original"];
+    Object.defineProperty(stop, "0", { enumerable: false });
+    const options = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, providerOptions: { openai: { stop } } },
+    );
+    const body = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.stop, ["original"]);
+    assertEquals(
+      buildModelCallContextRequest({ provider: "openai", modelId: "gpt-4o" }, options)
+        ?.stopSequences,
+      ["original"],
+    );
+  });
+
+  it("normalizes scalar native OpenAI Chat stop controls for persisted capture", () => {
+    for (
+      const { model, providerName, providerOptions } of [
+        {
+          model: { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+          providerName: "openai",
+          providerOptions: { openai: { stop: "END" } },
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "mistral",
+            modelId: "mistral-large",
+          },
+          providerName: "veryfront-cloud",
+          providerOptions: { "veryfront-cloud": { stop: "END" } },
+        },
+      ] as const
+    ) {
+      const options = snapshotModelCallProviderOptions(
+        model,
+        { prompt, stopSequences: ["neutral"], providerOptions },
+      );
+      const body = buildOpenAIChatRequest(
+        model.modelId,
+        providerName,
+        options,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals<unknown>(body.stop, "END");
+      assertEquals(buildModelCallContextRequest(model, options)?.stopSequences, ["END"]);
+    }
+  });
+
+  it("keeps native OpenAI stop null and Responses scalar stop semantics", () => {
+    const chatOptions = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "chat-completions" },
+      { prompt, stopSequences: ["neutral"], providerOptions: { openai: { stop: null } } },
+    );
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      chatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(chatBody.stop, null);
+    assertEquals(
+      buildModelCallContextRequest({ provider: "openai", modelId: "gpt-4o" }, chatOptions)
+        ?.stopSequences,
+      undefined,
+    );
+
+    const responsesOptions = snapshotModelCallProviderOptions(
+      { provider: "openai", modelId: "gpt-4o", openAITransport: "responses" },
+      { prompt, stopSequences: ["neutral"], providerOptions: { openai: { stop: "END" } } },
+    );
+    const responsesBody = buildOpenAIResponsesRequest(
+      "gpt-4o",
+      "openai",
+      responsesOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals<unknown>(responsesBody.stop, "END");
+    assertEquals(
+      buildModelCallContextRequest(
+        { provider: "openai", modelId: "gpt-4o", openAITransport: "responses" },
+        responsesOptions,
+      )?.stopSequences,
+      undefined,
+    );
+  });
+
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {
@@ -301,6 +463,350 @@ describe("model call request projection", () => {
     assertEquals(projected?.reasoning, { enabled: true, effort: "low" });
   });
 
+  it("persists OpenAI Chat native response_format precedence", () => {
+    const neutralFormat = {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: { neutral: { type: "string" } } },
+    } as const;
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          providerName: "openai",
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          providerName: "veryfront-cloud",
+        },
+      ] as const
+    ) {
+      const nativeJsonOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: { response_format: { type: "json_object" } },
+        },
+      };
+      const projected = buildModelCallContextRequest(testCase.model, nativeJsonOptions);
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        testCase.providerName,
+        nativeJsonOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.responseFormat, { type: "json" });
+      assertEquals(body.response_format, { type: "json_object" });
+
+      const suppressedOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: { response_format: undefined },
+        },
+      };
+      const suppressed = buildModelCallContextRequest(testCase.model, suppressedOptions);
+      const suppressedBody = buildOpenAIChatRequest(
+        "gpt-4o",
+        testCase.providerName,
+        suppressedOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(suppressed?.responseFormat, undefined);
+      assertEquals(suppressedBody.response_format, undefined);
+    }
+  });
+
+  it("persists OpenAI Responses native text.format precedence", () => {
+    const neutralFormat = {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: { neutral: { type: "string" } } },
+    } as const;
+    const nativeSchema = { type: "object", properties: { native: { type: "string" } } };
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          providerName: "openai",
+        },
+        {
+          model: {
+            provider: "veryfront-cloud",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          providerName: "veryfront-cloud",
+        },
+      ] as const
+    ) {
+      const nativeOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: {
+          [testCase.providerName]: {
+            text: {
+              format: {
+                type: "json_schema",
+                name: "native",
+                schema: nativeSchema,
+                strict: true,
+              },
+            },
+          },
+        },
+      };
+      const projected = buildModelCallContextRequest(testCase.model, nativeOptions);
+      const body = buildOpenAIResponsesRequest(
+        "gpt-5.4-mini",
+        testCase.providerName,
+        nativeOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.responseFormat, {
+        type: "json_schema",
+        name: "native",
+        schema: nativeSchema,
+        strict: true,
+      });
+      assertEquals(body.text?.format, {
+        type: "json_schema",
+        name: "native",
+        schema: nativeSchema,
+        strict: true,
+      });
+
+      const suppressedOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: neutralFormat,
+        providerOptions: { [testCase.providerName]: { text: { format: undefined } } },
+      };
+      const suppressed = buildModelCallContextRequest(testCase.model, suppressedOptions);
+      const suppressedBody = buildOpenAIResponsesRequest(
+        "gpt-5.4-mini",
+        testCase.providerName,
+        suppressedOptions,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(suppressed?.responseFormat, undefined);
+      assertEquals(suppressedBody.text?.format, undefined);
+    }
+  });
+
+  it("does not preserve caller schemas after native Anthropic and Google projection", () => {
+    for (
+      const testCase of [
+        {
+          model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+          nativeOptions(schema: unknown): ModelRuntimeCallOptions {
+            return {
+              prompt,
+              providerOptions: {
+                anthropic: {
+                  output_config: {
+                    format: { type: "json_schema", schema },
+                  },
+                },
+              },
+            };
+          },
+        },
+        {
+          model: { provider: "google", modelId: "gemini-synthetic" },
+          nativeOptions(schema: unknown): ModelRuntimeCallOptions {
+            return {
+              prompt,
+              providerOptions: {
+                google: {
+                  generationConfig: {
+                    responseMimeType: "application/json",
+                    responseJsonSchema: schema,
+                  },
+                },
+              },
+            };
+          },
+        },
+      ] as const
+    ) {
+      const schema = {
+        type: "object",
+        properties: { wrapper: { type: "boolean" } },
+        jsonSchema: { type: "number" },
+      };
+      buildModelCallContextRequest(testCase.model, testCase.nativeOptions(schema));
+
+      const neutralOptions: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json_schema", name: "neutral", schema },
+      };
+      const projected = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        openAITransport: "chat-completions",
+      }, neutralOptions);
+      const body = buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        neutralOptions,
+        false,
+        createWarningCollector(),
+      );
+      const nativeSchema = (body.response_format as {
+        json_schema?: { schema?: unknown };
+      }).json_schema?.schema;
+      assertEquals(projected?.responseFormat?.type, "json_schema");
+      assertEquals(
+        projected?.responseFormat?.type === "json_schema"
+          ? projected.responseFormat.schema
+          : undefined,
+        nativeSchema,
+      );
+      assertEquals(nativeSchema, { type: "number" });
+    }
+  });
+
+  it("matches OpenAI neutral response format after provider option snapshots", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: {
+        type: "json_schema",
+        name: "neutral",
+        schema: {
+          jsonSchema: {
+            type: "object",
+            jsonSchema: { type: "number", jsonSchema: { type: "boolean" } },
+          },
+        },
+      },
+    };
+    for (
+      const testCase of [
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          },
+          schemaFromBody(snapshot: ModelRuntimeCallOptions): unknown {
+            const body = buildOpenAIChatRequest(
+              "gpt-4o",
+              "openai",
+              snapshot,
+              false,
+              createWarningCollector(),
+            );
+            return (body.response_format as { json_schema?: { schema?: unknown } })
+              .json_schema?.schema;
+          },
+        },
+        {
+          model: {
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-5.4-mini",
+            openAITransport: "responses",
+          },
+          schemaFromBody(snapshot: ModelRuntimeCallOptions): unknown {
+            const body = buildOpenAIResponsesRequest(
+              "gpt-5.4-mini",
+              "openai",
+              snapshot,
+              false,
+              createWarningCollector(),
+            );
+            return body.text?.format?.type === "json_schema" ? body.text.format.schema : undefined;
+          },
+        },
+      ] as const
+    ) {
+      const snapshot = snapshotModelCallProviderOptions(testCase.model, options);
+      const projected = buildModelCallContextRequest(testCase.model, snapshot);
+      const actualSchema = testCase.schemaFromBody(snapshot);
+      assertEquals(projected?.responseFormat?.type, "json_schema");
+      assertEquals(
+        projected?.responseFormat?.type === "json_schema"
+          ? projected.responseFormat.schema
+          : undefined,
+        actualSchema,
+      );
+      assertEquals(actualSchema, { type: "number", jsonSchema: { type: "boolean" } });
+    }
+  });
+
+  it("persists OpenAI neutral response format builder defaults", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: {
+        type: "json_schema",
+        name: "neutral",
+        schema: { type: "object", properties: {} },
+      },
+    };
+
+    const chatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, options);
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(chatProjected?.responseFormat, options.responseFormat);
+    assertEquals(
+      (chatBody.response_format as { json_schema?: { strict?: boolean } }).json_schema?.strict,
+      undefined,
+    );
+
+    const responsesProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-5.4-mini",
+      openAITransport: "responses",
+    }, options);
+    const responsesBody = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(responsesProjected?.responseFormat, {
+      type: "json_schema",
+      name: "neutral",
+      schema: { type: "object", properties: {} },
+      strict: false,
+    });
+    assertEquals(responsesBody.text?.format.strict, false);
+  });
+
   it("omits adaptive effort overwritten by Anthropic structured output", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,
@@ -327,6 +833,64 @@ describe("model call request projection", () => {
     );
     assertEquals(projected?.reasoning, { enabled: true });
     assertEquals((body.output_config as Record<string, unknown>).effort, undefined);
+  });
+
+  it("ignores undispatched underlying buckets for served Anthropic and Google models", () => {
+    const anthropicModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m1" };
+    registerVeryfrontCloudModelFacts(anthropicModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "anthropic",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const anthropicOptions = snapshotModelCallProviderOptions(anthropicModel, {
+      prompt,
+      providerOptions: {
+        anthropic: { max_tokens: 111, thinking: { type: "enabled", budget_tokens: 1000 } },
+        "veryfront-cloud": { max_tokens: 222, thinking: { type: "enabled", budget_tokens: 2000 } },
+        acme: { max_tokens: 999, thinking: { type: "enabled", budget_tokens: 9000 } },
+      },
+    });
+    const anthropicProjected = buildModelCallContextRequest(anthropicModel, anthropicOptions);
+    const anthropicBody = buildAnthropicMessagesRequest(
+      "m1",
+      "veryfront-cloud",
+      anthropicOptions,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(anthropicProjected?.maxOutputTokens, 222);
+    assertEquals(anthropicProjected?.reasoning, { enabled: true, budgetTokens: 2000 });
+    assertEquals(anthropicBody.max_tokens, 222);
+    assertEquals(anthropicBody.thinking, { type: "enabled", budget_tokens: 2000 });
+
+    const googleModel = { provider: "veryfront-cloud", modelProvider: "acme", modelId: "m2" };
+    registerVeryfrontCloudModelFacts(googleModel as never, () =>
+      ({
+        provider: "acme",
+        surface: "google",
+        native: false,
+        transportPlan: "chat-completions",
+      }) as never);
+    const googleOptions = snapshotModelCallProviderOptions(googleModel, {
+      prompt,
+      providerOptions: {
+        google: { generationConfig: { maxOutputTokens: 111 } },
+        "veryfront-cloud": { generationConfig: { maxOutputTokens: 222 } },
+        acme: { generationConfig: { maxOutputTokens: 999 } },
+      },
+    });
+    const googleProjected = buildModelCallContextRequest(googleModel, googleOptions);
+    const googleBody = buildGoogleGenerateContentRequest(
+      "veryfront-cloud",
+      googleOptions,
+      createWarningCollector(),
+    );
+
+    assertEquals(googleProjected?.maxOutputTokens, 222);
+    assertEquals(googleBody.generationConfig?.maxOutputTokens, 222);
   });
 
   it("records native controls by served surface for a newly served provider", () => {
@@ -581,6 +1145,358 @@ describe("model call request projection", () => {
     }
   });
 
+  it("records the effective OpenAI output token budget after native overrides", () => {
+    const responseOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        openai: { max_output_tokens: 111, max_tokens: 999 },
+        "veryfront-cloud": { max_output_tokens: 222, max_tokens: 888 },
+      },
+    };
+    const responseProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "o3",
+    }, responseOptions);
+    const responseBody = buildOpenAIResponsesRequest(
+      "o3",
+      "veryfront-cloud",
+      responseOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(responseBody.max_output_tokens, 222);
+    assertEquals(responseProjected?.maxOutputTokens, responseBody.max_output_tokens);
+
+    const nativeChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        "openai-compatible": { max_completion_tokens: 111 },
+        openai: { max_tokens: 333, max_output_tokens: 999 },
+      },
+    };
+    const nativeChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeChatOptions);
+    const nativeChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeChatBody.max_completion_tokens, 333);
+    assertEquals(nativeChatProjected?.maxOutputTokens, nativeChatBody.max_completion_tokens);
+
+    const nativeCompletionOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_completion_tokens: 444 } },
+    };
+    const nativeCompletionProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeCompletionOptions);
+    const nativeCompletionBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeCompletionOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeCompletionBody.max_completion_tokens, 444);
+    assertEquals(
+      nativeCompletionProjected?.maxOutputTokens,
+      nativeCompletionBody.max_completion_tokens,
+    );
+
+    const nativeAliasCollisionOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_tokens: 333, max_completion_tokens: 444 } },
+    };
+    const nativeAliasCollisionProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, nativeAliasCollisionOptions);
+    const nativeAliasCollisionBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      nativeAliasCollisionOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(nativeAliasCollisionBody.max_completion_tokens, 444);
+    assertEquals(
+      nativeAliasCollisionProjected?.maxOutputTokens,
+      nativeAliasCollisionBody.max_completion_tokens,
+    );
+
+    const compatibleChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_tokens: 555, max_completion_tokens: 444 } },
+    };
+    const compatibleChatProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "mistral",
+      modelId: "mistral-large",
+    }, compatibleChatOptions);
+    const compatibleChatBody = buildOpenAIChatRequest(
+      "mistral-large",
+      "veryfront-cloud",
+      compatibleChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(compatibleChatBody.max_tokens, 555);
+    assertEquals(compatibleChatBody.max_completion_tokens, 444);
+    assertEquals(compatibleChatProjected?.maxOutputTokens, compatibleChatBody.max_tokens);
+
+    const compatibleCompletionOnlyOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_completion_tokens: 444 } },
+    };
+    const compatibleCompletionOnlyProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "mistral",
+      modelId: "mistral-large",
+    }, compatibleCompletionOnlyOptions);
+    const compatibleCompletionOnlyBody = buildOpenAIChatRequest(
+      "mistral-large",
+      "veryfront-cloud",
+      compatibleCompletionOnlyOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(compatibleCompletionOnlyBody.max_tokens, 100);
+    assertEquals(compatibleCompletionOnlyBody.max_completion_tokens, 444);
+    assertEquals(
+      compatibleCompletionOnlyProjected?.maxOutputTokens,
+      compatibleCompletionOnlyBody.max_tokens,
+    );
+
+    const directAmbiguousOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_output_tokens: 666, max_tokens: 777 } },
+    };
+    const directAmbiguousProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "auto",
+    }, directAmbiguousOptions);
+    const directAmbiguousChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    const directAmbiguousResponsesBody = buildOpenAIResponsesRequest(
+      "gpt-4o",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(directAmbiguousChatBody.max_completion_tokens, 777);
+    assertEquals(directAmbiguousResponsesBody.max_output_tokens, 666);
+    assertEquals(
+      directAmbiguousProjected?.maxOutputTokens,
+      directAmbiguousChatBody.max_completion_tokens,
+    );
+
+    const directHostedToolProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "auto",
+    }, {
+      ...directAmbiguousOptions,
+      tools: [{ type: "provider", id: "openai.web_search", name: "web_search", args: {} }],
+    });
+    assertEquals(
+      directHostedToolProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const directUnknownTransportProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "custom-openai",
+      modelId: "custom-gpt",
+    }, directAmbiguousOptions);
+    assertEquals(directAmbiguousChatBody.max_completion_tokens, 777);
+    assertEquals(directAmbiguousResponsesBody.max_output_tokens, 666);
+    assertEquals(directUnknownTransportProjected?.maxOutputTokens, 100);
+
+    const pinnedReasoningChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "o3",
+      openAITransport: "chat-completions",
+    }, directAmbiguousOptions);
+    const pinnedReasoningChatBody = buildOpenAIChatRequest(
+      "o3",
+      "openai",
+      directAmbiguousOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(
+      pinnedReasoningChatProjected?.maxOutputTokens,
+      pinnedReasoningChatBody.max_completion_tokens,
+    );
+
+    const pinnedResponsesProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "responses",
+    }, directAmbiguousOptions);
+    assertEquals(
+      pinnedResponsesProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const customChatRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-openai-label",
+      providerName: "openai",
+    }, "gpt-4o");
+    const customChatProjected = buildModelCallContextRequest(
+      customChatRuntime,
+      directAmbiguousOptions,
+    );
+    assertEquals(customChatRuntime.provider, "custom-openai-label");
+    assertEquals(customChatRuntime.modelProvider, "openai");
+    assertEquals(
+      customChatProjected?.maxOutputTokens,
+      directAmbiguousChatBody.max_completion_tokens,
+    );
+
+    const customResponsesRuntime = createOpenAIResponsesRuntime({
+      apiKey: "test-api-key",
+      name: "custom-openai-label",
+      providerName: "openai",
+    }, "gpt-4o");
+    const customResponsesProjected = buildModelCallContextRequest(
+      customResponsesRuntime,
+      directAmbiguousOptions,
+    );
+    assertEquals(customResponsesRuntime.provider, "custom-openai-label");
+    assertEquals(customResponsesRuntime.modelProvider, "openai");
+    assertEquals(
+      customResponsesProjected?.maxOutputTokens,
+      directAmbiguousResponsesBody.max_output_tokens,
+    );
+
+    const customProviderOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: {
+        openai: { max_tokens: 333 },
+        moonshotai: { max_tokens: 555 },
+      },
+    };
+    const customProviderRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-moonshot-label",
+      providerName: "moonshotai",
+    }, "kimi-k2.5");
+    const customProviderProjected = buildModelCallContextRequest(
+      customProviderRuntime,
+      customProviderOptions,
+    );
+    const customProviderBody = buildOpenAIChatRequest(
+      "kimi-k2.5",
+      "moonshotai",
+      customProviderOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(customProviderRuntime.provider, "custom-moonshot-label");
+    assertEquals(customProviderRuntime.modelProvider, "moonshotai");
+    assertEquals(customProviderBody.max_tokens, 555);
+    assertEquals(customProviderProjected?.maxOutputTokens, customProviderBody.max_tokens);
+
+    const customProviderReasoningRuntime = createOpenAIModelRuntime({
+      apiKey: "test-api-key",
+      name: "custom-moonshot-label",
+      providerName: "moonshotai",
+    }, "o3");
+    const customProviderReasoningProjected = buildModelCallContextRequest(
+      customProviderReasoningRuntime,
+      { temperature: 0.4 },
+    );
+    const customProviderReasoningBody = buildOpenAIChatRequest(
+      "o3",
+      "moonshotai",
+      { prompt, temperature: 0.4 },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(customProviderReasoningBody.reasoning_effort, undefined);
+    assertEquals(customProviderReasoningBody.temperature, undefined);
+    assertEquals(customProviderReasoningProjected?.reasoning, undefined);
+    assertEquals(
+      customProviderReasoningProjected?.temperature,
+      customProviderReasoningBody.temperature,
+    );
+
+    const explicitUndefinedResponseOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { "veryfront-cloud": { max_output_tokens: undefined } },
+    };
+    const explicitUndefinedResponseProjected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "o3",
+    }, explicitUndefinedResponseOptions);
+    const explicitUndefinedResponseBody = buildOpenAIResponsesRequest(
+      "o3",
+      "veryfront-cloud",
+      explicitUndefinedResponseOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(explicitUndefinedResponseBody.max_output_tokens, undefined);
+    assertEquals(explicitUndefinedResponseProjected?.maxOutputTokens, undefined);
+
+    const explicitUndefinedChatOptions: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 100,
+      providerOptions: { openai: { max_tokens: undefined } },
+    };
+    const explicitUndefinedChatProjected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, explicitUndefinedChatOptions);
+    const explicitUndefinedChatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      explicitUndefinedChatOptions,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(explicitUndefinedChatBody.max_completion_tokens, undefined);
+    assertEquals(explicitUndefinedChatProjected?.maxOutputTokens, undefined);
+  });
+
   it("projects numeric native sampling overrides after neutral sampling is dropped", () => {
     const expected = { temperature: 0, topP: 0.6, presencePenalty: -0.2, frequencyPenalty: 0.5 };
     for (const provider of ["openai", "veryfront-cloud"]) {
@@ -648,7 +1564,6 @@ describe("model call request projection", () => {
           modelProvider: "anthropic",
           modelId: "claude-haiku-4-5",
         }, options);
-        assertEquals(projected?.maxOutputTokens, 64);
         for (const stream of [false, true]) {
           const body = buildAnthropicMessagesRequest(
             "claude-haiku-4-5",
@@ -657,6 +1572,7 @@ describe("model call request projection", () => {
             stream,
             createWarningCollector(),
           ) as unknown as Record<string, unknown>;
+          assertEquals(projected?.maxOutputTokens, body.max_tokens);
           for (
             const [field, nativeField] of [...samplingFields, ["topK", "top_k"], [
               "seed",
@@ -674,6 +1590,293 @@ describe("model call request projection", () => {
         }
       }
     }
+  });
+
+  it("matches Anthropic thinking token expansion and model caps", () => {
+    for (
+      const options of [
+        {
+          modelId: "claude-haiku-4-5",
+          maxOutputTokens: 64,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+        {
+          modelId: "claude-3-haiku",
+          maxOutputTokens: 4000,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+        },
+      ] as const
+    ) {
+      const callOptions = {
+        prompt,
+        maxOutputTokens: options.maxOutputTokens,
+        reasoning: options.reasoning,
+      };
+      const model = {
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: options.modelId,
+      };
+      const projected = buildModelCallContextRequest(model, callOptions);
+      const body = buildAnthropicMessagesRequest(
+        options.modelId,
+        "anthropic",
+        callOptions,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals(projected?.maxOutputTokens, body.max_tokens);
+    }
+  });
+
+  it("matches default Anthropic wire limits for hosted reasoning cases", () => {
+    const cases: { modelId: string; options: ModelRuntimeCallOptions; expected: number }[] = [
+      {
+        modelId: "claude-opus-4-8",
+        options: { prompt, providerOptions: { anthropic: { thinking: { type: "adaptive" } } } },
+        expected: 128_000,
+      },
+      {
+        modelId: "claude-sonnet-4-6",
+        options: {
+          prompt,
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        },
+        expected: 64_000,
+      },
+      ...[{}, { enabled: false }, { enabled: true, budgetTokens: 1024 }].map((reasoning) => ({
+        modelId: "claude-synthetic",
+        options: {
+          prompt,
+          reasoning,
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        },
+        expected: 4096,
+      })),
+    ];
+    for (const { modelId, options, expected } of cases) {
+      const captured = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "anthropic",
+        modelId,
+      }, options);
+      for (const stream of [false, true]) {
+        const body = buildAnthropicMessagesRequest(
+          modelId,
+          "veryfront-cloud",
+          options,
+          stream,
+          createWarningCollector(),
+        );
+        assertEquals(body.max_tokens, expected);
+        assertEquals(captured?.maxOutputTokens, body.max_tokens);
+      }
+    }
+  });
+
+  it("matches direct Anthropic native max_tokens overrides to the exact wire body", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions: {
+        anthropic: { max_tokens: 512 },
+      },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, 512);
+    assertEquals(projected?.maxOutputTokens, body.max_tokens);
+  });
+
+  it("omits Anthropic schemaless JSON capture just as the native builder does", () => {
+    for (const provider of ["anthropic", "veryfront-cloud"]) {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json" },
+      };
+      const projected = buildModelCallContextRequest({
+        provider,
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, options);
+      const body = buildAnthropicMessagesRequest(
+        "claude-haiku-4-5",
+        provider,
+        options,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.output_config, undefined);
+      assertEquals(projected?.responseFormat, undefined);
+    }
+  });
+
+  it("captures the closed neutral JSON schema the Anthropic builder dispatches", () => {
+    for (const provider of ["anthropic", "veryfront-cloud"]) {
+      const schema = {
+        type: "object",
+        properties: {
+          city: { type: "string" },
+          location: {
+            type: "object",
+            properties: { lat: { type: "number" } },
+            required: ["lat"],
+          },
+        },
+        required: ["city", "location"],
+      };
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        responseFormat: { type: "json_schema", name: "weather", schema },
+      };
+      const projected = buildModelCallContextRequest({
+        provider,
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      }, options);
+      const body = buildAnthropicMessagesRequest(
+        "claude-haiku-4-5",
+        provider,
+        options,
+        false,
+        createWarningCollector(),
+      );
+      const dispatched = (body.output_config as { format: { schema: unknown } }).format.schema;
+
+      assertEquals((dispatched as { additionalProperties?: unknown }).additionalProperties, false);
+      assert(projected?.responseFormat?.type === "json_schema");
+      assertEquals(projected.responseFormat.schema, dispatched);
+      assertEquals("additionalProperties" in schema, false);
+    }
+  });
+
+  it("matches Anthropic undefined native max_tokens suppression", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions: {
+        anthropic: { max_tokens: undefined },
+      },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, undefined);
+    assertEquals(projected, undefined);
+  });
+
+  it("shares neutral Anthropic controls between capture and the native wire builder", () => {
+    const model = { provider: "anthropic", modelId: "claude-haiku-4-5" };
+    const stopSequences = ["original"];
+    const reasoning = { enabled: true, budgetTokens: 2048 };
+    const options = snapshotModelCallProviderOptions(model, {
+      prompt,
+      maxOutputTokens: 8192,
+      stopSequences,
+      reasoning,
+    });
+    const projected = buildModelCallContextRequest(model, options);
+    stopSequences[0] = "mutated";
+    reasoning.budgetTokens = 4096;
+    const body = buildAnthropicMessagesRequest(
+      model.modelId,
+      model.provider,
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(projected?.stopSequences, ["original"]);
+    assertEquals(body.stop_sequences, ["original"]);
+    assertEquals(projected?.reasoning, { enabled: true, budgetTokens: 2048 });
+    assertEquals(body.thinking, { type: "enabled", budget_tokens: 2048 });
+  });
+
+  it("snapshots direct Anthropic controls once for capture and the native wire builder", () => {
+    const anthropic = { max_tokens: 512, thinking: { type: "enabled", budget_tokens: 2048 } };
+    const options = snapshotModelCallProviderOptions(
+      {
+        provider: "anthropic",
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-4-5",
+      },
+      {
+        prompt,
+        maxOutputTokens: 64,
+        providerOptions: { anthropic },
+      },
+    );
+    anthropic.max_tokens = 768;
+    anthropic.thinking.budget_tokens = 4096;
+
+    const model = {
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    };
+    const projected = buildModelCallContextRequest(model, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, 512);
+    assertEquals(projected?.maxOutputTokens, 512);
+    assertEquals(projected?.reasoning, { enabled: true, budgetTokens: 2048 });
+  });
+
+  it("matches non-enumerable Anthropic provider buckets accepted by the request builder", () => {
+    const providerOptions: NonNullable<ModelRuntimeCallOptions["providerOptions"]> = {};
+    Object.defineProperty(providerOptions, "anthropic", {
+      value: { max_tokens: 768 },
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      providerOptions,
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "anthropic",
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-4-5",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "anthropic",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.max_tokens, 768);
+    assertEquals(projected?.maxOutputTokens, body.max_tokens);
   });
 
   it("preserves Anthropic native control overrides after neutral filtering", () => {
@@ -708,6 +1911,7 @@ describe("model call request projection", () => {
       seed: 0,
       presencePenalty: 0.7,
       frequencyPenalty: -0.5,
+      maxOutputTokens: 64_000,
       stopSequences: ["native"],
       reasoning: { enabled: true, budgetTokens: 2048 },
     });
@@ -766,6 +1970,262 @@ describe("model call request projection", () => {
       assertEquals(projected?.presencePenalty, undefined);
       assertEquals(projected?.frequencyPenalty, undefined);
       assertEquals(projected?.reasoning, reasoning);
+    }
+  });
+
+  it("rejects Google accessor provider buckets before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "google", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          generationConfig: {
+            maxOutputTokens: 999,
+            temperature: 0.1,
+            thinkingConfig: { thinkingBudget: 999 },
+          },
+        };
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      temperature: 0.4,
+      maxOutputTokens: 64,
+      reasoning: { enabled: true, budgetTokens: 1024 },
+      providerOptions,
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "google",
+          modelId: "gemini-synthetic",
+        }, options),
+      TypeError,
+      'Provider options for "google" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildGoogleGenerateContentRequest(
+          "veryfront-cloud",
+          options,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "google" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects OpenAI accessor provider buckets before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          max_tokens: 777,
+          max_output_tokens: 888,
+          reasoning: { effort: "high" },
+          reasoning_effort: "low",
+        };
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      maxOutputTokens: 64,
+      reasoning: { enabled: true, effort: "medium" },
+      providerOptions,
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "openai",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          openAITransport: "chat-completions",
+        }, options),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("uses OpenAI provider bucket descriptors instead of proxy get traps", () => {
+    let getTrapCalls = 0;
+    const providerOptions = new Proxy({}, {
+      getOwnPropertyDescriptor(_target, key) {
+        if (key !== "openai") return undefined;
+        return {
+          configurable: true,
+          enumerable: true,
+          value: { max_tokens: 111, reasoning_effort: "low" },
+          writable: true,
+        };
+      },
+      get(_target, key) {
+        if (key === "openai") {
+          getTrapCalls += 1;
+          return { max_tokens: 777, reasoning_effort: "high" };
+        }
+        return undefined;
+      },
+      ownKeys() {
+        return ["openai"];
+      },
+    }) as Record<string, unknown>;
+    const options: ModelRuntimeCallOptions = { prompt, providerOptions };
+
+    const projected = buildModelCallContextRequest({
+      provider: "openai",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+      openAITransport: "chat-completions",
+    }, options);
+    const chatBody = buildOpenAIChatRequest(
+      "gpt-4o",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    const responseBody = buildOpenAIResponsesRequest(
+      "gpt-5.4-mini",
+      "openai",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(projected?.maxOutputTokens, 111);
+    assertEquals(projected?.reasoning, { enabled: true, effort: "low" });
+    assertEquals(chatBody.max_completion_tokens, 111);
+    assertEquals(chatBody.reasoning_effort, "low");
+    assertEquals(responseBody.max_tokens, 111);
+    assertEquals(responseBody.reasoning_effort, "low");
+    assertEquals(getTrapCalls, 0);
+  });
+
+  it("rejects OpenAI native option accessors before dispatch and persistence", () => {
+    let getterCalls = 0;
+    const openai = Object.defineProperty({}, "max_tokens", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 777;
+      },
+    });
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      providerOptions: { openai },
+    };
+
+    assertThrows(
+      () =>
+        buildModelCallContextRequest({
+          provider: "openai",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          openAITransport: "chat-completions",
+        }, options),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          options,
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must contain data properties',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("sanitizes OpenAI provider option enumeration failures before capture and dispatch", () => {
+    const privateFailure = "private-provider-enumeration-sentinel";
+    const buckets = [
+      new Proxy({}, {
+        ownKeys() {
+          throw new Error(privateFailure);
+        },
+      }),
+      new Proxy({ max_tokens: 111 }, {
+        getOwnPropertyDescriptor() {
+          throw new Error(privateFailure);
+        },
+      }),
+    ];
+    for (const openai of buckets) {
+      const options: ModelRuntimeCallOptions = { prompt, providerOptions: { openai } };
+      const calls = [
+        () =>
+          buildModelCallContextRequest({
+            provider: "openai",
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            openAITransport: "chat-completions",
+          }, options),
+        () => buildOpenAIChatRequest("gpt-4o", "openai", options, false, createWarningCollector()),
+        () =>
+          buildOpenAIResponsesRequest(
+            "gpt-5.4-mini",
+            "openai",
+            options,
+            false,
+            createWarningCollector(),
+          ),
+      ];
+      for (const call of calls) {
+        const message = 'Provider options for "openai" could not be enumerated';
+        const error = assertThrows(call, TypeError, message);
+        assert(error instanceof TypeError);
+        assertEquals(error.message, message);
+        assertEquals(error.cause, undefined);
+      }
     }
   });
 
@@ -868,3 +2328,56 @@ describe("model call request projection", () => {
     );
   });
 });
+
+for (const provider of ["anthropic", "google", "openai"] as const) {
+  for (const cloud of [false, true]) {
+    for (const strict of [false, true]) {
+      it(`captures only ${provider} supported neutral schema strict ${strict} in ${cloud ? "Cloud" : "native"}`, () => {
+        const options: ModelRuntimeCallOptions = {
+          prompt,
+          responseFormat: {
+            type: "json_schema",
+            name: "answer",
+            strict,
+            schema: { type: "object", properties: { answer: { type: "string" } } },
+          },
+        };
+        const captured = buildModelCallContextRequest({
+          provider: cloud ? "veryfront-cloud" : provider,
+          modelProvider: provider,
+          modelId: "format-test",
+          openAITransport: "chat-completions",
+        }, options);
+        const warnings = createWarningCollector();
+        const body = provider === "anthropic"
+          ? buildAnthropicMessagesRequest("claude-test", provider, options, false, warnings)
+          : provider === "google"
+          ? buildGoogleGenerateContentRequest(provider, options, warnings)
+          : buildOpenAIChatRequest("gpt-4.1-mini", provider, options, false, warnings);
+        assert(captured?.responseFormat?.type === "json_schema");
+        if (provider === "openai") {
+          const response = Reflect.get(body, "response_format");
+          assert(typeof response === "object" && response !== null);
+          const format = Reflect.get(response, "json_schema");
+          assert(typeof format === "object" && format !== null);
+          assertEquals(captured.responseFormat.strict, Reflect.get(format, "strict"));
+          assertEquals(captured.responseFormat.strict, strict);
+        } else {
+          assertEquals(Object.hasOwn(captured.responseFormat, "strict"), false);
+          const config = Reflect.get(
+            body,
+            provider === "anthropic" ? "output_config" : "generationConfig",
+          );
+          assert(typeof config === "object" && config !== null);
+          const format = provider === "anthropic" ? Reflect.get(config, "format") : config;
+          assert(typeof format === "object" && format !== null);
+          assertEquals(Object.hasOwn(format, "strict"), false);
+          assertEquals(
+            captured.responseFormat.schema,
+            Reflect.get(format, provider === "anthropic" ? "schema" : "responseJsonSchema"),
+          );
+        }
+      });
+    }
+  }
+}

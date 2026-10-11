@@ -17,6 +17,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { Agent } from "#veryfront/agent";
+import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import {
   createWorkflowClient,
@@ -28,8 +29,17 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
+import type { AgentRunModelCallContextEvent } from "#veryfront/runtime/model-call-context.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import {
+  executeLocalChild,
+  observeGeneratedAgentTurn,
+  withLocalChildRuntime,
+} from "#veryfront/agent/composition/local-child-execution.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
@@ -93,6 +103,16 @@ function canonicalKnowledgeIndexResponse(url: string, init?: RequestInit): Respo
   return undefined;
 }
 
+function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (
+    headers === undefined || typeof headers !== "object" || Array.isArray(headers) ||
+    headers instanceof Headers || !Object.hasOwn(headers, name)
+  ) {
+    return undefined;
+  }
+  return headers[name];
+}
+
 async function expectedReportArtifact(report: EvalReport, sourcePath: string, path = sourcePath) {
   const content = `${JSON.stringify({ ...report, reportPath: sourcePath }, null, 2)}\n`;
   return {
@@ -119,6 +139,7 @@ import type { WorkflowNode, WorkflowRun } from "#veryfront/workflow/types.ts";
 import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
@@ -178,6 +199,28 @@ class SynchronousInMemorySpanExporter implements SpanExporter {
  * replacing a runtime method: the ceiling is then observed exactly where it has
  * to hold, in the tool list and prompt the provider receives.
  */
+function createProjectRunEventToken(input: {
+  runId: string;
+  projectId: string;
+  canonicalRunId: string;
+  attemptId?: string;
+}): string {
+  return `test.${
+    btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        runId: input.runId,
+        projectId: input.projectId,
+        projectExecutionAttempt: {
+          canonicalRunId: input.canonicalRunId,
+          workerId: "worker",
+          attemptId: input.attemptId ?? "attempt",
+        },
+      }),
+    )
+  }.signature`;
+}
+
 function createEvalTransportModel(input: {
   text: string;
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -200,6 +243,32 @@ function createEvalTransportModel(input: {
               finishReason: "stop",
               ...(input.usage ? { usage: input.usage } : {}),
             });
+            controller.close();
+          },
+        }),
+      });
+    },
+  };
+}
+
+function createScriptedStreamModel(
+  modelId: string,
+  turns: readonly (readonly RuntimeStreamPart[])[],
+): ModelRuntime<ModelRuntimeCallOptions> {
+  let call = 0;
+  return {
+    provider: "hosted",
+    modelId,
+    doGenerate: () => {
+      throw new Error(`Expected ${modelId} to use the streaming path`);
+    },
+    doStream: () => {
+      const parts = turns[call++];
+      if (!parts) throw new Error(`Unexpected ${modelId} stream call ${call}`);
+      return Promise.resolve({
+        stream: new ReadableStream<RuntimeStreamPart>({
+          start(controller) {
+            for (const part of parts) controller.enqueue(part);
             controller.close();
           },
         }),
@@ -585,6 +654,7 @@ const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (option
       environmentId: options.environmentId,
       signal: options.signal,
       attempt: options.attempt ?? 1,
+      ...(options.runChild === undefined ? {} : { runChild: options.runChild }),
     });
     return { success: true, result, durationMs: performance.now() - startedAt };
   } catch (error) {
@@ -869,7 +939,9 @@ describe("workflow capability transport boundary", () => {
             VERYFRONT_API_BASE_URL: "https://tenant.example.test",
             VERYFRONT_API_URL: "https://tenant.example.test",
           }, async () => {
-            const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+            const ctx = createCtx(signed.publicKeyPem);
+            ctx.projectId = "proj-1";
+            const result = await handler.handle(sealIngressCredentials(signed.request), ctx);
             assertExists(result.response);
             const response = await result.response.json();
             assertEquals(response.success, false);
@@ -888,7 +960,7 @@ describe("workflow capability transport boundary", () => {
   }
 
   for (const hasAgentNode of [false, true]) {
-    it(`settles workflow lifecycle with plaintext host transport and agent node ${hasAgentNode}`, async () => {
+    it(`settles workflow lifecycle with unsupported host transport and agent node ${hasAgentNode}`, async () => {
       let localExecutions = 0;
       let created = false;
       const runId = `run_https_boundary_${hasAgentNode}`;
@@ -930,12 +1002,21 @@ describe("workflow capability transport boundary", () => {
         kind: "workflow",
         target: "workflow:publish",
         projectId: "proj-1",
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId: "proj-1",
+          canonicalRunId: "88888888-8888-4888-8888-888888888888",
+        }),
       });
       await withEnv(
-        { VERYFRONT_API_BASE_URL: "http://api.example.test", VERYFRONT_API_URL: "" },
+        {
+          VERYFRONT_API_BASE_URL: "ftp://api.example.test",
+          VERYFRONT_API_URL: "https://api.example.test",
+        },
         () =>
           withMockFetch(() => {
-            throw new Error("Plaintext transport must never send credentials");
+            throw new Error("Unapproved transport must never send credentials");
           }, async () => {
             const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
             assertExists(result.response);
@@ -944,7 +1025,11 @@ describe("workflow capability transport boundary", () => {
             assertEquals(created, true, "workflow lifecycle must own transport failure cleanup");
             assertEquals(response.success, !hasAgentNode);
             if (hasAgentNode) assertStringIncludes(response.error, "HTTPS");
-            assertEquals(localExecutions, 0, "reject plaintext before executing an agent");
+            assertEquals(
+              localExecutions,
+              0,
+              "reject unapproved transport before executing an agent",
+            );
           }),
       );
     });
@@ -2404,6 +2489,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const hostile of [
       { name: "a project env file", envFile: true, base: "https://93.184.216.34" },
       { name: "a plaintext host API", envFile: false, base: "http://api.example.test" },
+      // Deno tests read this as the boot-configured API, which other host credentials accept.
+      {
+        name: "a boot-configured plaintext host API",
+        envFile: false,
+        base: "http://127.0.0.1:4000",
+      },
     ]
   ) {
     it(`never sends the knowledge writer credential to ${hostile.name} origin`, async () => {
@@ -9431,6 +9522,510 @@ describe("project run inference credential header", () => {
   };
   const taskPath = "/api/control-plane/runs/run_task_inference/execute";
 
+  async function withAcknowledgedRuntimeEntry<T>(operation: () => Promise<T>): Promise<T> {
+    return await withMockFetch(async (input, init) => {
+      const request = new Request(input, init);
+      assertMatch(request.url, /\/runs\/[0-9a-f-]+\/events$/);
+      assertMatch(request.headers.get("authorization") ?? "", /^Bearer [^.]+\.[^.]+\.[^.]+$/);
+      assertEquals(request.headers.get("x-veryfront-run-event-token"), null);
+      const body = requestJsonBody(init);
+      assertExists(body);
+      assertEquals(body.events, [{
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: {
+          runId: JSON.parse(
+            atob(request.headers.get("authorization")!.slice("Bearer ".length).split(".")[1]!),
+          )
+            .runId,
+        },
+      }]);
+      assertMatch(JSON.stringify(body.runtime_observations), /execution_entry/);
+      return Response.json({
+        run_id: request.url.split("/").at(-2),
+        latest_event_id: 2,
+        appended_count: 2,
+      });
+    }, operation);
+  }
+
+  it("replays the full execution entry after a lost receipt without duplicating the attempt", async () => {
+    const runId = "run_entry_receipt_redelivery";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const recorded = new Map<string, string>();
+    const requests: { key: string; body: string }[] = [];
+    let executions = 0;
+    const originalNow = Date.now;
+    const dispatch = async (attemptId: string, elapsedMs: number) => {
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId,
+          attemptId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          executions++;
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      Date.now = () => originalNow() + elapsedMs;
+      try {
+        const result = await handler.handle(signed.request, ctx);
+        assertExists(result.response);
+        return await result.response.json();
+      } finally {
+        Date.now = originalNow;
+      }
+    };
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const observed = observeFetchRequestInit(init);
+          const key = new Headers(observed.headers).get("idempotency-key");
+          assertExists(key);
+          if (typeof observed.body !== "string") throw new Error("Expected encoded append body");
+          const body = observed.body;
+          requests.push({ key, body });
+          const existing = recorded.get(key);
+          if (existing !== undefined && existing !== body) {
+            return Response.json({ error: "Idempotency conflict" }, { status: 409 });
+          }
+          if (existing === undefined) recorded.set(key, body);
+          if (requests.length === 1) throw new Error("Accepted entry receipt was lost");
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: recorded.size,
+            appended_count: existing === undefined ? 1 : 0,
+          });
+        }, async () => {
+          const randomnessBefore = crypto.randomUUID();
+          assertEquals((await dispatch("45454545-4545-4545-8545-454545454545", 0)).success, false);
+          assertEquals(executions, 0);
+          const randomnessAfter = crypto.randomUUID();
+          assertEquals(randomnessBefore === randomnessAfter, false);
+          assertEquals(
+            (await dispatch("45454545-4545-4545-8545-454545454545", 1_000)).success,
+            true,
+          );
+          assertEquals(executions, 1);
+          assertEquals(requests[1], requests[0]);
+          assertEquals(recorded.size, 1);
+          assertEquals(
+            (await dispatch("56565656-5656-4656-8656-565656565656", 2_000)).success,
+            true,
+          );
+          assertEquals(executions, 2);
+          assertEquals(requests[2]?.key === requests[0]?.key, false);
+          assertEquals(requests[2]?.body === requests[0]?.body, false);
+          assertEquals(recorded.size, 2);
+        }),
+    );
+  });
+
+  it("recovers a fresh model observation after the previous accepted receipt was lost", async () => {
+    const runId = "run_model_receipt_redelivery";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const recorded = new Map<string, string>();
+    const requests: { key: string; body: string }[] = [];
+    let executions = 0;
+    const originalNow = Date.now;
+    const dispatch = async (attemptId: string, elapsedMs: number) => {
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId,
+          attemptId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          executions++;
+          await getActiveRunEventSink()?.({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            modelCallId: crypto.randomUUID(),
+            messages: [{
+              role: "user",
+              content: [{ type: "text", text: `Fresh model input ${Date.now()}` }],
+            }],
+            tools: [],
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      Date.now = () => originalNow() + elapsedMs;
+      try {
+        const result = await handler.handle(signed.request, ctx);
+        assertExists(result.response);
+        return await result.response.json();
+      } finally {
+        Date.now = originalNow;
+      }
+    };
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const observed = observeFetchRequestInit(init);
+          const key = new Headers(observed.headers).get("idempotency-key");
+          assertExists(key);
+          if (typeof observed.body !== "string") throw new Error("Expected encoded append body");
+          const body = observed.body;
+          requests.push({ key, body });
+          const existing = recorded.get(key);
+          if (existing !== undefined && existing !== body) {
+            return Response.json({ error: "Idempotency conflict" }, { status: 409 });
+          }
+          if (existing === undefined) recorded.set(key, body);
+          if (requests.length === 2) throw new Error("Accepted model receipt was lost");
+          const payload = JSON.parse(body);
+          const model = payload.events.find((event: { type: string }) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+          );
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: recorded.size,
+            appended_count: existing === undefined ? 1 : 0,
+            ...(model
+              ? {
+                model_call_captures: [{
+                  event_id: String(recorded.size),
+                  run_id: canonicalRunId,
+                  project_id: projectId,
+                  model_call_id: model.modelCallId,
+                }],
+              }
+              : {}),
+          });
+        }, async () => {
+          const randomnessBefore = crypto.randomUUID();
+          assertEquals((await dispatch("45454545-4545-4545-8545-454545454545", 0)).success, false);
+          assertEquals(executions, 1);
+          const randomnessAfter = crypto.randomUUID();
+          assertEquals(randomnessBefore === randomnessAfter, false);
+          assertEquals(
+            (await dispatch("45454545-4545-4545-8545-454545454545", 1_000)).success,
+            true,
+          );
+          assertEquals(executions, 2);
+          assertEquals(requests[2], requests[0]);
+          assertEquals(requests[3]?.body === requests[1]?.body, false);
+          assertEquals(requests[3]?.key === requests[1]?.key, false);
+          assertEquals(recorded.size, 3);
+          for (const request of requests) assertEquals(request.key.length <= 128, true);
+        }),
+    );
+  });
+
+  it("persists oversized public child text and tool results within the event byte limit", async () => {
+    const runId = "run_public_observation_limit";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const limit = 240 * 1024;
+    const text = "x".repeat(limit + 10_000);
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-child",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: text });
+            await control.onEvent({
+              type: "tool-output-available",
+              toolCallId: "lookup",
+              output: text,
+            });
+            return { text, toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
+          for (const event of payload.events) {
+            if (new TextEncoder().encode(JSON.stringify(event)).byteLength > limit) {
+              return Response.json({ error: "Event too large" }, { status: 413 });
+            }
+            appended.push(event);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const deltas = appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
+    assertEquals(deltas.map((event) => event.delta).join(""), text);
+    assertEquals(deltas.length > 1, true);
+    const tool = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(tool);
+    assertStringIncludes(String(tool.content), "tool result truncated");
+  });
+
+  it("retains public observations and exact private input while project array hooks are replaced", async () => {
+    const runId = "run_public_observation_limit";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const limit = 240 * 1024;
+    const text = "x".repeat(limit + 10_000);
+    const appended: Record<string, unknown>[] = [];
+    const exactMessages = [{
+      role: "user",
+      content: [{ type: "text", text: "Exact private input" }],
+    }] satisfies AgentRunModelCallContextEvent["messages"];
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let capturedMessages: unknown;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-child",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const originalMap = Array.prototype.map;
+            const originalFilter = Array.prototype.filter;
+            const originalFlatMap = Array.prototype.flatMap;
+            const originalSlice = Array.prototype.slice;
+            const originalIterator = Array.prototype[Symbol.iterator];
+            const originalSpecies = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+            let scheduledBatchSpeciesReads = 0;
+            Array.prototype.map = () => [];
+            Array.prototype.filter = () => [];
+            Array.prototype.flatMap = () => [];
+            Array.prototype.slice = () => [];
+            Array.prototype[Symbol.iterator] = function () {
+              return originalIterator.call([]);
+            };
+            try {
+              Object.defineProperty(Array, Symbol.species, {
+                configurable: true,
+                get() {
+                  if (new Error().stack?.includes("schedulePendingBatches")) {
+                    scheduledBatchSpeciesReads++;
+                  }
+                  return Array;
+                },
+              });
+              try {
+                await control.onEvent({ type: "text-delta", id: "message", delta: text });
+                assertEquals(scheduledBatchSpeciesReads, 0);
+              } finally {
+                if (originalSpecies) Object.defineProperty(Array, Symbol.species, originalSpecies);
+                else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+              }
+              await control.onEvent({
+                type: "tool-output-available",
+                toolCallId: "lookup",
+                output: text,
+              });
+              await getActiveRunEventSink()?.({
+                type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+                modelCallId,
+                messages: exactMessages,
+                tools: [],
+              });
+            } finally {
+              Array.prototype.map = originalMap;
+              Array.prototype.filter = originalFilter;
+              Array.prototype.flatMap = originalFlatMap;
+              Array.prototype.slice = originalSlice;
+              Array.prototype[Symbol.iterator] = originalIterator;
+              if (originalSpecies) Object.defineProperty(Array, Symbol.species, originalSpecies);
+              else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+            }
+            return { text, toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
+          for (let index = 0; index < payload.events.length; index++) {
+            const event = payload.events[index];
+            if (new TextEncoder().encode(JSON.stringify(event)).byteLength > limit) {
+              return Response.json({ error: "Event too large" }, { status: 413 });
+            }
+            appended[appended.length] = event;
+            if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+              capturedMessages = event.messages;
+            }
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(capturedMessages
+              ? {
+                model_call_captures: [{
+                  event_id: String(appended.length),
+                  run_id: canonicalRunId,
+                  project_id: projectId,
+                  model_call_id: modelCallId,
+                }],
+              }
+              : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const deltas = appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
+    assertEquals(deltas.map((event) => event.delta).join(""), text);
+    assertEquals(deltas.length > 1, true);
+    const tool = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(tool);
+    assertStringIncludes(String(tool.content), "tool result truncated");
+    assertEquals(capturedMessages, exactMessages);
+  });
+
+  it("persists child text beyond the append request limit in ordered bounded batches", async () => {
+    const runId = "run_public_observation_limit";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const limit = 240 * 1024;
+    const text = "x".repeat(10 * 1024 * 1024 + 10_000);
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-child",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: text });
+            await control.onEvent({
+              type: "tool-output-available",
+              toolCallId: "lookup",
+              output: text,
+            });
+            return { text, toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const body = observeFetchRequestInit(init).body;
+          if (
+            typeof body !== "string" || new TextEncoder().encode(body).byteLength > 10 * 1024 * 1024
+          ) return Response.json({ error: "Append body too large" }, { status: 413 });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected observation events");
+          for (const event of payload.events) {
+            if (new TextEncoder().encode(JSON.stringify(event)).byteLength > limit) {
+              return Response.json({ error: "Event too large" }, { status: 413 });
+            }
+            appended.push(event);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const deltas = appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
+    assertEquals(deltas.map((event) => event.delta).join(""), text);
+    assertEquals(deltas.length > 1, true);
+    const tool = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(tool);
+    assertStringIncludes(String(tool.content), "tool result truncated");
+  });
+
   async function withCapturedConsole<T>(
     fn: () => Promise<T>,
   ): Promise<{ value: T; lines: string[] }> {
@@ -9455,18 +10050,32 @@ describe("project run inference credential header", () => {
 
   it("scopes a managed-model resolver to a task run that carries the header", async () => {
     let resolverInScope: boolean | undefined;
+    const runId = "run_task_inference";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async () => {
         resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
         return { success: true, result: { ok: true }, durationMs: 1 };
       },
     }));
-    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
-      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
-    });
+    const { request, publicKeyPem } = await signedRequest(
+      taskPath,
+      { ...taskBody, projectId, canonicalRunId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
-    const { value: result, lines } = await withCapturedConsole(() =>
-      handler.handle(request, createCtx(publicKeyPem))
+    const { value: result, lines } = await withAcknowledgedRuntimeEntry(() =>
+      withCapturedConsole(() => handler.handle(request, ctx))
     );
 
     assertExists(result.response);
@@ -9491,23 +10100,3180 @@ describe("project run inference credential header", () => {
         destroy: async () => {},
       }),
     }));
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
     const body = {
       runId: "run_workflow_inference",
+      canonicalRunId,
       kind: "workflow",
       target: "workflow:publish",
-      projectId: "proj-1",
+      projectId,
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_workflow_inference/execute",
       body,
-      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_workflow_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(resolverInScope, true);
+  });
+
+  it("captures inline task agent.generate model context and output events before dispatch", async () => {
+    const runId = "run_inline_generate_observed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    let toolExecutions = 0;
+    let entryObservations = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("inline-generate", {
+          name: "Inline generate",
+          run: async () => {
+            assertEquals(
+              entryObservations,
+              1,
+              "parent runtime entry must persist before task code",
+            );
+            const assistant = agent({
+              id: "managed-inference-probe",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say OK.",
+              skills: false,
+              maxSteps: 3,
+              tools: {
+                lookup: tool({
+                  id: "lookup",
+                  description: "Lookup",
+                  inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+                  execute: () => {
+                    toolExecutions++;
+                    return { fact: "known" };
+                  },
+                }),
+              },
+            });
+            const response = await assistant.generate({ input: "Say OK." });
+            const reviewer = agent({
+              id: "managed-inference-reviewer",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say Second.",
+              skills: false,
+            });
+            const second = await reviewer.generate({ input: "Say Second." });
+            return { text: `${response.text} ${second.text}` };
+          },
+        });
+        return discovery;
+      },
+    }));
+    const body = {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:inline-generate",
+      projectId,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      body,
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+    const appended: Record<string, unknown>[] = [];
+    const idempotencyKeys: string[] = [];
+    const gatewayCaptures: Array<{ modelCallId: string | null; captureEventId: string | null }> =
+      [];
+    let cursor = 0;
+    let gatewayCalls = 0;
+    const encoder = new TextEncoder();
+    const sse = (chunks: readonly Record<string, unknown>[]) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const request = new Request(input, init);
+          const url = request.url;
+          if (url === "https://api.veryfront.com/ai/models") {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (url === "https://api.veryfront.com/ai/v1/chat/completions") {
+            gatewayCaptures.push({
+              modelCallId: request.headers.get("x-veryfront-model-call-id"),
+              captureEventId: request.headers.get("x-veryfront-model-call-capture-event-id"),
+            });
+            gatewayCalls++;
+            if (gatewayCalls === 1) {
+              return sse([
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: { role: "assistant", content: "Looking up" } }],
+                },
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{
+                    index: 0,
+                    delta: {
+                      tool_calls: [{
+                        index: 0,
+                        id: "lookup-call",
+                        type: "function",
+                        function: { name: "lookup", arguments: '{"query":"brief"}' },
+                      }],
+                    },
+                  }],
+                },
+                {
+                  id: "chatcmpl-1",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+                  usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+                },
+              ]);
+            }
+            if (gatewayCalls === 2) {
+              return sse([
+                {
+                  id: "chatcmpl-2",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: { role: "assistant", content: "OK." } }],
+                },
+                {
+                  id: "chatcmpl-2",
+                  object: "chat.completion.chunk",
+                  created: 0,
+                  model: "gpt-test",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                  usage: { prompt_tokens: 6, completion_tokens: 1, total_tokens: 7 },
+                },
+              ]);
+            }
+            return sse([
+              {
+                id: "chatcmpl-3",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: { role: "assistant", content: "Second." } }],
+              },
+              {
+                id: "chatcmpl-3",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+              },
+            ]);
+          }
+          assertEquals(url, `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`);
+          const headers = new Headers(observeFetchRequestInit(init).headers);
+          assertEquals(headers.get("x-veryfront-run-event-token"), null);
+          assertEquals(headers.get("authorization"), `Bearer ${eventToken}`);
+          const idempotencyKey = headers.get("idempotency-key");
+          assertExists(idempotencyKey);
+          idempotencyKeys.push(idempotencyKey);
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          const runtimeContextEvents = (events as Record<string, unknown>[]).filter((event) =>
+            event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+          );
+          if (runtimeContextEvents.length > 0) {
+            entryObservations++;
+            assertEquals(events, [{
+              type: "RUNTIME_EVENT_RECORDED",
+              runtime: "veryfront",
+              kind: "runtime_context",
+              value: { runId },
+            }]);
+            assertMatch(JSON.stringify(payload?.runtime_observations), /"kind":"execution_entry"/);
+            assertMatch(JSON.stringify(payload?.runtime_observations), /"event_index":0/);
+          } else {
+            assertEquals(payload?.runtime_observations, undefined);
+          }
+          appended.push(...events as Record<string, unknown>[]);
+          cursor += events.length;
+          assertEquals(
+            (events as Record<string, unknown>[]).some((event) =>
+              event.type === "RUN_STARTED" || event.type === "RUN_FINISHED" ||
+              event.type === "RUN_ERROR"
+            ),
+            false,
+          );
+          const captures = (events as Record<string, unknown>[])
+            .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+            .map((event, index) => ({
+              event_id: String(9007199254740993n + BigInt(cursor - events.length + index)),
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: cursor,
+            appended_count: events.length,
+            ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, { text: "OK. Second." });
+    assertEquals(payload.logs, null);
+    assertEquals(typeof payload.duration_ms, "number");
+    assertEquals(toolExecutions, 1);
+    assertEquals(entryObservations, 1);
+    assertEquals(gatewayCaptures.length, 3);
+    assertEquals(new Set(gatewayCaptures.map((capture) => capture.captureEventId)).size, 3);
+    assertEquals(
+      gatewayCaptures.every((capture) =>
+        typeof capture.modelCallId === "string" &&
+        typeof capture.captureEventId === "string" &&
+        BigInt(capture.captureEventId) > 9007199254740991n
+      ),
+      true,
+    );
+    assertEquals(idempotencyKeys.length, new Set(idempotencyKeys).size);
+    assertEquals(
+      appended.filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+      3,
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta),
+      ["Looking up", "OK.", "Second."],
+    );
+    assertEquals(
+      appended
+        .filter((event) =>
+          event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+        )
+        .map((event) => event.value),
+      [
+        {
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+        },
+        {
+          finishReason: "stop",
+          totalUsage: { inputTokens: 6, outputTokens: 1, totalTokens: 7 },
+        },
+        {
+          finishReason: "stop",
+          totalUsage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 },
+        },
+      ],
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TOOL_CALL_START").map((event) => event.toolCallId),
+      ["lookup-call"],
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TOOL_CALL_RESULT").map((event) =>
+        event.toolCallId
+      ),
+      ["lookup-call"],
+    );
+  });
+
+  it("batches streamed runtime observations without blocking every chunk on append", async () => {
+    const runId = "run_stream_observation_batching";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const runtimeAppendStarted = Promise.withResolvers<void>();
+    const releaseRuntimeAppend = Promise.withResolvers<void>();
+    const appended: Record<string, unknown>[] = [];
+    let taskFinishedStreaming = false;
+    let entryObservations = 0;
+    let runtimeAppendCalls = 0;
+    let maxRuntimeBatchSize = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-stream-batcher",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            for (let index = 0; index < 250; index++) {
+              await control.onEvent({
+                type: "text-delta",
+                id: "message",
+                delta: `${index},`,
+              });
+            }
+            taskFinishedStreaming = true;
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations !== undefined) {
+            entryObservations++;
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: appended.length + events.length,
+              appended_count: events.length,
+            });
+          }
+          runtimeAppendCalls++;
+          maxRuntimeBatchSize = Math.max(maxRuntimeBatchSize, events.length);
+          runtimeAppendStarted.resolve();
+          if (runtimeAppendCalls === 1) {
+            await delay(0);
+            const finishedBeforeAppendReceipt = taskFinishedStreaming;
+            releaseRuntimeAppend.resolve();
+            assertEquals(finishedBeforeAppendReceipt, true);
+          }
+          await releaseRuntimeAppend.promise;
+          appended.push(...events as Record<string, unknown>[]);
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: events.length,
+          });
+        }, async () => {
+          const pending = handler.handle(request, ctx);
+          await runtimeAppendStarted.promise;
+          return await pending;
+        }),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(entryObservations, 1);
+    assertEquals(runtimeAppendCalls, 3);
+    assertEquals(maxRuntimeBatchSize, 100);
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").length,
+      250,
+    );
+  });
+
+  it("withholds nested exception diagnostics and reconstructs public provider errors", async () => {
+    const privateDetail =
+      "finalize failed: postgres://synthetic:private@db.internal/test /internal/runtime.ts";
+    for (const code of [undefined, privateDetail, "OVERLOADED_ERROR"]) {
+      const runId = "run_nested_private_failure";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const appended: Record<string, unknown>[] = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          await executeLocalChild({
+            agentId: "nested-finalization-failure",
+            input: "test",
+            toolName: "invoke_agent",
+            toolInput: {},
+            execute: async (control) => {
+              assertExists(control?.onEvent);
+              await control.onEvent({
+                type: "error",
+                error: privateDetail,
+                ...(code ? { code } : {}),
+              });
+              return { text: "done", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            const payload = requestJsonBody(init);
+            assert(Array.isArray(payload?.events));
+            appended.push(...payload.events);
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: appended.length,
+              appended_count: payload.events.length,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const errors = appended.filter((event) =>
+        event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+      );
+      assertEquals(errors.length, 1);
+      assertEquals(
+        errors[0]?.value,
+        code === "OVERLOADED_ERROR"
+          ? { code, message: "The LLM provider is currently overloaded" }
+          : { message: "Provider stream failed" },
+      );
+      assertEquals(JSON.stringify(appended).includes(privateDetail), false);
+    }
+  });
+
+  it("applies backpressure when streamed runtime observation appends stall", async () => {
+    const runId = "run_stream_observation_backpressure";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const firstAppendStarted = Promise.withResolvers<void>();
+    const releaseFirstAppend = Promise.withResolvers<void>();
+    const appended: Record<string, unknown>[] = [];
+    let producedDeltas = 0;
+    let taskFinishedStreaming = false;
+    let runtimeAppendCalls = 0;
+    let maxRuntimeAppendCallsBeforeRelease = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-stream-backpressure",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            for (let index = 0; index < 450; index++) {
+              await control.onEvent({
+                type: "text-delta",
+                id: "message",
+                delta: `${index},`,
+              });
+              producedDeltas++;
+            }
+            taskFinishedStreaming = true;
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations !== undefined) {
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: events.length,
+              appended_count: events.length,
+            });
+          }
+          runtimeAppendCalls++;
+          if (runtimeAppendCalls === 1) {
+            await Promise.resolve();
+            firstAppendStarted.resolve();
+            await releaseFirstAppend.promise;
+          }
+          maxRuntimeAppendCallsBeforeRelease = Math.max(
+            maxRuntimeAppendCallsBeforeRelease,
+            runtimeAppendCalls,
+          );
+          appended.push(...events as Record<string, unknown>[]);
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: events.length,
+          });
+        }, async () => {
+          const pending = handler.handle(request, ctx);
+          await firstAppendStarted.promise;
+          await delay(0);
+          assertEquals(taskFinishedStreaming, false);
+          assertEquals(producedDeltas <= 300, true);
+          assertEquals(producedDeltas < 450, true);
+          assertEquals(runtimeAppendCalls, 1);
+          assertEquals(maxRuntimeAppendCallsBeforeRelease, 0);
+          releaseFirstAppend.resolve();
+          return await pending;
+        }),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(taskFinishedStreaming, true);
+    assertEquals(runtimeAppendCalls, 5);
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").length,
+      450,
+    );
+  });
+
+  it("keeps queued runtime observation appends private from inherited numeric array setters", async () => {
+    const runId = "run_stream_observation_numeric_setter";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    const text = "numeric setter safe";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-numeric-setter",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const originalIndexZero = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+            const originalDefineProperty = Object.defineProperty;
+            let observationNumericSetterCalls = 0;
+            Object.defineProperty(Array.prototype, "0", {
+              configurable: true,
+              set(this: unknown[], value: unknown) {
+                if (new Error().stack?.includes("project-run-execute.handler.ts")) {
+                  observationNumericSetterCalls++;
+                }
+                originalDefineProperty(this, "0", {
+                  configurable: true,
+                  enumerable: true,
+                  writable: true,
+                  value,
+                });
+              },
+            });
+            try {
+              await control.onEvent({ type: "text-delta", id: "message", delta: text });
+              assertEquals(observationNumericSetterCalls, 0);
+            } finally {
+              if (originalIndexZero) Object.defineProperty(Array.prototype, "0", originalIndexZero);
+              else delete (Array.prototype as unknown as Record<PropertyKey, unknown>)["0"];
+            }
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations === undefined) {
+            for (let index = 0; index < events.length; index++) {
+              appended[appended.length] = events[index];
+            }
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length + events.length,
+            appended_count: events.length,
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      text,
+    );
+  });
+
+  it("snapshots nested runtime observation data before project code mutates it", async () => {
+    const runId = "run_stream_observation_snapshot_mutation";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-snapshot-mutation",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const data = { status: "accepted", nested: { count: 1 } };
+            await control.onEvent({ type: "data-custom", data });
+            data.status = "mutated";
+            Object.defineProperty(data.nested, "count", {
+              enumerable: true,
+              get() {
+                throw new Error("queued observation retained project getter");
+              },
+            });
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations === undefined) {
+            appended.push(...events as Record<string, unknown>[]);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length + events.length,
+            appended_count: events.length,
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    const custom = appended.find((event) => event.type === "CUSTOM" && event.name === "custom");
+    assertExists(custom);
+    assertEquals(custom.value, { status: "accepted", nested: { count: 1 } });
+  });
+
+  it("flushes a partial runtime observation batch before long task completion", async () => {
+    const runId = "run_stream_observation_timer_flush";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const runtimeAppendStarted = Promise.withResolvers<void>();
+    const finishTask = Promise.withResolvers<void>();
+    const appended: Record<string, unknown>[] = [];
+    let taskCompleted = false;
+    let runtimeAppendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-timer-flush",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: "early" });
+            await finishTask.promise;
+            taskCompleted = true;
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations === undefined) {
+            runtimeAppendCalls++;
+            appended.push(...events as Record<string, unknown>[]);
+            runtimeAppendStarted.resolve();
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length + events.length,
+            appended_count: events.length,
+          });
+        }, async () => {
+          const pending = handler.handle(request, ctx);
+          await runtimeAppendStarted.promise;
+          assertEquals(taskCompleted, false);
+          assertEquals(runtimeAppendCalls, 1);
+          assertEquals(
+            appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) =>
+              event.delta
+            ),
+            ["early"],
+          );
+          finishTask.resolve();
+          return await pending;
+        }),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+  });
+
+  it("awaits runtime observations scheduled while final flush waits for a prior receipt", async () => {
+    const runId = "run_stream_observation_concurrent_flush";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const firstRuntimeAppendStarted = Promise.withResolvers<void>();
+    const releaseFirstRuntimeAppend = Promise.withResolvers<void>();
+    const lateObservationQueued = Promise.withResolvers<void>();
+    const appended: Record<string, unknown>[] = [];
+    let runtimeAppendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-concurrent-flush",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const onEvent = control.onEvent;
+            for (let index = 0; index < 99; index++) {
+              await onEvent({
+                type: "text-delta",
+                id: "message",
+                delta: `${index},`,
+              });
+            }
+            void (async () => {
+              await firstRuntimeAppendStarted.promise;
+              await delay(0);
+              await onEvent({ type: "text-delta", id: "message", delta: "late" });
+              lateObservationQueued.resolve();
+            })();
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations !== undefined) {
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: events.length,
+              appended_count: events.length,
+            });
+          }
+          runtimeAppendCalls++;
+          if (runtimeAppendCalls === 1) {
+            firstRuntimeAppendStarted.resolve();
+            await releaseFirstRuntimeAppend.promise;
+          }
+          appended.push(...events as Record<string, unknown>[]);
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: events.length,
+          });
+        }, async () => {
+          const pending = handler.handle(request, ctx);
+          await lateObservationQueued.promise;
+          await delay(75);
+          assertEquals(runtimeAppendCalls, 1);
+          releaseFirstRuntimeAppend.resolve();
+          return await pending;
+        }),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(runtimeAppendCalls, 2);
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .at(-1),
+      "late",
+    );
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").length,
+      100,
+    );
+  });
+
+  it("fails closed when a delayed partial runtime observation flush fails", async () => {
+    const runId = "run_stream_observation_timer_flush_failed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const runtimeAppendStarted = Promise.withResolvers<void>();
+    const finishTask = Promise.withResolvers<void>();
+    let runtimeAppendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-timer-flush-failed",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: "early" });
+            await finishTask.promise;
+            return { text: "done", toolCalls: 0, status: "completed" };
+          },
+        });
+        return { success: true, result: "done", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations !== undefined) {
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: events.length,
+              appended_count: events.length,
+            });
+          }
+          runtimeAppendCalls++;
+          runtimeAppendStarted.resolve();
+          throw new TypeError("delayed observation append unavailable");
+        }, async () => {
+          const pending = handler.handle(request, ctx);
+          await runtimeAppendStarted.promise;
+          finishTask.resolve();
+          return await pending;
+        }),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "delayed observation append unavailable");
+    assertEquals(runtimeAppendCalls, 1);
+    await delay(75);
+    assertEquals(runtimeAppendCalls, 1);
+  });
+
+  it("flushes queued runtime observations when task execution throws", async () => {
+    const runId = "run_stream_observation_throw_flush";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-throw-flush",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: "partial" });
+            throw new Error("task exploded after partial output");
+          },
+        });
+        return { success: true, result: "unexpected", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations === undefined) {
+            appended.push(...events as Record<string, unknown>[]);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length + events.length,
+            appended_count: events.length,
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "task exploded after partial output");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta),
+      ["partial"],
+    );
+  });
+
+  it("fails closed when flushing queued runtime observations after a task throw fails", async () => {
+    const runId = "run_stream_observation_throw_flush_failed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    let runtimeAppendCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observed-throw-flush-failed",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            await control.onEvent({ type: "text-delta", id: "message", delta: "partial" });
+            throw new Error("task exploded before failed flush");
+          },
+        });
+        return { success: true, result: "unexpected", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { ...taskBody, runId, canonicalRunId, projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          if (payload?.runtime_observations !== undefined) {
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: events.length,
+              appended_count: events.length,
+            });
+          }
+          runtimeAppendCalls++;
+          throw new TypeError("queued observation append unavailable");
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "queued observation append unavailable");
+    assertEquals(runtimeAppendCalls, 1);
+  });
+
+  it("keeps model-call capture receipts private when project code patches Map methods", async () => {
+    const runId = "run_inline_generate_private_receipts";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    let patchedMapSetCalls = 0;
+    const capturedValues: unknown[] = [];
+    const gatewayCaptures: Array<{ modelCallId: string | null; captureEventId: string | null }> =
+      [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("private-receipts", {
+          name: "Private receipts",
+          run: async () => {
+            const assistant = agent({
+              id: "managed-private-receipts",
+              model: "veryfront-cloud/openai/gpt-test",
+              system: "Say OK.",
+              skills: false,
+            });
+            const originalMapSet = Map.prototype.set;
+            Map.prototype.set = function (this: Map<unknown, unknown>, key, value) {
+              if (
+                key === "model-call-private-receipts" ||
+                (
+                  value !== null && typeof value === "object" &&
+                  "eventId" in value && "projectId" in value && "runId" in value &&
+                  "modelCallId" in value
+                )
+              ) {
+                patchedMapSetCalls++;
+                capturedValues.push(value);
+              }
+              return originalMapSet.call(this, key, value);
+            };
+            try {
+              const response = await assistant.generate({ input: "Say OK." });
+              return { text: response.text };
+            } finally {
+              Map.prototype.set = originalMapSet;
+            }
+          },
+        });
+        return discovery;
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, canonicalRunId, kind: "task", target: "task:private-receipts", projectId },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+    let cursor = 0;
+    const encoder = new TextEncoder();
+    const sse = (chunks: readonly Record<string, unknown>[]) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const upstream = new Request(input, init);
+          if (upstream.url === "https://api.veryfront.com/ai/models") {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (upstream.url === "https://api.veryfront.com/ai/v1/chat/completions") {
+            gatewayCaptures.push({
+              modelCallId: upstream.headers.get("x-veryfront-model-call-id"),
+              captureEventId: upstream.headers.get("x-veryfront-model-call-capture-event-id"),
+            });
+            return sse([
+              {
+                id: "chatcmpl-private-receipts",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: { role: "assistant", content: "OK." } }],
+              },
+              {
+                id: "chatcmpl-private-receipts",
+                object: "chat.completion.chunk",
+                created: 0,
+                model: "gpt-test",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+              },
+            ]);
+          }
+          assertEquals(
+            upstream.url,
+            `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+          );
+          const payload = requestJsonBody(init);
+          const events = payload?.events;
+          if (!Array.isArray(events)) throw new Error("Expected event batch");
+          cursor += events.length;
+          const captures = (events as Record<string, unknown>[])
+            .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
+            .map((event, index) => ({
+              event_id: String(9007199254740993n + BigInt(cursor - events.length + index)),
+              project_id: projectId,
+              run_id: canonicalRunId,
+              model_call_id: event.modelCallId,
+            }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: cursor,
+            appended_count: events.length,
+            ...(captures.length > 0 ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "OK." });
+    assertEquals(patchedMapSetCalls, 0);
+    assertEquals(capturedValues, []);
+    assertEquals(gatewayCaptures.length, 1);
+    assertEquals(typeof gatewayCaptures[0]?.modelCallId, "string");
+    assertEquals(typeof gatewayCaptures[0]?.captureEventId, "string");
+  });
+
+  it("captures hosted invoke_agent child and nested child stream observations", async () => {
+    const runId = "run_delegated_agent_observed";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const projectId = "22222222-2222-4222-8222-222222222222";
+    const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+    const appended: Record<string, unknown>[] = [];
+    let entryObservations = 0;
+    let cursor = 0;
+
+    const childLookup = tool({
+      id: "child_lookup",
+      description: "Lookup child data",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: () => ({ found: "alpha fact" }),
+    });
+    const parent = agent({
+      id: "delegating-parent",
+      model: "hosted/parent",
+      system: "Delegate to children.",
+      skills: false,
+      maxSteps: 4,
+      tools: { invoke_agent: true },
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/parent", [[
+            { type: "reasoning-start", id: "parent-reason" },
+            { type: "reasoning-delta", id: "parent-reason", delta: "parent thinks" },
+            { type: "reasoning-end", id: "parent-reason" },
+            { type: "text-delta", text: "Parent before children. " },
+            {
+              type: "tool-call",
+              toolCallId: "parent-alpha",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-alpha",
+                description: "Run alpha",
+                prompt: "Run alpha child.",
+                context: {},
+              },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "parent-beta",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-beta",
+                description: "Run beta",
+                prompt: "Run beta child.",
+                context: {},
+              },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            { type: "text-delta", text: "Parent done." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childAlpha = agent({
+      id: "child-alpha",
+      model: "hosted/child-alpha",
+      system: "Run alpha and delegate once.",
+      skills: false,
+      maxSteps: 5,
+      tools: { invoke_agent: true, child_lookup: childLookup },
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-alpha", [[
+            { type: "reasoning-start", id: "alpha-reason" },
+            { type: "reasoning-delta", id: "alpha-reason", delta: "alpha thinks" },
+            { type: "reasoning-end", id: "alpha-reason" },
+            { type: "text-delta", text: "Alpha before nested. " },
+            {
+              type: "tool-call",
+              toolCallId: "alpha-nested",
+              toolName: "invoke_agent",
+              input: {
+                agent_id: "child-grand",
+                description: "Run grand",
+                prompt: "Run grand child.",
+                context: {},
+              },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            {
+              type: "tool-call",
+              toolCallId: "alpha-lookup",
+              toolName: "child_lookup",
+              input: { query: "alpha" },
+            },
+            { type: "finish", finishReason: "tool-calls", totalUsage: null },
+          ], [
+            { type: "text-delta", text: "Alpha final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childBeta = agent({
+      id: "child-beta",
+      model: "hosted/child-beta",
+      system: "Run beta.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-beta", [[
+            { type: "reasoning-start", id: "beta-reason" },
+            { type: "reasoning-delta", id: "beta-reason", delta: "beta thinks" },
+            { type: "reasoning-end", id: "beta-reason" },
+            { type: "text-delta", text: "Beta final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const childGrand = agent({
+      id: "child-grand",
+      model: "hosted/child-grand",
+      system: "Run grand child.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/child-grand", [[
+            { type: "reasoning-start", id: "grand-reason" },
+            { type: "reasoning-delta", id: "grand-reason", delta: "grand thinks" },
+            { type: "reasoning-end", id: "grand-reason" },
+            { type: "text-delta", text: "Grand final." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    agentRegistry.register("child-alpha", childAlpha);
+    agentRegistry.register("child-beta", childBeta);
+    agentRegistry.register("child-grand", childGrand);
+
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      ensureProjectDiscovery: async () => {
+        const discovery = createEmptyDiscoveryResult();
+        discovery.tasks.set("delegated-agent", {
+          name: "Delegated agent",
+          run: async () => {
+            let finalText = "";
+            const stream = await parent.stream({
+              input: "Coordinate child work.",
+              onFinish: (response) => {
+                finalText = response.text;
+              },
+            });
+            const body = stream.toDataStreamResponse().body;
+            if (body) {
+              for await (const _chunk of body) {
+                // The regression must consume the real runtime stream because
+                // child observation is wired through streaming delegation.
+              }
+            }
+            return { text: finalText };
+          },
+        });
+        return discovery;
+      },
+    }));
+    const body = {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:delegated-agent",
+      projectId,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      body,
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    try {
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            assertEquals(
+              request.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const headers = new Headers(observeFetchRequestInit(init).headers);
+            assertEquals(headers.get("x-veryfront-run-event-token"), null);
+            assertEquals(headers.get("authorization"), `Bearer ${eventToken}`);
+            const payload = requestJsonBody(init);
+            const events = payload?.events;
+            if (!Array.isArray(events)) throw new Error("Expected event batch");
+            const runtimeContextEvents = events.filter((event) =>
+              event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "runtime_context"
+            );
+            if (runtimeContextEvents.length > 0) {
+              entryObservations++;
+              assertEquals(events, [{
+                type: "RUNTIME_EVENT_RECORDED",
+                runtime: "veryfront",
+                kind: "runtime_context",
+                value: { runId },
+              }]);
+              assertMatch(
+                JSON.stringify(payload?.runtime_observations),
+                /"kind":"execution_entry"/,
+              );
+            } else {
+              assertEquals(payload?.runtime_observations, undefined);
+            }
+            appended.push(...events as Record<string, unknown>[]);
+            cursor += events.length;
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: cursor,
+              appended_count: events.length,
+            });
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true, JSON.stringify(payload));
+      assertEquals(payload.result, { text: "Parent done." });
+      assertEquals(entryObservations, 1);
+      assertEquals(
+        appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) =>
+          event.delta
+        ).sort(),
+        [
+          "Alpha before nested. ",
+          "Alpha final.",
+          "Beta final.",
+          "Grand final.",
+          "Parent before children. ",
+          "Parent done.",
+        ],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "REASONING_MESSAGE_CONTENT").map((event) =>
+          event.delta
+        ).sort(),
+        ["alpha thinks", "beta thinks", "grand thinks", "parent thinks"],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "TOOL_CALL_START").map((event) =>
+          event.toolCallId
+        ).sort(),
+        ["alpha-lookup", "alpha-nested", "parent-alpha", "parent-beta"],
+      );
+      assertEquals(
+        appended.filter((event) => event.type === "TOOL_CALL_RESULT").map((event) =>
+          event.toolCallId
+        ).sort(),
+        ["alpha-lookup", "alpha-nested", "parent-alpha", "parent-beta"],
+      );
+
+      const textStarts = appended.filter((event) => event.type === "TEXT_MESSAGE_START");
+      const textEnds = appended.filter((event) => event.type === "TEXT_MESSAGE_END");
+      assertEquals(textEnds.length, textStarts.length);
+      const startIds = new Set(textStarts.map((event) => `${event.messageId}:${event.contentId}`));
+      assertEquals(startIds.size, textStarts.length);
+      for (const event of textEnds) {
+        assert(
+          startIds.has(`${event.messageId}:${event.contentId}`),
+          `missing text start for ${event.messageId}:${event.contentId}`,
+        );
+      }
+      const identityByDelta = new Map(
+        appended
+          .filter((event) => event.type === "TEXT_MESSAGE_CONTENT")
+          .map((event) => [event.delta, `${event.messageId}:${event.contentId}`]),
+      );
+      assertNotEquals(
+        identityByDelta.get("Alpha before nested. "),
+        identityByDelta.get("Beta final."),
+      );
+      assertNotEquals(identityByDelta.get("Grand final."), identityByDelta.get("Alpha final."));
+    } finally {
+      agentRegistry.delete("child-alpha");
+      agentRegistry.delete("child-beta");
+      agentRegistry.delete("child-grand");
+    }
+  });
+
+  it("persists real task agent.stream output while project flatMap stays replaced", async () => {
+    const runId = "run_hostile_stream";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "hostile-stream",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Stream must persist." },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("hostile-stream", {
+            name: "Hostile stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              const original = Array.prototype.flatMap;
+              try {
+                Array.prototype.flatMap = () => [];
+                delivered = await response.text();
+              } finally {
+                Array.prototype.flatMap = original;
+              }
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:hostile-stream",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertStringIncludes(delivered, "Stream must persist.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Stream must persist.",
+    );
+  });
+
+  it("appends streamed task observations in bounded batches", async () => {
+    const runId = "run_batched_stream";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const deltas = Array.from({ length: 150 }, (_, index) => `d${index} `);
+    let eventRequests = 0;
+    let delivered = "";
+    const assistant = agent({
+      id: "batched-stream",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            ...deltas.map((text) => ({ type: "text-delta" as const, text })),
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("batched-stream", {
+            name: "Batched stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              delivered = await stream.toDataStreamResponse().text();
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:batched-stream",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          eventRequests++;
+          appended.push(...payload.events);
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertStringIncludes(delivered, "d149 ");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      deltas.join(""),
+    );
+    // Entry, model-call capture and structural boundaries; 150 deltas share one batch.
+    assertEquals(eventRequests <= 10, true, `${eventRequests} event requests`);
+  });
+
+  it("keeps queued stream observations when the task fails afterwards", async () => {
+    const runId = "run_batched_stream_failure";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const deltas = Array.from({ length: 150 }, (_, index) => `d${index} `);
+    let eventRequests = 0;
+    let delivered = "";
+    const assistant = agent({
+      id: "batched-stream-failure",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            ...deltas.map((text) => ({ type: "text-delta" as const, text })),
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("batched-stream-failure", {
+            name: "Batched stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              delivered = await stream.toDataStreamResponse().text();
+              throw new Error("task failed after streaming");
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:batched-stream-failure",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          eventRequests++;
+          appended.push(...payload.events);
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false, JSON.stringify(payload));
+    assertStringIncludes(delivered, "d149 ");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      deltas.join(""),
+    );
+    // Entry, model-call capture and structural boundaries; 150 deltas share one batch.
+    assertEquals(eventRequests <= 10, true, `${eventRequests} event requests`);
+  });
+
+  it("records streamed agent failure without terminating a successful parent task", async () => {
+    const runId = "run_stream_failure_observed";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "stream-failure-observed",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Stream must persist." },
+            { type: "error", error: new Error("private upstream error detail") },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("stream-failure-observed", {
+            name: "Hostile stream",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              delivered = await response.text();
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:stream-failure-observed",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    const wireError = delivered.split("\n\n").map((frame) => {
+      const data = frame.startsWith("data: ") ? frame.slice(6) : "null";
+      try {
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }).find((event) => event?.type === "error");
+    assertExists(wireError);
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    const error = errors[0];
+    assertExists(error);
+    const value = error.value as Record<string, unknown>;
+    assertEquals(value.message, wireError.error);
+    assertEquals(value.code, wireError.code);
+    assertEquals(typeof value.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("private upstream error detail"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+    assertStringIncludes(delivered, "Stream must persist.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Stream must persist.",
+    );
+  });
+
+  it("records a caught outputSchema rejection as one nonterminal agent error", async () => {
+    const runId = "run_caught_output_schema_rejection";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let caughtMessage = "";
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const usage = {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete" as const,
+    };
+    const model = scriptedModel(
+      [{
+        text: '{"title":"Wrong","count":"two"}',
+        finishReason: "stop",
+        providerMetadata: { privateMarker: "provider-secret-task" },
+      }],
+      {
+        only: "generate",
+        provider: "hosted",
+        modelId: "hosted/output-schema-rejection",
+        usage,
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("caught-output-schema-rejection", {
+            name: "Caught output schema rejection",
+            run: async () => {
+              const assistant = agent({
+                id: "caught-output-schema-rejection",
+                model: "hosted/output-schema-rejection",
+                system: "Return structured output.",
+                skills: false,
+                outputSchema,
+                resolveModelTransport: () => Promise.resolve({ model }),
+              });
+              try {
+                await assistant.generate({ input: "Return structured output." });
+              } catch (error) {
+                caughtMessage = error instanceof Error ? error.message : String(error);
+              }
+              return { text: "handled" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:caught-output-schema-rejection",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertStringIncludes(caughtMessage, "failed outputSchema validation");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      '{"title":"Wrong","count":"two"}',
+    );
+    const finishes = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+    );
+    assertEquals(finishes.length, 1);
+    assertEquals(finishes[0]?.value, {
+      finishReason: "stop",
+      totalUsage: usage,
+    });
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    const errorValue = errors[0]?.value as Record<string, unknown>;
+    assertEquals(errorValue.message, "Agent output failed outputSchema validation");
+    assertEquals(errorValue.code, "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED");
+    assertEquals(typeof errorValue.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("Wrong"), false);
+    assertEquals(JSON.stringify(errors).includes("count"), false);
+    assertEquals(JSON.stringify(appended).includes("provider-secret-task"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+  });
+
+  it("records a caught workflow outputSchema rejection as one nonterminal agent error", async () => {
+    const runId = "run_workflow_caught_output_schema_rejection";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let caughtMessage = "";
+    const outputSchema = defineSchema((v) =>
+      v.object({
+        title: v.string(),
+        count: v.number(),
+      })
+    )();
+    const usage = {
+      inputTokens: 4,
+      outputTokens: 6,
+      totalTokens: 10,
+      usageCaptureStatus: "complete" as const,
+    };
+    const model = scriptedModel(
+      [{
+        text: '{"title":"Wrong","count":"two"}',
+        finishReason: "stop",
+        providerMetadata: { privateMarker: "provider-secret-workflow" },
+      }],
+      {
+        only: "generate",
+        provider: "hosted",
+        modelId: "hosted/workflow-output-schema-rejection",
+        usage,
+      },
+    );
+    Object.assign(model, { runtimeCapabilities: { structuredOutput: true } });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "caught-output-schema-rejection-workflow",
+        filePath: "workflows/caught-output-schema-rejection-workflow.ts",
+        exportName: "default",
+        definition: {
+          id: "caught-output-schema-rejection-workflow",
+          steps: [],
+        } as unknown as WorkflowDefinition,
+      }),
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async () => {
+          const assistant = agent({
+            id: "workflow-caught-output-schema-rejection",
+            model: "hosted/workflow-output-schema-rejection",
+            system: "Return structured output.",
+            skills: false,
+            outputSchema,
+            resolveModelTransport: () => Promise.resolve({ model }),
+          });
+          try {
+            await assistant.generate({ input: "Return structured output." });
+          } catch (error) {
+            caughtMessage = error instanceof Error ? error.message : String(error);
+          }
+          return { runId };
+        },
+        getRun: async () => ({ status: "completed", output: { text: "handled" } }),
+        waitForExecutionStopped: async () => true,
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "workflow",
+      target: "workflow:caught-output-schema-rejection-workflow",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertStringIncludes(caughtMessage, "failed outputSchema validation");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      '{"title":"Wrong","count":"two"}',
+    );
+    const finishes = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "message_finish_metadata"
+    );
+    assertEquals(finishes.length, 1);
+    assertEquals(finishes[0]?.value, {
+      finishReason: "stop",
+      totalUsage: usage,
+    });
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    const errorValue = errors[0]?.value as Record<string, unknown>;
+    assertEquals(errorValue.message, "Agent output failed outputSchema validation");
+    assertEquals(errorValue.code, "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED");
+    assertEquals(typeof errorValue.messageId, "string");
+    assertEquals(JSON.stringify(errors).includes("Wrong"), false);
+    assertEquals(JSON.stringify(errors).includes("count"), false);
+    assertEquals(JSON.stringify(appended).includes("provider-secret-workflow"), false);
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+  });
+
+  it("records a caught agent.generate failure as a sanitized nonterminal observation", async () => {
+    const runId = "run_caught_generate_error";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const privateDetail = "private upstream generate detail";
+    let caught = false;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("caught-generate-error", {
+            name: "Caught generate error observation",
+            run: async () => {
+              const assistant = agent({
+                id: "caught-generate-error",
+                model: "veryfront-cloud/openai/gpt-test",
+                system: "Say observed.",
+                skills: false,
+              });
+              try {
+                await assistant.generate({ input: "Say observed." });
+              } catch {
+                caught = true;
+              }
+              return { text: "handled" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:caught-generate-error",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          const url = String(input);
+          if (url.endsWith("/ai/models")) {
+            return Response.json({
+              models: [{
+                id: "gpt-test",
+                modelId: "openai/gpt-test",
+                provider: "openai",
+                surface: "openai",
+                operations: ["chat-completions"],
+                aliases: ["openai/gpt-test", "gpt-test"],
+                capabilities: { transport: "chat-completions" },
+              }],
+            });
+          }
+          if (url.endsWith("/ai/v1/chat/completions")) {
+            return Response.json({ error: privateDetail }, { status: 500 });
+          }
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result, { text: "handled" });
+    assertEquals(caught, true);
+    assertEquals(
+      appended.filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+      1,
+    );
+    const errors = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(errors.length, 1);
+    assertEquals(errors[0]?.runtime, "veryfront");
+    assertEquals(errors[0]?.value, {
+      message: "The LLM provider is currently overloaded",
+      code: "OVERLOADED_ERROR",
+    });
+    assertEquals(
+      appended.some((event) =>
+        ["RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"].includes(String(event.type))
+      ),
+      false,
+    );
+    assertEquals(JSON.stringify(appended).includes(privateDetail), false);
+  });
+
+  it("records a streamed agent failure without failing a successful parent task", async () => {
+    const runId = "run_agent_stream_error";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    let delivered = "";
+    const assistant = agent({
+      id: "agent-stream-error",
+      model: "hosted/test",
+      system: "Say observed.",
+      skills: false,
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: createScriptedStreamModel("hosted/test", [[
+            { type: "text-delta", text: "Partial output." },
+            { type: "error", error: "Stream provider failed" },
+          ]]),
+        }),
+    });
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("agent-stream-error", {
+            name: "Stream failure observation",
+            run: async () => {
+              const stream = await assistant.stream({ input: "Say observed." });
+              const response = stream.toDataStreamResponse();
+              delivered = await response.text();
+              return { text: "done" };
+            },
+          });
+          return discovery;
+        },
+      }),
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "task",
+      target: "task:agent-stream-error",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (input, init) => {
+          if (String(input).endsWith("/ai/models")) return Response.json({ models: [] });
+          const payload = requestJsonBody(init);
+          if (!Array.isArray(payload?.events)) throw new Error("Expected event batch");
+          for (let index = 0; index < payload.events.length; index++) {
+            appended[appended.length] = payload.events[index];
+          }
+          const captures = payload.events.filter((event: Record<string, unknown>) =>
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
+            typeof event.modelCallId === "string"
+          ).map((event: Record<string, unknown>) => ({
+            event_id: String(appended.length),
+            run_id: canonicalRunId,
+            project_id: projectId,
+            model_call_id: event.modelCallId,
+          }));
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: payload.events.length,
+            ...(captures.length ? { model_call_captures: captures } : {}),
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertStringIncludes(delivered, "Partial output.");
+    assertEquals(
+      appended.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta)
+        .join(""),
+      "Partial output.",
+    );
+    const wireError = delivered.split("\n\n").map((frame) => {
+      const data = frame.startsWith("data: ") ? frame.slice(6) : "null";
+      try {
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }).find((event) => event?.type === "error");
+    assertExists(wireError);
+    assertEquals(wireError.error, "Provider stream failed");
+    const failures = appended.filter((event) =>
+      event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+    );
+    assertEquals(failures.length, 1);
+    assertEquals(failures[0]?.runtime, "veryfront");
+    assertEquals(typeof failures[0]?.elapsedMs, "number");
+    assertEquals(typeof failures[0]?.emittedAt, "number");
+    const failure = failures[0]?.value;
+    assert(typeof failure === "object" && failure !== null && "message" in failure);
+    assertEquals(failure.message, "Provider stream failed");
+    assertStringIncludes(delivered, "Provider stream failed");
+    assertEquals(appended.some((event) => event.type === "RUN_ERROR"), false);
+  });
+
+  for (
+    const failure of [
+      "transport",
+      "wrong-run",
+      "invalid-capture",
+      "invalid-json",
+      "pre-append",
+      "schema-transport",
+    ] as const
+  ) {
+    it(`fails closed when a mandatory output observation fails (${failure})`, async () => {
+      let caughtObservationFailure = false;
+      let caughtFailureMessage = "";
+      const runId = `run_observation_append_failed_${failure}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          try {
+            if (failure === "pre-append") {
+              let output: unknown = "observed";
+              for (let depth = 0; depth < 140; depth++) output = { nested: output };
+              await executeLocalChild({
+                agentId: "observation-probe",
+                input: "test",
+                toolName: "invoke_agent",
+                toolInput: {},
+                execute: async (control) => {
+                  assertExists(control?.onEvent);
+                  await control.onEvent({
+                    type: "data-observation-probe",
+                    data: output,
+                  });
+                  return { text: "done", toolCalls: 1, status: "completed" };
+                },
+              });
+            } else if (failure === "schema-transport") {
+              const model: ModelRuntime<ModelRuntimeCallOptions> = {
+                provider: "test",
+                modelId: "test/schema-rejection-observation",
+                executionMode: "remote",
+                runtimeCapabilities: { structuredOutput: true },
+                doGenerate() {
+                  return Promise.resolve({
+                    content: [{ type: "text", text: '{"city":"Berlin"}' }],
+                    finishReason: "stop" as const,
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  });
+                },
+                doStream() {
+                  throw new Error("unexpected stream dispatch");
+                },
+              };
+              const assistant = agent({
+                id: "schema-rejection-observation-probe",
+                model: "test/schema-rejection-observation",
+                system: "Report weather.",
+                skills: false,
+                outputSchema: defineSchema((v) =>
+                  v.object({ city: v.string(), tempC: v.number() })
+                )(),
+                resolveModelTransport: () => Promise.resolve({ model }),
+              });
+              await assistant.generate({ input: "Berlin?" });
+            } else {
+              await withLocalChildRuntime(
+                new AgentRuntime("observation-probe", { model: "test/model", system: "Observe" }),
+                () =>
+                  observeGeneratedAgentTurn("observed-message", { text: "Output must persist." }),
+              );
+            }
+          } catch (error) {
+            caughtObservationFailure = true;
+            caughtFailureMessage = error instanceof Error ? error.message : "";
+            if (failure === "schema-transport") throw error;
+          }
+          return { success: true, result: { ignored: true }, durationMs: 1 };
+        },
+      }));
+      const body = { ...taskBody, runId, projectId, canonicalRunId };
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        {
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": eventToken,
+        },
+      );
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
+      let appendCalls = 0;
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            assertEquals(
+              request.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const body = requestJsonBody(init);
+            assertExists(body);
+            appendCalls++;
+            if (failure === "pre-append") {
+              if (!Array.isArray(body.events)) throw new Error("Expected observation events");
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: appendCalls,
+                appended_count: body.events.length,
+              });
+            }
+            if (appendCalls === 1) {
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 1,
+                appended_count: 1,
+              });
+            }
+            if (failure === "wrong-run") return Response.json({ run_id: "other-run" });
+            if (failure === "invalid-capture") {
+              return Response.json({ run_id: canonicalRunId, model_call_captures: [{}] });
+            }
+            if (failure === "invalid-json") {
+              return new Response("{");
+            }
+            throw new TypeError("append transport unavailable");
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(
+        caughtObservationFailure,
+        failure === "pre-append" || failure === "schema-transport",
+      );
+      if (failure === "pre-append") assertStringIncludes(caughtFailureMessage, "structural limit");
+      assertEquals(payload.success, false);
+      if (failure === "transport") {
+        assertStringIncludes(payload.error, "append transport unavailable");
+      } else if (failure === "wrong-run") {
+        assertStringIncludes(
+          payload.error,
+          "Project run observation append identified a different run",
+        );
+      } else if (failure === "invalid-capture") {
+        assertStringIncludes(
+          payload.error,
+          "Project run observation model-call receipt is invalid",
+        );
+      } else if (failure === "invalid-json") {
+        assertStringIncludes(payload.error, "JSON");
+      } else if (failure === "schema-transport") {
+        assertStringIncludes(payload.error, "append transport unavailable");
+      } else {
+        assertStringIncludes(payload.error, "Project run observation sink is disabled");
+      }
+      if (failure !== "pre-append") assertEquals(appendCalls, 2);
+    });
+  }
+
+  for (const [patchedRace, patchedReason] of [[false, false], [true, false], [false, true]]) {
+    it(`releases managed task inference when observation receipt stalls and request aborts (patched race: ${patchedRace}, patched reason: ${patchedReason})`, async () => {
+      const runId = "run_inline_generate_observation_abort";
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      const controller = new AbortController();
+      let appendStarted = false;
+      let appendSignal: AbortSignal | undefined;
+      let gatewayCalls = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("abort-observation", {
+            name: "Abort observation",
+            run: async () => {
+              const assistant = agent({
+                id: "managed-inference-abort",
+                model: "veryfront-cloud/openai/gpt-test",
+                system: "Say never dispatched.",
+                skills: false,
+              });
+              const originalRace = Promise.race;
+              if (patchedRace) {
+                Promise.race = <T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>> => {
+                  for (const value of values) return Promise.resolve(value);
+                  return new Promise<Awaited<T>>(() => {});
+                };
+              }
+              try {
+                const response = await assistant.generate({ input: "Say hello." });
+                return { text: response.text };
+              } finally {
+                Promise.race = originalRace;
+              }
+            },
+          });
+          return discovery;
+        },
+      }));
+      const body = {
+        runId,
+        canonicalRunId,
+        kind: "task",
+        target: "task:abort-observation",
+        projectId,
+      };
+      const signed = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        {
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": eventToken,
+        },
+      );
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const request = new Request(signed.request, { signal: controller.signal });
+
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const upstream = new Request(input, init);
+            if (upstream.url === "https://api.veryfront.com/ai/models") {
+              return Response.json({
+                models: [{
+                  id: "gpt-test",
+                  modelId: "openai/gpt-test",
+                  provider: "openai",
+                  surface: "openai",
+                  operations: ["chat-completions"],
+                  aliases: ["openai/gpt-test", "gpt-test"],
+                  capabilities: { transport: "chat-completions" },
+                }],
+              });
+            }
+            if (upstream.url === "https://api.veryfront.com/ai/v1/chat/completions") {
+              gatewayCalls++;
+              return Response.json({});
+            }
+            assertEquals(
+              upstream.url,
+              `${"https://api.veryfront.com"}/runs/${canonicalRunId}/events`,
+            );
+            const appendBody = requestJsonBody(init);
+            if (appendBody?.runtime_observations !== undefined) {
+              return Response.json({
+                run_id: canonicalRunId,
+                latest_event_id: 2,
+                appended_count: 2,
+              });
+            }
+            appendStarted = true;
+            appendSignal = observeFetchRequestInit(init).signal as AbortSignal | undefined;
+            const reason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason");
+            try {
+              if (patchedReason) {
+                Object.defineProperty(AbortSignal.prototype, "reason", {
+                  configurable: true,
+                  get(this: AbortSignal) {
+                    if (this === appendSignal) throw new Error("project replacement reason getter");
+                    return Reflect.apply(reason!.get!, this, []);
+                  },
+                });
+              }
+              controller.abort(new Error("run cancelled"));
+            } finally {
+              if (reason) Object.defineProperty(AbortSignal.prototype, "reason", reason);
+            }
+            return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+              headers: { "content-type": "application/json" },
+            });
+          }, () => handler.handle(request, ctx)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertStringIncludes(payload.error, "run cancelled");
+      assertEquals(appendStarted, true);
+      assertEquals(appendSignal?.aborted, true);
+      assertEquals(gatewayCalls, 0);
+    });
+  }
+
+  it("times out managed entry persistence at the task deadline before user code", async () => {
+    const clock = manualTaskDeadlineClock();
+    const started = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const runId = "run_entry_deadline";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    let taskRan = false;
+    let appendSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          taskRan = true;
+          return { success: true, result: "unexpected", durationMs: 0 };
+        },
+      }),
+      clock,
+    );
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+      deadlineAt: new Date(clock.now() + 25).toISOString(),
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch((_input, init) => {
+          appendSignal = observeFetchRequestInit(init).signal ?? undefined;
+          assertExists(appendSignal);
+          const signal = appendSignal;
+          started.resolve();
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+          );
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            ctx,
+          );
+          await started.promise;
+          clock.advance(25);
+          const cancelledByDeadline = appendSignal?.aborted;
+          // Bound the regression's old behavior without waiting for its 30-second timeout.
+          controller.abort(new Error("test cleanup"));
+          const result = await pending;
+          assertEquals(cancelledByDeadline, true);
+          return result;
+        }),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    assertEquals(taskRan, false);
+  });
+
+  it("normalizes cyclic public tool results before snapshotting project run observations", async () => {
+    const runId = "run_cyclic_tool_result_observation";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const appended: Record<string, unknown>[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        await executeLocalChild({
+          agentId: "observation-probe",
+          input: "test",
+          toolName: "invoke_agent",
+          toolInput: {},
+          execute: async (control) => {
+            assertExists(control?.onEvent);
+            const output: Record<string, unknown> = { label: "cyclic-result" };
+            output.self = output;
+            await control.onEvent({
+              type: "tool-output-available",
+              toolCallId: "tool-cyclic",
+              output,
+            });
+            return { text: "done", toolCalls: 1, status: "completed" };
+          },
+        });
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const events = requestJsonBody(init)?.events;
+          if (Array.isArray(events)) {
+            for (const event of events) appended.push(event as Record<string, unknown>);
+          }
+          return Response.json({
+            run_id: canonicalRunId,
+            latest_event_id: appended.length,
+            appended_count: Array.isArray(events) ? events.length : 0,
+          });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    const toolResult = appended.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertExists(toolResult);
+    assertEquals(toolResult.toolCallId, "tool-cyclic");
+    assertEquals(toolResult.content, { label: "cyclic-result", self: "[circular]" });
+  });
+
+  it("keeps mandatory model input unchanged when project code replaces JSON and EventTarget methods", async () => {
+    const runId = "run_private_observation_json";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const modelCallId = "34343434-3434-4343-8343-343434343434";
+    let hooksCalled = 0;
+    let observedMessages: unknown;
+    const receiptBody = JSON.stringify({
+      run_id: canonicalRunId,
+      latest_event_id: 3,
+      appended_count: 1,
+      model_call_captures: [{
+        event_id: "9007199254740993",
+        run_id: canonicalRunId,
+        project_id: projectId,
+        model_call_id: modelCallId,
+      }],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        const originalStringify = JSON.stringify;
+        const originalAdd = EventTarget.prototype.addEventListener;
+        const originalRemove = EventTarget.prototype.removeEventListener;
+        EventTarget.prototype.addEventListener = () => {
+          hooksCalled++;
+          throw new Error("patched registration");
+        };
+        EventTarget.prototype.removeEventListener = () => {
+          hooksCalled++;
+          throw new Error("patched cleanup");
+        };
+        const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+        JSON.stringify = () => {
+          hooksCalled++;
+          throw new Error("Project JSON replacement invoked");
+        };
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value: () => {
+            hooksCalled++;
+            return "changed-input";
+          },
+        });
+        try {
+          await getActiveRunEventSink()?.({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+            modelCallId,
+            messages: [{ role: "user", content: [{ type: "text", text: "Exact provider input" }] }],
+            tools: [],
+          });
+        } finally {
+          JSON.stringify = originalStringify;
+          EventTarget.prototype.addEventListener = originalAdd;
+          EventTarget.prototype.removeEventListener = originalRemove;
+          if (originalToJson) Object.defineProperty(Object.prototype, "toJSON", originalToJson);
+          else Reflect.deleteProperty(Object.prototype, "toJSON");
+        }
+        return { success: true, result: "recorded", durationMs: 0 };
+      },
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      ...taskBody,
+      runId,
+      canonicalRunId,
+      projectId,
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(async (_input, init) => {
+          const events = requestJsonBody(init)?.events;
+          if (Array.isArray(events)) {
+            for (const event of events) {
+              if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") {
+                observedMessages = event.messages;
+              }
+            }
+          }
+          return new Response(receiptBody, { headers: { "content-type": "application/json" } });
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(hooksCalled, 0);
+    assertEquals(observedMessages, [{
+      role: "user",
+      content: [{ type: "text", text: "Exact provider input" }],
+    }]);
+  });
+
+  it("releases managed workflow stop registration when entry persistence fails", async () => {
+    const registry = new RunStopRegistry();
+    const runId = "run_workflow_entry_failed";
+    const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+    const projectId = "23232323-2323-4232-8232-232323232323";
+    const handler = new ProjectRunExecuteHandler(createDeps(), undefined, registry);
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId,
+      kind: "workflow",
+      target: "workflow:publish",
+    }, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId,
+        canonicalRunId,
+      }),
+    });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
+    const result = await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+      () =>
+        withMockFetch(() => {
+          throw new TypeError("entry transport failed");
+        }, () => handler.handle(signed.request, ctx)),
+    );
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(registry.requestStop(runId), { accepted: false, stopped: false });
+  });
+
+  for (const kind of ["task", "workflow"] as const) {
+    it(`retains host event authority for ${kind} child admission after request sanitization`, async () => {
+      const runId = `run_retained_${kind}_child`;
+      const canonicalRunId = "12121212-1212-4121-8121-121212121212";
+      const projectId = "23232323-2323-4232-8232-232323232323";
+      const eventToken = createProjectRunEventToken({ runId, projectId, canonicalRunId });
+      let admissions = 0;
+      let admittedToken: string | null = null;
+      let admittedParent: unknown;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("child-probe", {
+            name: "Child probe",
+            run: async (context) => {
+              assertExists(context.runChild);
+              try {
+                await context.runChild({
+                  target: { type: "agent", id: "researcher" },
+                  input: "probe",
+                  idempotencyKey: "probe-child",
+                });
+              } catch { /* The fake API deliberately refuses after checking authority. */ }
+              return "handled";
+            },
+          });
+          return discovery;
+        },
+        createWorkflowClient: (config) => ({
+          register: () => {},
+          start: async () => {
+            const runAgentNode = config?.executor?.stepExecutor?.runAgentNode;
+            assertExists(runAgentNode);
+            try {
+              await runAgentNode({
+                runId,
+                nodeId: "probe",
+                agentId: "researcher",
+                input: "probe",
+                execute: async () => ({ success: true, output: {}, executionTime: 0 }),
+              });
+            } catch { /* The fake API deliberately refuses after checking authority. */ }
+            return { runId };
+          },
+          getRun: async () => ({ status: "completed", output: "handled" }),
+          cancel: async () => {},
+          destroy: async () => {},
+        }),
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId,
+        kind,
+        target: kind === "task" ? "task:child-probe" : "workflow:publish",
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": eventToken,
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      ctx.proxyToken = "test-runtime-api-token";
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (input, init) => {
+            const request = new Request(input, init);
+            if (new URL(request.url).pathname === "/runs") {
+              admissions++;
+              admittedToken = request.headers.get("x-veryfront-run-event-token");
+              admittedParent = requestJsonBody(init)?.parent_run_id;
+              return new Response("deliberate admission refusal", { status: 409 });
+            }
+            assertEquals(request.url, `https://api.veryfront.com/runs/${canonicalRunId}/events`);
+            return Response.json({ run_id: canonicalRunId, latest_event_id: 2, appended_count: 2 });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      assertEquals(admissions, 1);
+      assertEquals(admittedToken, eventToken);
+      assertEquals(admittedParent, canonicalRunId);
+    });
+  }
+
+  it("fails closed before managed task inference when run-event authority is absent", async () => {
+    let taskRan = false;
+    const registry = new RunStopRegistry();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          taskRan = true;
+          return { success: true, result: null, durationMs: 0 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+    });
 
     const result = await handler.handle(request, createCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(resolverInScope, true);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project run observation requires run event authority");
+    assertEquals(taskRan, false);
+    assertEquals(registry.requestStop(taskBody.runId), { accepted: false, stopped: false });
+  });
+
+  it("fails closed before managed task inference when run-event authority targets another run", async () => {
+    let taskRan = false;
+    const projectId = "proj-1";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        taskRan = true;
+        return { success: true, result: null, durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId: "run_other",
+        projectId,
+        canonicalRunId: "11111111-1111-4111-8111-111111111111",
+      }),
+    });
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "Project child execution requires current run authority");
+    assertEquals(taskRan, false);
   });
 
   it("keeps the current behaviour when the header is absent", async () => {
@@ -9579,22 +13345,36 @@ describe("project run inference credential header", () => {
         return async () => ({ text: "Paris" });
       },
     }));
+    const projectId = "33333333-3333-4333-8333-333333333333";
+    const canonicalRunId = "44444444-4444-4444-8444-444444444444";
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_sealed/execute",
       {
         runId: "run_eval_sealed",
+        canonicalRunId,
         kind: "task",
         target: "task:eval",
-        projectId: "proj-1",
+        projectId,
         config: { eval_id: "eval:deep-research", agent_id: "researcher" },
       },
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_eval_sealed",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
     const sealed = sealIngressCredentials(request);
     assertEquals(sealed.headers.get("x-token"), null);
     assertEquals(sealed.headers.get("X-Veryfront-Inference-Token"), null);
 
-    const result = await handler.handle(sealed, createCtx(publicKeyPem));
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
+
+    const result = await handler.handle(sealed, ctx);
 
     assertExists(result.response);
     assertEquals(result.response.status, 200, JSON.stringify(await result.response.json()));
@@ -9624,22 +13404,35 @@ describe("project run inference credential header", () => {
         return async () => ({ text: "Paris" });
       },
     }));
+    const projectId = "55555555-5555-4555-8555-555555555555";
+    const canonicalRunId = "66666666-6666-4666-8666-666666666666";
     const body = {
       runId: "run_eval_inference",
+      canonicalRunId,
       kind: "task",
       target: "task:eval",
-      projectId: "proj-1",
+      projectId,
       config: { eval_id: "eval:deep-research", agent_id: "researcher" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_inference/execute",
       body,
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_eval_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
     let result;
     try {
-      result = await handler.handle(request, createCtx(publicKeyPem));
+      result = await handler.handle(request, ctx);
     } finally {
       Headers.prototype.get = originalGet;
     }
@@ -9693,19 +13486,32 @@ describe("project run inference credential header", () => {
           return { success: true, result: null, logs: null, duration_ms: 0 };
         },
       }));
+      const projectId = "77777777-7777-4777-8777-777777777777";
+      const canonicalRunId = "88888888-8888-4888-8888-888888888888";
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_iterate_inference/execute",
         {
           runId: "run_iterate_inference",
+          canonicalRunId,
           kind: "task",
           target: "task:knowledge-ingest",
-          projectId: "proj-1",
+          projectId,
         },
-        { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+        {
+          "x-token": "project-runtime-token",
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId: "run_iterate_inference",
+            projectId,
+            canonicalRunId,
+          }),
+        },
       );
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
       // Only what the handler does from here on is observed.
       seen.length = 0;
-      result = await handler.handle(request, createCtx(publicKeyPem));
+      result = await handler.handle(request, ctx);
     } finally {
       prototype[Symbol.iterator] = originals.iterator;
       prototype.entries = originals.entries;
@@ -9717,6 +13523,7 @@ describe("project run inference credential header", () => {
     assertEquals(result.response.status, 200);
     assertExists(received);
     assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(received.headers.get("x-veryfront-run-event-token"), null);
     assertEquals(seen.some((value) => value.includes(INFERENCE_TOKEN)), false);
   });
 
@@ -9728,25 +13535,39 @@ describe("project run inference credential header", () => {
         return { success: true, result: null, logs: null, duration_ms: 0 };
       },
     }));
+    const projectId = "99999999-9999-4999-8999-999999999999";
+    const canonicalRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const body = {
       runId: "run_ingest_inference",
+      canonicalRunId,
       kind: "task",
       target: "task:knowledge-ingest",
-      projectId: "proj-1",
+      projectId,
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_ingest_inference/execute",
       body,
-      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "x-token": "project-runtime-token",
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_ingest_inference",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = projectId;
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertExists(received);
     assertEquals(received.headers.get("X-Veryfront-Inference-Token"), null);
     assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(received.headers.get("x-veryfront-run-event-token"), null);
     assertEquals(received.url, request.url);
     assertEquals(received.method, "POST");
   });
@@ -9765,13 +13586,23 @@ describe("project run inference credential header", () => {
         return { success: true, result: { synced: 1 }, durationMs: 1 };
       },
     }));
-    const signed = await signedRequest(taskPath, taskBody, {
+    const projectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const canonicalRunId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const body = { ...taskBody, projectId, canonicalRunId };
+    const signed = await signedRequest(taskPath, body, {
       "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId: taskBody.runId,
+        projectId,
+        canonicalRunId,
+      }),
     });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
     const controller = new AbortController();
     const request = new Request(signed.request, { signal: controller.signal });
 
-    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    const pending = withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
     await taskStarted.promise;
     controller.abort(new Error("run cancelled"));
 
@@ -9810,20 +13641,32 @@ describe("project run inference credential header", () => {
         if (polls > 5) status = "completed";
       },
     }));
+    const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const canonicalRunId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     const signed = await signedRequest(
       "/api/control-plane/runs/run_workflow_inference_cancel/execute",
       {
         runId: "run_workflow_inference_cancel",
+        canonicalRunId,
         kind: "workflow",
         target: "workflow:publish",
-        projectId: "proj-1",
+        projectId,
         input: {},
       },
-      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId: "run_workflow_inference_cancel",
+          projectId,
+          canonicalRunId,
+        }),
+      },
     );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.projectId = projectId;
     const request = new Request(signed.request, { signal: controller.signal });
 
-    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+    const result = await withAcknowledgedRuntimeEntry(() => handler.handle(request, ctx));
 
     assertEquals(cancelled, ["run_workflow_inference_cancel"]);
     assertExists(result.response);
@@ -11821,8 +15664,8 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       projectId: "proj-1",
     }, { "x-veryfront-run-stop-token": "opaque-stop-capability" });
     await withEnv({
-      VERYFRONT_API_BASE_URL: "http://localhost:4000",
-      VERYFRONT_API_URL: "http://localhost:4000",
+      VERYFRONT_API_BASE_URL: "ftp://localhost:4000",
+      VERYFRONT_API_URL: "https://localhost:4000",
     }, () =>
       withMockFetch(async () => {
         callbacks += 1;
@@ -12272,9 +16115,8 @@ describe("project run control-plane Authorization", () => {
 
     const result = await withMockFetch(
       ((input: string | URL | Request, init?: RequestInit) => {
-        const headers = init?.headers as Record<string, string> | undefined;
         authorizations.push(
-          headers && Object.hasOwn(headers, "authorization") ? headers.authorization : undefined,
+          ownHeaderValue(observeFetchRequestInit(init).headers, "authorization"),
         );
         return recorder.fetch(input, init);
       }) as typeof fetch,
