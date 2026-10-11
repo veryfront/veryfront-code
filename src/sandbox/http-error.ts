@@ -9,7 +9,7 @@ const parseJson = JSON.parse;
 const isArray = Array.isArray;
 const ownDescriptor = Object.getOwnPropertyDescriptor;
 
-function ownValue(value: object, key: string): unknown {
+function ownValue(value: unknown, key: string): unknown {
   const descriptor = ownDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
