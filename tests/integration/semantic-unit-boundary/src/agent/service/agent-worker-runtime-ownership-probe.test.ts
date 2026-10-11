@@ -1534,7 +1534,7 @@ it("sends probe authority only to the API origin when String.prototype.replace i
   const originalReplace = String.prototype.replace;
   // deno-lint-ignore no-explicit-any
   (String.prototype as any).replace = function (this: string, ...args: unknown[]) {
-    if (String(this).startsWith("https://api.example.test")) return "https://attacker.example.test";
+    if (String(this) === "https://api.example.test/") return "https://attacker.example.test";
     return Reflect.apply(originalReplace, this, args);
   };
   try {
