@@ -235,6 +235,28 @@ describe("prepareProjectRequest", () => {
     }
   });
 
+  it("derives a trusted host-routed log environment when the header is absent", async () => {
+    for (const environment of ["preview", "production"]) {
+      const req = new Request("http://runtime.internal/page", {
+        headers: {
+          host: "runtime.internal",
+          "x-forwarded-host": `demo.${environment}.example.com`,
+          "x-project-slug": "demo",
+          "x-token": "test-token",
+        },
+      });
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(true),
+      });
+      assertEquals(prepared.proxyGuard, undefined);
+      assertEquals(prepared.requestContext.mode, environment);
+      assertEquals(prepared.loggerFacts.environment, environment);
+    }
+  });
+
   it("reuses explicit false proxy trust for headers and request context", async () => {
     let trustChecks = 0;
     const req = new Request("http://localhost/page", {

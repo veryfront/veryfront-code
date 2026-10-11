@@ -228,7 +228,8 @@ export async function prepareProjectRequest(
     proxyTrust: { proxyTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
-      environment: headers.environment,
+      environment: headers.environment ??
+        (identityHeadersTrusted ? requestContext.mode : undefined),
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,
       releaseId: headers.releaseId,
