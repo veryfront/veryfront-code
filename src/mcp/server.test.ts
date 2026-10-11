@@ -10,7 +10,7 @@ import { dynamicTool, tool } from "#veryfront/tool";
 import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { register, resolve } from "#veryfront/extensions/contracts.ts";
 
@@ -929,6 +929,78 @@ describe("mcp/server", () => {
       assertEquals(called.result, {
         content: [{ type: "text", text: JSON.stringify(entry.value, null, 2) }],
         isError: false,
+      });
+    }
+  });
+
+  it("validates declared output contracts that MCP cannot advertise", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const cases: Array<
+      { id: string; schema: JsonSchema | Schema<unknown>; valid: unknown; invalid: unknown }
+    > = [
+      {
+        id: "test:composed-output",
+        schema: {
+          allOf: [{ type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] }],
+        },
+        valid: { ok: true },
+        invalid: { other: true },
+      },
+      { id: "test:string-contract", schema: { type: "string" }, valid: "accepted", invalid: 42 },
+      {
+        id: "test:native-string-contract",
+        schema: defineSchema((v) => v.string())(),
+        valid: "accepted",
+        invalid: 42,
+      },
+    ];
+    for (const entry of cases) {
+      let returned = entry.valid;
+      registerTool(
+        entry.id,
+        tool({
+          id: entry.id,
+          description: "Declares a contract without a root object type",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: entry.schema,
+          execute: async () => returned,
+        }),
+      );
+      const listed = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const definitions = (listed.result as { tools: ToolListEntry[] }).tools;
+      assertEquals(
+        Object.hasOwn(
+          definitions.find((definition) => definition.name === entry.id)!,
+          "outputSchema",
+        ),
+        false,
+      );
+      const accepted = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(accepted.result, {
+        content: [{ type: "text", text: JSON.stringify(entry.valid, null, 2) }],
+        isError: false,
+      });
+      returned = entry.invalid;
+      const rejected = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: entry.id, arguments: {} },
+      });
+      assertEquals(rejected.result, {
+        content: [{
+          type: "text",
+          text: `Tool "${entry.id}" result does not match its declared output schema`,
+        }],
+        isError: true,
       });
     }
   });

@@ -6,7 +6,7 @@
  * validate output and return its snapshot as structured content and serialized
  * text. Validators without JSON Schema compilation omit output contracts;
  * native schemas still validate results, and raw schemas retain text-only results.
- * Non-object output contracts also retain text-only results.
+ * Contracts without a root object type retain text-only results but are still validated.
  *
  * @module mcp
  *

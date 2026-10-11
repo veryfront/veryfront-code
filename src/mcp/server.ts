@@ -29,10 +29,32 @@ function mcpOutputSchema(tool: Tool) {
   return outputSchema?.type === "object" ? outputSchema : undefined;
 }
 
+// MCP only advertises output schemas whose root is `type: "object"`. Contracts
+// it cannot advertise (primitives, arrays, combinators) are still enforced, so
+// a declared schema never lets a nonconforming result through as plain text.
+async function validateUnadvertisedOutput(tool: Tool, result: unknown): Promise<unknown> {
+  if (typeof tool.outputSchema?.safeParse === "function") {
+    const validation = tool.outputSchema.safeParse(result);
+    if (!validation.success) {
+      throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+    }
+    return validation.data;
+  }
+  if (tool.outputSchemaJson === undefined) return result;
+  const validator = resolve<SchemaValidator>("SchemaValidator");
+  if (!validator.compileJsonSchema) return result;
+  const validation = await validator.compileJsonSchema(tool.outputSchemaJson)(result);
+  if (!validation.success) {
+    throw new Error(`Tool "${tool.id}" result does not match its declared output schema`);
+  }
+  return validation.value;
+}
+
 async function formatToolResult(tool: Tool, result: unknown): Promise<Record<string, unknown>> {
   const outputSchema = mcpOutputSchema(tool);
   if (outputSchema === undefined) {
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
+    const output = await validateUnadvertisedOutput(tool, result);
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], isError: false };
   }
   if (typeof tool.outputSchema?.safeParse === "function") {
     const validation = tool.outputSchema.safeParse(result);
