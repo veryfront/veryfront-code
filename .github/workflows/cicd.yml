@@ -120,7 +120,7 @@ jobs:
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
         if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
           path: dist/release-number
@@ -155,7 +155,7 @@ jobs:
           echo "$tree" > dist/tested-tree/tree.txt
       - name: Upload the tested PR tree
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree-${{ steps.pr-tree.outputs.tree }}
           path: dist/tested-tree
@@ -448,14 +448,14 @@ jobs:
       - name: Archive npm runtime workspace
         run: tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz
       - name: Upload tested npm compatibility artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
           retention-days: 30
           overwrite: true
       - name: Upload npm runtime workspace
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-runtime-workspace-${{ github.sha }}
           path: dist/npm-runtime-workspace.tar.gz
@@ -685,7 +685,7 @@ jobs:
             coverage-profiles/coverage-native-executor \
             coverage-profiles/coverage-integration-client
       - name: Upload merged Sonar coverage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-sonar
           path: coverage/lcov.info
@@ -1492,7 +1492,7 @@ jobs:
           PROXY_MEMORY_ATTEMPTS: "3"
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -1682,7 +1682,7 @@ jobs:
           cp scripts/install.sh dist/public-release/
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
@@ -1878,7 +1878,7 @@ jobs:
           (cd dist/public-release && sha256sum veryfront-* install.sh install.ps1 > SHA256SUMS)
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/

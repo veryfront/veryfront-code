@@ -200,7 +200,7 @@ jobs:
           deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-shard-${{ inputs.shard }}
           path: coverage-shard-${{ inputs.shard }}/**/lcov.info
@@ -231,7 +231,7 @@ jobs:
       - name: Collect mapped native executor coverage
         run: deno task coverage:ci:node-executor
       - name: Upload native executor coverage lcov
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-native-executor
           path: coverage/node-executor/lcov.info
@@ -258,7 +258,7 @@ jobs:
       - name: Collect integration client and CLI coverage
         run: deno task coverage:ci:integration-client
       - name: Upload integration client coverage lcov
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-integration-client
           path: coverage/integration-client/lcov.info
