@@ -861,6 +861,14 @@ export function createVeryfrontHandler(
             profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
             onEnvironmentResolved: (envRes) => {
               updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
+              loggerContext.logger = loggerContext.logger.child({
+                environment: envRes.resolvedEnvironment,
+              });
+              setProjectAttributes(
+                spanInfo.span,
+                projectRes.projectSlug,
+                envRes.resolvedEnvironment,
+              );
             },
             logDebug,
           });
