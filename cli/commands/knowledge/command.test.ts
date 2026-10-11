@@ -1133,6 +1133,9 @@ describe("ingestResolvedSources", () => {
         progress_unit: "page",
         progress_current: 1,
         progress_total: 2,
+        source_ordinal: 1,
+        source_count: 2,
+        source_type: "pdf",
         page_current: 1,
         page_total: 2,
         characters: 100,
@@ -1143,6 +1146,9 @@ describe("ingestResolvedSources", () => {
         progress_unit: "page",
         progress_current: 2,
         progress_total: 2,
+        source_ordinal: 1,
+        source_count: 2,
+        source_type: "pdf",
         page_current: 2,
         page_total: 2,
         characters: 120,
@@ -1153,12 +1159,52 @@ describe("ingestResolvedSources", () => {
         progress_unit: "slide",
         progress_current: 1,
         progress_total: 1,
+        source_ordinal: 2,
+        source_count: 2,
+        source_type: "pptx",
         slide_current: 1,
         slide_total: 1,
         characters: 80,
         source_name: "roadmap.pptx",
       },
     ]);
+  });
+
+  it("logs parser-start progress before invoking the parser without claiming a real parser callback", async () => {
+    const events: LoggedEvent[] = [];
+    let parserCalled = false;
+
+    await ingestResolvedSources(
+      [createUploadSource("uploads/manuals/bosch.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => {
+          const parserStart = events.find((event) =>
+            event.message === "Starting knowledge source parser"
+          );
+          assertEquals(parserStart?.metadata, {
+            phase: "parser_started_pre_call",
+            progress_unit: "file",
+            progress_current: 1,
+            progress_total: 1,
+            source_ordinal: 1,
+            source_count: 1,
+            source_type: "pdf",
+            source_name: "bosch.pdf",
+          });
+          parserCalled = true;
+          return createParserSuccess();
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+        eventLogger: createMemoryEventLogger(events),
+      },
+    );
+
+    assertEquals(parserCalled, true);
   });
 
   it("does not request extraction progress when no event logger can report it", async () => {

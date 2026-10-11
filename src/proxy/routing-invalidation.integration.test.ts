@@ -132,7 +132,6 @@ it("converges deploy and rollback routing across two proxy replicas", async () =
     redisUrl: "redis://example.test:6379",
     expectedReplicas: 2,
     replicaId: "replica-a",
-    acknowledgementTimeoutMs: 100,
     createClient: redis.createClient,
     integritySecret,
     onInvalidate: async (event) => {
@@ -144,7 +143,6 @@ it("converges deploy and rollback routing across two proxy replicas", async () =
     redisUrl: "redis://example.test:6379",
     expectedReplicas: 2,
     replicaId: "replica-b",
-    acknowledgementTimeoutMs: 100,
     createClient: redis.createClient,
     integritySecret,
     onInvalidate: async (event) => {

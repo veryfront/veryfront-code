@@ -25,14 +25,18 @@ export async function chunk(text: string, options?: ChunkOptions): Promise<strin
   return (await chunkWithOffsets(text, options)).map((part) => part.content);
 }
 
-/** @internal Canonical UTF-16 source positions, retained during recursive splitting. */
+/** A text chunk with UTF-16 offsets into the original source string. */
 export interface PositionedTextChunk {
   content: string;
   startOffset: number;
   endOffset: number;
 }
 
-/** @internal Split without ambiguously searching for repeated text afterward. */
+/**
+ * Splits text into overlapping chunks and preserves each chunk's UTF-16 source offsets.
+ *
+ * Use this when downstream indexing must point back to exact positions in the original document.
+ */
 export async function chunkWithOffsets(
   text: string,
   options?: ChunkOptions,

@@ -583,6 +583,48 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(headerValue(2, "Idempotency-Key"), headerValue(1, "Idempotency-Key"));
   });
 
+  for (
+    const [kind, create] of [
+      [
+        "task",
+        (client: VeryfrontRunsClient) => client.createTaskRun({ projectId, target: "task:sync" }),
+      ],
+      ["workflow", (client: VeryfrontRunsClient) =>
+        client.createWorkflowRun({
+          projectId,
+          workflowId: "content-pipeline",
+          target: "workflow:content-pipeline",
+        })],
+      [
+        "eval",
+        (client: VeryfrontRunsClient) =>
+          client.createEvalRun({ projectId, target: "eval:quality" }),
+      ],
+    ] as const
+  ) {
+    it(`generates one idempotency key per ${kind} creation and reuses it on retry (#3131)`, async () => {
+      const runId = "55555555-5555-4555-8555-555555555555";
+      mockFetch([
+        jsonResponse({ error: "temporary upstream failure" }, 503),
+        jsonResponse({ ...makeRun(), id: runId }, 202),
+        jsonResponse({ ...makeRun(), id: "66666666-6666-4666-8666-666666666666" }, 202),
+      ]);
+      const client = createTestClient({ retry: { maxRetries: 1, initialDelay: 1, maxDelay: 1 } });
+
+      const first = await create(client);
+      await create(client);
+
+      assertEquals(fetchCalls.length, 3);
+      const firstKey = headerValue(0, "Idempotency-Key");
+      assertExists(firstKey);
+      assertEquals(headerValue(1, "Idempotency-Key"), firstKey);
+      assert(headerValue(2, "Idempotency-Key") !== firstKey);
+      assertEquals(jsonBody(1), jsonBody(0));
+      assert("run_id" in first.run);
+      assertEquals(first.run.run_id, runId);
+    });
+  }
+
   it("does not create a run when the pushed source schedule is missing", async () => {
     mockFetch([
       jsonResponse({

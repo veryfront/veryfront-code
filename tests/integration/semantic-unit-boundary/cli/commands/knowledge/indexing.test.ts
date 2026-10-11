@@ -14,6 +14,7 @@ import type { Embedding } from "#veryfront/embedding/types.ts";
 
 const fileId = "11111111-1111-4111-8111-111111111111";
 const versionId = "22222222-2222-4222-8222-222222222222";
+const branchId = "33333333-3333-4333-8333-333333333333";
 const published = {
   path: "knowledge/topic.md",
   file_id: fileId,
@@ -186,6 +187,276 @@ it("missing publication receipt, oversized complete sets and provider failures n
       "atomic index limit",
     );
     assertEquals(commits, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("accepts empty canonical sources only after exact current index-status readiness", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "---\ntype: Topic\n---\n   \n");
+    const checksum = await computeHash(await Deno.readTextFile(localPath));
+    let statusPath = "";
+    let statusBody: unknown;
+    let commits = 0;
+    let embeddings = 0;
+    const receipt = await indexKnowledgeDocument({
+      client: createMockClient({
+        post: async (path, body) => {
+          if (path.endsWith("/knowledge/index-status")) {
+            statusPath = path;
+            statusBody = body;
+            return {
+              data: [{
+                path: published.path,
+                file_id: fileId,
+                file_version_id: versionId,
+                index_ready: true,
+              }],
+            };
+          }
+          commits++;
+          return {};
+        },
+      }),
+      projectSlug: "project",
+      branch: "main",
+      published: { ...published, checksum },
+      localPath,
+      embedder: embedder(() => {
+        embeddings++;
+      }),
+    });
+    assertEquals(statusPath, "/projects/project/knowledge/index-status");
+    assertEquals(statusBody, {
+      paths: [published.path],
+      lookup_target: { kind: "preview_branch", branch_id: null },
+    });
+    assertEquals(receipt, {
+      file_id: fileId,
+      version_id: versionId,
+      path: published.path,
+      checksum,
+      indexed_chunk_count: 0,
+      model: null,
+    });
+    assertEquals(commits, 0);
+    assertEquals(embeddings, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("resolves named branches before accepting empty canonical source readiness", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "");
+    const emptyChecksum = await computeHash(await Deno.readTextFile(localPath));
+    let branchLookupPath = "";
+    let branchLookupParams: Record<string, string> | undefined;
+    let statusBody: unknown;
+    const receipt = await indexKnowledgeDocument({
+      client: createMockClient({
+        get: async (path, params) => {
+          branchLookupPath = path;
+          branchLookupParams = params;
+          return {
+            data: [{ id: branchId, name: "preview", project_id: "project-id" }],
+            page_info: {},
+          };
+        },
+        post: async (_path, body) => {
+          statusBody = body;
+          return {
+            data: [{
+              path: published.path,
+              file_id: fileId,
+              file_version_id: versionId,
+              index_ready: true,
+            }],
+          };
+        },
+      }),
+      projectSlug: "project",
+      branch: "preview",
+      published: { ...published, checksum: emptyChecksum },
+      localPath,
+      embedder: embedder(() => {
+        throw new Error("empty source must not embed");
+      }),
+    });
+    assertEquals(branchLookupPath, "/projects/project/branches");
+    assertEquals(branchLookupParams, { search: "preview", limit: "100" });
+    assertEquals(statusBody, {
+      paths: [published.path],
+      lookup_target: { kind: "preview_branch", branch_id: branchId },
+    });
+    assertEquals(receipt.indexed_chunk_count, 0);
+    assertEquals(receipt.model, null);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("uses an explicit branch id directly when accepting empty canonical source readiness", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "");
+    const emptyChecksum = await computeHash(await Deno.readTextFile(localPath));
+    let lookups = 0;
+    let statusBody: unknown;
+    await indexKnowledgeDocument({
+      client: createMockClient({
+        get: async () => {
+          lookups++;
+          return { data: [] };
+        },
+        post: async (_path, body) => {
+          statusBody = body;
+          return {
+            data: [{
+              path: published.path,
+              file_id: fileId,
+              file_version_id: versionId,
+              index_ready: true,
+            }],
+          };
+        },
+      }),
+      projectSlug: "project",
+      branch: branchId,
+      published: { ...published, checksum: emptyChecksum },
+      localPath,
+      embedder: embedder(() => {
+        throw new Error("empty source must not embed");
+      }),
+    });
+    assertEquals(lookups, 0);
+    assertEquals(statusBody, {
+      paths: [published.path],
+      lookup_target: { kind: "preview_branch", branch_id: branchId },
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("rejects empty canonical sources when status is denied, stale, or not ready", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "");
+    let embeddings = 0;
+    const baseInput = {
+      projectSlug: "project",
+      branch: "main",
+      published,
+      localPath,
+      embedder: embedder(() => {
+        embeddings++;
+      }),
+    };
+    for (
+      const data of [
+        [],
+        [{
+          path: published.path,
+          file_id: fileId,
+          file_version_id: fileId,
+          index_ready: true,
+        }],
+        [{
+          path: published.path,
+          file_id: fileId,
+          file_version_id: versionId,
+          index_ready: false,
+        }],
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          indexKnowledgeDocument({
+            ...baseInput,
+            client: createMockClient({
+              post: async () => ({ data }),
+            }),
+          }),
+        Error,
+        "readiness",
+      );
+    }
+    assertEquals(embeddings, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("rejects empty canonical sources when named branch lookup is absent, ambiguous, or wrong-name only", async () => {
+  const root = await makeTempDir();
+  try {
+    const localPath = `${root}/empty.md`;
+    await Deno.writeTextFile(localPath, "");
+    const cases = [
+      {
+        name: "absent",
+        pages: [{ data: [], page_info: {} }],
+        message: "did not return the requested branch",
+      },
+      {
+        name: "ambiguous",
+        pages: [{
+          data: [
+            { id: branchId, name: "preview" },
+            { id: "44444444-4444-4444-8444-444444444444", name: "preview" },
+          ],
+          page_info: {},
+        }],
+        message: "multiple exact matches",
+      },
+      {
+        name: "wrong-name",
+        pages: [{ data: [{ id: branchId, name: "preview-copy" }], page_info: {} }],
+        message: "did not return the requested branch",
+      },
+      {
+        name: "wrong-name-paginated",
+        pages: [
+          {
+            data: [{ id: branchId, name: "preview-copy" }],
+            page_info: { next: "cursor-2" },
+          },
+          { data: [{ id: branchId, name: "preview-old" }], page_info: {} },
+        ],
+        message: "did not return the requested branch",
+      },
+    ];
+    for (const item of cases) {
+      let call = 0;
+      await assertRejects(
+        () =>
+          indexKnowledgeDocument({
+            client: createMockClient({
+              get: async () => item.pages[call++] ?? { data: [] },
+              post: async () => {
+                throw new Error(`status must not run for ${item.name}`);
+              },
+            }),
+            projectSlug: "project",
+            branch: "preview",
+            published,
+            localPath,
+            embedder: embedder(() => {
+              throw new Error("empty source must not embed");
+            }),
+          }),
+        Error,
+        item.message,
+      );
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }

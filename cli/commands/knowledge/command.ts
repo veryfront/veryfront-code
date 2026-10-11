@@ -142,6 +142,34 @@ function buildKnowledgeSourceName(source: KnowledgeSource): string {
   return basename(source.kind === "upload" ? source.uploadPath : source.localPath);
 }
 
+function classifyKnowledgeSourceType(sourceName: string): string {
+  const extension = extname(sourceName).toLowerCase();
+  switch (extension) {
+    case ".pdf":
+      return "pdf";
+    case ".ppt":
+    case ".pptx":
+      return "pptx";
+    case ".doc":
+    case ".docx":
+      return "docx";
+    case ".md":
+    case ".mdx":
+      return "markdown";
+    case ".json":
+      return "json";
+    case ".txt":
+      return "text";
+    case ".html":
+    case ".htm":
+      return "html";
+    case ".csv":
+      return "csv";
+    default:
+      return "unknown";
+  }
+}
+
 function buildExtractionProgressPhase(event: DocumentExtractionProgressEvent): string {
   if (event.unit === "page") return "pdf_page_completed";
   if (event.unit === "slide") return "ppt_slide_completed";
@@ -151,6 +179,8 @@ function buildExtractionProgressPhase(event: DocumentExtractionProgressEvent): s
 function buildExtractionProgressMetadata(
   sourceName: string,
   event: DocumentExtractionProgressEvent,
+  sourceOrdinal: number,
+  sourceCount: number,
 ): Record<string, unknown> {
   const total = event.total ?? event.current;
   const metadata: Record<string, unknown> = {
@@ -158,6 +188,9 @@ function buildExtractionProgressMetadata(
     progress_unit: event.unit,
     progress_current: event.current,
     progress_total: total,
+    source_ordinal: sourceOrdinal,
+    source_count: sourceCount,
+    source_type: classifyKnowledgeSourceType(sourceName),
     source_name: sourceName,
   };
 
@@ -811,6 +844,9 @@ export async function ingestResolvedSources(
       phase: "file_failed",
       progress_current: index + 1,
       progress_total: sources.length,
+      source_ordinal: index + 1,
+      source_count: sources.length,
+      source_type: classifyKnowledgeSourceType(buildKnowledgeSourceName(source)),
       source_name: buildKnowledgeSourceName(source),
       error: message,
     });
@@ -830,16 +866,30 @@ export async function ingestResolvedSources(
     deps.signal?.throwIfAborted();
     const sourceReference = buildSourceReference(source);
 
+    const sourceName = buildKnowledgeSourceName(source);
+    const sourceType = classifyKnowledgeSourceType(sourceName);
     deps.eventLogger?.info("Processing knowledge source", {
       phase: "file_processing",
       progress_current: index + 1,
       progress_total: sources.length,
-      source_name: buildKnowledgeSourceName(source),
+      source_ordinal: index + 1,
+      source_count: sources.length,
+      source_type: sourceType,
+      source_name: sourceName,
     });
 
     let parser: KnowledgeParserResult;
     try {
-      const sourceName = buildKnowledgeSourceName(source);
+      deps.eventLogger?.info("Starting knowledge source parser", {
+        phase: "parser_started_pre_call",
+        progress_unit: "file",
+        progress_current: index + 1,
+        progress_total: sources.length,
+        source_ordinal: index + 1,
+        source_count: sources.length,
+        source_type: sourceType,
+        source_name: sourceName,
+      });
       const eventLogger = deps.eventLogger;
       const parserDeps = {
         signal: deps.signal,
@@ -849,7 +899,7 @@ export async function ingestResolvedSources(
               deps.signal?.throwIfAborted();
               eventLogger.info(
                 "Knowledge source extraction progress",
-                buildExtractionProgressMetadata(sourceName, event),
+                buildExtractionProgressMetadata(sourceName, event, index + 1, sources.length),
               );
             },
           }
@@ -923,7 +973,10 @@ export async function ingestResolvedSources(
         phase: "file_completed",
         progress_current: index + 1,
         progress_total: sources.length,
-        source_name: buildKnowledgeSourceName(source),
+        source_ordinal: index + 1,
+        source_count: sources.length,
+        source_type: sourceType,
+        source_name: sourceName,
         remote_path: uploaded.path,
         warning_count: parser.warnings.length,
       });

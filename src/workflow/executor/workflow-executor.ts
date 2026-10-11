@@ -332,7 +332,7 @@ export class WorkflowExecutor {
       ) {
         throw INVALID_ARGUMENT.create({
           detail:
-            "Workflow run IDs of the form run_<uuid> are reserved for the Veryfront control plane",
+            "Workflow run IDs of the form <uuid> or run_<uuid> are reserved for the Veryfront control plane",
         });
       }
     }

@@ -443,6 +443,8 @@ jobs:
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
             scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
       - name: Archive npm runtime workspace

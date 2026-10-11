@@ -157,7 +157,10 @@ import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
 } from "#veryfront/agent/hosted/durable-run-event-sink.ts";
-import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  getActiveRunEventSinks,
+  runWithMandatoryRunEventSink,
+} from "#veryfront/runtime/run-event-sink-context.ts";
 import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
@@ -170,6 +173,7 @@ import {
   mapRuntimeStreamEventToAgUiEvents,
 } from "#veryfront/agent/ag-ui/encoder.ts";
 import { buildRuntimeEventRecordedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import type { AgentRunRuntimeEventRecordedEvent } from "#veryfront/runtime/model-call-context.ts";
 import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
 import { computeHash as computeObservationHash } from "#veryfront/utils/hash-utils.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -177,6 +181,10 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import {
+  createProjectRunRuntimeOwnershipProbeFromHostEnv,
+  type RuntimeOwnershipProbe,
+} from "./project-run-runtime-ownership-probe.ts";
 
 const TaskDate = Date;
 /** Captured before project code runs, which may replace the global. */
@@ -268,9 +276,12 @@ const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
 const KNOWLEDGE_LOG_MAX_EVENTS = 1_000;
 const KNOWLEDGE_LOG_MAX_BYTES = 256 * 1_024;
 const KNOWLEDGE_LOG_TRUNCATED_MESSAGE = "Knowledge ingest logs were truncated";
+const KNOWLEDGE_PROGRESS_RUNTIME = "veryfront";
+const KNOWLEDGE_PROGRESS_EVENT_KIND = "knowledge_ingest_progress";
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -557,6 +568,7 @@ export interface ProjectRunExecuteHandlerDeps {
   workflowPauseDecisionTimeoutMs?: number;
   /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
   workflowClientDestroyTimeoutMs?: number;
+  createRuntimeOwnershipProbe?(nowMs: number): RuntimeOwnershipProbe | undefined;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -2355,7 +2367,11 @@ interface RuntimeApiClient {
   put<T>(
     path: string,
     body?: unknown,
-    options?: { signal?: AbortSignal; retryPolicy?: "default" | "none" },
+    options?: {
+      signal?: AbortSignal;
+      params?: Record<string, string>;
+      retryPolicy?: "default" | "none";
+    },
   ): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -2482,6 +2498,19 @@ async function withProjectRunObservationDeadline<T>(input: {
 
 type ProjectRunObservationEvent = Record<string, unknown> & { type: string };
 
+function projectRunObservationBatchRequiresCursor(
+  events: readonly Record<string, unknown>[],
+): boolean {
+  for (const event of primordialArrayValues(events)) {
+    if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return true;
+  }
+  return false;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && NumberIsSafeInteger(value) && value > 0;
+}
+
 function snapshotProjectRunObservationEvent(
   event: Record<string, unknown>,
 ): ProjectRunObservationEvent {
@@ -2544,29 +2573,53 @@ function createProjectRunObservationMirror(input: {
   ) => {
     if (disabled || events.length === 0) return;
     const ordinal = ++appendOrdinal;
+    const requiresCursor = projectRunObservationBatchRequiresCursor(events);
+    if (requiresCursor && latestEventId <= 0) {
+      disabled = true;
+      throw new DurableRunEventPersistenceError(
+        "Project run observation append cursor is unavailable",
+      );
+    }
     let body: unknown;
     try {
-      const encodedBody = privateJsonStringify(
-        {
-          events,
-          ...(executionEntryOccurrenceId
-            ? {
-              runtime_observations: {
-                version: 1,
-                observations: [{
-                  kind: "execution_entry",
-                  occurrence_id: executionEntryOccurrenceId,
-                  event_index: 0,
-                }],
-              },
-            }
-            : {}),
-        },
+      const logicalPayload = {
+        events,
+        ...(executionEntryOccurrenceId
+          ? {
+            runtime_observations: {
+              version: 1,
+              observations: [{
+                kind: "execution_entry",
+                occurrence_id: executionEntryOccurrenceId,
+                event_index: 0,
+              }],
+            },
+          }
+          : {}),
+      };
+      const encodedLogicalPayload = privateJsonStringify(
+        logicalPayload,
         null,
         undefined,
         MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
       );
-      // Hash the exact sent bytes with scope and ordinal; fresh model facts never reuse an old key.
+      const encodedBody = requiresCursor
+        ? privateJsonStringify(
+          {
+            expected_previous_event_id: latestEventId,
+            ...logicalPayload,
+          },
+          null,
+          undefined,
+          MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
+        )
+        : encodedLogicalPayload;
+      if (typeof encodedLogicalPayload !== "string" || typeof encodedBody !== "string") {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append body is invalid",
+        );
+      }
+      // Hash the logical event payload, not the cursor wrapper; fresh model facts never reuse an old key.
       const scopeHash = await computeObservationHash(privateJsonStringify([
         "project-runtime-observation-v1",
         input.runId,
@@ -2574,7 +2627,7 @@ function createProjectRunObservationMirror(input: {
         input.attemptId,
         ordinal,
       ]));
-      const payloadHash = await computeObservationHash(encodedBody);
+      const payloadHash = await computeObservationHash(encodedLogicalPayload);
       const idempotencyKey = `project-runtime-observation:${await computeObservationHash(
         `${scopeHash}:${payloadHash}`,
       )}`;
@@ -2621,7 +2674,13 @@ function createProjectRunObservationMirror(input: {
           "Project run observation append identified a different run",
         );
       }
-      if (typeof receipt.latest_event_id === "number") latestEventId = receipt.latest_event_id;
+      if (isPositiveSafeInteger(receipt.latest_event_id)) {
+        latestEventId = receipt.latest_event_id;
+      } else if (requiresCursor) {
+        throw new DurableRunEventPersistenceError(
+          "Project run observation append receipt cursor is invalid",
+        );
+      }
       const captures = receipt.model_call_captures;
       if (captures !== undefined) {
         if (!ArrayIsArray(captures)) {
@@ -2835,11 +2894,26 @@ function isPermittedProjectRunObservationEventType(type: string): boolean {
   }
 }
 
+function readRuntimeOwnershipEventAuthorityCanonicalRunId(
+  request: ProjectRunExecuteRequest,
+  eventToken: string | undefined,
+): string | undefined {
+  if (eventToken === undefined) return undefined;
+  try {
+    return readProjectExecutionParent(
+      eventToken,
+      request.runId,
+      request.projectId,
+    ).canonicalRunId;
+  } catch {
+    return undefined;
+  }
+}
+
 function shouldObserveProjectRunRuntime(request: ProjectRunExecuteRequest): boolean {
   if (request.kind === "workflow") return true;
   switch (request.target) {
     case "task:eval":
-    case "task:knowledge-ingest":
     case "task:release-asset-build":
     case "task:dependency-artifact-build":
     case "task:style-artifact-build":
@@ -3027,6 +3101,7 @@ function createRunStopAcknowledger(
   req: Request,
   runId: string,
   executionSignal?: AbortSignal,
+  afterAcknowledged?: () => Promise<void>,
 ): (() => Promise<void>) | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
@@ -3082,6 +3157,16 @@ function createRunStopAcknowledger(
       await cancelAcknowledgementBody(response);
       if (!ReflectApply(ResponseOkGetter, response, [])) {
         throw new TaskError("Run stop acknowledgement rejected");
+      }
+      try {
+        await afterAcknowledged?.();
+      } catch {
+        serverLogger.warn(
+          "[project-run-execute] Runtime ownership probe failed after stop acknowledgement",
+          {
+            runId,
+          },
+        );
       }
     } catch {
       // Best effort. Missing acknowledgement remains unconfirmed in the API.
@@ -3623,6 +3708,7 @@ function createRuntimeApiClient(
   defaultSignal?: AbortSignal,
   canonicalWriterAuthority = false,
   retainedWriterToken?: string,
+  retainedBearerToken?: string,
 ): RuntimeApiClient {
   // A client that may carry the current-attempt writer credential uses the
   // host-owned HTTPS origin; project env files cannot select it, and a
@@ -3632,7 +3718,7 @@ function createRuntimeApiClient(
       requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl()),
     )
     : getEnvironmentConfig().apiBaseUrl;
-  const token = getRuntimeApiToken(req, ctx);
+  const token = retainedBearerToken ?? getRuntimeApiToken(req, ctx);
   // The execution request no longer carries the event token; it is retained
   // by the handler and passed in explicitly.
   const writerToken = canonicalWriterAuthority ? retainedWriterToken ?? null : null;
@@ -3732,9 +3818,9 @@ function createRuntimeApiClient(
     put<T>(
       path: string,
       body?: unknown,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; params?: Record<string, string> },
     ): Promise<T> {
-      return requestJson<T>("PUT", path, body, undefined, options?.signal);
+      return requestJson<T>("PUT", path, body, options?.params, options?.signal);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("PATCH", path, body);
@@ -3817,9 +3903,172 @@ async function resolveUploadIdsToPaths(
   return paths;
 }
 
+type KnowledgeRuntimeProgressValue = {
+  version: 1;
+  phase: string;
+  source_ordinal: number;
+  source_count: number;
+  source_type: string;
+  progress: {
+    unit: string;
+    current: number;
+    total?: number;
+  };
+};
+
+type KnowledgeRuntimeProgressBridge = {
+  record: (level: string, message: string, metadata?: Record<string, unknown>) => void;
+  flush: () => Promise<void>;
+};
+
+const KNOWLEDGE_RUNTIME_PROGRESS_PHASES = new Set([
+  "file_processing",
+  "parser_started_pre_call",
+  "pdf_page_completed",
+  "ppt_slide_completed",
+  "document_file_completed",
+  "file_completed",
+  "file_failed",
+]);
+const KNOWLEDGE_RUNTIME_PROGRESS_SOURCE_TYPES = new Set([
+  "pdf",
+  "pptx",
+  "docx",
+  "markdown",
+  "json",
+  "text",
+  "html",
+  "csv",
+  "unknown",
+]);
+const KNOWLEDGE_RUNTIME_PROGRESS_UNITS = new Set(["file", "page", "slide"]);
+const KNOWLEDGE_RUNTIME_PARSER_PROGRESS_PHASES = new Set([
+  "pdf_page_completed",
+  "ppt_slide_completed",
+  "document_file_completed",
+]);
+
+function readKnowledgeProgressString(
+  metadata: Record<string, unknown>,
+  key: string,
+  allowed: Set<string>,
+): string | undefined {
+  const value = getOwnDataProperty(metadata, key);
+  if (typeof value !== "string") return undefined;
+  return allowed.has(value) ? value : undefined;
+}
+
+function readKnowledgeProgressInteger(
+  metadata: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = getOwnDataProperty(metadata, key);
+  if (typeof value !== "number" || !NumberIsFinite(value) || MathTrunc(value) !== value) {
+    return undefined;
+  }
+  return value > 0 ? value : undefined;
+}
+
+function readKnowledgeRuntimeProgressValue(
+  metadata: Record<string, unknown> | undefined,
+): KnowledgeRuntimeProgressValue | undefined {
+  if (metadata === undefined) return undefined;
+  const phase = readKnowledgeProgressString(
+    metadata,
+    "phase",
+    KNOWLEDGE_RUNTIME_PROGRESS_PHASES,
+  );
+  const sourceOrdinal = readKnowledgeProgressInteger(metadata, "source_ordinal") ??
+    readKnowledgeProgressInteger(metadata, "progress_current");
+  const sourceCount = readKnowledgeProgressInteger(metadata, "source_count") ??
+    readKnowledgeProgressInteger(metadata, "progress_total");
+  const sourceType = readKnowledgeProgressString(
+    metadata,
+    "source_type",
+    KNOWLEDGE_RUNTIME_PROGRESS_SOURCE_TYPES,
+  ) ?? "unknown";
+  if (phase === undefined || sourceOrdinal === undefined || sourceCount === undefined) {
+    return undefined;
+  }
+
+  const progressUnit = readKnowledgeProgressString(
+    metadata,
+    "progress_unit",
+    KNOWLEDGE_RUNTIME_PROGRESS_UNITS,
+  ) ?? "file";
+  const progressCurrent = readKnowledgeProgressInteger(metadata, "progress_current") ??
+    sourceOrdinal;
+  const progressTotal = readKnowledgeProgressInteger(metadata, "progress_total");
+  return {
+    version: 1,
+    phase,
+    source_ordinal: sourceOrdinal,
+    source_count: sourceCount,
+    source_type: sourceType,
+    progress: {
+      unit: progressUnit,
+      current: progressCurrent,
+      ...(progressTotal === undefined ? {} : { total: progressTotal }),
+    },
+  };
+}
+
+export function createKnowledgeRuntimeProgressBridge(): KnowledgeRuntimeProgressBridge | undefined {
+  const sink = getActiveRunEventSinks().mandatory;
+  if (!sink) return undefined;
+  const pending: Promise<void>[] = [];
+  const emittedParserProgress = new Set<string>();
+  let firstFailure: unknown;
+
+  const queue = (event: AgentRunRuntimeEventRecordedEvent) => {
+    if (firstFailure !== undefined) throw firstFailure;
+    try {
+      const result = sink(event);
+      if (result && typeof result === "object" && "then" in result) {
+        const pendingResult = Promise.resolve(result).then(() => undefined);
+        pendingResult.catch((error) => {
+          firstFailure ??= error;
+        });
+        pending.push(pendingResult);
+      }
+    } catch (error) {
+      firstFailure ??= error;
+      throw error;
+    }
+  };
+
+  return {
+    record: (_level, _message, metadata) => {
+      const value = readKnowledgeRuntimeProgressValue(metadata);
+      if (value === undefined) return;
+
+      if (KNOWLEDGE_RUNTIME_PARSER_PROGRESS_PHASES.has(value.phase)) {
+        const key = `${value.source_ordinal}:${value.phase}`;
+        const parserProgressSeen = emittedParserProgress.has(key);
+        const parserProgressComplete = value.progress.total !== undefined &&
+          value.progress.current >= value.progress.total;
+        if (parserProgressSeen && !parserProgressComplete) return;
+        emittedParserProgress.add(key);
+      }
+
+      queue({
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: KNOWLEDGE_PROGRESS_RUNTIME,
+        kind: KNOWLEDGE_PROGRESS_EVENT_KIND,
+        value,
+      });
+    },
+    async flush() {
+      await Promise.allSettled(pending);
+      if (firstFailure !== undefined) throw firstFailure;
+    },
+  };
+}
+
 export function createKnowledgeEventLogger(
   lines: string[],
   truncatedMessage = KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+  progressBridge?: KnowledgeRuntimeProgressBridge,
 ): Logger {
   const encoder = new TextEncoder();
   const truncatedLine = JSON.stringify({ level: "warn", message: truncatedMessage });
@@ -3837,6 +4086,7 @@ export function createKnowledgeEventLogger(
     }
   };
   const append = (level: string, message: string, metadata?: Record<string, unknown>) => {
+    progressBridge?.record(level, message, metadata);
     if (truncated || eventCount >= KNOWLEDGE_LOG_MAX_EVENTS) {
       truncate();
       return;
@@ -3892,6 +4142,15 @@ function resolveKnowledgeOutputDestination(
   throw INVALID_ARGUMENT.create({
     detail: "Knowledge ingest requires an explicit writable main_branch or preview_branch target",
   });
+}
+function resolveRuntimeOwnershipCanonicalBranchId(
+  request: ProjectRunExecuteRequest,
+): string | undefined | null {
+  if (request.runtimeTargetKind === "preview_branch") return request.runtimeTargetBranchId ?? null;
+  if (request.runtimeTargetKind === undefined || request.runtimeTargetKind === "main_branch") {
+    return undefined;
+  }
+  return null;
 }
 
 async function executeKnowledgeIngestRun(input: {
@@ -4094,26 +4353,37 @@ async function executeKnowledgeIngestRun(input: {
       throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
     }
 
-    const results = await ingestResolvedSources(collection.sources, options, {
-      client,
-      projectSlug: projectReference,
-      outputDir,
-      runParser: runKnowledgeParser,
-      eventLogger: createKnowledgeEventLogger(logLines),
-      destinationBranch: outputDestination?.branchId ?? "main",
-      indexKnowledgeDocument: indexCanonical,
-      uploadKnowledgeFile: (remotePath, localPath, metadata) =>
-        putRemoteFileFromLocal(
+    const progressBridge = createKnowledgeRuntimeProgressBridge();
+    const results = await (async () => {
+      try {
+        return await ingestResolvedSources(collection.sources, options, {
           client,
-          projectReference,
-          remotePath,
-          localPath,
-          input.signal,
-          outputDestination,
-          metadata,
-        ),
-      signal: input.signal,
-    });
+          projectSlug: projectReference,
+          outputDir,
+          runParser: runKnowledgeParser,
+          eventLogger: createKnowledgeEventLogger(
+            logLines,
+            KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+            progressBridge,
+          ),
+          destinationBranch: outputDestination?.branchId ?? "main",
+          indexKnowledgeDocument: indexCanonical,
+          uploadKnowledgeFile: (remotePath, localPath, metadata) =>
+            putRemoteFileFromLocal(
+              client,
+              projectReference,
+              remotePath,
+              localPath,
+              input.signal,
+              outputDestination,
+              metadata,
+            ),
+          signal: input.signal,
+        });
+      } finally {
+        await progressBridge?.flush();
+      }
+    })();
     input.signal.throwIfAborted();
     const result = buildKnowledgeIngestRunResult({
       requestedCount,
@@ -5061,6 +5331,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
+  createRuntimeOwnershipProbe: (nowMs) => createProjectRunRuntimeOwnershipProbeFromHostEnv(nowMs),
   sleep: (ms) => new IntrinsicPromise<void>((resolve) => TaskSetTimeout(resolve, ms)),
   now: () => Date.now(),
 };
@@ -5253,7 +5524,44 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
           stopController.signal,
         ]]) as AbortSignal;
-        const callback = createRunStopAcknowledger(req, request.runId, executionSignal);
+        const startedAt = this.deps.now();
+        const hostObservedAt = this.taskDeadlineClock.now();
+        const runtimeOwnershipProbe = this.deps.createRuntimeOwnershipProbe?.(hostObservedAt);
+        const runtimeOwnershipCanonicalBranchId = runtimeOwnershipProbe === undefined
+          ? null
+          : resolveRuntimeOwnershipCanonicalBranchId(request);
+        const runtimeOwnershipEventAuthorityCanonicalRunId = runtimeOwnershipProbe === undefined
+          ? undefined
+          : readRuntimeOwnershipEventAuthorityCanonicalRunId(request, eventToken);
+        const runtimeOwnershipProbeSession = runtimeOwnershipCanonicalBranchId === null
+          ? undefined
+          : runtimeOwnershipProbe?.createSession({
+            request,
+            ctx,
+            nowMs: hostObservedAt,
+            readNowMs: () => this.taskDeadlineClock.now(),
+            retainedEventToken: runtimeOwnershipEventAuthorityCanonicalRunId !== undefined,
+            eventAuthorityCanonicalRunId: runtimeOwnershipEventAuthorityCanonicalRunId,
+            canonicalBranchId: runtimeOwnershipCanonicalBranchId,
+            createCanonicalClient: (signal) =>
+              createRuntimeApiClient(req, ctx, signal, true, eventToken),
+            createReadbackClient: (signal) =>
+              createRuntimeApiClient(req, ctx, signal, true, undefined),
+            createEventAppendClient: (signal) =>
+              eventToken === undefined
+                ? createRuntimeApiClient(req, ctx, signal, true, undefined)
+                : createRuntimeApiClient(req, ctx, signal, true, undefined, eventToken),
+            createHeartbeatClient: (signal) =>
+              createRuntimeApiClient(req, ctx, signal, true, undefined),
+          });
+        const callback = createRunStopAcknowledger(
+          req,
+          request.runId,
+          executionSignal,
+          () =>
+            runtimeOwnershipProbeSession?.afterStopAcknowledged() ??
+              primordialPromiseResolve(undefined),
+        );
         const acknowledgePause = request.kind === "workflow"
           ? createRunPauseAcknowledger(req, request.runId, this.deps.sleep)
           : undefined;
@@ -5270,10 +5578,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         return await withSpan(
           "project_run.execute",
           async () => {
-            const startedAt = this.deps.now();
             let executionOwned = false;
             try {
-              const execute = () => {
+              const execute = async () => {
+                await runtimeOwnershipProbeSession?.beforeExecute();
                 if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
                   requireProjectRunObservationParent(request, eventToken);
                 }
