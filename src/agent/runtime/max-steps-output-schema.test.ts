@@ -23,6 +23,9 @@ const dateReportSchema = defineSchema((v) =>
   v.object({ city: v.string() }).transform(() => new Date("2026-01-01T00:00:00.000Z"))
 );
 const bigintReportSchema = defineSchema((v) => v.object({ city: v.string() }).transform(() => 12n));
+const nonFiniteReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => Number.POSITIVE_INFINITY)
+);
 const deepReportSchema = defineSchema((v) =>
   v.object({ city: v.string() }).transform(() => {
     let output: Record<string, unknown> = { city: "Berlin" };
@@ -996,6 +999,13 @@ describe("agent max steps output schema", () => {
         expected: undefined,
         reason: "unsupported_undefined",
         value: "[unsupported undefined]",
+      },
+      {
+        name: "non-finite number",
+        schema: nonFiniteReportSchema(),
+        expected: Number.POSITIVE_INFINITY,
+        reason: "unsupported_number",
+        value: "[unsupported number]",
       },
     ]
   ) {

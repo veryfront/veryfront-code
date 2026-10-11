@@ -424,6 +424,26 @@ describe("coverage source paths", () => {
     );
   });
 
+  it("keeps sources of a producer checkout located under a cache-shaped path", () => {
+    const report = [
+      "SF:/home/runner/.cache/veryfront/checkout/src/server/entry.mjs",
+      "DA:1,4",
+      "end_of_record",
+      "SF:/home/runner/.cache/veryfront/checkout/.cache/veryfront/src/page.tsx.mjs",
+      "DA:2,5",
+      "end_of_record",
+    ].join("\n");
+
+    assertEquals(
+      normalizeLcovSourcePaths(
+        report,
+        ["/home/runner/.cache/veryfront/checkout"],
+        (path) => path === "src/server/entry.mjs",
+      ),
+      ["SF:src/server/entry.mjs", "DA:1,4", "end_of_record"].join("\n"),
+    );
+  });
+
   it("drops generated cache records across runner homes and path separators", () => {
     for (
       const cacheRoot of [
