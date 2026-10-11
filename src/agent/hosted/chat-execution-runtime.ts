@@ -12,6 +12,10 @@ import {
   buildChatStreamChunkMessageMetadata,
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
+import {
+  bindReasoningPartIdentity,
+  readReasoningPartIdentity,
+} from "../../chat/reasoning-part-identity.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   type ChatUiMessage,
@@ -902,6 +906,18 @@ export function createHostedChatExecutionRuntime(
     const snapshot = messageProjection.snapshot();
     if (!snapshot.id) return undefined;
     const message = getChatUiMessageSchema().parse(snapshot);
+    // Validation returns new part objects, which drops the projection's private
+    // stream identity. Rebind it by position so finalization can still tell an
+    // open reasoning block from a completed one. A reshaped part list carries
+    // no identity, which finalization treats as closed.
+    if (message.parts.length === snapshot.parts.length) {
+      for (const [index, part] of message.parts.entries()) {
+        const source = snapshot.parts[index];
+        if (part.type !== "reasoning" || source?.type !== "reasoning") continue;
+        const identity = readReasoningPartIdentity(source);
+        if (identity) bindReasoningPartIdentity(part, identity.id, identity.open);
+      }
+    }
     type Part = (typeof message.parts)[number];
     const isDataPart = (part: Part): part is Extract<Part, { type: `data-${string}` }> =>
       part.type.startsWith("data-");

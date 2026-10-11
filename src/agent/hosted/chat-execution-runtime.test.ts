@@ -2110,6 +2110,62 @@ describe("agent/hosted-chat-execution-runtime", () => {
     }
   }
 
+  it("completes an unfinished detached reasoning block with only its missing suffix", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const mirroredChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({
+          terminalStates,
+          durableRunMirror: createDurableRunMirror({ chunks: mirroredChunks, flushes: [] }),
+        }),
+        rootStreamWatchdog: createRootStreamWatchdog({ disposed: () => {} }),
+        streamResult: {
+          steps: Promise.resolve([{
+            finishReason: "stop",
+            response: {
+              messages: [{
+                role: "assistant",
+                content: [{ type: "reasoning", text: "Partial thought" }],
+              }],
+            },
+          }]),
+          toUIMessageStream: async function* () {
+            yield { type: "start", messageId: "stream-message-1" };
+            yield { type: "reasoning-start", id: "reasoning-1" };
+            yield { type: "reasoning-delta", id: "reasoning-1", delta: "Partial" };
+          },
+        },
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    for await (const _chunk of runtime.agentUIStream) {
+      /* Drain actual mirror and projection. */
+    }
+    await runtime.waitForFinish();
+
+    // The validated snapshot must keep the open block's identity, so the final
+    // step appends the suffix to it instead of replaying the streamed prefix.
+    assertEquals(
+      mirroredChunks.flatMap((chunk) => chunk.type === "reasoning-delta" ? [chunk.delta] : []),
+      ["Partial", " thought"],
+    );
+    assertEquals(
+      mirroredChunks.filter((chunk) => chunk.type === "reasoning-start").length,
+      1,
+    );
+    assertEquals(terminalStates.map((state) => state.status), ["completed"]);
+  });
+
   it("finalizes detached streams when the finish handler never runs", async () => {
     let disposed = 0;
     const terminalStates: HostedLifecycleTerminalState[] = [];
