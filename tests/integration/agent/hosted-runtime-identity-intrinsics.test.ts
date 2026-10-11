@@ -1,3 +1,4 @@
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -12,6 +13,7 @@ const policy = { schemaVersion: 1, mode: "allowlist", integrations: {} } as cons
 for (const surface of ["default", "prepared"] as const) {
   for (const replacement of ["blank", "throw"] as const) {
     it(`preserves ${surface} identity with a ${replacement} trim replacement`, async () => {
+      using _catalog = useServedCatalogForTests();
       const trim = String.prototype.trim;
       const apply = Reflect.apply;
       let calls = 0;
