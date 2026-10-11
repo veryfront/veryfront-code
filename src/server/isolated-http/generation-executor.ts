@@ -245,12 +245,13 @@ export function createHostedHttpGenerationExecutor(
     const binding = session.binding;
     if (binding) {
       try {
+        // The client may keep raw work pending after cancellation; bound this wait anyway.
+        const signal = AbortSignal.timeout(RELEASE_CONFIRMATION_TIMEOUT_MS);
+        const observed = input.session.allocator.observe(binding, signal);
+        observed.catch(() => {});
         const view = parseHostedExecutorData(
           getHostedExecutorAllocationSchema(),
-          await input.session.allocator.observe(
-            binding,
-            AbortSignal.timeout(RELEASE_CONFIRMATION_TIMEOUT_MS),
-          ),
+          await awaitAbortable(observed, signal),
         );
         if (sameHostedExecutorBinding(view.binding, binding) && view.phase === "released") return;
       } catch { /* Reported below as an unconfirmed release. */ }

@@ -399,6 +399,21 @@ describe("hosted HTTP generation executor", () => {
     }
   });
 
+  it("bounds release confirmation when the allocator never answers", async () => {
+    const f = fixture(() => new Response("served"));
+    f.input.session.allocator.release = () =>
+      Promise.reject(new Error("synthetic allocator outage"));
+    const { executor, sessions } = executorFor(f);
+    try {
+      await (await executor.render(new Request("https://app.example"))).text();
+      f.input.session.allocator.observe = () => new Promise(() => {});
+      await assertRejects(() => executor.stop(), Error, "unconfirmed");
+    } finally {
+      await sessions.shutdown();
+      await sessions.settled;
+    }
+  });
+
   it("refuses a request whose installation differs from its own", async () => {
     const f = fixture(() => new Response("must not run"));
     const sessions = createHostedExecutorSessionPool({ maxActive: 1 });
