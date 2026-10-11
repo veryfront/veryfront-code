@@ -220,6 +220,20 @@ export function normalizeLcovSourcePaths(
   return output.join(newline);
 }
 
+function findMostSpecificCheckoutPrefix(
+  source: string,
+  prefixes: readonly string[],
+): string | undefined {
+  let prefix: string | undefined;
+  for (const candidate of prefixes) {
+    if (
+      source.startsWith(candidate) &&
+      (!prefix || candidate.length > prefix.length)
+    ) prefix = candidate;
+  }
+  return prefix;
+}
+
 function normalizeLcovSource(
   source: string,
   prefixes: readonly string[],
@@ -228,13 +242,7 @@ function normalizeLcovSource(
   const portable = source.replaceAll("\\", "/");
   // Match the cache shape only below a verified checkout root, so a checkout
   // that itself lives under a `.cache/veryfront/` directory keeps its sources.
-  let producerPrefix: string | undefined;
-  for (const candidate of prefixes) {
-    if (
-      portable.startsWith(candidate) &&
-      (!producerPrefix || candidate.length > producerPrefix.length)
-    ) producerPrefix = candidate;
-  }
+  const producerPrefix = findMostSpecificCheckoutPrefix(portable, prefixes);
   const producerRelative = producerPrefix
     ? normalizeRelativeLcovPath(portable.slice(producerPrefix.length))
     : undefined;

@@ -1127,6 +1127,43 @@ describe("agent/ag-ui-encoder", () => {
     }
   });
 
+  it("restores structured output when finish metadata fits alone but leaves no object budget", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const [small] = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: "r",
+    });
+    const [sized] = normalizeConversationRunEvent({
+      type: "RUNTIME_EVENT_RECORDED",
+      ...small?.payload,
+      elapsedMs: Number.MAX_VALUE,
+      emittedAt: Number.MAX_VALUE,
+    });
+    if (!sized) throw new Error("Expected finish metadata record");
+    const reason = "r".repeat(
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES - getConversationRunEventJsonByteLength(sized) + 1 -
+        16,
+    );
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "text-delta", id: "text-1", delta: "done" });
+    const [event] = mapRuntimeStreamEventToAgUiEvents(state, {
+      type: "message-finish",
+      finishReason: reason,
+      object: { answer: 42 },
+    });
+    const value = event?.payload.value as Record<string, unknown>;
+    assertEquals(value.finishReason, {
+      captureStatus: "partial",
+      field: "finishReason",
+      reasons: ["serialized_budget_exhausted"],
+    });
+    assertEquals(value.object, { answer: 42 });
+    assertEquals(
+      finalizeAgUiEvents(state, null).find((entry) => entry.event === "RunFinished")?.payload
+        .result,
+      { answer: 42 },
+    );
+  });
+
   it("keeps oversized message-finish result metadata durable without losing usage", () => {
     const state = createAgUiEncoderState({
       nowMs: () => 100,
