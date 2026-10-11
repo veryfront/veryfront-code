@@ -6,7 +6,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 const NativeError = Error;
 function fixture() {
-  let reject = true, changed = false;
+  let reject = true, changed = false, useLegacyLineage = false;
   const attempts: Array<{ path: string; wire: string; key?: string }> = [];
   const client: OwnershipChildClient = {
     get: <T>() =>
@@ -14,8 +14,15 @@ function fixture() {
         {
           id: "parent",
           project_id: "project",
-          descendant_count: changed ? 1 : 0,
-          active_descendant_count: changed ? 1 : 0,
+          ...(useLegacyLineage
+            ? { descendant_count: changed ? 1 : 0, active_descendant_count: changed ? 1 : 0 }
+            : {
+              descendants: {
+                total: changed ? 1 : 0,
+                active: changed ? 1 : 0,
+                has_failures: false,
+              },
+            }),
           status: "cancelled",
         } as T,
       ),
@@ -50,6 +57,9 @@ function fixture() {
     },
     change: () => {
       changed = true;
+    },
+    useLegacyLineage: () => {
+      useLegacyLineage = true;
     },
   };
 }
@@ -87,6 +97,17 @@ describe("host-owned child admission after cancellation", () => {
       () => f.probe({ ...f.request, staleAfterCancel: true }),
       NativeError,
       "No current owned child invocation receipt",
+    );
+    assertEquals(f.attempts.length, 0);
+  });
+  it("rejects legacy top-level descendant counters instead of treating them as canonical readback", async () => {
+    const f = fixture();
+    await f.probe({ ...f.request, staleAfterCancel: false });
+    f.useLegacyLineage();
+    await assertRejects(
+      () => f.probe({ ...f.request, staleAfterCancel: true }),
+      NativeError,
+      "Child lineage readback is incomplete",
     );
     assertEquals(f.attempts.length, 0);
   });

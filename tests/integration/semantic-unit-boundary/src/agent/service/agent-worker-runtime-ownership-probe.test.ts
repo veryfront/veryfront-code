@@ -1614,6 +1614,38 @@ it("reconciles claim cursor when the probe append outcome is ambiguous", async (
   assertEquals(receipts[0]?.status, "error");
 });
 
+it("keeps fatal claim cursor classification when global Error is replaced", async () => {
+  const originalError = globalThis.Error;
+  let caughtMessage: string | undefined;
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+    const fixtureFetch = claimProofFetch({ failEventAppend: "missing-cursor-retry-reject" });
+    const fetchWithPoisonedError = ((input, init) => {
+      const response = fixtureFetch(input, init);
+      globalThis.Error = function () {
+        return {};
+      } as unknown as ErrorConstructor;
+      return response;
+    }) as typeof fetch;
+
+    try {
+      await probe.afterClaim({
+        apiUrl: "https://api.example.test",
+        fetch: fetchWithPoisonedError,
+        workerId,
+        run: probeRun(),
+        credentials: credentials(),
+        embedder: managedTestEmbedder(),
+      });
+    } catch (error) {
+      caughtMessage = error instanceof originalError ? error.message : String(error);
+    }
+  } finally {
+    globalThis.Error = originalError;
+  }
+  assertEquals(caughtMessage, "Agent worker runtime ownership probe append outcome is ambiguous");
+});
+
 it("keeps fatal claim cursor classification when String.includes is replaced", async () => {
   const originalIncludes = String.prototype.includes;
   let caughtMessage: string | undefined;

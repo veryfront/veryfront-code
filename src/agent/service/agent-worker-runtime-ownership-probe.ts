@@ -18,6 +18,7 @@ const MAX_OPERATION_TIMEOUT_MS = 30_000;
 const MAX_ACTIVATION_WINDOW_MS = 6 * 60 * 60 * 1_000;
 const PROBE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RuntimeAbortSignalTimeout = AbortSignal.timeout;
+const RuntimeError = Error;
 const RuntimeArrayIsArray = Array.isArray;
 const RuntimeArrayPrototypeSome = Array.prototype.some;
 const RuntimeArrayPrototypeSort = Array.prototype.sort;
@@ -464,6 +465,10 @@ function errorMessageIncludes(error: unknown, expected: string): boolean {
     (RuntimeReflectApply(RuntimeStringPrototypeIncludes, message, [expected]) as boolean);
 }
 
+function fatalCursorError(message: string, cause?: unknown): Error {
+  return cause === undefined ? new RuntimeError(message) : new RuntimeError(message, { cause });
+}
+
 function readLatestExternalEventSequence(body: unknown): number | undefined {
   if (body === null || typeof body !== "object") return undefined;
   const direct =
@@ -568,9 +573,10 @@ async function retryEventAppendForCursor(
     );
     return retried.ok ? readLatestExternalEventSequence(retried.body) : undefined;
   } catch (error) {
-    throw new Error("Agent worker runtime ownership probe append outcome is ambiguous", {
-      cause: error,
-    });
+    throw fatalCursorError(
+      "Agent worker runtime ownership probe append outcome is ambiguous",
+      error,
+    );
   }
 }
 
@@ -1358,7 +1364,7 @@ async function currentWriteIndex(
         eventResponseHash: await safeHash(appended.body),
         reason: "append-cursor-unavailable",
       });
-      throw new Error("Agent worker runtime ownership probe append cursor is unavailable");
+      throw fatalCursorError("Agent worker runtime ownership probe append cursor is unavailable");
     }
     const after = await readEventSnapshot(
       instrumented,
@@ -1403,7 +1409,7 @@ async function currentWriteIndex(
           return { latestExternalEventSequence: committedLatestExternalEventSequence };
         }
       }
-      throw new Error("Agent worker runtime ownership probe append outcome is ambiguous");
+      throw fatalCursorError("Agent worker runtime ownership probe append outcome is ambiguous");
     }
   }
 }
@@ -1499,7 +1505,7 @@ async function replacedGenerationDenied(
         deniedStatus: denied.status,
         reason: "append-cursor-unavailable",
       });
-      throw new Error("Agent worker runtime ownership probe append cursor is unavailable");
+      throw fatalCursorError("Agent worker runtime ownership probe append cursor is unavailable");
     }
     const after = await readEventSnapshot(
       instrumented,
@@ -1554,7 +1560,9 @@ async function replacedGenerationDenied(
           return { latestExternalEventSequence: committedLatestExternalEventSequence };
         }
       }
-      throw new Error("Agent worker runtime ownership probe stale generation outcome is ambiguous");
+      throw fatalCursorError(
+        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+      );
     }
   }
 }

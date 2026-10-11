@@ -28,6 +28,20 @@ const denial = /(?:^|\D)(401|403)(?:\D|$)/;
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
+function readCanonicalDescendantCounts(
+  value: unknown,
+): { total: number; active: number } | undefined {
+  if (!record(value)) return undefined;
+  const descendants = value.descendants;
+  if (!record(descendants)) return undefined;
+  const total = descendants.total;
+  const active = descendants.active;
+  return typeof total === "number" && Number.isSafeInteger(total) && total >= 0 &&
+      typeof active === "number" && Number.isSafeInteger(active) && active >= 0
+    ? { total, active }
+    : undefined;
+}
+
 /** Prepare one legitimate task invocation while current; later POST /runs directly with its retained issuer authority. */
 export function createRuntimeOwnershipChildProbe(
   input: {
@@ -70,11 +84,12 @@ export function createRuntimeOwnershipChildProbe(
       throw new Error("No current owned child invocation receipt");
     }
     const before: unknown = await reader.get(runPath, undefined, { signal });
+    const beforeDescendants = readCanonicalDescendantCounts(before);
     if (
-      !record(before) || before.project_id !== input.projectId ||
-      typeof before.descendant_count !== "number" ||
-      typeof before.active_descendant_count !== "number"
-    ) throw new Error("Child lineage readback is incomplete");
+      !record(before) || before.project_id !== input.projectId || beforeDescendants === undefined
+    ) {
+      throw new Error("Child lineage readback is incomplete");
+    }
     let rejected = false;
     try {
       await writer.postRaw("/runs", retained.wire, { signal, idempotencyKey: retained.key });
@@ -90,6 +105,14 @@ export function createRuntimeOwnershipChildProbe(
     }
     if (!rejected) throw new Error("Child creation was accepted after cancellation");
     const after: unknown = await reader.get(runPath, undefined, { signal });
+    const afterDescendants = readCanonicalDescendantCounts(after);
+    if (
+      !record(after) || after.project_id !== input.projectId || afterDescendants === undefined ||
+      afterDescendants.total !== beforeDescendants.total ||
+      afterDescendants.active !== beforeDescendants.active
+    ) {
+      throw new Error("Denied child creation changed parent state or lineage");
+    }
     const beforeHash = await computeHash(privateJsonStringify(before)),
       afterHash = await computeHash(privateJsonStringify(after));
     if (beforeHash !== afterHash) {
