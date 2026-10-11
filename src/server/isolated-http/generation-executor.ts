@@ -155,6 +155,7 @@ export function createHostedHttpGenerationExecutor(
   let retired = false;
   let released = false;
   let stopping: Promise<void> | undefined;
+  let observation: Promise<unknown> | undefined;
 
   function retire(): void {
     if (retired) return;
@@ -245,19 +246,30 @@ export function createHostedHttpGenerationExecutor(
     const binding = session.binding;
     if (binding) {
       try {
-        // The client may keep raw work pending after cancellation; bound this wait anyway.
+        // The client may keep raw work pending after cancellation. Bound each wait, and
+        // reuse a still-pending observation instead of starting another one.
         const signal = AbortSignal.timeout(RELEASE_CONFIRMATION_TIMEOUT_MS);
-        const observed = input.session.allocator.observe(binding, signal);
-        observed.catch(() => {});
+        if (!observation) {
+          const pending = input.session.allocator.observe(binding, signal);
+          observation = pending;
+          pending.then(() => {
+            if (observation === pending) observation = undefined;
+          }, () => {
+            if (observation === pending) observation = undefined;
+          });
+        }
         const view = parseHostedExecutorData(
           getHostedExecutorAllocationSchema(),
-          await awaitAbortable(observed, signal),
+          await awaitAbortable(observation, signal),
         );
         if (sameHostedExecutorBinding(view.binding, binding) && view.phase === "released") return;
       } catch { /* Reported below as an unconfirmed release. */ }
     }
     throw new Error("HTTP executor release is unconfirmed");
   }
+
+  // A generation that is never used retires like an idle one.
+  idleTimer = setTimeout(retire, idleTimeoutMs);
 
   return {
     ended: ended.promise,

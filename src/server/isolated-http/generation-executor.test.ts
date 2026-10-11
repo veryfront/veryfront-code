@@ -406,8 +406,34 @@ describe("hosted HTTP generation executor", () => {
     const { executor, sessions } = executorFor(f);
     try {
       await (await executor.render(new Request("https://app.example"))).text();
-      f.input.session.allocator.observe = () => new Promise(() => {});
+      let observations = 0;
+      f.input.session.allocator.observe = () => {
+        observations++;
+        return new Promise(() => {});
+      };
       await assertRejects(() => executor.stop(), Error, "unconfirmed");
+      await assertRejects(() => executor.stop(), Error, "unconfirmed");
+      assertEquals(observations, 1);
+    } finally {
+      await sessions.shutdown();
+      await sessions.settled;
+    }
+  });
+
+  it("retires a generation that never receives a request", async () => {
+    const f = fixture(() => new Response("unused"));
+    const sessions = createHostedExecutorSessionPool({ maxActive: 1 });
+    const executor = createHostedHttpGenerationExecutor({
+      input: prepareHostedHttpInput(f.input),
+      sessions,
+      context: () => undefined,
+      idleTimeoutMs: 10,
+      retireBeforeDeadlineMs: 0,
+    });
+    try {
+      await executor.ended;
+      await executor.stop();
+      assertEquals(f.calls, []);
     } finally {
       await sessions.shutdown();
       await sessions.settled;
