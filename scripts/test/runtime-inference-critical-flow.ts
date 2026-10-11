@@ -591,7 +591,7 @@ export async function waitForProviderCancellation(
 ): Promise<void> {
   if (state.cancellationEvidence()) return;
 
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(
       () =>
