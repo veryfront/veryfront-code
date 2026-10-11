@@ -244,6 +244,9 @@ function maskNonCode(source: string): string {
   // literal from division.
   let previous = "";
   let previousWord = "";
+  // For each open parenthesis, whether it holds a control condition such as
+  // `if (...)`, after which a slash starts a regular expression.
+  const parentheses: boolean[] = [];
   // Brace depth of the enclosing code for each open template expression.
   const templateDepths: number[] = [];
   let depth = 0;
@@ -346,6 +349,14 @@ function maskNonCode(source: string): string {
     }
     result += char;
     index++;
+    if (char === "(") {
+      parentheses.push(CONTROL_KEYWORDS.has(previousWord));
+    } else if (char === ")" && parentheses.pop()) {
+      // After a control condition a statement follows, so treat it like an opening.
+      previous = "{";
+      previousWord = "";
+      continue;
+    }
     if (/[\w$]/.test(char)) {
       previousWord = /[\w$]/.test(previous) ? previousWord + char : char;
       previous = char;
@@ -356,6 +367,9 @@ function maskNonCode(source: string): string {
   }
   return result;
 }
+
+/** Keywords whose parenthesized condition is followed by a statement. */
+const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
 
 /** Keywords after which a slash starts a regular expression, not a division. */
 const REGEXP_KEYWORDS = new Set([
@@ -544,6 +558,18 @@ describe("execution surface inventory", () => {
     assertEquals(
       countGuards(codeOf(`return /requiresIsolatedProjectRuntime\\(/.test(text);`)),
       0,
+    );
+    // A regular expression after a control condition is still recognized.
+    assertEquals(
+      countGuards(
+        codeOf(`if (ready) /["']/.test(value); allowHostProjectCodeExecution && run();`),
+      ),
+      1,
+    );
+    // A call's closing parenthesis still ends an expression, so this is division.
+    assertEquals(
+      countGuards(codeOf("const r = count(items) / 2; isSharedProjectRuntime(ctx);")),
+      1,
     );
     // Division is not a regular expression.
     assertEquals(
