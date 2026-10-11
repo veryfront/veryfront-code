@@ -268,12 +268,8 @@ export function createHostedHttpGenerationExecutor(
       if (retired) throw new Error("HTTP executor generation is retired");
       request.signal.throwIfAborted();
       if (!ready) {
-        try {
-          ready = start();
-        } catch (error) {
-          retire();
-          throw error;
-        }
+        // A failed start, including refused admission, retires this executor.
+        ready = Promise.resolve().then(start);
         ready.catch(retire);
       }
       active++;

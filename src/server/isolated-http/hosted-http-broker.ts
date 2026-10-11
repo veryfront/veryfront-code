@@ -199,8 +199,11 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     return result;
   }
   // An owner signal shuts down the session pool directly; stop retries and generations too.
-  options.signal?.addEventListener("abort", shutdown, { once: true });
-  if (options.signal?.aborted) shutdown();
+  const onOwnerAbort = () => {
+    void shutdown();
+  };
+  options.signal?.addEventListener("abort", onOwnerAbort, { once: true });
+  if (options.signal?.aborted) onOwnerAbort();
 
   return {
     get active() {
