@@ -82,11 +82,11 @@ async function settleBeforeWatchdog<T>(promise: Promise<T>): Promise<T> {
 function recordingClient() {
   const events: Array<Record<string, unknown>> = [];
   const client: DependencyArtifactBuildClient = {
-    async uploadAsset(input) {
+    async writeAsset(input) {
       events.push({ kind: "upload", ...input });
       return { stored: true, existed: false };
     },
-    async reportResult(input) {
+    async createResult(input) {
       events.push({ kind: "result", ...input });
       return {
         accepted: true,
@@ -337,7 +337,7 @@ describe("release-assets/dependency-artifact-builder", () => {
     let fetchCalls = 0;
     const metrics: string[] = [];
     const { client } = recordingClient();
-    client.reportResult = () => Promise.reject(new Error("result API unavailable"));
+    client.createResult = () => Promise.reject(new Error("result API unavailable"));
 
     const result = await runDependencyArtifactBuild(
       buildTaskInput({
@@ -738,7 +738,7 @@ describe("release-assets/dependency-artifact-builder", () => {
   it("fails when the API does not confirm ready publication", async () => {
     const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
     const { client, events } = recordingClient();
-    client.reportResult = async (input) => {
+    client.createResult = async (input) => {
       events.push({ kind: "result", ...input });
       return { accepted: true, state: "failed" };
     };
@@ -756,7 +756,7 @@ describe("release-assets/dependency-artifact-builder", () => {
     const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
     const metrics: string[] = [];
     const { client } = recordingClient();
-    client.reportResult = () => Promise.reject(new Error("result API unavailable"));
+    client.createResult = () => Promise.reject(new Error("result API unavailable"));
 
     const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
       fetch: fixtureFetch({
@@ -777,7 +777,7 @@ describe("release-assets/dependency-artifact-builder", () => {
     const releaseReporting = Promise.withResolvers<{ accepted: true; state: "failed" }>();
     const metrics: string[] = [];
     const { client } = recordingClient();
-    client.reportResult = () => {
+    client.createResult = () => {
       reportingStarted.resolve();
       return releaseReporting.promise;
     };

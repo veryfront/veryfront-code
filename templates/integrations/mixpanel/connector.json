@@ -72,13 +72,13 @@
     {
       "id": "mixpanel__track_event",
       "name": "Track Event",
-      "description": "Track a custom event in Mixpanel with properties",
+      "description": "Track event",
       "requiresWrite": true
     },
     {
       "id": "mixpanel__query_events",
       "name": "Query Events",
-      "description": "Query and export event data from Mixpanel",
+      "description": "Query events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -124,7 +124,7 @@
     {
       "id": "mixpanel__get_funnel",
       "name": "Get Funnel",
-      "description": "Retrieve funnel analysis data to understand conversion rates",
+      "description": "Get funnel",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -165,7 +165,7 @@
     {
       "id": "mixpanel__list_funnels",
       "name": "List Funnels",
-      "description": "List saved funnels with their names and funnel IDs",
+      "description": "List funnels",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -183,7 +183,7 @@
     {
       "id": "mixpanel__get_retention",
       "name": "Get Retention",
-      "description": "Analyze user retention cohorts over time",
+      "description": "Get retention",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -233,7 +233,7 @@
     {
       "id": "mixpanel__list_cohorts",
       "name": "List Cohorts",
-      "description": "List all user cohorts defined in your Mixpanel project",
+      "description": "List cohorts",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

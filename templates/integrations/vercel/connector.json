@@ -28,7 +28,7 @@
     {
       "id": "vercel__list_projects",
       "name": "List Projects",
-      "description": "List projects of the authenticated user or team",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "vercel__get_project",
       "name": "Get Project",
-      "description": "Get a project by ID or name",
+      "description": "Get project",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "vercel__list_deployments",
       "name": "List Deployments",
-      "description": "List deployments under the authenticated user or team",
+      "description": "List deployments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -185,7 +185,7 @@
     {
       "id": "vercel__get_deployment",
       "name": "Get Deployment",
-      "description": "Get a deployment by ID or hostname URL",
+      "description": "Get deployment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -213,7 +213,7 @@
     {
       "id": "vercel__list_env_vars",
       "name": "List Environment Variables",
-      "description": "List the environment variables of a project (values stay encrypted unless decrypt is set)",
+      "description": "List environment variables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

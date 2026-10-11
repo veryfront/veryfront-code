@@ -1304,8 +1304,10 @@ export function formatKnowledgeContext(results: RagSearchResult[]): string {
 }
 
 /**
- * Search the local OKF knowledge manifest with the same input/output shape as
- * Veryfront Cloud's `search_knowledge` MCP tool.
+ * Search the local OKF knowledge manifest with the response shape of Veryfront
+ * Cloud's `search_knowledge` operation. Two inputs differ from the hosted
+ * operation: `lookup_target` names one knowledge file (a path or `{ path }`)
+ * rather than a source, and `limit` defaults to 8 rather than 6.
  */
 export async function searchProjectKnowledge(
   input: ProjectKnowledgeLookupInput,

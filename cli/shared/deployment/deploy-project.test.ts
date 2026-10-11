@@ -1163,7 +1163,7 @@ describe("DeployProject", () => {
         const message = warning?.kind === "warning" ? warning.message : "";
         assertStringIncludes(
           message,
-          "the Cloud API does not offer the environment access token exchange (HTTP 404)",
+          "the Cloud API does not offer the environment access token exchange (HTTP 501)",
         );
         // Server-provided detail never reaches the operator-facing warning.
         assertEquals(message.includes("internal-host"), false);
@@ -1215,6 +1215,54 @@ describe("DeployProject", () => {
           message,
           "the Cloud API refused to issue an environment access token for this API key (HTTP 403)",
         );
+        assertEquals(message.includes("internal-host"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }, { VERYFRONT_API_TOKEN: API_KEY_TOKEN });
+  });
+
+  it("names a not_found exchange as refused, with the API key remedy", async () => {
+    // The exchange answers 404 not_found for a key without access to the
+    // project, a key for another project and an unknown project or environment.
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      controlPlane.environmentAccessToken = null;
+      controlPlane.environmentAccessTokenFailureStatus = 404;
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await withFetchStub(
+          () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        const warning = events.find((event) =>
+          event.kind === "warning" && event.code === "environment-url-unverified"
+        );
+        const message = warning?.kind === "warning" ? warning.message : "";
+        assertStringIncludes(
+          message,
+          "the Cloud API refused to issue an environment access token for this API key (HTTP 404)",
+        );
+        assertStringIncludes(message, "Use an API key for this project whose owner can read it");
+        assertEquals(message.includes("does not offer"), false);
         assertEquals(message.includes("internal-host"), false);
       } finally {
         await Deno.remove(projectDir, { recursive: true });

@@ -64,6 +64,7 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       usage: getUsageSchema().optional(),
       totalUsage: getUsageSchema().optional(),
       object: json.optional(),
+      objectEncoding: v.literal("snapshot").optional(),
     }).strict(),
     v.object({
       type: v.literal("step-start"),

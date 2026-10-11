@@ -47,6 +47,7 @@ const scopes = createPrivateAsyncLocalStorage<Scope>();
 const run = scopes.run;
 const getStore = scopes.getStore;
 const apply = Reflect.apply;
+const objectHasOwn = Object.hasOwn;
 
 /** Private host boundary for the existing local delegation operation. */
 export async function withLocalChildExecution<T>(
@@ -173,7 +174,7 @@ export function observeRuntimeStream(
 /** Observe accepted nonstreaming provider turns through the same private host mirror. */
 export async function observeGeneratedAgentTurn(
   messageId: string,
-  turn: RuntimeGenerateTextResult & { object?: unknown },
+  turn: RuntimeGenerateTextResult & { object?: unknown; objectEncoding?: "snapshot" },
 ): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe) return;
@@ -210,18 +211,30 @@ export async function observeGeneratedAgentTurn(
 
 /** Observe only the generated turn finish for a message whose content was admitted earlier. */
 export async function observeGeneratedAgentTurnFinish(
-  turn: Pick<RuntimeGenerateTextResult, "finishReason" | "usage"> & { object?: unknown },
+  turn: Pick<RuntimeGenerateTextResult, "finishReason" | "usage"> & {
+    object?: unknown;
+    objectEncoding?: "snapshot";
+  },
 ): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe) return;
-  if (turn.finishReason === undefined && turn.usage === undefined && turn.object === undefined) {
+  if (
+    turn.finishReason === undefined && turn.usage === undefined && !objectHasOwn(turn, "object")
+  ) {
     return;
   }
   await scope.observe({
     type: "message-finish",
     ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
     ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
-    ...(turn.object !== undefined ? { object: turn.object } : {}),
+    ...(objectHasOwn(turn, "object")
+      ? {
+        object: turn.object,
+        ...(objectHasOwn(turn, "objectEncoding") && turn.objectEncoding === "snapshot"
+          ? { objectEncoding: "snapshot" as const }
+          : {}),
+      }
+      : {}),
   });
 }
 

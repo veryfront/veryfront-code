@@ -353,10 +353,11 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
             },
           );
         } catch (error) {
-          logger.debug("Scheduled platform dependency resolution failed", {
+          logger.warn("Scheduled platform dependency resolution failed", {
             projectId: queued.projectId,
             target: dependencyWritebackTargetKey(queued.target),
             specifierCount: batch.length,
+            code: dependencyResolutionErrorCode(error),
             error: String(error),
           });
         } finally {
@@ -380,6 +381,17 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
   pendingPlatformResolutionPromises.add(flush);
 }
 
+/** A loggable classification of a write-back failure, such as `AbortError`. */
+function dependencyResolutionErrorCode(error: unknown): string {
+  if (error !== null && typeof error === "object") {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+    const name = (error as { name?: unknown }).name;
+    if (typeof name === "string" && name.length > 0) return name;
+  }
+  return "unknown";
+}
+
 /** Override the platform write-back transport. For tests only. */
 export function _setDependencyResolutionPosterForTest(
   poster?: DependencyResolutionPoster,
@@ -392,8 +404,9 @@ export function _setDependencyResolutionPosterForTest(
  * declarations.
  *
  * Uses the request-scoped bearer token when provided, with the runtime
- * environment token as a fallback. Silently ignores all failures including
- * 404 (endpoint may not exist yet while the API track is built in parallel).
+ * environment token as a fallback. Never throws: a non-OK status (including
+ * 404 from an API without the endpoint) or a network failure is logged as a
+ * warning, and the render continues unpinned.
  *
  * @param projectId  - project identifier from the render context
  * @param specifiers - raw bare names or package declarations such as
@@ -472,8 +485,8 @@ export async function postDependencyResolution(
       signal: controller.signal,
     });
 
-    if (!res.ok && res.status !== 404) {
-      logger.debug("Dependency resolution write-back returned non-OK status", {
+    if (!res.ok) {
+      logger.warn("Dependency resolution write-back returned non-OK status", {
         projectId,
         status: res.status,
       });
@@ -484,8 +497,9 @@ export async function postDependencyResolution(
       // The response status is all this best-effort transport consumes.
     }
   } catch (err) {
-    logger.debug("Dependency resolution write-back failed", {
+    logger.warn("Dependency resolution write-back failed", {
       projectId,
+      code: dependencyResolutionErrorCode(err),
       error: String(err),
     });
   } finally {

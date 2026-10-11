@@ -54,7 +54,7 @@ support filtering before ranking.
 
 Create Markdown files under `knowledge/`.
 
-Knowledge documents target [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/ad30107c31c06aec8a7d5636e0d1058118604e6f/SPEC.md),
+Knowledge files target [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/ad30107c31c06aec8a7d5636e0d1058118604e6f/SPEC.md),
 pinned to revision `ad30107c31c06aec8a7d5636e0d1058118604e6f`.
 Agent configuration stays in TypeScript; OKF document metadata uses the standard's
 frontmatter format. Concept documents require a non-empty `type`; `index.md` and

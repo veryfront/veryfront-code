@@ -13,7 +13,8 @@ import {
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
-import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import {
@@ -101,6 +102,9 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
 ]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const failedSessionLookups = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
@@ -275,14 +279,14 @@ export class LazySandbox {
                 body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
               });
               if (!response.ok) {
-                throw REQUEST_ERROR.create({
-                  detail: `Sandbox command failed: ${response.status}`,
-                });
+                throw await createSandboxHttpError(response, "Sandbox command failed", signal);
               }
               return parseSandboxCommandResult(await response.json());
             },
           );
         } catch (error) {
+          // An HTTP response proves dispatch occurred; its diagnostic body cannot authorize replay.
+          if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) throw error;
           const cause = error instanceof Error ? error.cause : undefined;
           const code = cause && typeof cause === "object" && "code" in cause
             ? cause.code
@@ -355,7 +359,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Read file failed");
     }
 
     return await readSandboxFileContent(res);
@@ -376,9 +380,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Write files failed");
     }
     const result = await res.json();
     const paths = files.map((file) => file.path);
@@ -405,9 +407,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Start background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.kind);
@@ -430,9 +430,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -452,9 +450,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command output failed");
     }
 
     const json = await res.json();
@@ -482,7 +478,7 @@ export class LazySandbox {
       }`;
       const res = await this.#fetchControl(url, { headers: this.#authHeaders() }, route.kind);
       if (!res.ok) {
-        throw REQUEST_ERROR.create({ detail: `List background commands failed: ${res.status}` });
+        throw await createSandboxHttpError(res, "List background commands failed");
       }
       return res.json();
     };
@@ -510,9 +506,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Cancel background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -559,7 +553,7 @@ export class LazySandbox {
             }
           }
 
-          throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
+          throw await createSandboxHttpError(res, "Sandbox heartbeat failed");
         }
 
         this.lastHeartbeatAt = Date.now();
@@ -695,9 +689,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to create sandbox");
     }
 
     const session = await res.json();
@@ -772,9 +764,9 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      const error = await createSandboxHttpError(res, "Failed to get sandbox");
+      applyIntrinsic(weakSetAdd, failedSessionLookups, [error]);
+      throw error;
     }
 
     return await res.json() as SandboxSessionRecord;
@@ -833,7 +825,7 @@ export class LazySandbox {
           return;
         }
 
-        lastFailure = `${res.status} ${await res.text()}`;
+        lastFailure = (await createSandboxHttpError(res, "Runtime readiness failed")).message;
         if (!RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES.has(res.status)) {
           break;
         }
@@ -953,7 +945,7 @@ export class LazySandbox {
     // A 404 means no sandbox is available to this client; cleanup is idempotent.
     // Other denials and server failures must preserve the handle for retry.
     if (!response.ok && response.status !== 404) {
-      throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
+      throw await createSandboxHttpError(response, "Delete sandbox failed");
     }
   }
 
@@ -1064,12 +1056,8 @@ export class LazySandbox {
           return res;
         }
 
-        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
-          await this.waitForExecStartRetry();
-          continue;
-        }
-
-        throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+        // HTTP failures may follow command dispatch; replay requires a pre-response failure.
+        throw await createSandboxHttpError(res, "Exec failed");
       } catch (error) {
         if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
           throw error;
@@ -1200,10 +1188,6 @@ export class LazySandbox {
   }
 }
 
-function isRetryableExecStartStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504;
-}
-
 function commandStreamUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands/stream" : "/exec"}`;
 }
@@ -1220,15 +1204,13 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
  * requires a code update to restore automatic retry.
  */
 function isRetryableExecStartError(error: unknown): boolean {
+  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
   return error instanceof Error && /fetch failed/i.test(error.message);
 }
 
 function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
-  if (!(error instanceof Error)) return false;
-  const detail = "detail" in error && typeof error.detail === "string"
-    ? error.detail
-    : error.message;
-  return detail.startsWith(`Failed to get sandbox: ${status} `);
+  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status &&
+    applyIntrinsic(weakSetHas, failedSessionLookups, [error]);
 }
 
 /**
@@ -1253,6 +1235,7 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
  * failures where the sandbox pod is no longer reachable.
  */
 function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
+  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
   if (!(error instanceof Error)) {
     return false;
   }

@@ -37,7 +37,7 @@
     {
       "id": "personio__list_persons",
       "name": "List Persons",
-      "description": "List employees (persons) in the Personio account with optional email filtering",
+      "description": "List persons",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -65,7 +65,7 @@
     {
       "id": "personio__get_person",
       "name": "Get Person",
-      "description": "Retrieve a single employee (person) by ID",
+      "description": "Get person",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -83,7 +83,7 @@
     {
       "id": "personio__list_employments",
       "name": "List Employments",
-      "description": "List a person's employment records (position, department, supervisor, status), most recent first",
+      "description": "List employments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -112,7 +112,7 @@
     {
       "id": "personio__list_absence_types",
       "name": "List Absence Types",
-      "description": "List the account's absence types (vacation, sick leave, ...) to find the absence_type IDs needed to create absences",
+      "description": "List absence types",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -135,7 +135,7 @@
     {
       "id": "personio__list_absence_periods",
       "name": "List Absence Periods",
-      "description": "List absence periods (vacation, sick leave, etc.) with person and date-range filters",
+      "description": "List absence periods",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -178,7 +178,7 @@
     {
       "id": "personio__list_attendance_periods",
       "name": "List Attendance Periods",
-      "description": "List attendance periods (work and break times) with person and update-date filters",
+      "description": "List attendance periods",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -206,7 +206,7 @@
     {
       "id": "personio__create_absence_period",
       "name": "Create Absence Period",
-      "description": "Create an absence period (e.g. vacation or sick leave) for an employee",
+      "description": "Create absence period",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",

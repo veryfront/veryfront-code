@@ -1,4 +1,5 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { fetchSandboxUrl } from "./config.ts";
 import { hasTemporarySandboxPolicy } from "./response.ts";
 import type { CommandOptions } from "./types.ts";
@@ -71,17 +72,18 @@ export async function currentSandboxCleanupPolicy(input: {
   signal?: AbortSignal;
 }): Promise<"temporary" | "retain" | "unavailable"> {
   return await withSandboxRequestDeadline(input.timeoutMs ?? 15_000, async (deadline) => {
+    const signal = input.signal && deadline
+      ? AbortSignal.any([input.signal, deadline])
+      : input.signal ?? deadline;
     const response = await fetchSandboxUrl(sandboxSessionRoute(input.apiUrl, input.sessionId), {
       method: "GET",
       cache: "no-store",
       headers: { Authorization: `Bearer ${input.authToken}` },
-      signal: input.signal && deadline
-        ? AbortSignal.any([input.signal, deadline])
-        : input.signal ?? deadline,
+      signal,
     });
     if (response.status === 404) return "unavailable";
     if (!response.ok) {
-      throw REQUEST_ERROR.create({ detail: `Sandbox cleanup policy failed: ${response.status}` });
+      throw await createSandboxHttpError(response, "Sandbox cleanup policy failed", signal);
     }
     const record = await response.json();
     return record?.id === input.sessionId && hasTemporarySandboxPolicy(record)

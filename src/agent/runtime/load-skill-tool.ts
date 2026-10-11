@@ -71,7 +71,7 @@ function isRuntimeLoadSkillArray(value: unknown): boolean {
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
-  `Load skill instructions; loading does not perform the task. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Wait for the body result before choosing a reference; never batch the first body load with a reference read. To read a file listed in the loaded skill's references, use the reference object with that same skillId and the listed file path: {"reference":{"skillId":"<loaded-skill-id>","file":"<listed-relative-path>"}}. Reference filenames are not tool names or skill IDs. The legacy load.file form remains accepted.`;
+  `Load skill instructions; loading does not perform the task. ${LOAD_SKILL_POLICY_CLAUSES} ${LOAD_SKILL_OVERRIDE_FORWARDING} To discover authorized skill IDs, use the inventory object. Use a cursor listed in context when present, then follow each nextCursor value. To load a skill, use the load object with only skillId. Wait for the body result before choosing a reference; never batch the first body load with a reference read. To read a file from the loaded skill's references list, use the reference object with the same skillId. Reference filenames are not tool names or skill IDs.`;
 
 function rememberBoundedRecordValue<T>(
   record: Record<string, T>,
@@ -400,6 +400,11 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
 
+// This definition is sent with every model request, so it advertises one way to
+// read a reference file: the `reference` object. The legacy `load.file` form is
+// not advertised, but the runtime input schema still accepts it at execution.
+// The tool description already explains inventory cursors, so the cursor field
+// carries no description of its own.
 function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
   return {
     type: "object",
@@ -411,27 +416,24 @@ function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
             type: "integer",
             minimum: 0,
             maximum: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
-            description:
-              "Pagination cursor from the prompt or a previous skill inventory response.",
           },
         },
         additionalProperties: false,
       },
       reference: {
         type: "object",
-        description: "Read one advertised reference file inside a loaded skill.",
         properties: {
           skillId: {
             type: "string",
             maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
             pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-            description: "The skillId returned when the parent skill was loaded.",
+            description: "The loaded skill's ID.",
           },
           file: {
             type: "string",
             minLength: 1,
             maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-            description: "The exact relative file path from the loaded skill's references list.",
+            description: "A path from the loaded skill's references list.",
           },
         },
         required: ["skillId", "file"],
@@ -444,15 +446,7 @@ function createStaticRuntimeLoadSkillToolInputJsonSchema(): JsonSchema {
             type: "string",
             maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
             pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-            description:
-              'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-          },
-          file: {
-            type: "string",
-            minLength: 1,
-            maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-            description:
-              "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
+            description: 'A listed skill ID. A lowercase ".md" suffix is accepted.',
           },
         },
         required: ["skillId"],
@@ -1293,7 +1287,7 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
   // generated skill context, not in the tool definition. Keeping skill IDs out
   // of the description (and the advertised input schema) lets the tools array
   // join the shared cache prefix. See RFC 0001 (layered context).
-  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs may be listed in the <available_skills> or <authorized_skill_ids> context block. Direct consumers can omit skillId to page authorized IDs or provide equivalent context. You must not invent IDs.`;
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Skill IDs may be listed in the <available_skills> or <authorized_skill_ids> context block. You must not invent IDs.`;
 }
 
 function snapshotRuntimeSkillIdInventory(
