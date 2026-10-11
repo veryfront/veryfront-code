@@ -41,6 +41,7 @@ import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { setProviderObservedSkillBodies } from "#veryfront/tool/provider-observed-skill-bodies.ts";
 
 // The advertised input schema is intentionally STATIC and project-independent
 // (RFC 0001, layered context): skill IDs are surfaced in generated skill context,
@@ -2381,6 +2382,59 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(secondResult.references, ["references/project-2.md"]);
 });
 
+Deno.test("createRuntimeLoadSkillTool binds provider observation to the current skill scope", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: (activeContext) =>
+        Promise.resolve([`references/${activeContext.projectId}.md`, "references/shared.md"]),
+      loadProjectSkill: (activeContext, skillId) =>
+        Promise.resolve({
+          instructions: `# ${activeContext.projectId} ${skillId}`,
+          references: [`references/${activeContext.projectId}.md`, "references/shared.md"],
+        }),
+      loadProjectSkillReference: (activeContext, _skillId, file) =>
+        Promise.resolve(`${activeContext.projectId} ${file}`),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+  const read = { skillId: "plan", file: "references/shared.md" };
+
+  const firstBody = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+  const observedFirstScope = {};
+  setProviderObservedSkillBodies(observedFirstScope, [
+    { skillId: "plan", references: ["references/shared.md", "references/project-1.md"] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedFirstScope) as { content?: string }).content,
+    "project-1 references/shared.md",
+  );
+
+  context.projectId = "project-2";
+  context.branchId = null;
+  // Same provider step: the second scope's body load and reference read share one snapshot.
+  const secondBody = expectLoadedSkillResponse(
+    await tool.execute({ skillId: "plan" }, observedFirstScope),
+  );
+  assertEquals(secondBody.references, ["references/project-2.md", "references/shared.md"]);
+  assertEquals(await tool.execute(read, observedFirstScope), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const observedSecondScope = {};
+  setProviderObservedSkillBodies(observedSecondScope, [
+    { skillId: "plan", references: firstBody.references ?? [] },
+    { skillId: "plan", references: secondBody.references ?? [] },
+  ]);
+  assertEquals(
+    (await tool.execute(read, observedSecondScope) as { content?: string }).content,
+    "project-2 references/shared.md",
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill body is loaded", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -2482,6 +2536,150 @@ Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a
   );
 });
 
+Deno.test("createRuntimeLoadSkillTool authorizes cold reference reads from provider-observed body refs", async () => {
+  const projectSkillLoader = createProjectSkillLoader({
+    skills: new Map([
+      [
+        "research",
+        {
+          instructions: "# Research",
+          references: ["resources/schema.json", "assets/template.txt"],
+        },
+      ],
+    ]),
+    references: new Map([
+      ["research/resources/schema.json", '{"type":"object"}'],
+      ["research/assets/template.txt", "template"],
+    ]),
+  });
+  const initialTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+  const loaded = expectLoadedSkillResponse(await initialTool.execute({ skillId: "research" }));
+  const observed = {};
+  setProviderObservedSkillBodies(observed, [{
+    skillId: loaded.skillId,
+    references: loaded.references ?? [],
+  }]);
+
+  const resumedTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      observed,
+    ),
+    {
+      skillId: "research",
+      file: "resources/schema.json",
+      content: '{"type":"object"}',
+    },
+  );
+
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      {},
+    ),
+    {
+      error:
+        'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+    },
+  );
+
+  const wrongObservation = {};
+  setProviderObservedSkillBodies(wrongObservation, [{
+    skillId: "research",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      wrongObservation,
+    ),
+    {
+      error:
+        'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+    },
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects cold observed refs for wrong body, skill, or file", async () => {
+  const projectSkillLoader = createProjectSkillLoader({
+    skills: new Map([
+      [
+        "research",
+        {
+          instructions: "# Research",
+          references: ["resources/schema.json", "assets/template.txt"],
+        },
+      ],
+      ["other", { instructions: "# Other", references: ["resources/schema.json"] }],
+    ]),
+    references: new Map([
+      ["research/resources/schema.json", '{"type":"object"}'],
+      ["research/assets/template.txt", "template"],
+      ["other/resources/schema.json", "other schema"],
+      ["research/references/private.md", "private"],
+    ]),
+  });
+  const create = () =>
+    createRuntimeLoadSkillTool({
+      context: createProjectContext({ availableSkillIds: ["research", "other"] }),
+      skillsDir: "/skills",
+      projectSkillLoader,
+      builtinStore: createBuiltinStore({}),
+    });
+  const readResearch = { skillId: "research", file: "resources/schema.json" };
+
+  const wrongRefs = {};
+  setProviderObservedSkillBodies(wrongRefs, [{
+    skillId: "research",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(await create().execute(readResearch, wrongRefs), {
+    error:
+      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const wrongSkill = {};
+  setProviderObservedSkillBodies(wrongSkill, [{
+    skillId: "other",
+    references: ["resources/schema.json"],
+  }]);
+  assertEquals(await create().execute(readResearch, wrongSkill), {
+    error:
+      'Read the load_skill result for "research" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+
+  const untrusted = {};
+  assertEquals(await create().execute(readResearch, untrusted), {
+    error:
+      'Skill "research" must be loaded before reference file "resources/schema.json". Call load_skill with {"load":{"skillId":"research"}} first, then request one of the listed reference files.',
+  });
+
+  const observed = {};
+  setProviderObservedSkillBodies(observed, [{
+    skillId: "research",
+    references: ["resources/schema.json", "assets/template.txt"],
+  }]);
+  assertEquals(
+    await create().execute({ skillId: "research", file: "references/private.md" }, observed),
+    {
+      error:
+        'Reference file not advertised by loaded skill "research": references/private.md. Available references: assets/template.txt, resources/schema.json',
+    },
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files after body load", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
@@ -2552,6 +2750,89 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files 
     file: "references/empty.md",
     content: "",
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool waits until provider observes body before reference reads", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+      ]),
+      references: new Map([["plan/references/project.md", "project reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await tool.execute({ skillId: "plan" });
+
+  const sameProviderStepContext = {};
+  setProviderObservedSkillBodies(sameProviderStepContext, []);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      sameProviderStepContext,
+    ),
+    {
+      error:
+        'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+    },
+  );
+
+  const nextProviderStepContext = {};
+  setProviderObservedSkillBodies(nextProviderStepContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
+  assertEquals(
+    await tool.execute(
+      { skillId: "plan", file: "references/project.md" },
+      nextProviderStepContext,
+    ),
+    {
+      skillId: "plan",
+      file: "references/project.md",
+      content: "project reference",
+    },
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool can require a provider observation snapshot", async () => {
+  const create = (requireProviderObservation?: boolean) =>
+    createRuntimeLoadSkillTool({
+      context: createProjectContext(),
+      skillsDir: "/skills",
+      projectSkillLoader: createProjectSkillLoader({
+        skills: new Map([
+          ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+        ]),
+        references: new Map([["plan/references/project.md", "project reference"]]),
+      }),
+      builtinStore: createBuiltinStore({}),
+      ...(requireProviderObservation === undefined ? {} : { requireProviderObservation }),
+    });
+  const read = { skillId: "plan", file: "references/project.md" };
+
+  const required = create(true);
+  await required.execute({ skillId: "plan" });
+  assertEquals(await required.execute(read, {}), {
+    error:
+      'Read the load_skill result for "plan" before requesting reference files. Retry this reference in the next step using a listed path.',
+  });
+  const observedContext = {};
+  setProviderObservedSkillBodies(observedContext, [
+    { skillId: "plan", references: ["references/project.md"] },
+  ]);
+  assertEquals(
+    (await required.execute(read, observedContext) as { content?: string }).content,
+    "project reference",
+  );
+
+  const direct = create();
+  await direct.execute({ skillId: "plan" });
+  assertEquals(
+    (await direct.execute(read, {}) as { content?: string }).content,
+    "project reference",
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool rejects unadvertised references after body load", async () => {

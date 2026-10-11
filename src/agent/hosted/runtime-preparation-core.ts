@@ -881,6 +881,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
             })
             : definition.system ?? definition.instructions),
         temperature: request.temperature ?? definition.temperature,
+        ...(definition.parallelToolCalls === undefined
+          ? {}
+          : { parallelToolCalls: definition.parallelToolCalls }),
         thinking,
         maxSteps: mathMin(
           request.maxSteps ?? grant.maxSteps,

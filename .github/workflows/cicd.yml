@@ -120,7 +120,7 @@ jobs:
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
         if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
           path: dist/release-number
@@ -155,7 +155,7 @@ jobs:
           echo "$tree" > dist/tested-tree/tree.txt
       - name: Upload the tested PR tree
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree-${{ steps.pr-tree.outputs.tree }}
           path: dist/tested-tree
@@ -448,14 +448,14 @@ jobs:
       - name: Archive npm runtime workspace
         run: tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz
       - name: Upload tested npm compatibility artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
           retention-days: 30
           overwrite: true
       - name: Upload npm runtime workspace
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-runtime-workspace-${{ github.sha }}
           path: dist/npm-runtime-workspace.tar.gz
@@ -569,7 +569,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -601,7 +601,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -656,21 +656,21 @@ jobs:
           persist-credentials: false
       # A main run that reuses the merge-queue run merges the queue's coverage.
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download native executor coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-native-executor
           path: coverage-profiles/coverage-native-executor
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download integration client coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-integration-client
           path: coverage-profiles/coverage-integration-client
@@ -685,7 +685,7 @@ jobs:
             coverage-profiles/coverage-native-executor \
             coverage-profiles/coverage-integration-client
       - name: Upload merged Sonar coverage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-sonar
           path: coverage/lcov.info
@@ -730,7 +730,7 @@ jobs:
           # Sonar reads git history for new-code and blame.
           fetch-depth: 0
       - name: Download merged Sonar coverage
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-sonar
           path: coverage
@@ -1492,7 +1492,7 @@ jobs:
           PROXY_MEMORY_ATTEMPTS: "3"
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -1611,7 +1611,7 @@ jobs:
           echo "Publishing RC: ${RC_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1654,7 +1654,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1682,7 +1682,7 @@ jobs:
           cp scripts/install.sh dist/public-release/
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
@@ -1824,7 +1824,7 @@ jobs:
         run: npm install --global "npm@${NPM_CLI_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1842,7 +1842,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1878,7 +1878,7 @@ jobs:
           (cd dist/public-release && sha256sum veryfront-* install.sh install.ps1 > SHA256SUMS)
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
@@ -1911,7 +1911,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Download public release assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: public-release-${{ github.sha }}
           path: public-release-assets

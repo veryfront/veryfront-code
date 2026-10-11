@@ -146,6 +146,226 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("records each successfully dispatched prompt in the host skill observation", async () => {
+    const observed: unknown[] = [];
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => model(() => {}),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      while (!(await reader.read()).done) { /* Consume the bounded stream. */ }
+      assertEquals(observed, [prompt, prompt]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("does not observe prompts when dispatch setup fails", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () => model(() => {}),
+        runEventSink: () => {
+          throw new Error("Synthetic setup failure");
+        },
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        if (mode === "generate") {
+          await assertRejects(async () => await runtime.doGenerate({ prompt }));
+        } else {
+          await assertRejects(async () => await runtime.doStream({ prompt }));
+        }
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("does not observe prompts when generate provider dispatch fails", async () => {
+    for (
+      const resolveModelRuntime of [
+        () => ({
+          ...model(() => {}),
+          doGenerate() {
+            throw new Error("Synthetic generate failure");
+          },
+        }),
+        () => ({
+          ...model(() => {}),
+          doGenerate() {
+            return Promise.reject(new Error("Synthetic generate rejection"));
+          },
+        }),
+      ] satisfies Array<() => ModelRuntime<ModelRuntimeCallOptions>>
+    ) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime,
+        runEventSink: async () => {},
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () => await runtime.doGenerate({ prompt }));
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("does not observe prompts when stream provider dispatch fails", async () => {
+    for (
+      const resolveModelRuntime of [
+        () => ({
+          ...model(() => {}),
+          doStream() {
+            throw new Error("Synthetic stream failure");
+          },
+        }),
+        () => ({
+          ...model(() => {}),
+          doStream() {
+            return Promise.reject(new Error("Synthetic stream rejection"));
+          },
+        }),
+      ] satisfies Array<() => ModelRuntime<ModelRuntimeCallOptions>>
+    ) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime,
+        runEventSink: async () => {},
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () => await runtime.doStream({ prompt }));
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("observes a successful stream after the provider returns the stream body", async () => {
+    const observed: unknown[] = [];
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => ({
+        ...model(() => {}),
+        doStream() {
+          return Promise.resolve({
+            stream: new ReadableStream({
+              start(controller) {
+                controller.error(new Error("Synthetic body failure"));
+              },
+            }),
+          });
+        },
+      }),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      await assertRejects(async () => await reader.read());
+      assertEquals(observed, [prompt]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("does not record a prompt the provider rejected before accepting it", async () => {
+    const observed: unknown[] = [];
+    let attempts = 0;
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => ({
+        ...model(() => {}),
+        doGenerate() {
+          attempts++;
+          return Promise.reject(new Error("synthetic provider setup failure"));
+        },
+      }),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await assertRejects(async () => await runtime.doGenerate({ prompt }));
+      assertEquals(attempts, 1);
+      assertEquals(observed, []);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("dispatches project calls against the current cursor-only API before capture activation", async () => {
     let dispatches = 0;
     let appends = 0;

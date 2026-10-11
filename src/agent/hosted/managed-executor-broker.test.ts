@@ -29,7 +29,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
 import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
@@ -57,6 +57,12 @@ import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-man
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
+import { prepareHostedChatRuntimeMessages } from "#veryfront/agent/hosted/chat-preparation.ts";
+import { isToolResultPart } from "#veryfront/agent/runtime/tool-result-part.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import type { AgentRuntimeMessage } from "#veryfront/agent/runtime/message-adapter.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
@@ -111,6 +117,11 @@ function fixture(
     initialCheckpoint?: boolean;
     allocationLifetimeMs?: number;
     hardDeadlineMs?: number;
+    onStream?: (input: {
+      peer: ReturnType<typeof createExecutorChannel>;
+      value: JsonValue;
+      installed: ExecutorRuntimeInstall;
+    }) => Promise<void>;
   } = {},
 ) {
   const now = Date.now();
@@ -264,6 +275,7 @@ function fixture(
           async *handle(value): AsyncGenerator<JsonValue> {
             calls.push("stream");
             streamInputs.push(value);
+            await options.onStream?.({ peer: peer!, value, installed: installed! });
             if (!options.skipModelRequest) {
               await peer!.request("model.generate", {
                 modelId,
@@ -414,6 +426,173 @@ function configureCanonical(
   if (bindSessionOwnedWork) input.bindSessionOwnedWork = bindSessionOwnedWork;
 }
 
+const historySkillBody = {
+  skillId: "review",
+  instructions: "# Review\nUse the checklist before answering.",
+  references: ["references/checklist.md"],
+  scripts: [],
+};
+
+function persistedLoadSkillHistory(): ChatUiMessage[] {
+  const messages: ChatUiMessage[] = [{
+    id: "stored-load-skill",
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "veryfront__load_skill",
+      toolCallId: "stored-load-call",
+      state: "output-available",
+      input: { load: { skillId: "review" } },
+      output: historySkillBody,
+    }],
+  }];
+  return JSON.parse(JSON.stringify(messages));
+}
+
+async function preparePersistedLoadSkillHistory(trusted: boolean): Promise<AgentRuntimeMessage[]> {
+  return await prepareHostedChatRuntimeMessages(
+    persistedLoadSkillHistory(),
+    trusted ? { trustedHostedHistoryMessageIds: ["stored-load-skill"] } : {},
+  );
+}
+
+function stripHostedHistoryTransportMetadata(
+  messages: readonly (AgentRuntimeMessage & { metadata?: unknown })[],
+): AgentRuntimeMessage[] {
+  return messages.map(({ metadata: _metadata, ...message }) => message);
+}
+
+function promptFromPreparedLoadSkillHistory(messages: readonly AgentRuntimeMessage[]): JsonValue {
+  for (const message of messages) {
+    if (message.role !== "tool") continue;
+    for (const part of message.parts) {
+      if (!isToolResultPart(part) || part.toolCallId !== "stored-load-call") continue;
+      const snapshot = snapshotBoundedJsonValue(part.result);
+      if (!snapshot.success) return [];
+      return [{
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: { type: "json", value: snapshot.value },
+        }],
+      }];
+    }
+  }
+  return [];
+}
+
+function configureLoadSkillHostFacade(f: ReturnType<typeof fixture>): void {
+  const loadSkill = createRuntimeLoadSkillTool({
+    context: { projectId: null, authToken: "test-token", branchId: null },
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
+      loadProjectSkill: (_context, skillId) =>
+        Promise.resolve(skillId === "review" ? historySkillBody : null),
+      loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
+    },
+    builtinStore: {
+      readSkill: () => Promise.resolve(null),
+      readReferenceFile: () => Promise.resolve(null),
+      listReferences: () => Promise.resolve([]),
+    },
+  });
+  f.input.installation.grant.allowedToolNames = ["load_skill"];
+  f.input.installation.grant.hostToolFacadeIds = ["skills"];
+  f.input.tools.catalog = new Map([["load_skill", {}]]);
+  f.input.tools.sources = new Map([["skills", {
+    source: {
+      id: "skills",
+      listTools: () =>
+        Promise.resolve([{ name: "load_skill", description: "Load a skill", parameters: {} }]),
+      executeTool: (_name, args, context) => loadSkill.execute!(args, context),
+    },
+    allowedToolNames: new Set(["load_skill"]),
+    context: {},
+  }]]);
+}
+
+async function readManagedLoadSkillReference(input: {
+  trustedHistory: boolean;
+  file?: string;
+}): Promise<{ result: { error?: string; content?: string }; prompts: JsonValue[] }> {
+  const messages = await preparePersistedLoadSkillHistory(input.trustedHistory);
+  const prompts: JsonValue[] = [];
+  const f = fixture({
+    owner: { scopeKind: "global", serviceName: "global-test-service" },
+    completeStream: true,
+    skipModelRequest: true,
+    async onStream({ peer, installed }) {
+      const facades = await createExecutorRuntimeFacades({
+        input: installed,
+        channel: peer,
+        signal: peer.signal,
+      });
+      try {
+        const loadSkill = facades.hostTools.get("skills")?.load_skill;
+        if (!loadSkill?.execute) throw new Error("Missing managed load_skill host facade");
+        const prompt = promptFromPreparedLoadSkillHistory(messages);
+        await peer.request("model.generate", {
+          modelId,
+          options: {
+            prompt,
+            maxOutputTokens: installed.grant.models[0]!.maxOutputTokens,
+          },
+        });
+        const result = await loadSkill.execute(
+          { reference: { skillId: "review", file: input.file ?? "references/checklist.md" } },
+          { toolCallId: "reference-call" },
+        );
+        referenceResult = result;
+      } finally {
+        await facades.cleanup();
+      }
+    },
+  });
+  let referenceResult: unknown;
+  configureLoadSkillHostFacade(f);
+  f.input.model.resolver = () => {
+    const observedModel: ModelRuntime<ModelRuntimeCallOptions> = {
+      ...runtimeModel(),
+      doGenerate(options) {
+        const snapshot = snapshotBoundedJsonValue(options.prompt);
+        if (snapshot.success) prompts.push(snapshot.value);
+        return Promise.resolve({ content: [], finishReason: "stop", usage: {} });
+      },
+    };
+    return observedModel;
+  };
+  const broker = createManagedExecutorBroker({ maxActive: 1 });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    runtime = await broker.start(f.input);
+    runtime.accept({ kind: "execution" });
+    const stream = await runtime.agent.stream({
+      messages: stripHostedHistoryTransportMetadata(messages),
+      abortSignal: new AbortController().signal,
+    });
+    await Array.fromAsync(stream.toUIMessageStream());
+  } finally {
+    await runtime?.close("completed");
+    await broker.shutdown();
+    await broker.settled;
+  }
+  return { result: readReferenceResult(referenceResult), prompts };
+}
+
+function readReferenceResult(value: unknown): { error?: string; content?: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Missing managed load_skill reference result");
+  }
+  const error = "error" in value && typeof value.error === "string" ? value.error : undefined;
+  const content = "content" in value && typeof value.content === "string"
+    ? value.content
+    : undefined;
+  return { ...(error ? { error } : {}), ...(content ? { content } : {}) };
+}
+
 function observationPersistence(projectId = owner.projectId) {
   const bodies: Record<string, unknown>[] = [];
   let cursor = 0;
@@ -462,6 +641,29 @@ function observationPersistence(projectId = owner.projectId) {
 }
 
 describe("managed executor broker", () => {
+  it("continues managed remote skill references only after trusted server history reaches a provider prompt", async () => {
+    const trusted = await readManagedLoadSkillReference({ trustedHistory: true });
+    assertEquals(trusted.result.content, "Detailed checklist content");
+    assertStringIncludes(JSON.stringify(trusted.prompts), "# Review");
+    assertStringIncludes(JSON.stringify(trusted.prompts), "references/checklist.md");
+
+    const wrongFile = await readManagedLoadSkillReference({
+      trustedHistory: true,
+      file: "references/other.md",
+    });
+    assertEquals(wrongFile.result.content, undefined);
+    assertStringIncludes(
+      wrongFile.result.error ?? "",
+      'Reference file not advertised by loaded skill "review"',
+    );
+
+    const untrusted = await readManagedLoadSkillReference({ trustedHistory: false });
+    assertEquals(untrusted.result.content, undefined);
+    assertStringIncludes(
+      untrusted.result.error ?? "",
+      'Read the load_skill result for "review"',
+    );
+  });
   it("enables the producer from an exact runtime-observation persistence sink", async () => {
     const stepId = "22222222-2222-4222-8222-222222222222";
     const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });

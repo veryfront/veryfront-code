@@ -215,7 +215,7 @@ describe("npm smoke Node support contract", () => {
     assert(
       prereleaseSteps.some((step) =>
         step.uses ===
-          "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" &&
+          "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" &&
         record(step.with, "prerelease artifact download inputs").name ===
           "npm-compatibility-${{ github.sha }}" &&
         record(step.with, "prerelease artifact download inputs").path ===
