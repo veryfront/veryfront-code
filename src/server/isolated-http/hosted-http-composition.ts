@@ -251,13 +251,13 @@ export async function readHostFilePrefix(
  * Read a bounded UTF-8 host file. Failures name the setting, never the host path,
  * so file system errors do not reach user-facing output or error reporting.
  */
-async function readBoundedText(
+async function readBoundedBytes(
   read: NonNullable<HostedHttpCompositionDependencies["readFile"]>,
   setting: string,
   path: string,
   maxBytes: number,
   signal?: AbortSignal,
-) {
+): Promise<Uint8Array> {
   let bytes: Uint8Array;
   try {
     bytes = await read(path, { signal, maxBytes });
@@ -265,10 +265,22 @@ async function readBoundedText(
     signal?.throwIfAborted();
     throw CONFIG_INVALID.create({ detail: `The file named by ${setting} could not be read` });
   }
+  if (bytes.byteLength > maxBytes) {
+    bytes.fill(0);
+    throw CONFIG_INVALID.create({ detail: `The file named by ${setting} is too large` });
+  }
+  return bytes;
+}
+
+async function readBoundedText(
+  read: NonNullable<HostedHttpCompositionDependencies["readFile"]>,
+  setting: string,
+  path: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+) {
+  const bytes = await readBoundedBytes(read, setting, path, maxBytes, signal);
   try {
-    if (bytes.byteLength > maxBytes) {
-      throw CONFIG_INVALID.create({ detail: `The file named by ${setting} is too large` });
-    }
     try {
       return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
@@ -369,11 +381,14 @@ export async function createHostedHttpComposition(
     throw new TypeError("Hosted HTTP isolation requires host project execution to be disabled");
   }
   const read = dependencies.readFile ?? readHostFilePrefix;
-  const readStartupFile = async (setting: string, path: string, maxBytes: number) => {
+  const readStartupFile = async <T>(
+    setting: string,
+    readFile: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> => {
     const startup = new AbortController();
     try {
       return await settleWithin(
-        readBoundedText(read, setting, path, maxBytes, startup.signal),
+        readFile(startup.signal),
         startup.signal,
         dependencies.hostFileReadTimeoutMs ?? HOST_FILE_READ_TIMEOUT_MS,
       );
@@ -390,18 +405,30 @@ export async function createHostedHttpComposition(
   const ca = config.allocatorCaFile
     ? await readStartupFile(
       "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
-      config.allocatorCaFile,
-      MAX_CA_BYTES,
+      (signal) =>
+        readBoundedText(
+          read,
+          "VERYFRONT_EXECUTOR_ALLOCATOR_CA_FILE",
+          config.allocatorCaFile!,
+          MAX_CA_BYTES,
+          signal,
+        ),
     )
     : undefined;
-  const configurationKey = new TextEncoder().encode(
-    (await readStartupFile(
-      "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-      config.configurationKeyFile,
-      MAX_TOKEN_BYTES,
-    )).trim(),
+  // The key is raw bytes: it is neither decoded as text nor trimmed.
+  const configurationKey = await readStartupFile(
+    "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+    (signal) =>
+      readBoundedBytes(
+        read,
+        "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+        config.configurationKeyFile,
+        MAX_TOKEN_BYTES,
+        signal,
+      ),
   );
   if (configurationKey.byteLength < 32) {
+    configurationKey.fill(0);
     throw CONFIG_INVALID.create({
       detail:
         "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
