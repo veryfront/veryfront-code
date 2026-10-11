@@ -6,31 +6,27 @@ import {
   formatTraceparent,
   parseTraceparent,
 } from "#veryfront/observability/tracing/traceparent.ts";
-import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
-import {
-  type ExecutorHttpInstall,
-  getExecutorHttpInstallSchema,
-  parseExecutorInstallation,
-} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
-import {
-  getHostedExecutorAllocationRequestSchema,
-  parseHostedExecutorData,
-  sameHostedExecutorOwner,
-} from "#veryfront/agent/hosted/executor-session-schema.ts";
+import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
 import {
   createHostedExecutorSessionPool,
   type HostedExecutorSessionPoolOptions,
 } from "#veryfront/agent/hosted/executor-session-pool.ts";
-import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
-import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
-import { createExecutorHttpClient, type ExecutorHttpTracing } from "./executor-http.ts";
+import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
+import { RenderGenerationPool } from "#veryfront/rendering/render-generation-pool.ts";
+import { resolveRenderGenerationIdentity } from "#veryfront/rendering/render-generation-binding.ts";
+import type { WorkerGenerationIdentity } from "#veryfront/security/sandbox/worker-generation.ts";
+import type { ExecutorHttpTracing } from "./executor-http.ts";
+import type { ExecutorHttpApplicationConfiguration } from "./application-configuration.ts";
 import {
-  createExecutorHttpConfigurationOperation,
-  type ExecutorHttpApplicationConfiguration,
-  snapshotExecutorHttpApplicationConfiguration,
-} from "./application-configuration.ts";
+  createHostedHttpGenerationExecutor,
+  type HostedHttpGenerationRequest,
+  hostedHttpInstallationKey,
+  type PreparedHostedHttpInput,
+  prepareHostedHttpInput,
+} from "./generation-executor.ts";
+import { buildHostedHttpGenerationBindingInput } from "./hosted-http-resolver.ts";
 
 export { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
 export {
@@ -59,23 +55,126 @@ export interface HostedHttpInput {
   projectTracing?: ProjectTraceConfigResult;
 }
 
-/** One HTTP invocation per existing allocator session, with no shared-host fallback. */
-export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions) {
-  const pool = createHostedExecutorSessionPool(options);
+/** Admission and lifetime limits of the hosted HTTP broker's warm executors. */
+export interface HostedHttpBrokerOptions extends HostedExecutorSessionPoolOptions {
+  /** Requests one executor serves at once. Default 8, maximum 16. */
+  maxConcurrentRequestsPerExecutor?: number;
+  /** Retire an executor after this long without a request in flight. Default 60 seconds, maximum 1 hour. */
+  idleTimeoutMs?: number;
+  /**
+   * How long a retiring executor keeps serving requests it already admitted. Executors also
+   * stop admitting requests this long before their allocation's hard deadline. Default 10
+   * seconds, maximum 5 minutes.
+   */
+  drainTimeoutMs?: number;
+  /** Operator execution-policy revision bound into every generation identity. */
+  executionPolicyId?: string;
+}
+
+function bounded(value: number, minimum: number, maximum: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new TypeError(`Hosted HTTP broker requires a bounded ${name}`);
+  }
+  return value;
+}
+
+/**
+ * Serve HTTP requests from warm executors with no shared-host fallback. Each executor holds
+ * one long-lived allocator session for one installation and is keyed by the render generation
+ * identity of its project, environment, digest-pinned image, configuration and execution
+ * policy. When a project environment resolves to a new generation, its previous generation
+ * stops admitting requests and drains. A request whose installation differs from the warm
+ * executor with the same identity is refused, never rebound.
+ */
+export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
+  const sessions = createHostedExecutorSessionPool(options);
+  const perExecutor = bounded(
+    options.maxConcurrentRequestsPerExecutor ?? 8,
+    1,
+    16,
+    "per-executor request limit",
+  );
+  const idleTimeoutMs = bounded(options.idleTimeoutMs ?? 60_000, 1, 3_600_000, "idle timeout");
+  const drainTimeoutMs = bounded(options.drainTimeoutMs ?? 10_000, 0, 300_000, "drain timeout");
+  const executionPolicyId = options.executionPolicyId ?? "hosted-http:v1";
+  if (
+    typeof executionPolicyId !== "string" || !executionPolicyId || executionPolicyId.length > 256
+  ) throw new TypeError("Hosted HTTP broker requires an execution policy identity");
+  const generations = new RenderGenerationPool({
+    maxGenerations: options.maxActive,
+    maxConcurrentRenders: options.maxActive * perExecutor,
+  });
+  const contexts = new WeakMap<Request, HostedHttpGenerationRequest>();
+  /** Current pool key of each project environment's generation. */
+  const scopes = new Map<string, Readonly<WorkerGenerationIdentity>>();
+  let epoch = 0;
+
+  function retire(key: Readonly<WorkerGenerationIdentity>): void {
+    if (scopes.get(key.scopeId)?.generationId === key.generationId) scopes.delete(key.scopeId);
+    // Failed cleanup keeps the generation's capacity reserved in the pool.
+    void generations.retire(key).catch(() => {});
+  }
+
+  function currentKey(identity: Readonly<WorkerGenerationIdentity>) {
+    const current = scopes.get(identity.scopeId);
+    if (current?.generationId.startsWith(`${identity.generationId}:`)) return current;
+    // A new generation for this environment: drain the previous one.
+    if (current) retire(current);
+    const key = Object.freeze({
+      scopeId: identity.scopeId,
+      generationId: `${identity.generationId}:${++epoch}`,
+    });
+    scopes.set(key.scopeId, key);
+    return key;
+  }
+
+  async function dispatch(
+    request: Request,
+    input: PreparedHostedHttpInput,
+    identity: Readonly<WorkerGenerationIdentity>,
+    tracing = input.tracing,
+  ): Promise<Response> {
+    request.signal.throwIfAborted();
+    const key = currentKey(identity);
+    const admitted = new Request(request, { signal: request.signal });
+    contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
+    return await generations.render(admitted, key, (owned) => {
+      const executor = createHostedHttpGenerationExecutor({
+        input,
+        sessions,
+        context: (value) => contexts.get(value),
+        idleTimeoutMs,
+        retireBeforeDeadlineMs: drainTimeoutMs,
+      });
+      void executor.ended.then(() => retire(owned));
+      return new RenderGeneration({
+        executor,
+        // Executor images own their artifacts; the allocator release retires them.
+        releaseArtifacts: () => Promise.resolve(),
+        maxConcurrentRenders: perExecutor,
+        drainTimeoutMs,
+      });
+    });
+  }
+
   return {
     get active() {
-      return pool.active;
+      return sessions.active;
     },
     get settled() {
-      return pool.settled;
+      return sessions.settled;
     },
-    shutdown: pool.shutdown.bind(pool),
+    shutdown() {
+      // Session shutdown cancels every allocation now; generation cleanup then confirms it.
+      const result = sessions.shutdown();
+      void generations.close().catch(() => {});
+      return result;
+    },
     async fetch(request: Request, input: HostedHttpInput): Promise<Response> {
       request.signal.throwIfAborted();
       const prepared = prepareHostedHttpInput(input);
       const settings = input.projectTracing;
-      if (settings === undefined) return dispatch(request, prepared);
-      if (input.tracing !== undefined) {
+      if (settings !== undefined && input.tracing !== undefined) {
         throw new TypeError("Project tracing cannot be combined with explicit tracing");
       }
       const owner = prepared.installation.owner;
@@ -84,147 +183,45 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
         environmentId: prepared.installation.environmentId,
       };
       if (
-        settings.status === "enabled" && (
+        settings?.status === "enabled" && (
           settings.config.projectId !== identity.projectId ||
           settings.config.environmentId !== identity.environmentId
         )
       ) throw new TypeError("HTTP executor tracing identity does not match its installation");
+      const generation = await resolveGenerationIdentity(prepared, executionPolicyId);
+      if (settings === undefined) return dispatch(request, prepared, generation);
       return runProjectHttpTracing(
         settings,
         identity,
         request,
-        () => dispatch(request, prepared, captureProjectTracing()),
+        () => dispatch(request, prepared, generation, captureProjectTracing()),
         { errorOnAbort: true },
       );
     },
   };
-
-  async function dispatch(
-    request: Request,
-    input: ReturnType<typeof prepareHostedHttpInput>,
-    tracing = input.tracing,
-  ): Promise<Response> {
-    request.signal.throwIfAborted();
-    const { allocation, installation, configuration, headerOptions } = input;
-    const lifetime = new AbortController();
-    let channel: ExecutorChannel | undefined;
-    let client: ReturnType<typeof createExecutorHttpClient> | undefined;
-    const session = pool.start({
-      ...input.session,
-      request: allocation,
-      preparationSignal: request.signal,
-      createOperations(binding) {
-        client = createExecutorHttpClient({
-          binding: {
-            allocationId: binding.allocationId,
-            invocationId: binding.invocationId,
-            generation: binding.generation,
-          },
-          channel: () => {
-            if (!channel) throw new Error("HTTP executor channel is not ready");
-            return channel;
-          },
-          ...headerOptions,
-        });
-        const operations = new Map(client.operations);
-        if (configuration) {
-          operations.set(
-            "http.configuration",
-            createExecutorHttpConfigurationOperation(binding, configuration),
-          );
-        }
-        return { operations, revoke: () => lifetime.abort() };
-      },
-    });
-    const closeSession = (reason: "completed" | "canceled") => {
-      // Session/pool settlement owns cleanup. Returning an HTTP error must
-      // neither await that cleanup nor replace it with a cleanup failure.
-      void Promise.resolve().then(() => session.close(reason)).catch(() => {});
-    };
-    try {
-      channel = await session.ready;
-      const binding = session.binding;
-      if (!binding || !client) throw new Error("HTTP executor allocation is not bound");
-      const acknowledged = await channel.request("runtime.install", {
-        ...installation,
-        binding: {
-          allocationId: binding.allocationId,
-          invocationId: binding.invocationId,
-          generation: binding.generation,
-        },
-      }, { signal: session.signal });
-      if (
-        !acknowledged || typeof acknowledged !== "object" || Array.isArray(acknowledged) ||
-        Object.keys(acknowledged).length !== 1 || acknowledged.installed !== true
-      ) {
-        throw new Error("HTTP executor installation acknowledgement is invalid");
-      }
-      session.accept({ kind: "request" });
-      const signal = AbortSignal.any([request.signal, session.signal, lifetime.signal]);
-      const ownedRequest = new Request(request, { signal });
-      const response = await session.runOwned(() => client!.fetch(ownedRequest, tracing));
-      return completeOnResponseBodyConsumption(
-        response,
-        () => {},
-        signal,
-        { highWaterMark: 0 },
-        {
-          errorOnAbort: true,
-          onOutcome(outcome) {
-            // Pool admission stays held through session.settled, including
-            // cleanup whose bounded notification requires a reaper.
-            closeSession(
-              outcome === "completed" && !request.signal.aborted ? "completed" : "canceled",
-            );
-          },
-        },
-      );
-    } catch (error) {
-      closeSession("canceled");
-      throw error;
-    }
-  }
 }
 
-/** Validate and detach execution authority before opening a project telemetry scope. */
-function prepareHostedHttpInput(input: HostedHttpInput) {
-  const allocation = parseHostedExecutorData(
-    getHostedExecutorAllocationRequestSchema(),
-    input.session.request,
-  );
-  if (allocation.executionProfile !== undefined && allocation.executionProfile !== "http") {
-    throw new TypeError("HTTP executor requires the HTTP allocation profile");
-  }
-  allocation.executionProfile = "http";
-  const installation = parseExecutorInstallation(getExecutorHttpInstallSchema(), {
-    ...input.installation,
-    // Validate before reserving capacity. The authenticated allocator's
-    // actual generation replaces this validation-only value below.
-    binding: {
-      allocationId: allocation.allocationId,
-      invocationId: allocation.invocationId,
-      generation: 1,
-    },
+/**
+ * The digest-pinned tenant-source image contains the dependencies, prepared artifact,
+ * framework and runtime, so its digest identifies each of them.
+ */
+function resolveGenerationIdentity(input: PreparedHostedHttpInput, executionPolicyId: string) {
+  const authorized = buildHostedHttpGenerationBindingInput({
+    session: { ...input.session, request: input.allocation },
+    installation: input.installation,
   });
-  if (
-    !sameHostedExecutorOwner(allocation.owner, installation.owner) ||
-    verifyHostedRuntimeSourceBinding(allocation.source, installation.source) !== undefined
-  ) {
-    throw new TypeError("HTTP executor installation does not match its allocation");
-  }
-  const configuration = input.configuration === undefined
-    ? undefined
-    : snapshotExecutorHttpApplicationConfiguration(input.configuration, installation);
-  const headerOptions = { denyHeaders: input.headers?.denyHeaders?.slice() };
-  const tracing = input.tracing ? { ...input.tracing } : undefined;
-  return {
-    allocation,
-    installation,
-    configuration,
-    headerOptions,
-    tracing,
-    session: { ...input.session },
-  };
+  const image = authorized.sourceSnapshotId;
+  return resolveRenderGenerationIdentity({
+    projectId: authorized.projectId,
+    environmentId: authorized.environmentId,
+    sourceSnapshotId: image,
+    configurationId: authorized.configurationId,
+    dependencySnapshotId: image,
+    artifactId: image,
+    frameworkId: image,
+    runtimeId: image,
+    executionPolicyId,
+  });
 }
 
 /** Capture this request's provider and parent before asynchronous executor delivery. */

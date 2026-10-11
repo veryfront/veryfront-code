@@ -135,5 +135,9 @@ export function createHostedHttpFixture(
     holdRelease() {
       holdRelease = true;
     },
+    /** Close the current executor channel, as an executor process exit would. */
+    crash() {
+      peer?.close();
+    },
   };
 }
