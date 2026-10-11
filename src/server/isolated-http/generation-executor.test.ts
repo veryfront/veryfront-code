@@ -176,8 +176,18 @@ describe("hosted HTTP generation broker", () => {
       f.crash();
       await f.releaseEntered.promise;
       assertEquals(f.calls.includes("release:canceled"), true);
-      const response = await broker.fetch(new Request("https://app.example"), f.input);
-      assertEquals(await response.text(), "served");
+      // The crashed generation keeps its capacity until its release is confirmed.
+      let served: string | undefined;
+      for (let attempt = 0; attempt < 50 && served === undefined; attempt++) {
+        served = await broker.fetch(new Request("https://app.example"), f.input).then(
+          (response) => response.text(),
+          (error) => {
+            assertEquals(String(error).includes("capacity"), true);
+            return new Promise<undefined>((resolve) => setTimeout(resolve, 20));
+          },
+        );
+      }
+      assertEquals(served, "served");
       assertEquals(count(f.calls, "allocate"), 2);
       assertEquals(count(f.calls, "install"), 2);
     } finally {
