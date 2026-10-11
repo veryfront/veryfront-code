@@ -100,6 +100,10 @@ export type {
 };
 import { ReloadNotifier } from "./reload-notifier.ts";
 export { ReloadNotifier };
+export {
+  HOSTED_HTTP_ISOLATION_ENV,
+  isHostedHttpIsolationEnabled,
+} from "./isolated-http/hosted-http-flag.ts";
 export { RouteDiscovery } from "./dev-server/route-discovery.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
 export { defaultDistributedCacheInitializers } from "./distributed-cache-initializers.ts";
