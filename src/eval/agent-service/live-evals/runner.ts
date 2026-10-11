@@ -6,9 +6,15 @@ import {
   parseAgUiSseResponse as parseSseResponse,
   type ParsedAgUiSseRun as ParsedRun,
 } from "#veryfront/agent";
+import { coerceWireEvent } from "#veryfront/agent/ag-ui/sse-parser.ts";
+import {
+  createRunsSdk,
+  type RunsInput,
+  type RunStreamFrame,
+} from "#veryfront/runs/target/index.ts";
 import { buildFailureSuffix, buildProgressLine, containsOrderedSubsequence } from "./formatting.ts";
 import { type LiveEvalRuntime } from "./performance.ts";
-import { buildLiveEvalRequestBody } from "./request.ts";
+import { buildLiveEvalRequestBody, type LiveEvalRequestBody } from "./request.ts";
 import { type LiveEvalCaseMetadata } from "./report.ts";
 import {
   createFailedEvalResult,
@@ -464,6 +470,374 @@ function applyLiveEvalCleanupFailures(
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeLiveEvalApiUrl(apiUrl: string): string {
+  return apiUrl.replace(/\/+$/, "");
+}
+
+function createLiveEvalRunsSdk(input: {
+  apiUrl: string;
+  authToken: string;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  onResponse?: (input: { path: string; response: Response }) => void;
+}) {
+  const baseUrl = normalizeLiveEvalApiUrl(input.apiUrl);
+  return createRunsSdk({
+    transport: {
+      request: async (path, init = {}) => {
+        const headers = new Headers(init.headers);
+        headers.set("Authorization", `Bearer ${input.authToken}`);
+        const url = `${baseUrl}${path}`;
+        const response = await input.fetch(url, {
+          method: init.method,
+          headers,
+          body: init.body,
+          signal: init.signal,
+          redirect: "error",
+        });
+        input.onResponse?.({ path, response });
+        if (!init.onResponse) return response;
+        return await init.onResponse(response, init, url, init.signal);
+      },
+    },
+  });
+}
+
+function buildCanonicalLiveEvalDirectBody(input: {
+  config: LiveEvalRunnerConfig;
+  testCase: LiveEvalCase;
+  prepared: PreparedLiveEvalInput | null;
+  conversationId: string;
+}): LiveEvalRequestBody {
+  return buildLiveEvalRequestBody({
+    testCaseId: input.testCase.id,
+    prompt: input.prepared?.prompt ?? input.testCase.prompt ?? "",
+    metadata: input.prepared?.metadata,
+    projectId: input.config.projectId,
+    ...(input.config.branchId ? { branchId: input.config.branchId } : {}),
+    ...(input.config.model ? { model: input.config.model } : {}),
+    conversationId: input.conversationId,
+    allowedTools: input.testCase.allowedTools,
+    forceRuntimeOverrides: input.testCase.forceRuntimeOverrides,
+    maxSteps: input.testCase.maxSteps,
+  });
+}
+
+function buildCanonicalLiveEvalInput(input: {
+  config: LiveEvalRunnerConfig;
+  testCase: LiveEvalCase;
+  prepared: PreparedLiveEvalInput | null;
+  conversationId: string;
+  userMessageId: string;
+  directBody: LiveEvalRequestBody;
+}): Record<string, unknown> {
+  const veryfront = input.directBody.forwardedProps?.veryfront ?? {
+    projectId: input.config.projectId,
+    conversationId: input.conversationId,
+    branchId: input.config.branchId ?? null,
+  };
+  const runtimeOverrides = isRecord(veryfront.runtimeOverrides)
+    ? veryfront.runtimeOverrides
+    : undefined;
+  const forwardedProps = {
+    ...(input.config.model ? { model: input.config.model } : {}),
+    ...(runtimeOverrides ? { runtimeOverrides } : {}),
+    veryfront,
+  };
+
+  return {
+    messages: [
+      {
+        id: input.userMessageId,
+        role: "user",
+        parts: [{ type: "text", text: input.prepared?.prompt ?? input.testCase.prompt ?? "" }],
+      },
+    ],
+    state: input.directBody.state,
+    context: {
+      conversationId: input.conversationId,
+      projectId: input.config.projectId,
+      branchId: input.config.branchId ?? null,
+    },
+    forwardedProps,
+  };
+}
+
+function validateCanonicalConversationInput(input: {
+  config: Pick<LiveEvalRunnerConfig, "projectId">;
+  prepared: PreparedLiveEvalInput | null;
+}): string {
+  if (!input.config.projectId) {
+    throw createEvalValidationError(
+      "Conversation-backed live evals require AG_UI_EVAL_PROJECT_ID for canonical run admission",
+    );
+  }
+  if (typeof input.prepared?.metadata?.customBody === "string") {
+    throw createEvalValidationError(
+      "Conversation-backed live evals do not support metadata.customBody; canonical run admission owns the request body",
+    );
+  }
+  return input.config.projectId;
+}
+
+function buildCanonicalLiveEvalCreateRunBody(input: {
+  config: LiveEvalRunnerConfig;
+  testCase: LiveEvalCase;
+  prepared: PreparedLiveEvalInput | null;
+  conversationId: string;
+  userMessageId: string;
+  clientRunId: string;
+  directBody: LiveEvalRequestBody;
+}): RunsInput<"createRun">["body"] {
+  const projectId = validateCanonicalConversationInput(input);
+
+  const body = {
+    project_id: projectId,
+    title: input.testCase.label,
+    target: { type: "agent", id: "veryfront" },
+    conversation_id: input.conversationId,
+    execution: {
+      runtime: input.config.branchId
+        ? { type: "preview_branch", id: input.config.branchId }
+        : { type: "main_branch" },
+    },
+    input: buildCanonicalLiveEvalInput(input),
+    config: {
+      agent_admission: {
+        mode: "hosted",
+        input_message_id: input.userMessageId,
+        client_run_id: input.clientRunId,
+      },
+    },
+  } satisfies RunsInput<"createRun">["body"];
+  return body;
+}
+
+function encodeLiveEvalPathSegment(value: string, label: string): string {
+  assertCanonicalEvalString(value, label);
+  return encodeURIComponent(value);
+}
+
+function readPersistedMessageId(result: unknown): string {
+  if (isRecord(result) && typeof result.id === "string" && result.id.length > 0) {
+    return result.id;
+  }
+  throw createEvalValidationError(
+    "Canonical live eval message persistence did not return a message id",
+  );
+}
+
+async function persistCanonicalLiveEvalUserMessage(input: {
+  config: LiveEvalRunnerConfig;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  conversationId: string;
+  prompt: string;
+  signal: AbortSignal;
+}): Promise<string> {
+  const baseUrl = normalizeLiveEvalApiUrl(input.config.apiUrl);
+  const conversationId = encodeLiveEvalPathSegment(
+    input.conversationId,
+    "Live eval conversation id",
+  );
+  const response = await input.fetch(`${baseUrl}/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.config.authToken}`,
+    },
+    body: JSON.stringify({
+      role: "user",
+      parts: [{ type: "text", text: input.prompt }],
+    }),
+    signal: input.signal,
+    redirect: "error",
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw createEvalValidationError(
+      `Failed to persist canonical live eval user message: HTTP ${response.status}`,
+    );
+  }
+
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch {
+    throw createEvalValidationError(
+      "Canonical live eval message persistence returned invalid JSON",
+    );
+  }
+  return readPersistedMessageId(result);
+}
+
+function readCreatedRunId(result: unknown): string {
+  if (isRecord(result)) {
+    const id = result.id;
+    if (typeof id === "string" && id.length > 0) return id;
+    const runId = result.run_id;
+    if (typeof runId === "string" && runId.length > 0) return runId;
+  }
+  throw createEvalValidationError("Canonical live eval run admission did not return a run id");
+}
+
+function createCanonicalParsedRun(responseStatus: number): ParsedRun {
+  return {
+    responseStatus,
+    events: [],
+    eventTypes: [],
+    toolStarts: [],
+    toolArgs: [],
+    text: "",
+    runError: null,
+  };
+}
+
+function applyCanonicalParsedEvent(run: ParsedRun, event: Record<string, unknown>): void {
+  run.events.push(event);
+  const type = getStringField(event, "type");
+  if (type) run.eventTypes.push(type);
+  if (type === agUiSseEventTypes.toolCallStart) {
+    const toolCallName = getStringField(event, "toolCallName") ??
+      getStringField(event, "tool_call_name");
+    if (toolCallName) run.toolStarts.push(toolCallName);
+  } else if (type === agUiSseEventTypes.toolCallArgs) {
+    const delta = getStringField(event, "delta");
+    if (delta) run.toolArgs.push(delta);
+  } else if (type === agUiSseEventTypes.textMessageContent) {
+    const delta = getStringField(event, "delta");
+    if (delta) run.text += delta;
+  }
+}
+
+function normalizeCanonicalRunStreamFrame(frame: RunStreamFrame): Record<string, unknown> {
+  const payload = frame.event.payload;
+  if (typeof payload.type === "string") return payload;
+  return coerceWireEvent(frame.event.event_type, payload);
+}
+
+function isTerminalCanonicalEvent(run: ParsedRun): boolean {
+  return run.eventTypes.includes(agUiSseEventTypes.runFinished) ||
+    run.eventTypes.includes(agUiSseEventTypes.runError);
+}
+
+async function cancelCanonicalLiveEvalRun(input: {
+  sdk: ReturnType<typeof createRunsSdk>;
+  runId: string;
+  requestTimeoutMs: number;
+}): Promise<void> {
+  try {
+    await input.sdk.cancelRun({
+      path: { run_id: input.runId },
+      headers: { "Idempotency-Key": `live-eval-cancel:${input.runId}` },
+    }, { signal: AbortSignal.timeout(Math.min(input.requestTimeoutMs, 5_000)) });
+  } catch {
+    // Preserve the original streaming or admission error. Cancellation is best-effort cleanup.
+  }
+}
+
+async function runCanonicalConversationLiveEval(input: {
+  config: LiveEvalRunnerConfig;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  testCase: LiveEvalCase;
+  prepared: PreparedLiveEvalInput | null;
+  conversationId: string;
+  progressReporter: LiveEvalProgressReporter;
+}): Promise<{ run: ParsedRun; runId: string }> {
+  let streamResponseStatus = 0;
+  const sdk = createLiveEvalRunsSdk({
+    apiUrl: input.config.apiUrl,
+    authToken: input.config.authToken,
+    fetch: input.fetch,
+    onResponse: ({ path, response }) => {
+      if (path.includes("/stream")) streamResponseStatus = response.status;
+    },
+  });
+  const signal = AbortSignal.timeout(input.config.requestTimeoutMs);
+  const prompt = input.prepared?.prompt ?? input.testCase.prompt ?? "";
+  validateCanonicalConversationInput(input);
+  const directBody = buildCanonicalLiveEvalDirectBody({
+    config: input.config,
+    testCase: input.testCase,
+    prepared: input.prepared,
+    conversationId: input.conversationId,
+  });
+  const userMessageId = await persistCanonicalLiveEvalUserMessage({
+    config: input.config,
+    fetch: input.fetch,
+    conversationId: input.conversationId,
+    prompt,
+    signal,
+  });
+  const clientRunId = `run_${crypto.randomUUID()}`;
+  let admittedRunId: string | null = null;
+  let terminal = false;
+  let cancelledAfterUnfinishedStream = false;
+  try {
+    const created = await sdk.createRun({
+      headers: { "Idempotency-Key": `live-eval:${input.testCase.id}:${crypto.randomUUID()}` },
+      body: buildCanonicalLiveEvalCreateRunBody({
+        ...input,
+        userMessageId,
+        clientRunId,
+        directBody,
+      }),
+    }, { signal });
+    admittedRunId = readCreatedRunId(created);
+    const run = createCanonicalParsedRun(streamResponseStatus);
+    const seenCanonicalEventIds = new Set<number>();
+    for await (
+      const frame of sdk.streamRunEvents({ path: { run_id: admittedRunId } }, { signal })
+    ) {
+      const eventId = frame.event.event_id;
+      if (eventId !== null) {
+        if (seenCanonicalEventIds.has(eventId)) continue;
+        seenCanonicalEventIds.add(eventId);
+      }
+      run.responseStatus = streamResponseStatus;
+      applyCanonicalParsedEvent(run, normalizeCanonicalRunStreamFrame(frame));
+      input.progressReporter.update({
+        eventCount: run.events.length,
+        lastEventType: run.eventTypes.at(-1) ?? null,
+        lastToolCallName: run.toolStarts.at(-1) ?? null,
+        toolStarts: [...run.toolStarts],
+        textLength: run.text.length,
+      });
+      terminal = isTerminalCanonicalEvent(run);
+    }
+    run.text = run.text.trim();
+    const errorEvent = run.events.find((event) =>
+      getStringField(event, "type") === agUiSseEventTypes.runError
+    );
+    run.runError = errorEvent && typeof errorEvent.message === "string" ? errorEvent.message : null;
+    run.responseStatus = streamResponseStatus;
+    terminal = terminal || isTerminalCanonicalEvent(run);
+    if (!terminal) {
+      run.runError = "Canonical live eval stream ended before terminal RUN_FINISHED/RUN_ERROR";
+      await cancelCanonicalLiveEvalRun({
+        sdk,
+        runId: admittedRunId,
+        requestTimeoutMs: input.config.requestTimeoutMs,
+      });
+      cancelledAfterUnfinishedStream = true;
+      throw createEvalValidationError(run.runError);
+    }
+    return { run, runId: admittedRunId };
+  } catch (error) {
+    if (admittedRunId && !terminal && !cancelledAfterUnfinishedStream) {
+      await cancelCanonicalLiveEvalRun({
+        sdk,
+        runId: admittedRunId,
+        requestTimeoutMs: input.config.requestTimeoutMs,
+      });
+    }
+    throw error;
+  }
+}
+
 function buildLiveEvalRunBody(input: {
   config: LiveEvalRunnerConfig;
   testCase: LiveEvalCase;
@@ -703,7 +1077,7 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
         conversationId: preparedConversationId,
         artifactPaths: collectPreparedArtifactPaths(prepared),
       });
-      const body = buildLiveEvalRunBody({
+      const directBody = preparedConversationId ? null : buildLiveEvalRunBody({
         config,
         testCase,
         prepared,
@@ -730,28 +1104,47 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
         log,
       });
 
-      const response = await fetchImpl(config.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.authToken}`,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      });
+      if (preparedConversationId) {
+        const canonical = await runCanonicalConversationLiveEval({
+          config,
+          fetch: fetchImpl,
+          testCase,
+          prepared,
+          conversationId: preparedConversationId,
+          progressReporter,
+        });
+        log(`[stream] ${runtime}:${testCase.id} canonical run ${canonical.runId}`);
+        result = await resolveCompletedLiveEvalRun({
+          testCase,
+          run: canonical.run,
+          prepared,
+          context: resultContext,
+          runId: canonical.runId,
+        });
+      } else {
+        const response = await fetchImpl(config.endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.authToken}`,
+          },
+          body: JSON.stringify(directBody),
+          signal: AbortSignal.timeout(config.requestTimeoutMs),
+        });
 
-      log(`[stream] ${runtime}:${testCase.id} HTTP ${response.status}`);
+        log(`[stream] ${runtime}:${testCase.id} HTTP ${response.status}`);
 
-      const run = await parseSseResponse(response, {
-        onProgress: progressReporter.update,
-      });
-      result = await resolveCompletedLiveEvalRun({
-        testCase,
-        run,
-        prepared,
-        context: resultContext,
-        runId: extractRunId(run) ?? undefined,
-      });
+        const run = await parseSseResponse(response, {
+          onProgress: progressReporter.update,
+        });
+        result = await resolveCompletedLiveEvalRun({
+          testCase,
+          run,
+          prepared,
+          context: resultContext,
+          runId: extractRunId(run) ?? undefined,
+        });
+      }
     } catch (error) {
       result = createStreamingFailureEvalResult({
         context: resultContext,
