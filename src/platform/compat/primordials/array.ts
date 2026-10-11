@@ -134,3 +134,41 @@ export function primordialArraySort<T>(
 ): T[] {
   return ReflectApply(ArrayPrototypeSort, values, [compare]) as T[];
 }
+
+/** Copy a trusted array range without species, iterator, or slice hooks. */
+export function primordialArraySlice<T>(values: readonly T[], start = 0, end = values.length): T[] {
+  const length = values.length;
+  const bound = (index: number) => {
+    const integer = index !== index ? 0 : index - (index % 1 || 0);
+    if (integer < 0) return integer + length < 0 ? 0 : integer + length;
+    return integer > length ? length : integer;
+  };
+  const first = bound(start);
+  const last = bound(end);
+  const count = last > first ? last - first : 0;
+  const result: T[] = [];
+  result.length = count;
+  for (let index = 0; index < count; index++) {
+    if (hasOwnIndex(values, first + index)) {
+      primordialArraySet(result, index, values[first + index]!);
+    }
+  }
+  return result;
+}
+
+/** Flatten array results without consulting mutable array traversal hooks. */
+export function primordialArrayFlatMap<T, U>(
+  values: readonly T[],
+  callback: (value: T, index: number) => readonly U[],
+): U[] {
+  const result: U[] = [];
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (!hasOwnIndex(values, index)) continue;
+    const entries = callback(values[index]!, index);
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      if (hasOwnIndex(entries, entryIndex)) primordialArrayPush(result, entries[entryIndex]!);
+    }
+  }
+  return result;
+}

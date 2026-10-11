@@ -1,0 +1,142 @@
+/** Keep package diagnostics attributable while preserving Actions commands. */
+export async function relayPackageOutput(
+  stream: ReadableStream<Uint8Array>,
+  name: string,
+  report: (line: string) => void,
+): Promise<void> {
+  let pending = "";
+  const emit = (line: string) => {
+    const annotation = line.match(
+      /^(::(?:error|warning|notice|debug)(?: [^:]*)?::)(.*)$/,
+    );
+    report(
+      annotation
+        ? `${annotation[1]}[${name}] ${annotation[2]}`
+        : line.startsWith("::")
+        ? line
+        : `[${name}] ${line}`,
+    );
+  };
+  for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+    pending += chunk;
+    let end: number;
+    while ((end = pending.indexOf("\n")) !== -1) {
+      emit(pending.slice(0, end).replace(/\r$/, ""));
+      pending = pending.slice(end + 1);
+    }
+  }
+  if (pending) emit(pending);
+}
+
+export interface PackageEntry {
+  name: string;
+  directory: string;
+  dependencies: string[];
+}
+
+/** Publish independent extensions together; keep dependency barriers and root last. */
+export async function publishPackages(
+  entries: PackageEntry[],
+  publish: (entry: PackageEntry) => Promise<void>,
+): Promise<void> {
+  const names = new Set(entries.map((entry) => entry.name));
+  if (names.size !== entries.length || !names.has("veryfront")) {
+    throw new Error(
+      "RC publication requires unique packages and one veryfront root",
+    );
+  }
+  const remaining = entries.map((entry) => ({
+    ...entry,
+    dependencies: entry.name === "veryfront"
+      ? [...names].filter((name) => name !== "veryfront")
+      : entry.dependencies.filter((name) => names.has(name)),
+  }));
+  const planned = new Set<string>();
+  const batches: PackageEntry[][] = [];
+  while (remaining.length > 0) {
+    const ready = remaining.filter((entry) =>
+      entry.dependencies.every((name) => planned.has(name))
+    );
+    if (ready.length === 0) {
+      throw new Error("Cyclic first-party publication dependencies");
+    }
+    for (let index = 0; index < ready.length; index += 4) {
+      batches.push(ready.slice(index, index + 4));
+    }
+    for (const entry of ready) {
+      planned.add(entry.name);
+      remaining.splice(remaining.indexOf(entry), 1);
+    }
+  }
+  for (const batch of batches) {
+    // Already-started immutable publishes must drain on failure. A rerun uses
+    // the same tarball/commit guards to adopt packages already published.
+    const results = await Promise.allSettled(batch.map(publish));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  }
+}
+
+if (import.meta.main) {
+  const entries: PackageEntry[] = [];
+  for (const directory of Deno.args) {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(`${directory}/package.json`),
+    );
+    if (typeof manifest.name !== "string" || !manifest.name) {
+      throw new Error("Invalid package name");
+    }
+    entries.push({
+      name: manifest.name,
+      directory,
+      dependencies: Object.keys({
+        ...manifest.dependencies,
+        ...manifest.optionalDependencies,
+      }),
+    });
+  }
+  const initialSpent = Number(
+    Deno.env.get("NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS") ?? "0",
+  );
+  if (!Number.isSafeInteger(initialSpent) || initialSpent < 0) {
+    throw new Error("Invalid initial metadata budget");
+  }
+  const budgetDirectory = await Deno.makeTempDir({
+    prefix: "veryfront-rc-budget-",
+  });
+  const budgetFile = `${budgetDirectory}/metadata.json`;
+  try {
+    await Deno.writeTextFile(
+      budgetFile,
+      JSON.stringify({ spent: initialSpent }),
+    );
+    await publishPackages(entries, async ({ name, directory }) => {
+      const child = new Deno.Command("bash", {
+        args: [
+          "-euo",
+          "pipefail",
+          "-c",
+          'source scripts/ci/publish-npm-packages.sh; run_rc_publish_package "$1"',
+          "rc-package",
+          directory,
+        ],
+        env: { NPM_GIT_HEAD_SHARED_BUDGET_FILE: budgetFile },
+        stdin: "null",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const [status] = await Promise.all([
+        child.status,
+        relayPackageOutput(child.stdout, name, console.log),
+        relayPackageOutput(child.stderr, name, console.error),
+      ]);
+      if (!status.success) {
+        throw new Error(
+          `RC publication failed for ${name} (status ${status.code})`,
+        );
+      }
+    });
+  } finally {
+    await Deno.remove(budgetDirectory, { recursive: true });
+  }
+}

@@ -111,3 +111,6 @@ export {
   canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
+
+// Anthropic output_config schema closing, shared with durable model-call capture.
+export { closeSchemaForOutputConfig } from "./anthropic-output-schema.ts";

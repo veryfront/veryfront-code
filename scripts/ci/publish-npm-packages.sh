@@ -151,6 +151,25 @@ NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
 # needs at least one confirming lookup.
 NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
 
+metadata_budget() {
+  deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write \
+    scripts/ci/npm-metadata-budget.ts "$1" "$NPM_GIT_HEAD_SHARED_BUDGET_FILE" "${2:-0}" "${3:-0}"
+}
+
+refresh_metadata_budget() {
+  if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget read)" || return 1
+  fi
+}
+
+charge_metadata_budget() {
+  if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget charge "$1")" || return 1
+  else
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$((NPM_GIT_HEAD_WAIT_SPENT_SECONDS + $1))
+  fi
+}
+
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
@@ -370,7 +389,7 @@ lookup_npm_git_head() {
   fi
   LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
   if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
-    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
+    charge_metadata_budget "$LOOKUP_SECONDS" || return 1
   fi
 }
 
@@ -390,13 +409,22 @@ wait_for_npm_git_head() {
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
+    refresh_metadata_budget || return 1
     if [ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]; then
       echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
       break
     fi
     echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
-    sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
-    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
+    if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+      reserve_status=0
+      NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget reserve "$NPM_GIT_HEAD_WAIT_DELAY_SECONDS" "$NPM_GIT_HEAD_WAIT_TOTAL_SECONDS")" || reserve_status=$?
+      if [[ "$reserve_status" == 2 ]]; then break; fi
+      if [[ "$reserve_status" != 0 ]]; then return 1; fi
+      sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+    else
+      sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+      charge_metadata_budget "$NPM_GIT_HEAD_WAIT_DELAY_SECONDS" || return 1
+    fi
   done
 
   lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}" || return 1
@@ -588,23 +616,30 @@ run_rc_publish() {
     done
   fi
 
-  for PACKAGE_DIR in $(package_dirs); do
-    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
-    if [[ -z "${PUBLISH_SPEC}" ]]; then
-      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
-      return 1
-    fi
-    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-    RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
-    if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
-      echo "::error::Maintenance rc selector changed during publication." >&2
-      return 1
-    fi
-    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
-  done
+  NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS="$NPM_GIT_HEAD_WAIT_SPENT_SECONDS" \
+  deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=bash --allow-env \
+    scripts/ci/publish-rc-packages.ts $(package_dirs)
   # The required read-only registry validator checks immutable identities and
   # RC tags after propagation, before the locked dispatch gate can deploy.
+}
+
+# Each child uses its own shell state and the parent's verified canonical artifact.
+run_rc_publish_package() {
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  PACKAGE_DIR="$1"
+  PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+  if [[ -z "${PUBLISH_SPEC}" ]]; then
+    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+    echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+    return 1
+  fi
+  PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+  RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
+    echo "::error::Maintenance rc selector changed during publication." >&2
+    return 1
+  fi
+  rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
 }
 
 is_npm_package_not_found() {

@@ -1,5 +1,6 @@
 const apply = Reflect.apply;
 const startsWith = String.prototype.startsWith;
+const split = String.prototype.split;
 const slice = String.prototype.slice;
 const includes = String.prototype.includes;
 const endsWith = String.prototype.endsWith;
@@ -11,6 +12,10 @@ const indexOf = String.prototype.indexOf;
 const charCodeAt = String.prototype.charCodeAt;
 const codePointAt = String.prototype.codePointAt;
 const toLowerCase = String.prototype.toLowerCase;
+
+export function privateTextSplit(value: string, separator: string): string[] {
+  return apply(split, value, [separator]) as string[];
+}
 
 export function privateTextToLowerCase(value: string): string {
   return apply(toLowerCase, value, []) as string;

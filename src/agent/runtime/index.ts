@@ -1,8 +1,11 @@
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   observeAdmittedAgentToolCalls,
   observeGeneratedAgentMessage,
   observeGeneratedAgentTurn,
+  observeGeneratedAgentTurnFinish,
+  observeRuntimeStream,
   withLocalChildRuntime,
 } from "../composition/local-child-execution.ts";
 import { forEachSequential } from "./sequential.ts";
@@ -60,6 +63,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import {
   createPrivateReadableStream,
   enqueuePrivateStream,
+  getPrivateStreamReader,
 } from "#veryfront/security/private-stream.ts";
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
@@ -87,6 +91,7 @@ import {
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import {
@@ -127,6 +132,7 @@ import {
 
 import {
   announceStreamedToolCallInput,
+  type ChatStreamState,
   createRuntimeStreamSource,
   createStreamState,
   processStream,
@@ -136,6 +142,7 @@ import {
   type StreamingToolResult,
   withRuntimeProviderStreamErrorProvenance,
 } from "./chat-stream-handler.ts";
+import { StreamLifecycleFailure } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import {
@@ -152,7 +159,10 @@ import {
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
-import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
+import {
+  generateText,
+  streamTextForObservedAgentRuntime,
+} from "#veryfront/runtime/runtime-bridge.ts";
 import { resolveAgentSystem } from "./effective-agent-system.ts";
 import {
   resolveActiveProviderReplayProvider,
@@ -374,6 +384,7 @@ import {
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { isAbortSignalAborted } from "#veryfront/platform/compat/abort-signal.ts";
 import {
   summarizeErrorCausesForLog,
   telemetryErrorType,
@@ -435,6 +446,7 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
+const MathMin = Math.min;
 const ObjectValues = Object.values;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -1040,6 +1052,48 @@ type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
   | { kind: "callback"; chunk: string };
 
+const MAX_RUNTIME_PROVIDER_STREAM_RETRIES = 1;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasRetryableProviderCause(error: unknown): boolean {
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  if (providerFailure.found) {
+    return isRecord(providerFailure.cause) && providerFailure.cause.retryable === true;
+  }
+
+  if (error instanceof StreamLifecycleFailure) {
+    return error.lifecycleError.source === "provider" && error.lifecycleError.retryable === true;
+  }
+
+  return false;
+}
+
+function hasRuntimeVisibleStreamProgress(state: ChatStreamState): boolean {
+  return state.accumulatedText.length > 0 || state.reasoningParts.length > 0 ||
+    state.toolCalls.size > 0 || state.toolResults.length > 0 ||
+    state.suppressedToolCalls.length > 0 || state.finishReason !== null ||
+    intrinsicArraySome(ObjectValues(state.usage), (value) => value !== undefined && value !== 0);
+}
+
+function shouldRetryRuntimeProviderStreamFailure(input: {
+  error: unknown;
+  state: ChatStreamState;
+  attempts: number;
+  abortSignal: AbortSignal | undefined;
+  hasUsageProgress: boolean;
+  hasEmittedStreamEvent: boolean;
+}): boolean {
+  return input.attempts < MAX_RUNTIME_PROVIDER_STREAM_RETRIES &&
+    (input.abortSignal === undefined || !isAbortSignalAborted(input.abortSignal)) &&
+    hasRetryableProviderCause(input.error) &&
+    !input.hasUsageProgress &&
+    !input.hasEmittedStreamEvent &&
+    !hasRuntimeVisibleStreamProgress(input.state);
+}
+
 function isTextSseChunk(chunk: Uint8Array): boolean {
   const payload = createPrivateTextDecoder().decode(chunk);
   if (!privateTextStartsWith(payload, "data: ")) {
@@ -1165,6 +1219,299 @@ function rewriteRecoveryTextSseChunkId(
   }
 }
 
+const OUTPUT_SCHEMA_REJECTION_ERROR_EVENT = {
+  type: "error",
+  error: "Agent output failed outputSchema validation",
+  code: "AGENT_OUTPUT_SCHEMA_VALIDATION_FAILED",
+} as const;
+
+async function observeGeneratedAgentOutputSchemaFailure(): Promise<void> {
+  const encoder = new PrivateTextEncoder();
+  const stream = observeRuntimeStream(createPrivateReadableStream<Uint8Array>({
+    start(controller) {
+      sendSSE(controller, encoder, OUTPUT_SCHEMA_REJECTION_ERROR_EVENT);
+      closeSSEStream(controller);
+    },
+  }));
+  const reader = getPrivateStreamReader(stream);
+  try {
+    while (!(await reader.read()).done) {
+      // Drain the synthetic stream so observeRuntimeStream mirrors the error event.
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function observeGeneratedAgentOutputSchemaRejection(
+  messageId: string,
+  response: RuntimeGenerateTextResult,
+): Promise<void> {
+  await observeGeneratedAgentTurn(messageId, response);
+  await observeGeneratedAgentOutputSchemaFailure();
+}
+
+type OutputSchemaObservationSnapshotStatus = "complete" | "partial" | "unsupported";
+
+interface OutputSchemaObservationSnapshot {
+  value: unknown;
+  status: OutputSchemaObservationSnapshotStatus;
+  reasons: string[];
+}
+
+interface OutputSchemaObservationSnapshotContext {
+  seen: WeakMap<object, true>;
+  remainingNodes: number;
+}
+
+const OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT = "[unsupported object]";
+const OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR = "[unsupported accessor]";
+const OUTPUT_SCHEMA_OBSERVATION_MAX_DEPTH = 32;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS = 100;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS = 100;
+const OUTPUT_SCHEMA_OBSERVATION_MAX_NODES = 1_000;
+
+function addOutputSchemaObservationReason(reasons: string[], reason: string): void {
+  for (let index = 0; index < reasons.length; index++) {
+    if (ObjectHasOwn(reasons, index) && reasons[index] === reason) return;
+  }
+  pushPrivateArray(reasons, reason);
+}
+
+function snapshotOutputSchemaObservationValue(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext = {
+    seen: new IntrinsicWeakMap<object, true>(),
+    remainingNodes: OUTPUT_SCHEMA_OBSERVATION_MAX_NODES,
+  },
+  depth = 0,
+): OutputSchemaObservationSnapshot {
+  const reasons: string[] = [];
+  context.remainingNodes -= 1;
+  if (context.remainingNodes < 0) {
+    return {
+      value: "[truncated nested data]",
+      status: "partial",
+      reasons: ["aggregate_budget_exhausted"],
+    };
+  }
+  if (
+    value === null || typeof value === "string" || typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return { value, status: "complete", reasons };
+  }
+  if (typeof value !== "object") {
+    return {
+      value: `[unsupported ${typeof value}]`,
+      status: "unsupported",
+      reasons: [`unsupported_${typeof value}`],
+    };
+  }
+
+  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  if (IntrinsicReflectApply(WeakMapGet, context.seen, [value]) === true) {
+    return { value: "[circular]", status: "partial", reasons: ["circular"] };
+  }
+  if (depth >= OUTPUT_SCHEMA_OBSERVATION_MAX_DEPTH) {
+    return {
+      value: "[truncated nested data]",
+      status: "partial",
+      reasons: ["max_depth"],
+    };
+  }
+
+  let isArray: boolean;
+  try {
+    isArray = ArrayIsArray(value);
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+
+  if (!isArray) {
+    let prototype: object | null;
+    try {
+      prototype = ObjectGetPrototypeOf(value);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    if (!isOrdinaryRecordPrototype(prototype)) {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+  }
+
+  IntrinsicReflectApply(WeakMapSet, context.seen, [value, true]);
+  {
+    if (isArray) {
+      const output: unknown[] = [];
+      const arrayValue = value as unknown[];
+      let length: number;
+      try {
+        length = arrayValue.length;
+      } catch {
+        return {
+          value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+          status: "unsupported",
+          reasons: ["unsupported_object"],
+        };
+      }
+      const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
+      for (let index = 0; index < limit; index++) {
+        let property: PropertyDescriptor | undefined;
+        try {
+          property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
+        } catch {
+          return {
+            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+            status: "unsupported",
+            reasons: ["unsupported_object"],
+          };
+        }
+        const item = property && ObjectHasOwn(property, "value")
+          ? snapshotOutputSchemaObservationValue(property.value, context, depth + 1)
+          : property
+          ? {
+            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
+            status: "partial",
+            reasons: ["accessor_property"],
+          } satisfies OutputSchemaObservationSnapshot
+          : {
+            value: null,
+            status: "complete",
+            reasons: [],
+          } satisfies OutputSchemaObservationSnapshot;
+        defineOwnDataProperty(output, index, item.value, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        forEachPrivateArray(
+          item.reasons,
+          (reason) => addOutputSchemaObservationReason(reasons, reason),
+        );
+        if (item.status === "unsupported") {
+          addOutputSchemaObservationReason(reasons, "unsupported_array_item");
+        }
+      }
+      if (length > limit) {
+        defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        addOutputSchemaObservationReason(reasons, "array_truncated");
+      }
+      return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+    }
+
+    const output = ObjectCreate(null) as Record<string, unknown>;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      descriptors = ObjectGetOwnPropertyDescriptors(value);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    let copiedKeys = 0;
+    const descriptorKeys = ReflectOwnKeys(descriptors);
+    for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
+      if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
+      const key = descriptorKeys[keyIndex];
+      if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
+        addOutputSchemaObservationReason(reasons, "object_keys_truncated");
+        break;
+      }
+      if (context.remainingNodes <= 0) {
+        addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
+        break;
+      }
+      if (typeof key !== "string") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
+        continue;
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable) continue;
+      if (!ObjectHasOwn(descriptor, "value")) {
+        defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        copiedKeys += 1;
+        addOutputSchemaObservationReason(reasons, "accessor_property");
+        continue;
+      }
+      const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
+      defineOwnDataProperty(output, key, item.value, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      copiedKeys += 1;
+      forEachPrivateArray(
+        item.reasons,
+        (reason) => addOutputSchemaObservationReason(reasons, reason),
+      );
+      if (item.status === "unsupported") {
+        addOutputSchemaObservationReason(reasons, "unsupported_property");
+      }
+    }
+    return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+  }
+}
+
+function createOutputSchemaObservationObject(object: unknown): unknown {
+  let snapshot: OutputSchemaObservationSnapshot;
+  try {
+    snapshot = snapshotOutputSchemaObservationValue(object);
+  } catch {
+    snapshot = {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  if (snapshot.status === "complete") return snapshot.value;
+  return {
+    captureStatus: snapshot.status,
+    reasons: snapshot.reasons,
+    value: snapshot.value,
+  };
+}
+
+function withOutputSchemaObservationObject<
+  TTurn extends RuntimeGenerateTextResult & { object?: unknown },
+>(
+  turn: TTurn,
+): TTurn {
+  if (!("object" in turn)) return turn;
+  return {
+    ...turn,
+    object: createOutputSchemaObservationObject(turn.object),
+  };
+}
+
 function buildGeneratedAssistantMessage(
   response: RuntimeGenerateTextResult,
   metadata: { id: string; timestamp: number },
@@ -1236,7 +1583,7 @@ function executeFrameworkToolSearch(input: {
     result: {
       ...result,
       nextStep: alreadyVisible
-        ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
+        ? "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it."
         : result.loadedCount > 0
         ? toolSearchLoadedNextStep(result.matches)
         : somePrivateArray(
@@ -3418,7 +3765,7 @@ export class AgentRuntime {
           }
         },
       });
-      return runtimeStream;
+      return observeRuntimeStream(runtimeStream);
     } catch (error) {
       abortScope.dispose();
       throw error;
@@ -3534,6 +3881,7 @@ export class AgentRuntime {
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
       let recoveredEmptyResponse = false;
+      let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -3738,18 +4086,58 @@ export class AgentRuntime {
           timestamp: Date.now(),
         });
         const admittedTurn = snapshotAdmittedToolTurn(assistantMessage, currentMessages.length);
+        let generatedTurnAdmissionObserved = false;
+        let generatedTurnFinishObserved = false;
+        const observeGeneratedProviderTurnAdmissionOnce = async (): Promise<void> => {
+          if (generatedTurnAdmissionObserved) return;
+          await observeGeneratedAgentTurn(assistantMessage.id, {
+            ...response,
+            finishReason: undefined,
+            usage: undefined,
+          });
+          generatedTurnAdmissionObserved = true;
+        };
+        const observeGeneratedProviderTurnFinishOnce = async (
+          turn: RuntimeGenerateTextResult & { object?: unknown },
+        ): Promise<void> => {
+          if (generatedTurnFinishObserved) return;
+          if (!generatedTurnAdmissionObserved) {
+            await observeGeneratedAgentTurn(
+              assistantMessage.id,
+              withOutputSchemaObservationObject(turn),
+            );
+            generatedTurnAdmissionObserved = true;
+          } else {
+            await observeGeneratedAgentTurnFinish({
+              finishReason: turn.finishReason,
+              usage: turn.usage,
+              ...("object" in turn
+                ? { object: createOutputSchemaObservationObject(turn.object) }
+                : {}),
+            });
+          }
+          generatedTurnFinishObserved = true;
+        };
+        let generatedProviderReplayCheckpointPersisted = false;
+        const persistGeneratedProviderReplayCheckpoint = async (): Promise<void> => {
+          if (generatedProviderReplayCheckpointPersisted) return;
+          await persistProviderReplayCheckpointAfterTurn({
+            emission: providerReplayCheckpointEmission,
+            providerMetadata: readAttachedProviderMetadata(assistantMessage),
+            invokeAgentToolCalls: generatedSkillDelegationOrder === "interleaved"
+              ? undefined
+              : generatedInvokeAgentBatch,
+            deferCompletion: generatedBatchCompletionDeferred,
+          });
+          generatedProviderReplayCheckpointPersisted = true;
+        };
         pushPrivateArray(currentMessages, assistantMessage);
-        await persistMessage(assistantMessage);
-        await observeGeneratedAgentTurn(assistantMessage.id, response);
-        await persistProviderReplayCheckpointAfterTurn({
-          emission: providerReplayCheckpointEmission,
-          providerMetadata: readAttachedProviderMetadata(assistantMessage),
-          invokeAgentToolCalls: generatedSkillDelegationOrder === "interleaved"
-            ? undefined
-            : generatedInvokeAgentBatch,
-          deferCompletion: generatedBatchCompletionDeferred,
-        });
-        throwIfAborted(abortSignal);
+        try {
+          await persistMessage(assistantMessage);
+        } catch (error) {
+          await observeGeneratedProviderTurnFinishOnce(response);
+          throw error;
+        }
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
@@ -3800,17 +4188,26 @@ export class AgentRuntime {
         };
 
         if (!response.toolCalls?.length) {
-          for (const generatedToolResult of generatedToolResults.values()) {
-            if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
-              continue;
+          try {
+            for (const generatedToolResult of generatedToolResults.values()) {
+              if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
+                continue;
+              }
+              await persistGeneratedToolResult(generatedToolResult);
             }
-            await persistGeneratedToolResult(generatedToolResult);
+          } catch (error) {
+            await observeGeneratedProviderTurnFinishOnce(response);
+            await persistGeneratedProviderReplayCheckpoint();
+            throw error;
           }
           const stoppedEmptyAfterCompletedTool = response.finishReason === "stop" &&
             !hasSubstantiveAssistantText(response.text) &&
             generatedToolResults.size === 0 &&
             somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
           if (stoppedEmptyAfterCompletedTool) {
+            await observeGeneratedProviderTurnFinishOnce(response);
+            await persistGeneratedProviderReplayCheckpoint();
+            throwIfAborted(abortSignal);
             if (recoveredEmptyResponse || step + 1 >= maxSteps) {
               throw new RuntimeEmptyResponseError();
             }
@@ -3832,9 +4229,25 @@ export class AgentRuntime {
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
+          let parsedObject: unknown;
+          if (outputSchema) {
+            try {
+              parsedObject = await outputSchema.parseOutput(response.text);
+            } catch (error) {
+              await observeGeneratedAgentOutputSchemaRejection(assistantMessage.id, response);
+              await persistGeneratedProviderReplayCheckpoint();
+              throw error;
+            }
+          }
+          await observeGeneratedProviderTurnFinishOnce({
+            ...response,
+            ...(outputSchema ? { object: parsedObject } : {}),
+          });
+          await persistGeneratedProviderReplayCheckpoint();
+          throwIfAborted(abortSignal);
           return attachOutputSchemaParser({
             text: response.text,
-            ...(outputSchema ? { object: await outputSchema.parseOutput(response.text) } : {}),
+            ...(outputSchema ? { object: parsedObject } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
@@ -3846,182 +4259,127 @@ export class AgentRuntime {
           }, outputSchema);
         }
 
-        this.status = "tool_execution";
-        addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
+        const isFinalMaxStepsToolTurn = step + 1 >= maxSteps;
 
-        for (let toolCallIndex = 0; toolCallIndex < response.toolCalls.length; toolCallIndex++) {
-          if (!ObjectHasOwn(response.toolCalls, toolCallIndex)) continue;
-          const tc = response.toolCalls[toolCallIndex]!;
-          throwIfAborted(abortSignal);
-          const toolCall: ToolCall = {
-            id: tc.toolCallId,
-            name: tc.toolName,
-            args: tc.input as Record<string, unknown>,
-            status: "pending",
-          };
-          const generatedToolResult = generatedToolResults.get(tc.toolCallId);
-
-          if (
-            generatedBatchCompletionDeferred && generatedToolResult === undefined &&
-            IntrinsicReflectApply(
-              IntrinsicSetHas,
-              providerReplayCheckpointEmission.invokeAgentToolNames,
-              [tc.toolName as ProviderReplayInvokeAgentToolName],
-            )
-          ) {
-            await completeDeferredProviderReplayCheckpointTurn(
-              providerReplayCheckpointEmission,
-              collectGeneratedParallelInvokeAgentToolCalls(
-                response.toolCalls,
-                generatedToolResults,
-                providerReplayCheckpointEmission.invokeAgentToolNames,
-                effectiveToolExposurePlan,
-                {
-                  activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-                  toolsConfig: runtimeToolsConfig,
-                  agentId: this.id,
-                  hasToolReplacements,
-                },
-              ),
-            );
-            generatedBatchCompletionDeferred = false;
+        try {
+          if (isFinalMaxStepsToolTurn) {
+            await observeGeneratedProviderTurnAdmissionOnce();
+          } else {
+            await observeGeneratedProviderTurnFinishOnce(response);
           }
+          await persistGeneratedProviderReplayCheckpoint();
+          throwIfAborted(abortSignal);
+          this.status = "tool_execution";
+          addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 
-          await withSpan("agent.tool_execute", async (toolSpan) => {
-            const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
-            setSpanAttributes(
-              toolSpan,
-              compactRuntimeTraceAttributes({
-                "tool.name": tc.toolName,
-                "tool.call.id": tc.toolCallId,
-                "tool.id": tc.toolCallId,
-                "tool.status": "executing",
-                "tool.input.size_bytes": inputSizeBytes,
-                "gen_ai.operation.name": "execute_tool",
-                "gen_ai.tool.name": tc.toolName,
-                "gen_ai.tool.type": "function",
-                "gen_ai.tool.call.id": tc.toolCallId,
-              }),
-            );
+          for (let toolCallIndex = 0; toolCallIndex < response.toolCalls.length; toolCallIndex++) {
+            if (!ObjectHasOwn(response.toolCalls, toolCallIndex)) continue;
+            const tc = response.toolCalls[toolCallIndex]!;
+            throwIfAborted(abortSignal);
+            const toolCall: ToolCall = {
+              id: tc.toolCallId,
+              name: tc.toolName,
+              args: tc.input as Record<string, unknown>,
+              status: "pending",
+            };
+            const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
-            const executionAuthority = resolveToolExecutionAuthority({
-              toolName: tc.toolName,
-              plan: effectiveToolExposurePlan,
-            });
             if (
-              generatedToolResult === undefined &&
-              shouldHandleToolResultRead({
+              generatedBatchCompletionDeferred && generatedToolResult === undefined &&
+              IntrinsicReflectApply(
+                IntrinsicSetHas,
+                providerReplayCheckpointEmission.invokeAgentToolNames,
+                [tc.toolName as ProviderReplayInvokeAgentToolName],
+              )
+            ) {
+              await completeDeferredProviderReplayCheckpointTurn(
+                providerReplayCheckpointEmission,
+                collectGeneratedParallelInvokeAgentToolCalls(
+                  response.toolCalls,
+                  generatedToolResults,
+                  providerReplayCheckpointEmission.invokeAgentToolNames,
+                  effectiveToolExposurePlan,
+                  {
+                    activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+                    toolsConfig: runtimeToolsConfig,
+                    agentId: this.id,
+                    hasToolReplacements,
+                  },
+                ),
+              );
+              generatedBatchCompletionDeferred = false;
+            }
+
+            await withSpan("agent.tool_execute", async (toolSpan) => {
+              const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.name": tc.toolName,
+                  "tool.call.id": tc.toolCallId,
+                  "tool.id": tc.toolCallId,
+                  "tool.status": "executing",
+                  "tool.input.size_bytes": inputSizeBytes,
+                  "gen_ai.operation.name": "execute_tool",
+                  "gen_ai.tool.name": tc.toolName,
+                  "gen_ai.tool.type": "function",
+                  "gen_ai.tool.call.id": tc.toolCallId,
+                }),
+              );
+
+              const executionAuthority = resolveToolExecutionAuthority({
                 toolName: tc.toolName,
                 plan: effectiveToolExposurePlan,
-                context: toolResultContext,
-              })
-            ) {
-              try {
-                if (toolResultContext === undefined) {
-                  throw new ReferenceError("Tool result context is not available");
-                }
-                const result = readToolResultContext(toolResultContext, toolCall.args);
-                toolCall.status = "completed";
-                toolCall.result = result;
-                setSpanAttributes(toolSpan, {
-                  "tool.status": "completed",
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
-                });
-                const toolResultMessage = createToolResultMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  result,
-                );
-                pushPrivateArray(currentMessages, toolResultMessage);
-                await persistMessage(toolResultMessage);
-              } catch (error) {
-                toolCall.status = "error";
-                toolCall.error = error instanceof Error ? error.message : String(error);
-                const errorMessage = createToolErrorMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  toolCall.error,
-                );
-                pushPrivateArray(currentMessages, errorMessage);
-                await persistMessage(errorMessage);
-              }
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              generatedToolResult === undefined &&
-              shouldBlockToolResultReadName({
-                toolName: tc.toolName,
-                context: toolResultContext,
-              })
-            ) {
-              toolCall.status = "error";
-              toolCall.error = toolResultReaderUnavailableError();
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              !hasToolReplacements &&
-              generatedToolResult === undefined &&
-              executionAuthority === undefined
-            ) {
-              toolCall.status = "error";
-              toolCall.error = toolNotVisibleError(tc.toolName);
-              setSpanAttributes(toolSpan, {
-                "tool.status": "blocked",
-                error: true,
-                "error.type": "ToolExposureBlocked",
               });
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-            if (
-              generatedToolResult === undefined &&
-              isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
-            ) {
-              let checkpoint: ToolExposureCheckpoint;
-              try {
-                const search = executeFrameworkToolSearch({
-                  args: toolCall.args,
+              if (
+                generatedToolResult === undefined &&
+                shouldHandleToolResultRead({
+                  toolName: tc.toolName,
                   plan: effectiveToolExposurePlan,
-                  state: toolExposureState,
-                });
-                if (didReloadProjectAgentWriteTool(search.result)) {
-                  agentWriteFinalResponseToolGuardEnabled = false;
+                  context: toolResultContext,
+                })
+              ) {
+                try {
+                  if (toolResultContext === undefined) {
+                    throw new ReferenceError("Tool result context is not available");
+                  }
+                  const result = readToolResultContext(toolResultContext, toolCall.args);
+                  toolCall.status = "completed";
+                  toolCall.result = result;
+                  setSpanAttributes(toolSpan, {
+                    "tool.status": "completed",
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                  });
+                  const toolResultMessage = createToolResultMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    result,
+                  );
+                  pushPrivateArray(currentMessages, toolResultMessage);
+                  await persistMessage(toolResultMessage);
+                } catch (error) {
+                  toolCall.status = "error";
+                  toolCall.error = error instanceof Error ? error.message : String(error);
+                  const errorMessage = createToolErrorMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    toolCall.error,
+                  );
+                  pushPrivateArray(currentMessages, errorMessage);
+                  await persistMessage(errorMessage);
                 }
-                toolCall.status = "completed";
-                toolCall.result = search.result;
-                setSpanAttributes(toolSpan, {
-                  "tool.status": "completed",
-                  "tool.search.result_count": search.result.resultCount,
-                  "tool.search.loaded_count": search.result.loadedCount,
-                  "tool.search.miss": search.result.miss,
-                });
-                const toolResultMessage = createToolResultMessage(
-                  tc.toolCallId,
-                  tc.toolName,
-                  search.result,
-                );
-                pushPrivateArray(currentMessages, toolResultMessage);
-                await persistMessage(toolResultMessage);
-                checkpoint = search.checkpoint;
-              } catch (error) {
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+              if (
+                generatedToolResult === undefined &&
+                shouldBlockToolResultReadName({
+                  toolName: tc.toolName,
+                  context: toolResultContext,
+                })
+              ) {
                 toolCall.status = "error";
-                toolCall.error = error instanceof Error ? error.message : String(error);
+                toolCall.error = toolResultReaderUnavailableError();
                 const errorMessage = createToolErrorMessage(
                   tc.toolCallId,
                   tc.toolName,
@@ -4032,238 +4390,321 @@ export class AgentRuntime {
                 pushPrivateArray(toolCalls, toolCall);
                 return;
               }
-              await persistToolExposureCheckpointBeforeContinuation({
-                checkpoint,
-                persist: persistToolExposureCheckpoint,
-                required: requireToolExposureCheckpointPersistence,
-              });
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
+              if (
+                !hasToolReplacements &&
+                generatedToolResult === undefined &&
+                executionAuthority === undefined
+              ) {
+                toolCall.status = "error";
+                toolCall.error = toolNotVisibleError(tc.toolName);
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "blocked",
+                  error: true,
+                  "error.type": "ToolExposureBlocked",
+                });
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+              if (
+                generatedToolResult === undefined &&
+                isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
+              ) {
+                let checkpoint: ToolExposureCheckpoint;
+                try {
+                  const search = executeFrameworkToolSearch({
+                    args: toolCall.args,
+                    plan: effectiveToolExposurePlan,
+                    state: toolExposureState,
+                  });
+                  if (didReloadProjectAgentWriteTool(search.result)) {
+                    agentWriteFinalResponseToolGuardEnabled = false;
+                  }
+                  toolCall.status = "completed";
+                  toolCall.result = search.result;
+                  setSpanAttributes(toolSpan, {
+                    "tool.status": "completed",
+                    "tool.search.result_count": search.result.resultCount,
+                    "tool.search.loaded_count": search.result.loadedCount,
+                    "tool.search.miss": search.result.miss,
+                  });
+                  const toolResultMessage = createToolResultMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    search.result,
+                  );
+                  pushPrivateArray(currentMessages, toolResultMessage);
+                  await persistMessage(toolResultMessage);
+                  checkpoint = search.checkpoint;
+                } catch (error) {
+                  toolCall.status = "error";
+                  toolCall.error = error instanceof Error ? error.message : String(error);
+                  const errorMessage = createToolErrorMessage(
+                    tc.toolCallId,
+                    tc.toolName,
+                    toolCall.error,
+                  );
+                  pushPrivateArray(currentMessages, errorMessage);
+                  await persistMessage(errorMessage);
+                  pushPrivateArray(toolCalls, toolCall);
+                  return;
+                }
+                await persistToolExposureCheckpointBeforeContinuation({
+                  checkpoint,
+                  persist: persistToolExposureCheckpoint,
+                  required: requireToolExposureCheckpointPersistence,
+                });
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
 
-            // Provider-executed tools (web_search/web_fetch) return results without skill-state
-            // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
-            // function tools that the runtime executes itself, so they never appear in
-            // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
-            // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
-            // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
-            if (generatedToolResult && !hasToolReplacements) {
-              if (generatedToolResult.providerExecuted === true) {
-                await traceProviderExecutedTool({
+              // Provider-executed tools (web_search/web_fetch) return results without skill-state
+              // transitions. Unlike locally-executed paths, load_skill and form_input are client-side
+              // function tools that the runtime executes itself, so they never appear in
+              // response.toolResults. This branch mirrors the streaming loop's providerExecuted===true
+              // path, not the locally-executed ones. If provider-executed tools expand beyond web_*,
+              // the transitions (skillState.applySuccessfulResult, markFormInputSubmitted) would apply.
+              if (generatedToolResult && !hasToolReplacements) {
+                if (generatedToolResult.providerExecuted === true) {
+                  await traceProviderExecutedTool({
+                    mode: "generate",
+                    agentId: this.id,
+                    toolName: tc.toolName,
+                    toolCallId: tc.toolCallId,
+                    context: {
+                      toolCallId: tc.toolCallId,
+                      ...toolContext,
+                      agentId: this.id,
+                    },
+                    args: tc.input,
+                    result: generatedToolResult.result,
+                    isError: generatedToolResult.isError === true,
+                  });
+                }
+                await persistGeneratedToolResult(generatedToolResult);
+                toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
+                toolCall.result = generatedToolResult.result;
+                toolCall.error = generatedToolResult.isError === true
+                  ? stringifyToolError(generatedToolResult.result)
+                  : undefined;
+                if (toolCall.error !== undefined) {
+                  setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
+                }
+                if (
+                  generatedToolResult.isError !== true &&
+                  shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
+                ) {
+                  agentWriteFinalResponseToolGuardEnabled = true;
+                }
+                setSpanAttributes(
+                  toolSpan,
+                  compactRuntimeTraceAttributes({
+                    "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
+                    "tool.provider_executed": generatedToolResult.providerExecuted === true,
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(
+                      generatedToolResult.result,
+                    ),
+                    ...(toolCall.error
+                      ? {
+                        error: true,
+                        "error.type": "ProviderExecutedToolError",
+                      }
+                      : {}),
+                  }),
+                );
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+
+              const policyCheck = enforceSkillPolicy(
+                tc.toolName,
+                {
+                  activeSkillId: skillState.activeSkillId,
+                  hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+                  skillToolAvailability: skillState.activeSkillToolAvailability,
+                  toolInput: tc.input,
+                  toolDefinition: executionAuthority?.toolDefinition,
+                },
+              );
+              if (!policyCheck.allowed) {
+                toolCall.status = "error";
+                toolCall.error = policyCheck.error;
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "blocked",
+                  error: true,
+                  "error.type": "ToolPolicyBlocked",
+                });
+
+                const errorMessage: Message = {
+                  id: `tool_error_${tc.toolCallId}`,
+                  role: "tool",
+                  parts: [{
+                    type: "tool-result",
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
+                    result: { error: policyCheck.error },
+                  }],
+                  timestamp: Date.now(),
+                };
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
+                pushPrivateArray(toolCalls, toolCall);
+                return;
+              }
+
+              try {
+                toolCall.status = "executing";
+                const startTime = Date.now();
+
+                const cacheCtx = tryGetCacheKeyContext();
+                toolCall.args = applySkillDelegationOverridesToToolInput(
+                  tc.toolName,
+                  toolCall.args,
+                  hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
+                  hasToolReplacements
+                    ? undefined
+                    : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, {
+                      agentId: this.id,
+                    }) ??
+                      undefined,
+                );
+                const executionContext = applicationExecutionContext(
+                  toolContext,
+                  providerObservedSkillBodies,
+                );
+                executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
+                throwIfAborted(abortSignal);
+                const result = await traceConfiguredToolExecution({
                   mode: "generate",
                   agentId: this.id,
                   toolName: tc.toolName,
                   toolCallId: tc.toolCallId,
-                  context: {
-                    toolCallId: tc.toolCallId,
-                    ...toolContext,
-                    agentId: this.id,
-                  },
-                  args: tc.input,
-                  result: generatedToolResult.result,
-                  isError: generatedToolResult.isError === true,
+                  args: toolCall.args,
+                  admittedTurn,
+                  owner: currentMessages,
+                  prepareTerminalDispatch,
+                  toolsConfig: runtimeToolsConfig,
+                  context: executionContext,
+                  allowedRemoteToolNames,
+                  remoteToolSources,
+                  sourceIntegrationPolicy,
+                  strictConfiguredToolsOnly: hasToolReplacements,
+                  frameworkLocalTools,
                 });
-              }
-              await persistGeneratedToolResult(generatedToolResult);
-              toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
-              toolCall.result = generatedToolResult.result;
-              toolCall.error = generatedToolResult.isError === true
-                ? stringifyToolError(generatedToolResult.result)
-                : undefined;
-              if (toolCall.error !== undefined) {
-                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
-              }
-              if (
-                generatedToolResult.isError !== true &&
-                shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
-              ) {
-                agentWriteFinalResponseToolGuardEnabled = true;
-              }
-              setSpanAttributes(
-                toolSpan,
-                compactRuntimeTraceAttributes({
-                  "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
-                  "tool.provider_executed": generatedToolResult.providerExecuted === true,
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(generatedToolResult.result),
-                  ...(toolCall.error
-                    ? {
-                      error: true,
-                      "error.type": "ProviderExecutedToolError",
-                    }
-                    : {}),
-                }),
-              );
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
-
-            const policyCheck = enforceSkillPolicy(
-              tc.toolName,
-              {
-                activeSkillId: skillState.activeSkillId,
-                hasSubmittedFormInput: skillState.hasSubmittedFormInput,
-                skillToolAvailability: skillState.activeSkillToolAvailability,
-                toolInput: tc.input,
-                toolDefinition: executionAuthority?.toolDefinition,
-              },
-            );
-            if (!policyCheck.allowed) {
-              toolCall.status = "error";
-              toolCall.error = policyCheck.error;
-              setSpanAttributes(toolSpan, {
-                "tool.status": "blocked",
-                error: true,
-                "error.type": "ToolPolicyBlocked",
-              });
-
-              const errorMessage: Message = {
-                id: `tool_error_${tc.toolCallId}`,
-                role: "tool",
-                parts: [{
-                  type: "tool-result",
-                  toolCallId: tc.toolCallId,
+                await this.notifyToolResult({
+                  mode: "generate",
                   toolName: tc.toolName,
-                  result: { error: policyCheck.error },
-                }],
-                timestamp: Date.now(),
-              };
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-              pushPrivateArray(toolCalls, toolCall);
-              return;
-            }
+                  toolCallId: tc.toolCallId,
+                  input: toolCall.args,
+                  result,
+                  context: executionContext,
+                });
 
-            try {
-              toolCall.status = "executing";
-              const startTime = Date.now();
-
-              const cacheCtx = tryGetCacheKeyContext();
-              toolCall.args = applySkillDelegationOverridesToToolInput(
-                tc.toolName,
-                toolCall.args,
-                hasToolReplacements ? undefined : skillState.activeSkillDelegationOverrides,
-                hasToolReplacements
-                  ? undefined
-                  : resolveConfiguredTool(runtimeToolsConfig, tc.toolName, { agentId: this.id }) ??
-                    undefined,
-              );
-              const executionContext = applicationExecutionContext(
-                toolContext,
-                providerObservedSkillBodies,
-              );
-              executionContext.projectId = cacheCtx?.projectId ?? toolContext?.projectId;
-              throwIfAborted(abortSignal);
-              const result = await traceConfiguredToolExecution({
-                mode: "generate",
-                agentId: this.id,
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                args: toolCall.args,
-                admittedTurn,
-                owner: currentMessages,
-                prepareTerminalDispatch,
-                toolsConfig: runtimeToolsConfig,
-                context: executionContext,
-                allowedRemoteToolNames,
-                remoteToolSources,
-                sourceIntegrationPolicy,
-                strictConfiguredToolsOnly: hasToolReplacements,
-                frameworkLocalTools,
-              });
-              await this.notifyToolResult({
-                mode: "generate",
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                input: toolCall.args,
-                result,
-                context: executionContext,
-              });
-
-              const resultError = getToolResultError(result);
-              if (resultError !== undefined) {
-                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
-              }
-              toolCall.status = resultError === undefined ? "completed" : "error";
-              toolCall.result = result;
-              toolCall.error = resultError;
-              toolCall.executionTime = Date.now() - startTime;
-              setSpanAttributes(
-                toolSpan,
-                compactRuntimeTraceAttributes({
-                  "tool.status": resultError === undefined ? "completed" : "failed",
-                  "tool.provider_executed": false,
-                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
-                  ...(resultError === undefined ? {} : {
-                    error: true,
-                    "error.type": "ToolResultError",
+                const resultError = getToolResultError(result);
+                if (resultError !== undefined) {
+                  setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
+                }
+                toolCall.status = resultError === undefined ? "completed" : "error";
+                toolCall.result = result;
+                toolCall.error = resultError;
+                toolCall.executionTime = Date.now() - startTime;
+                setSpanAttributes(
+                  toolSpan,
+                  compactRuntimeTraceAttributes({
+                    "tool.status": resultError === undefined ? "completed" : "failed",
+                    "tool.provider_executed": false,
+                    "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                    ...(resultError === undefined ? {} : {
+                      error: true,
+                      "error.type": "ToolResultError",
+                    }),
                   }),
-                }),
-              );
+                );
 
-              if (resultError === undefined) {
-                if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
-                  agentWriteFinalResponseToolGuardEnabled = true;
+                if (resultError === undefined) {
+                  if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
+                    agentWriteFinalResponseToolGuardEnabled = true;
+                  }
+                  // Track skill policy only from successful framework-owned load_skill results.
+                  if (
+                    isLoadSkillToolName(tc.toolName) &&
+                    hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
+                  ) {
+                    skillState.applySuccessfulResult(result);
+                  }
+                  const submittedFormInput = isSubmittedFormInputExecutionResult(
+                    tc.toolName,
+                    result,
+                    executionAuthority?.toolDefinition,
+                  );
+                  skillState.markFormInputSubmitted(submittedFormInput);
+                  if (submittedFormInput) {
+                    currentRuntimeContext = markSubmittedFormInputRuntimeContext(
+                      currentRuntimeContext,
+                    );
+                  }
                 }
-                // Track skill policy only from successful framework-owned load_skill results.
-                if (
-                  isLoadSkillToolName(tc.toolName) &&
-                  hasTrustedPlatformPolicyToolDefinition(executionAuthority?.toolDefinition)
-                ) {
-                  skillState.applySuccessfulResult(result);
-                }
-                const submittedFormInput = isSubmittedFormInputExecutionResult(
+
+                const toolResultMessage = createPolicyAwareToolResultMessage(
+                  tc.toolCallId,
                   tc.toolName,
                   result,
                   executionAuthority?.toolDefinition,
+                  false,
+                  true,
                 );
-                skillState.markFormInputSubmitted(submittedFormInput);
-                if (submittedFormInput) {
-                  currentRuntimeContext = markSubmittedFormInputRuntimeContext(
-                    currentRuntimeContext,
-                  );
-                }
+                pushPrivateArray(currentMessages, toolResultMessage);
+                await persistMessage(toolResultMessage);
+              } catch (error) {
+                await this.recordTerminalToolResult(
+                  error,
+                  toolCall,
+                  persistMessage,
+                  currentMessages,
+                  toolCalls,
+                  totalUsage,
+                );
+                throwIfAborted(abortSignal);
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "failed",
+                  error: true,
+                  "error.type": telemetryErrorType(error),
+                });
+
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                pushPrivateArray(currentMessages, errorMessage);
+                await persistMessage(errorMessage);
               }
 
-              const toolResultMessage = createPolicyAwareToolResultMessage(
-                tc.toolCallId,
-                tc.toolName,
-                result,
-                executionAuthority?.toolDefinition,
-                false,
-                true,
-              );
-              pushPrivateArray(currentMessages, toolResultMessage);
-              await persistMessage(toolResultMessage);
-            } catch (error) {
-              await this.recordTerminalToolResult(
-                error,
-                toolCall,
-                persistMessage,
-                currentMessages,
-                toolCalls,
-                totalUsage,
-              );
-              throwIfAborted(abortSignal);
-              toolCall.status = "error";
-              toolCall.error = error instanceof Error ? error.message : String(error);
-              setSpanAttributes(toolSpan, {
-                "tool.status": "failed",
-                error: true,
-                "error.type": telemetryErrorType(error),
-              });
+              pushPrivateArray(toolCalls, toolCall);
+            });
+            throwIfAborted(abortSignal);
+          }
+        } catch (error) {
+          if (generatedTurnAdmissionObserved) {
+            await observeGeneratedProviderTurnFinishOnce(response);
+          }
+          throw error;
+        }
 
-              const errorMessage = createToolErrorMessage(
-                tc.toolCallId,
-                tc.toolName,
-                toolCall.error,
-              );
-              pushPrivateArray(currentMessages, errorMessage);
-              await persistMessage(errorMessage);
-            }
-
-            pushPrivateArray(toolCalls, toolCall);
+        if (isFinalMaxStepsToolTurn) {
+          maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
+          await observeGeneratedProviderTurnFinishOnce({
+            ...response,
+            ...(maxStepsParsedOutput.parsed ? { object: maxStepsParsedOutput.object } : {}),
           });
-          throwIfAborted(abortSignal);
         }
       }
 
@@ -4275,7 +4716,8 @@ export class AgentRuntime {
       // The last message on this exit is a tool result, so the response text
       // and the structured-output candidate come from the final assistant turn.
       const finalText = getFinalAssistantText(currentMessages);
-      const parsedOutput = await tryParseMaxStepsOutput(finalText, outputSchema);
+      const parsedOutput = maxStepsParsedOutput ??
+        await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
         ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
@@ -4289,7 +4731,7 @@ export class AgentRuntime {
             ? { outputSchemaError: parsedOutput.outputSchemaError }
             : {}),
         }),
-      }, outputSchema);
+      }, withCachedMaxStepsOutputParse(outputSchema, parsedOutput, finalText));
     });
   }
 
@@ -4833,7 +5275,7 @@ export class AgentRuntime {
         { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
       );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
-        streamText({
+        streamTextForObservedAgentRuntime({
           model: streamModel,
           system: providerSystemPrompt,
           messages: providerMessages,
@@ -4849,7 +5291,7 @@ export class AgentRuntime {
         })
       );
 
-      const state = createStreamState();
+      let state = createStreamState();
       // Hold a possible replay only while it remains a prefix of the text the
       // client already received. Once it diverges, resume live delivery.
       const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
@@ -5007,73 +5449,108 @@ export class AgentRuntime {
         deferredRecoverySseText = "";
         deferredRecoveryCallbackText = "";
       };
-      const stepController = deferredRecoveryOutput === undefined ? controller : {
-        enqueue(chunk: Uint8Array) {
-          if (releasedDeferredRecoveryOutput) {
-            enqueuePrivateStream(
-              controller,
-              releasedRecoveryReplacementTextPartId !== undefined
-                ? rewriteRecoveryTextSseChunkId(
-                  chunk,
-                  releasedRecoveryReplacementTextPartId,
-                  encoder,
-                )
-                : chunk,
-            );
-            return;
+      let sawProviderStreamEvent = false;
+      const enqueueStepChunk = (chunk: Uint8Array): void => {
+        sawProviderStreamEvent = true;
+        enqueuePrivateStream(controller, chunk);
+      };
+      const stepController = deferredRecoveryOutput === undefined
+        ? {
+          enqueue: enqueueStepChunk,
+        } as ReadableStreamDefaultController
+        : {
+          enqueue(chunk: Uint8Array) {
+            sawProviderStreamEvent = true;
+            if (releasedDeferredRecoveryOutput) {
+              enqueuePrivateStream(
+                controller,
+                releasedRecoveryReplacementTextPartId !== undefined
+                  ? rewriteRecoveryTextSseChunkId(
+                    chunk,
+                    releasedRecoveryReplacementTextPartId,
+                    encoder,
+                  )
+                  : chunk,
+              );
+              return;
+            }
+            deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
+            const isTextEvent = isTextSseChunk(chunk);
+            pushPrivateArray(deferredRecoveryOutput, {
+              kind: "sse",
+              chunk,
+              isTextEvent,
+            });
+            releaseDeferredRecoveryOutputAfterDivergence();
+            releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
+            releaseDeferredRecoveryNonTextOutput(isTextEvent);
+            reconcileDeferredRecoveryTextSegment(isTextEndSseChunk(chunk));
+          },
+        } as ReadableStreamDefaultController;
+      let providerStreamRetryAttempts = 0;
+      let sawProviderStreamUsage = false;
+      while (true) {
+        try {
+          await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
+            onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
+              if (releasedDeferredRecoveryOutput) {
+                callbacks?.onChunk?.(chunk);
+                return;
+              }
+              deferredRecoveryCallbackText += chunk;
+              if (callbacks?.onChunk !== undefined) {
+                pushPrivateArray(deferredRecoveryOutput, { kind: "callback", chunk });
+              }
+              releaseDeferredRecoveryOutputAfterDivergence();
+            },
+            ...(runtimeObservationStepId !== undefined &&
+                runtimeObservationMessageSpanId !== undefined
+              ? {
+                runtimeObservationStepId,
+                runtimeObservationMessageSpanId,
+              }
+              : {}),
+            onUsage: (usage) => {
+              sawProviderStreamUsage = true;
+              accumulateUsage(totalUsage, usage);
+              // Snapshot, not the live object: a later step must not mutate a total
+              // a caller has already recorded on a span.
+              callbacks?.onUsage?.({ ...totalUsage });
+            },
+            requireProviderFinish:
+              languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
+            providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
+            availableToolNames: acceptedRuntimeToolNames,
+            streamLifecycleMode,
+            traceSpanName: `chat ${effectiveModel}`,
+            traceAttributes: {
+              ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
+              "gen_ai.request.model": effectiveModel,
+              "gen_ai.response.model": effectiveModel,
+              "gen_ai.request.max_tokens": maxOutputTokens,
+              "gen_ai.output.type": "text",
+              ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
+            },
+          }, abortSignal);
+          break;
+        } catch (error) {
+          if (
+            !shouldRetryRuntimeProviderStreamFailure({
+              error,
+              state,
+              attempts: providerStreamRetryAttempts,
+              abortSignal,
+              hasUsageProgress: sawProviderStreamUsage,
+              hasEmittedStreamEvent: sawProviderStreamEvent,
+            })
+          ) {
+            throw error;
           }
-          deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
-          const isTextEvent = isTextSseChunk(chunk);
-          pushPrivateArray(deferredRecoveryOutput, {
-            kind: "sse",
-            chunk,
-            isTextEvent,
-          });
-          releaseDeferredRecoveryOutputAfterDivergence();
-          releaseDeferredRecoveryOutputAfterExactReplay(isTextEvent);
-          releaseDeferredRecoveryNonTextOutput(isTextEvent);
-          reconcileDeferredRecoveryTextSegment(isTextEndSseChunk(chunk));
-        },
-      } as ReadableStreamDefaultController;
-      await processStream(streamSource, state, stepController, encoder, stepTextPartId, {
-        onChunk: deferredRecoveryOutput === undefined ? callbacks?.onChunk : (chunk) => {
-          if (releasedDeferredRecoveryOutput) {
-            callbacks?.onChunk?.(chunk);
-            return;
-          }
-          deferredRecoveryCallbackText += chunk;
-          if (callbacks?.onChunk !== undefined) {
-            pushPrivateArray(deferredRecoveryOutput, { kind: "callback", chunk });
-          }
-          releaseDeferredRecoveryOutputAfterDivergence();
-        },
-        ...(runtimeObservationStepId !== undefined && runtimeObservationMessageSpanId !== undefined
-          ? {
-            runtimeObservationStepId,
-            runtimeObservationMessageSpanId,
-          }
-          : {}),
-        onUsage: (usage) => {
-          accumulateUsage(totalUsage, usage);
-          // Snapshot, not the live object: a later step must not mutate a total
-          // a caller has already recorded on a span.
-          callbacks?.onUsage?.({ ...totalUsage });
-        },
-        requireProviderFinish:
-          languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
-        providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
-        availableToolNames: acceptedRuntimeToolNames,
-        streamLifecycleMode,
-        traceSpanName: `chat ${effectiveModel}`,
-        traceAttributes: {
-          ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
-          "gen_ai.request.model": effectiveModel,
-          "gen_ai.response.model": effectiveModel,
-          "gen_ai.request.max_tokens": maxOutputTokens,
-          "gen_ai.output.type": "text",
-          ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
-        },
-      }, abortSignal);
+
+          providerStreamRetryAttempts += 1;
+          state = createStreamState();
+        }
+      }
       throwIfAborted(abortSignal);
       const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
         ? 0
@@ -6239,6 +6716,22 @@ async function tryParseMaxStepsOutput(
       outputSchemaError: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function withCachedMaxStepsOutputParse(
+  outputSchema: ResolvedAgentOutputSchema | undefined,
+  parsedOutput: MaxStepsOutputParse,
+  finalText: string,
+): ResolvedAgentOutputSchema | undefined {
+  if (!outputSchema || !parsedOutput.parsed) return outputSchema;
+  return {
+    responseFormat: outputSchema.responseFormat,
+    enforcement: outputSchema.enforcement,
+    parseOutput(text: string): Promise<unknown> {
+      if (text === finalText) return Promise.resolve(parsedOutput.object);
+      return outputSchema.parseOutput(text);
+    },
+  };
 }
 
 /** Text of the latest assistant message, or empty when no assistant turn exists. */

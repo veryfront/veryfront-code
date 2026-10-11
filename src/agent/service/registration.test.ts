@@ -393,7 +393,7 @@ describe("agent/agent-service-registration", () => {
     const fetch: typeof globalThis.fetch = (_input, init) => {
       assert(init && "body" in init, "fetch must receive request options");
       attempts++;
-      bodies.push(String(init?.body));
+      bodies.push(String(init && "body" in init ? init.body : undefined));
       return attempts === 1
         ? Promise.reject(new TypeError("synthetic disconnected transport"))
         : Promise.resolve(jsonResponse(serviceResponse));
@@ -413,7 +413,7 @@ describe("agent/agent-service-registration", () => {
     const fetch: typeof globalThis.fetch = (_input, init) => {
       assert(init && "signal" in init, "fetch must receive request options");
       attempts++;
-      const signal = init?.signal;
+      const signal = init && "signal" in init ? init.signal : undefined;
       assert(signal, "startup requests must carry a deadline signal");
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
@@ -469,17 +469,29 @@ describe("agent/agent-service-registration", () => {
       "https://api.example.com/agent-runtimes/push-services/22222222-2222-4222-a222-222222222222/heartbeat",
     );
     assertEquals(
-      new Headers(calls[0]?.init?.headers).get("Authorization"),
+      new Headers(calls[0]?.init?.headers).get(
+        "Authorization",
+      ),
       "Bearer token-1",
       "registration must carry bearer auth",
     );
-    assertEquals(calls[0]?.init?.method, "POST", "registration must be a POST");
     assertEquals(
-      new Headers(calls[1]?.init?.headers).get("Authorization"),
+      calls[0]?.init?.method,
+      "POST",
+      "registration must be a POST",
+    );
+    assertEquals(
+      new Headers(calls[1]?.init?.headers).get(
+        "Authorization",
+      ),
       "Bearer token-1",
       "heartbeats must carry bearer auth",
     );
-    assertEquals(calls[1]?.init?.method, "POST", "the heartbeat must be a POST");
+    assertEquals(
+      calls[1]?.init?.method,
+      "POST",
+      "the heartbeat must be a POST",
+    );
     assertEquals(
       calls[1]?.init?.body,
       "{}",

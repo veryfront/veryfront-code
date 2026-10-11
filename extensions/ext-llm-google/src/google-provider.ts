@@ -567,6 +567,7 @@ export function createGoogleModelRuntime(
   const responseContext = { providerLabel };
   return {
     provider: providerLabel,
+    modelProvider: "google",
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},

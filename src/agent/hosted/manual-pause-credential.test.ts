@@ -34,7 +34,7 @@ it("binds a deferred pause transport once to the detached execution lifetime", a
     fetch: (_url, init) => {
       assert(init && "signal" in init, "fetch must receive request options");
       requests++;
-      assertEquals(init?.signal?.aborted, false);
+      assertEquals((init && "signal" in init ? init.signal : undefined)?.aborted, false);
       if (requests === 2) {
         execution.abort();
         return Promise.resolve(new Response(null, { status: 503 }));
@@ -70,9 +70,12 @@ describe("hosted agent pause capability", () => {
       fetch: async (url, init) => {
         assert(init && "body" in init, "fetch must receive request options");
         assertEquals(String(url), "https://api.example.com/runs/run_pause_test/pause-ack");
-        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer pause-test-token");
-        assertEquals(init?.redirect, "error");
-        bodies.push(String(init?.body));
+        assertEquals(
+          new Headers(init && "headers" in init ? init.headers : undefined).get("Authorization"),
+          "Bearer pause-test-token",
+        );
+        assertEquals(init && "redirect" in init ? init.redirect : undefined, "error");
+        bodies.push(String(init && "body" in init ? init.body : undefined));
         if (bodies.length === 1) throw new TypeError("Reply was lost after commit");
         return Response.json({ stop: true });
       },
@@ -404,7 +407,7 @@ it("checks pause intent without sending the continuation", async () => {
         String(url),
         "https://api.example.com/runs/run_pause_test/pause-checkpoint?boundary=true",
       );
-      assertEquals(init?.body, undefined);
+      assertEquals(init && "body" in init ? init.body : undefined, undefined);
       return Promise.resolve(
         Response.json({ stop: false, checkpoint: null, pauseRequested: false }),
       );

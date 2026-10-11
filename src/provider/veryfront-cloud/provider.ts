@@ -4,6 +4,7 @@ import { createGoogleProviderModel } from "@veryfront/ext-llm-google";
 import { createError, toError } from "#veryfront/errors";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 
 import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
@@ -76,19 +77,19 @@ function wrapVeryfrontCloudModel(
   const forwardedAccessors = new Set<PropertyKey>();
   let source: object | null = model;
   while (source && source !== ObjectPrototype) {
-    for (const key of ReflectOwnKeys(source)) {
-      if (forwardedAccessors.has(key) || ObjectHasOwn(wrapped, key)) continue;
+    forEachPrivateArray(ReflectOwnKeys(source), (key) => {
+      if (forwardedAccessors.has(key) || ObjectHasOwn(wrapped, key)) return;
 
       forwardedAccessors.add(key);
       const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-      if (!descriptor || (!descriptor.get && !descriptor.set)) continue;
+      if (!descriptor || (!descriptor.get && !descriptor.set)) return;
 
       ObjectDefineProperty(wrapped, key, {
         ...descriptor,
         get: descriptor.get ? bindModelMethod(descriptor.get, model) : undefined,
         set: descriptor.set ? bindModelMethod(descriptor.set, model) : undefined,
       });
-    }
+    });
     source = ObjectGetPrototypeOf(source);
   }
 
@@ -206,10 +207,10 @@ function withServedCatalog(
   };
   let source: object | null = model;
   while (source && source !== ObjectPrototype) {
-    for (const key of ReflectOwnKeys(source)) forward(key);
+    forEachPrivateArray(ReflectOwnKeys(source), forward);
     source = ObjectGetPrototypeOf(source);
   }
-  for (const key of OPTIONAL_FORWARDED_KEYS) forward(key);
+  forEachPrivateArray(OPTIONAL_FORWARDED_KEYS, forward);
   return wrapped;
 }
 

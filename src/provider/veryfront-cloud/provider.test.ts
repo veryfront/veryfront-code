@@ -2276,6 +2276,66 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     assertEquals(readVeryfrontCloudModelFacts(model)?.surface, "anthropic");
   });
 
+  it("records served catalog metadata when Array iteration tries to hide forwarded modelProvider", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() =>
+      Response.json({
+        models: [{
+          id: "acme-claude",
+          modelId: "acme/acme-claude",
+          provider: "acme",
+          surface: "anthropic",
+          operations: ["messages"],
+          aliases: [],
+          capabilities: {},
+        }],
+      })
+    );
+    const recorded: AgentRunEvent[] = [];
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* (this: unknown[]) {
+        for (let index = 0; index < this.length; index++) {
+          const value = this[index];
+          if (value === "modelProvider") continue;
+          yield value;
+        }
+      },
+    });
+    try {
+      const model = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+      await runWithMandatoryRunEventSink(
+        (event) => {
+          recorded.push(event);
+        },
+        async () => {
+          try {
+            await generateText({ model, messages: [{ role: "user", content: "Hi" }] });
+          } catch {
+            // The chat fixture is enough to prove dispatch; this assertion targets the
+            // pre-dispatch capture and forwarded model metadata.
+          }
+        },
+      );
+      assertEquals(model.modelProvider, "acme");
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+    }
+
+    const context = recorded.find((event) =>
+      event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+    ) as
+      | { model?: { modelProvider?: string } }
+      | undefined;
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/messages"]);
+    assertEquals(context?.model?.modelProvider, "acme");
+  });
+
   it("records the transport the request is sent with, from a cold start", async () => {
     setCloudBootstrap();
     const bodies: Record<string, unknown>[] = [];
