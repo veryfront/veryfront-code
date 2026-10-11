@@ -55,14 +55,23 @@ export function createLifecycleRunEventAdapter(input: {
   const maxBufferedContentBytes = input.maxBufferedContentBytes ??
     DEFAULT_MAX_BUFFERED_CONTENT_BYTES;
   const flushDelayMs = input.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
-  const setTimer = input.setTimer ??
-    ((callback: () => void, delayMs: number) => globalThis.setTimeout(callback, delayMs));
-  const clearTimer = input.clearTimer ??
-    ((timerId: number) => globalThis.clearTimeout(timerId));
+  const setTimer = input.setTimer;
+  const clearTimer = input.clearTimer;
+  if ((setTimer === undefined) !== (clearTimer === undefined)) {
+    throw new TypeError("A custom flush clock must provide both setTimer and clearTimer");
+  }
+  const scheduleFlush = (callback: () => void): () => void => {
+    if (setTimer !== undefined && clearTimer !== undefined) {
+      const handle = setTimer(callback, flushDelayMs);
+      return () => clearTimer(handle);
+    }
+    const handle = globalThis.setTimeout(callback, flushDelayMs);
+    return () => globalThis.clearTimeout(handle);
+  };
 
   let logicalSequence = 0;
   let pending: PendingDurableContent | null = null;
-  let flushTimerId: number | null = null;
+  let cancelFlushTimer: (() => void) | null = null;
   let disposed = false;
   const openToolCalls = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
@@ -72,9 +81,9 @@ export function createLifecycleRunEventAdapter(input: {
   const openReasoningIds = new Set<string>();
 
   const clearFlushTimer = () => {
-    if (flushTimerId !== null) {
-      clearTimer(flushTimerId);
-      flushTimerId = null;
+    if (cancelFlushTimer !== null) {
+      cancelFlushTimer();
+      cancelFlushTimer = null;
     }
   };
 
@@ -112,11 +121,11 @@ export function createLifecycleRunEventAdapter(input: {
     }
     if (pending === null) {
       pending = { ...content, byteLength };
-      if (flushTimerId === null) {
-        flushTimerId = setTimer(() => {
-          flushTimerId = null;
+      if (cancelFlushTimer === null) {
+        cancelFlushTimer = scheduleFlush(() => {
+          cancelFlushTimer = null;
           flushPending();
-        }, flushDelayMs);
+        });
       }
     } else {
       pending.delta += content.delta;

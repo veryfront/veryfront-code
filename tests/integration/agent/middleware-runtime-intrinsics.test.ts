@@ -64,7 +64,7 @@ describe("agent middleware runtime intrinsics", () => {
     assertEquals(
       await chain.execute(context, () => {
         finalHandlerCalls += 1;
-        return Reflect.apply(nativeResolve, Promise, [response]);
+        return selectedResponse;
       }),
       response,
     );
@@ -92,7 +92,9 @@ describe("agent middleware runtime intrinsics", () => {
       const chain = new MiddlewareChain([
         (_context, next) => {
           Object.defineProperty(globalThis, "setTimeout", {
-            ...setTimeoutDescriptor,
+            configurable: setTimeoutDescriptor.configurable,
+            enumerable: setTimeoutDescriptor.enumerable,
+            writable: true,
             value: poisonedSetTimeout,
           });
           continuation = next();
