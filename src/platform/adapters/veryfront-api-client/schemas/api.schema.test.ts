@@ -265,6 +265,8 @@ describe("schemas", () => {
         "lookupDomain",
         "resolveStyleArtifact",
         "ensureStyleArtifactBuild",
+        "getDependencyHistory",
+        "resolveDependencies",
       ] as const;
 
       for (const key of expectedKeys) {
@@ -286,6 +288,19 @@ describe("schemas", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
         assertEquals(["GET", "POST"].includes(endpoint.method), true);
       }
+    });
+
+    it("keeps the legacy dependency history key as an alias", () => {
+      assertEquals(
+        API_ENDPOINTS.readDependencyMetadataHistory,
+        API_ENDPOINTS.getDependencyHistory,
+      );
+      assertEquals(API_ENDPOINTS.getDependencyHistory.method, "GET");
+      assertEquals(API_ENDPOINTS.resolveDependencies.method, "POST");
+      assertEquals(
+        API_ENDPOINTS.resolveDependencies.path,
+        "/projects/{projectRef}/dependencies/resolve",
+      );
     });
 
     it("should use the expected methods for style artifact endpoints", () => {

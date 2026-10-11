@@ -4,17 +4,25 @@
  * @module platform/adapters/veryfront-api-client
  */
 
-export { type FileContext, VeryfrontApiClient } from "./client.ts";
+export {
+  type FileContext,
+  type GetDependencyHistoryInput,
+  VeryfrontApiClient,
+  type VeryfrontApiDependencies,
+} from "./client.ts";
 export type {
   DependencyMetadataHistory,
   DependencyMetadataHistoryEntry,
 } from "../dependency-metadata-history.ts";
 export {
+  type DependencyResolution,
+  type DependencySkipReason,
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
   type ProjectStyleArtifactResolution,
+  type ResolveDependenciesInput,
   type ResolveStyleArtifactInput,
   type StyleArtifactSelector,
   type UpsertStyleArtifactInput,
