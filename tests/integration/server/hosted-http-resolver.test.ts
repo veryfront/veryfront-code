@@ -137,6 +137,16 @@ function options(overrides: Partial<HostedHttpResolverOptions> = {}): HostedHttp
 const signal = () => new AbortController().signal;
 
 describe("hosted HTTP resolver", () => {
+  it("resolves against the canonical API base URL, not the configured spelling", async () => {
+    const api = apiFetch();
+    const resolve = createHostedHttpResolver(
+      options({ apiBaseUrl: "  https://API.veryfront.test:443/  " }),
+    );
+    await withMockFetch(api.fetch, () => resolve(authority, signal()));
+    assertEquals(api.calls.length, 3);
+    assert(api.calls.every((call) => call.url.startsWith(`${API}/projects/`)));
+  });
+
   it("authorizes identity with the source token before reading project configuration", async () => {
     const api = apiFetch();
     const resolve = createHostedHttpResolver(options());
