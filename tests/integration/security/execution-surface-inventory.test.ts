@@ -14,6 +14,19 @@ import { parse } from "npm:@babel/parser@7.29.2";
  * Counting is per file, never by function name or line, so moving code inside a
  * file keeps the inventory valid. Moving or renaming a file fails with the path
  * to update.
+ *
+ * Supported forms, and the only ones this test claims to see:
+ * - direct predicate calls, including `receiver.predicate(...)`;
+ * - predicates imported under another name (`import { p as q }`);
+ * - local aliases (`const q = p`), member aliases (`const q = policy.p`) and
+ *   destructured aliases (`const { p: q } = policy`), transitively;
+ * - every runtime use of `allowHostProjectCodeExecution`, including negation and
+ *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
+ * - literal `allowHostProjectCodeExecution: true` grants in values and types.
+ *
+ * Dynamic or computed access (`policy[name]()`, reassignment, re-exports through
+ * other modules) is out of scope: the runtime guards, not this test, enforce
+ * isolation. This test only keeps the inventory of those guards honest.
  */
 
 const REPO_ROOT = fromFileUrl(new URL("../../../", import.meta.url));
@@ -317,8 +330,16 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       const local = nameOf(node.local);
       if (imported !== undefined && local !== undefined) links.push([imported, local]);
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
-      if (node.id.type === "Identifier" && isNode(node.init) && node.init.type === "Identifier") {
-        links.push([node.init.name as string, node.id.name as string]);
+      const init = node.init;
+      if (node.id.type === "Identifier" && isNode(init) && init.type === "Identifier") {
+        links.push([init.name as string, node.id.name as string]);
+      } else if (
+        node.id.type === "Identifier" && isNode(init) &&
+        (init.type === "MemberExpression" || init.type === "OptionalMemberExpression")
+      ) {
+        // `const check = policy.requiresIsolatedProjectRuntime`
+        const member = propertyName(init.property, init.computed);
+        if (member !== undefined) links.push([member, node.id.name as string]);
       } else if (node.id.type === "ObjectPattern" && Array.isArray(node.id.properties)) {
         for (const property of node.id.properties) {
           if (!isNode(property) || property.type !== "ObjectProperty") continue;
@@ -639,9 +660,15 @@ describe("execution surface inventory", () => {
           "const { isSharedProjectRuntime: shared = fallback } = policy;",
           "shared(ctx);",
           "policy.isHostRealmApiExecution(ctx);",
+          "const member = policy.isHostProjectCodeExecutionAllowed;",
+          "member(ctx);",
+          "const optional = policy?.isSharedProjectRuntime;",
+          "optional(ctx);",
+          "const { requiresIsolatedProjectRuntime: destructured } = policy;",
+          "destructured(ctx);",
         ].join("\n"),
       ),
-      4,
+      7,
     );
     // An unrelated local with an unrelated name stays uncounted.
     assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
