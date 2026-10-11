@@ -646,6 +646,8 @@ describe("hosted HTTP host composition", () => {
 
   it("wipes the host file read buffer and stops waiting when close never settles", async () => {
     const buffers: Uint8Array[] = [];
+    const releases: Array<() => void> = [];
+    let opened = 0;
     const handle = {
       read(buffer: Uint8Array, offset: number) {
         buffers.push(buffer);
@@ -656,20 +658,34 @@ describe("hosted HTTP host composition", () => {
       close() {
         // The buffer is already wiped when close starts.
         assertEquals(buffers[0]!.every((byte) => byte === 0), true);
-        return new Promise<void>(() => {});
+        return new Promise<void>((resolve) => releases.push(resolve));
       },
     };
-    await assertRejects(
-      () =>
-        readHostFilePrefix("/host/configuration-key", {
-          maxBytes: 64,
-          closeTimeoutMs: 10,
-          open: () => Promise.resolve(handle),
-        }),
-      DOMException,
-      "timed out",
-    );
+    const read = () =>
+      readHostFilePrefix("/host/configuration-key", {
+        maxBytes: 64,
+        closeTimeoutMs: 10,
+        open: () => {
+          opened++;
+          return Promise.resolve(handle);
+        },
+      });
+    await assertRejects(read, DOMException, "timed out");
     assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+
+    // Stalled closes are counted; past the limit a read is refused before opening a file.
+    for (let i = 0; i < 3; i++) await assertRejects(read, DOMException, "timed out");
+    assertEquals(opened, 4);
+    await assertRejects(read, Error, "still closing");
+    assertEquals(opened, 4);
+
+    // Once the closes settle, reads are admitted again.
+    for (const release of releases) release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await assertRejects(read, DOMException, "timed out");
+    assertEquals(opened, 5);
+    for (const release of releases) release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
   it("detaches a broker token read that never settles", async () => {

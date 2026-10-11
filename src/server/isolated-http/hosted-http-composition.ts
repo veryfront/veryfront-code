@@ -28,6 +28,9 @@ const SOURCE_RECORDS_REFRESH_MS = 60_000;
 const HOST_FILE_READ_TIMEOUT_MS = 5_000;
 /** Bound for closing a host file handle after its bytes were read. */
 const HOST_FILE_CLOSE_TIMEOUT_MS = 2_000;
+/** Host file reads are refused while this many handle closes have not settled. */
+const MAX_STALLED_HOST_FILE_CLOSES = 4;
+let stalledHostFileCloses = 0;
 /** Bound on one broker token read, below the allocator client's 5 s request deadline. */
 const TOKEN_READ_TIMEOUT_MS = 2_000;
 /** Bound on one read of the source records file, below the resolver's 10 s deadline. */
@@ -244,6 +247,9 @@ export async function readHostFilePrefix(
   },
 ): Promise<Uint8Array> {
   options.signal?.throwIfAborted();
+  if (stalledHostFileCloses >= MAX_STALLED_HOST_FILE_CLOSES) {
+    throw new Error("Host file handles are still closing");
+  }
   const limit = options.maxBytes + 1;
   const handle = await (options.open ?? open)(path, "r");
   const buffer = new Uint8Array(limit);
@@ -266,15 +272,27 @@ export async function readHostFilePrefix(
     // Wipe before closing, so a close that never settles cannot retain the bytes.
     buffer.fill(0);
   }
+  let closeSettled = false;
+  const closing = handle.close();
+  closing.then(() => closeSettled = true, () => closeSettled = true);
   try {
     await settleWithin(
-      handle.close(),
+      closing,
       options.signal ?? new AbortController().signal,
       options.closeTimeoutMs ?? HOST_FILE_CLOSE_TIMEOUT_MS,
     );
   } catch (closeError) {
     // A failed or stalled close returns nothing, so the copy is wiped as well.
     result?.fill(0);
+    if (!closeSettled) {
+      // The handle stays open until its close settles; count it so stalled closes
+      // cannot accumulate handles.
+      stalledHostFileCloses++;
+      const settled = () => {
+        stalledHostFileCloses--;
+      };
+      closing.then(settled, settled);
+    }
     if (!failed) throw closeError;
   }
   if (failed) throw failure;
