@@ -21,14 +21,15 @@ import { parse } from "npm:@babel/parser@7.29.2";
  *   `predicate.call(...)` / `predicate.apply(...)` and tagged templates;
  * - predicates imported under another name (`import { p as q }`);
  * - local aliases (`const q = p`), member aliases (`const q = policy.p`) and
- *   destructured aliases (`const { p: q } = policy`), transitively;
+ *   destructured aliases (`const { p: q } = policy`), also through `as`, `satisfies`,
+ *   `!` or parentheses, transitively;
  * - every runtime use of `allowHostProjectCodeExecution`, including negation and
  *   `=== true` / `!== true` comparisons, reads, destructuring and propagation keys;
  * - literal `allowHostProjectCodeExecution: true` grants in values and types, including
  *   `as` / `satisfies` assertion types, class fields and constructor parameter properties
  *   initialized to or typed as `true`, assignments of `true` (`=`, `||=`, `??=`),
- *   destructuring and parameter defaults of `true`, getters returning `true`, and `true`
- *   wrapped in `as const`,
+ *   destructuring and parameter defaults of `true`, getters returning `true`, JSX props
+ *   (`<C allowHostProjectCodeExecution />` or `={true}`), and `true` wrapped in `as const`,
  *   `<const>` or parentheses;
  * - TypeScript and JavaScript sources (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`).
  *
@@ -385,7 +386,8 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       const local = nameOf(node.local);
       if (imported !== undefined && local !== undefined) links.push([imported, local]);
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
-      const init = node.init;
+      // `const q = p as Guard`, `const q = (policy.p)!`: aliases through transparent wrappers.
+      const init = unwrapExpression(node.init);
       if (node.id.type === "Identifier" && isNode(init) && init.type === "Identifier") {
         links.push([init.name as string, node.id.name as string]);
       } else if (
@@ -515,6 +517,23 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
           result.guards++;
           if (node.shorthand) return;
           visitChildren(node, false, node.key);
+          return;
+        }
+        break;
+      case "JSXAttribute":
+        // `<Runtime allowHostProjectCodeExecution />` or `={true}` is a grant; any other
+        // value is a use.
+        if (isNode(node.name) && node.name.type === "JSXIdentifier" && node.name.name === FLAG) {
+          const value = node.value;
+          const expression = isNode(value) && value.type === "JSXExpressionContainer"
+            ? value.expression
+            : undefined;
+          if (value === null || value === undefined || isTrue(expression)) {
+            result.grants++;
+            return;
+          }
+          result.guards++;
+          if (isNode(value)) visit(value, false);
           return;
         }
         break;
@@ -844,9 +863,13 @@ describe("execution surface inventory", () => {
           "isSharedProjectRuntime.call(undefined, ctx);",
           "policy.isHostRealmApiExecution.apply(policy, [true]);",
           "requiresIsolatedProjectRuntime`tagged`;",
+          "const asserted = policy.requiresIsolatedProjectRuntime as Guard;",
+          "asserted(ctx);",
+          "const wrapped = (isSharedProjectRuntime)!;",
+          "wrapped(ctx);",
         ].join("\n"),
       ),
-      8,
+      10,
     );
     // An unrelated local with an unrelated name stays uncounted.
     assertEquals(guards('import { other as needsIsolation } from "./x.ts"; needsIsolation();'), 0);
@@ -912,10 +935,16 @@ describe("execution surface inventory", () => {
         "const view = <Page allowed={options.allowHostProjectCodeExecution} />;",
         "if (requiresIsolatedProjectRuntime(ctx)) stop();",
         "module.exports = { allowHostProjectCodeExecution: true };",
+        "const bare = <Runtime allowHostProjectCodeExecution />;",
+        "const literal = <Runtime allowHostProjectCodeExecution={true} />;",
+        "const passed = <Runtime allowHostProjectCodeExecution={enabled} />;",
+        "const off = <Runtime allowHostProjectCodeExecution={false} />;",
       ].join("\n"),
       "js",
     );
-    assertEquals(analysis.guards, 2);
-    assertEquals(analysis.grants, 1);
+    // Member read, predicate call, and JSX props with a non-literal-true value (2).
+    assertEquals(analysis.guards, 4);
+    // Object property, bare JSX prop, and JSX prop set to `true`.
+    assertEquals(analysis.grants, 3);
   });
 });
