@@ -106,7 +106,7 @@ jobs:
           else
             gh release create v0.1.1263 --repo veryfront/veryfront-code --verify-tag --title v0.1.1263 --generate-notes --notes 'Binaries: https://github.com/veryfront/veryfront/releases/tag/v0.1.1263. Recovered original tested artifacts from run 35751966714 at commit 8f1cd570de295d1de9cdd4adc4cc3a5558539bac after publishing token expiry. No npm republish.'
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: recovered-1263-assets
           path: recovered-assets.json
