@@ -419,7 +419,11 @@ export function createHostedHttpResolver(
   const session = { ...options.session };
   if (
     typeof session.expectedBrokerInstanceId !== "string" || !session.expectedBrokerInstanceId ||
-    typeof session.connectTransport !== "function" || typeof session.allocator !== "object"
+    typeof session.connectTransport !== "function" || session.allocator === null ||
+    typeof session.allocator !== "object" ||
+    (["allocate", "observe", "renew", "release"] as const).some((operation) =>
+      typeof session.allocator[operation] !== "function"
+    )
   ) throw new TypeError("Hosted HTTP resolver requires a host executor session");
   const prepareMs = limit(
     options.prepareTimeoutMs,
