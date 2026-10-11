@@ -677,6 +677,8 @@ describe("hosted HTTP resolver", () => {
         { session: { ...options().session, expectedBrokerInstanceId: "-broker" } },
         { session: { ...options().session, expectedBrokerInstanceId: "b".repeat(129) } },
         { session: { ...options().session, expectedBrokerInstanceId: 7 as never } },
+        { session: { ...options().session, ownerSignal: {} as never } },
+        { session: undefined as never },
         { session: { ...options().session, pollIntervalMs: 0 } },
         { session: { ...options().session, requestTimeoutMs: 30_001 } },
         { session: { ...options().session, cleanupTimeoutMs: 1.5 } },
