@@ -217,9 +217,13 @@ export async function indexKnowledgeDocument(
   const canonicalVersion = requirePublishedCanonicalVersion(published);
   const source = await createFileSystem().readTextFile(input.localPath);
   signal?.throwIfAborted();
+  const sourceChecksum = await computeHash(source);
+  if (canonicalVersion.checksum !== undefined && sourceChecksum !== canonicalVersion.checksum) {
+    throw new Error("Canonical indexing requires the verified complete source checksum.");
+  }
   if (
     input.checksumAcknowledgement === "legacy-null" &&
-    (!canonicalVersion.checksum || await computeHash(source) !== canonicalVersion.checksum)
+    (!canonicalVersion.checksum || sourceChecksum !== canonicalVersion.checksum)
   ) {
     throw new Error("Legacy canonical indexing requires the verified complete source checksum.");
   }

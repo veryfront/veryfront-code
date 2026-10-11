@@ -17,10 +17,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const PROBE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const activeProbeFlights = new Set<string>();
 const RuntimeAbortSignalTimeout = AbortSignal.timeout;
+const RuntimeCryptoRandomUUID = crypto.randomUUID.bind(crypto);
 const RuntimeEncodeURIComponent = encodeURIComponent;
 const RuntimeArrayIsArray = Array.isArray;
 const RuntimeArrayPrototypeSort = Array.prototype.sort;
 const RuntimeJSONstringify = JSON.stringify;
+const RuntimeNumberIsSafeInteger = Number.isSafeInteger;
 const RuntimeObjectCreate = Object.create;
 const RuntimeObjectDefineProperty = Object.defineProperty;
 const RuntimeObjectKeys = Object.keys;
@@ -52,6 +54,7 @@ export interface RuntimeOwnershipProbeRunRequest {
   runId: string;
   projectId: string;
   canonicalRunId?: string;
+  attempt?: number;
 }
 
 export interface RuntimeOwnershipProbeSessionInput {
@@ -235,8 +238,15 @@ function isStagingContext(
 function canonicalSourcePath(
   activation: RuntimeOwnershipProbeActivation,
   admittedRunId: string,
+  artifactIdentity: string,
 ): string {
-  return `knowledge/context-runtime-host-owned-stage-probe-20261011/${activation.probeId}/${admittedRunId}/ownership.json`;
+  return `knowledge/context-runtime-host-owned-stage-probe-20261011/${activation.probeId}/${admittedRunId}/${artifactIdentity}/ownership.json`;
+}
+
+function attemptLabelForRequest(request: RuntimeOwnershipProbeRunRequest): string | undefined {
+  if (request.attempt === undefined) return undefined;
+  if (!RuntimeNumberIsSafeInteger(request.attempt) || request.attempt < 1) return undefined;
+  return `attempt-${request.attempt}`;
 }
 
 interface CanonicalSnapshot {
@@ -398,35 +408,42 @@ async function readRunSnapshot(
 
 function eventKindForPhase(
   activation: RuntimeOwnershipProbeActivation,
+  eventIdentity: string,
   phase: RuntimeOwnershipProbePhase,
 ): string {
-  return `veryfront.runtime-ownership.${activation.probeId}.${phase}`;
+  return `veryfront.runtime-ownership.${activation.probeId}.${eventIdentity}.${phase}`;
 }
 
 function eventPayloadForPhase(
   activation: RuntimeOwnershipProbeActivation,
+  eventIdentity: string,
   phase: RuntimeOwnershipProbePhase,
   runId: string,
+  attemptLabel?: string,
 ) {
   const value = RuntimeObjectCreate(null) as Record<string, unknown>;
   value.probe = "project-run-runtime-ownership";
   value.probeId = activation.probeId;
+  if (attemptLabel !== undefined) value.attemptLabel = attemptLabel;
+  value.eventIdentity = eventIdentity;
   value.phase = phase;
   value.runId = runId;
   const payload = RuntimeObjectCreate(null) as Record<string, unknown>;
   payload.type = "RUNTIME_EVENT_RECORDED";
   payload.runtime = "veryfront";
-  payload.kind = eventKindForPhase(activation, phase);
+  payload.kind = eventKindForPhase(activation, eventIdentity, phase);
   payload.value = value;
   return payload;
 }
 
 function eventAppendBodyForPhase(
   activation: RuntimeOwnershipProbeActivation,
+  eventIdentity: string,
   phase: RuntimeOwnershipProbePhase,
   runId: string,
+  attemptLabel?: string,
 ) {
-  const events = [eventPayloadForPhase(activation, phase, runId)];
+  const events = [eventPayloadForPhase(activation, eventIdentity, phase, runId, attemptLabel)];
   RuntimeObjectDefineProperty(events, "toJSON", {
     configurable: true,
     value() {
@@ -489,11 +506,20 @@ export function createProjectRunRuntimeOwnershipProbe(
       if (input.request.projectId !== activation.projectId) return undefined;
       const admittedRunId = input.request.canonicalRunId;
       if (admittedRunId === undefined || !UUID_RE.test(admittedRunId)) return undefined;
+      const attemptLabel = attemptLabelForRequest(input.request);
+      if (input.request.attempt !== undefined && attemptLabel === undefined) return undefined;
       if (!isStagingContext(input.ctx, activation)) return undefined;
 
       let currentContentHash: string | undefined;
       let currentVersionHash: string | undefined;
-      const sourcePath = canonicalSourcePath(activation, admittedRunId);
+      const sessionIdentity = `session-${RuntimeCryptoRandomUUID()}`;
+      const artifactIdentity = attemptLabel === undefined
+        ? sessionIdentity
+        : `${attemptLabel}/${sessionIdentity}`;
+      const eventIdentity = attemptLabel === undefined
+        ? sessionIdentity
+        : `${attemptLabel}.${sessionIdentity}`;
+      const sourcePath = canonicalSourcePath(activation, admittedRunId, artifactIdentity);
       const runPhase = async (phase: RuntimeOwnershipProbePhase): Promise<void> => {
         const baseReceipt = {
           probe: "project-run-runtime-ownership" as const,
@@ -535,10 +561,14 @@ export function createProjectRunRuntimeOwnershipProbe(
             RuntimeEncodeURIComponent(sourcePath)
           }`;
           const content = "project-run-runtime-ownership" + "\n" + activation.probeId + "\n" +
+            eventIdentity +
+            "\n" +
+            (attemptLabel ?? "") +
+            "\n" +
             phase +
             "\n" + admittedRunId + "\n" + sourcePath;
           const sourceHash = await computeHash(content);
-          const eventKind = eventKindForPhase(activation, phase);
+          const eventKind = eventKindForPhase(activation, eventIdentity, phase);
           const canonicalParams = input.canonicalBranchId === undefined
             ? undefined
             : { branch_id: input.canonicalBranchId };
@@ -776,7 +806,13 @@ export function createProjectRunRuntimeOwnershipProbe(
           try {
             eventResponse = await eventAppendClient.post<unknown>(
               runEventsPath(admittedRunId),
-              eventAppendBodyForPhase(activation, phase, admittedRunId),
+              eventAppendBodyForPhase(
+                activation,
+                eventIdentity,
+                phase,
+                admittedRunId,
+                attemptLabel,
+              ),
               { signal },
             );
           } catch (error) {

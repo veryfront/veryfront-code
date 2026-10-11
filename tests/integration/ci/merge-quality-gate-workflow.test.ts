@@ -814,6 +814,56 @@ done
     assertEquals(config.exclude, ["node_modules", "dist", ".cache", "npm"]);
   });
 
+  it("collects context ownership coverage in the head-owned Sonar job while keeping the pool trusted", async () => {
+    const jobs = asRecord(
+      asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow").jobs,
+      "jobs",
+    );
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards");
+    assertEquals(shards.uses, "veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main");
+    const sonar = asRecord(jobs["sonar-coverage"], "Sonar coverage");
+    assert(Array.isArray(sonar.steps));
+    const steps = sonar.steps.map((step) => asRecord(step, "Sonar coverage step"));
+    const collectorIndex = steps.findIndex((step) =>
+      step.name === "Collect context ownership coverage from checked-out source"
+    );
+    const mergeIndex = steps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
+    assert(
+      collectorIndex >= 0 && collectorIndex < mergeIndex,
+      "Head-owned tests must produce raw coverage before the final merge",
+    );
+    const collector = steps[collectorIndex];
+    const merge = steps[mergeIndex];
+    assert(collector);
+    assert(merge);
+    const command = String(collector.run);
+    assertStringIncludes(
+      command,
+      "deno task test:file --coverage=coverage-profiles/coverage-context-ownership",
+    );
+    for (
+      const target of [
+        "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+        "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+      ]
+    ) assertStringIncludes(command, target);
+    assertStringIncludes(
+      command,
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(command.includes("coverage:ci:merge"), false);
+    assertStringIncludes(
+      String(merge.run),
+      "coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(
+      steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
+      1,
+    );
+  });
+
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");

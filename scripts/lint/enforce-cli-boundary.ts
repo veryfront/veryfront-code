@@ -21,12 +21,6 @@ const SKIP_PATTERNS = [
 ];
 
 const DIRECT_INTERNAL_PREFIX = "#veryfront/";
-const ALLOWED_INTERNAL_SPECIFIERS = new Set([
-  // CLI knowledge ingestion wraps provider work in the host-owned cloud context without
-  // promoting credential-bearing context helpers into the public provider API.
-  "#veryfront/provider/veryfront-cloud/context.ts",
-]);
-
 
 interface Violation {
   file: string;
@@ -70,7 +64,6 @@ function lineOf(source: string, index: number): number {
 }
 
 function classifyViolation(specifier: string): string | null {
-  if (ALLOWED_INTERNAL_SPECIFIERS.has(specifier)) return null;
   if (!specifier.startsWith(DIRECT_INTERNAL_PREFIX)) return null;
 
   // Explicitly call out deep .ts imports (requested policy).

@@ -72,9 +72,12 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 const canonicalKnowledgeFixtureReceipt = {
   file_id: "11111111-1111-4111-8111-111111111111",
   version_id: "22222222-2222-4222-8222-222222222222",
-  checksum: "fixture-checksum",
 };
-function canonicalKnowledgeIndexResponse(url: string, init?: RequestInit): Response | undefined {
+function canonicalKnowledgeIndexResponse(
+  url: string,
+  init?: RequestInit,
+  publishedChecksums?: ReadonlyMap<string, string>,
+): Response | undefined {
   const body = requestJsonBody(init);
   const parsedUrl = new URL(url);
   if (/^\/runs\/[^/]+\/events$/.test(parsedUrl.pathname)) {
@@ -104,11 +107,26 @@ function canonicalKnowledgeIndexResponse(url: string, init?: RequestInit): Respo
     return Response.json({
       ...canonicalKnowledgeFixtureReceipt,
       path,
+      checksum: publishedChecksums?.get(path),
       indexed_chunk_count: Array.isArray(body?.chunks) ? body.chunks.length : 0,
       model: body?.model,
     });
   }
   return undefined;
+}
+
+async function canonicalKnowledgePublicationResponse(
+  path: string,
+  init: RequestInit | undefined,
+  publishedChecksums: Map<string, string>,
+): Promise<Response> {
+  const content = requestJsonBody(init)?.content;
+  if (typeof content !== "string") {
+    throw new Error("Mock canonical publication requires string source content");
+  }
+  const checksum = await computeHash(content);
+  publishedChecksums.set(path, checksum);
+  return Response.json({ ...canonicalKnowledgeFixtureReceipt, path, checksum });
 }
 
 function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
@@ -2603,6 +2621,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       );
       const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
       const indexUrls: string[] = [];
+      const publishedChecksums = new Map<string, string>();
 
       const result = await withMockFetch(
         (async (input, init) => {
@@ -2621,7 +2640,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               : null,
           );
           if (url.endsWith("/index")) indexUrls.push(url);
-          const indexed = canonicalKnowledgeIndexResponse(url, init);
+          const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
           if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             assertEquals(
@@ -2635,12 +2654,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(
-            JSON.stringify({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/guide.md" }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/guide.md",
+            init,
+            publishedChecksums,
           );
         }) as typeof fetch,
         async () =>
@@ -2701,6 +2718,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         },
       );
       const calls: Array<{ url: string; writer: string | null }> = [];
+      const publishedChecksums = new Map<string, string>();
 
       const result = await withEnv(
         { VERYFRONT_API_BASE_URL: hostile.base, VERYFRONT_API_URL: "" },
@@ -2722,7 +2740,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                     "X-Veryfront-Run-Event-Token",
                   ),
                 });
-                const indexed = canonicalKnowledgeIndexResponse(url, init);
+                const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
                 if (indexed) return indexed;
                 if (url.endsWith("/uploads/uploads%2Fguide.md")) {
                   return new Response("# Guide\n\nOrigin-bound knowledge.", {
@@ -2730,10 +2748,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                     headers: { "Content-Type": "application/octet-stream" },
                   });
                 }
-                return Response.json({
-                  ...canonicalKnowledgeFixtureReceipt,
-                  path: "knowledge/guide.md",
-                });
+                return await canonicalKnowledgePublicationResponse(
+                  "knowledge/guide.md",
+                  init,
+                  publishedChecksums,
+                );
               }) as typeof fetch,
               async () =>
                 await new ProjectRunExecuteHandler().handle(
@@ -2808,6 +2827,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           },
         );
         const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const publishedChecksums = new Map<string, string>();
         let indexCalls = 0;
         let embeddingCalls = 0;
 
@@ -2839,7 +2859,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
                 page_info: { next: null },
               });
             }
-            const indexed = canonicalKnowledgeIndexResponse(url, init);
+            const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
             if (indexed) {
               if (url.endsWith("/index")) indexCalls++;
               if (url.endsWith("/embeddings")) embeddingCalls++;
@@ -2863,15 +2883,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               `/projects/demo-project/files/${encodedSourcePath}`,
             );
             uploads.push({ url, body: requestJsonBody(init) ?? {} });
-            return new Response(
-              JSON.stringify({
-                ...canonicalKnowledgeFixtureReceipt,
-                path: `${knowledgePath}/guide.md`,
-              }),
-              {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-              },
+            return await canonicalKnowledgePublicationResponse(
+              `${knowledgePath}/guide.md`,
+              init,
+              publishedChecksums,
             );
           }) as typeof fetch,
           async () =>
@@ -3223,6 +3238,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       let publications = 0;
       let indexCommits = 0;
       let cursor = 0;
+      const publishedChecksums = new Map<string, string>();
       const result = await withMockFetch(
         async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
@@ -3259,7 +3275,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             throw new Error("Unavailable index must not commit");
           }
           publications++;
-          return Response.json({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/topic.md" });
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/topic.md",
+            init,
+            publishedChecksums,
+          );
         },
         () =>
           new ProjectRunExecuteHandler().handle(
@@ -3312,6 +3332,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       let providerSettled = false;
       let indexCommits = 0;
       const acknowledgements: boolean[] = [];
+      const publishedChecksums = new Map<string, string>();
       const body = {
         runId: "run_index_cancel",
         kind: "task",
@@ -3377,7 +3398,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           indexCommits++;
           throw new Error("Cancelled indexing must not commit");
         }
-        return Response.json({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/topic.md" });
+        return await canonicalKnowledgePublicationResponse(
+          "knowledge/topic.md",
+          init,
+          publishedChecksums,
+        );
       }, async () => {
         const pending = new ProjectRunExecuteHandler().handle(
           new Request(signed.request, { signal: controller.signal }),
@@ -3437,6 +3462,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const originalToLowerCase = String.prototype.toLowerCase;
     let interceptedMime = false;
     const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const publishedChecksums = new Map<string, string>();
     let result;
     try {
       result = await withMockFetch(
@@ -3448,7 +3474,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             : input.toString();
           const observation = respondObservation(url, init);
           if (observation) return observation;
-          const indexed = canonicalKnowledgeIndexResponse(url, init);
+          const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
           if (indexed) return indexed;
           if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md")) {
             const observed = observeFetchRequestInit(init);
@@ -3486,12 +3512,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }
           assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
           uploads.push({ url, body: requestJsonBody(init) ?? {} });
-          return new Response(
-            JSON.stringify({ ...canonicalKnowledgeFixtureReceipt, path: "knowledge/guide.md" }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
+          return await canonicalKnowledgePublicationResponse(
+            "knowledge/guide.md",
+            init,
+            publishedChecksums,
           );
         }) as typeof fetch,
         async () =>
@@ -3518,6 +3542,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
       const sources = ["first", "second", "third"];
       const outputs = new Map<string, string>();
+      const publishedChecksums = new Map<string, string>();
       const attempts: string[] = [];
       const held = Promise.withResolvers<void>();
       const controller = new AbortController();
@@ -3553,7 +3578,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const url = input instanceof Request ? input.url : String(input);
         const observation = respondObservation?.(url, init);
         if (observation) return observation;
-        const indexed = canonicalKnowledgeIndexResponse(url, init);
+        const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
         if (indexed) return indexed;
         if (url.endsWith("/cancellation-ack")) {
           stoppedAcknowledgements++;
@@ -3587,7 +3612,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         }
         const content = String(requestJsonBody(init)?.content);
         outputs.set(path, content);
-        return Response.json({ ...canonicalKnowledgeFixtureReceipt, path });
+        return await canonicalKnowledgePublicationResponse(path, init, publishedChecksums);
       }, async () => {
         const pending = execute(`run_retained_${cancel}`, cancel ? controller.signal : undefined);
         if (cancel) {

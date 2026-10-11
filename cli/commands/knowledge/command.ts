@@ -1,4 +1,4 @@
-import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { runWithVeryfrontCloudContextAsync } from "veryfront/provider/veryfront-cloud/cli-context";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 type SafeParseResult<T> = { success: true; data: T } | {

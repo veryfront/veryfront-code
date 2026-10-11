@@ -198,6 +198,54 @@ class RecordingClient implements RuntimeOwnershipProbeApiClient {
   }
 }
 
+interface BoundaryClientOptions {
+  get?: RuntimeOwnershipProbeApiClient["get"];
+  post?: RuntimeOwnershipProbeApiClient["post"] | null;
+  put?: RuntimeOwnershipProbeApiClient["put"];
+}
+
+function boundaryRecordingClient(): RecordingClient {
+  return new RecordingClient();
+}
+
+function boundaryClient(
+  base: RuntimeOwnershipProbeApiClient,
+  options: BoundaryClientOptions = {},
+): RuntimeOwnershipProbeApiClient {
+  const client: RuntimeOwnershipProbeApiClient = {
+    get: options.get ?? ((path, params, requestOptions) => base.get(path, params, requestOptions)),
+    put: options.put ?? ((path, body, requestOptions) => base.put(path, body, requestOptions)),
+  };
+  if (options.post !== null) {
+    client.post = options.post ??
+      ((path, body, requestOptions) =>
+        base.post?.(path, body, requestOptions) ??
+          Promise.reject(new Error("post unavailable")));
+  }
+  return client;
+}
+
+function createReadbackClient(
+  base: RuntimeOwnershipProbeApiClient,
+  options: BoundaryClientOptions = {},
+): RuntimeOwnershipProbeApiClient {
+  return boundaryClient(base, options);
+}
+
+function createEventAppendClient(
+  base: RuntimeOwnershipProbeApiClient,
+  options: BoundaryClientOptions = {},
+): RuntimeOwnershipProbeApiClient {
+  return boundaryClient(base, options);
+}
+
+function createHeartbeatClient(
+  base: RuntimeOwnershipProbeApiClient,
+  options: BoundaryClientOptions = {},
+): RuntimeOwnershipProbeApiClient {
+  return boundaryClient(base, options);
+}
+
 describe("project-run runtime ownership probe", () => {
   afterEach(() => __resetProjectRunRuntimeOwnershipProbeFlightsForTests());
 
@@ -980,5 +1028,342 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(serializedReceipts.includes("another-raw-secret-token"), false);
     assertEquals(serializedReceipts.includes("Bearer secret"), false);
     assertEquals(serializedReceipts.includes("name-getter-secret"), false);
+  });
+
+  it("rejects invalid retry attempt labels before creating a runtime session", () => {
+    const probe = createProjectRunRuntimeOwnershipProbe(activation);
+    for (const attempt of [0, -1, 1.5, Number.NaN]) {
+      assertEquals(
+        probe.createSession({
+          ...baseSessionInput(boundaryRecordingClient()),
+          request: { runId, canonicalRunId: runId, projectId: "proj-1", attempt },
+        }),
+        undefined,
+      );
+    }
+    assertExists(
+      probe.createSession({
+        ...baseSessionInput(boundaryRecordingClient()),
+        request: { runId, canonicalRunId: runId, projectId: "proj-1", attempt: 1 },
+      }),
+    );
+  });
+
+  it("reports invalid event and run snapshots before and after guarded writes", async () => {
+    const cases = [
+      {
+        name: "event-before",
+        expectedReason: "event-readback-before-failed",
+        expectedErrorType: "InvalidRunEventsReadback",
+        expectedWrites: 0,
+        readbackFor(client: RecordingClient): RuntimeOwnershipProbeApiClient {
+          return createReadbackClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) =>
+              isRunEventsPath(path)
+                ? { data: "not-an-array", page_info: { next: null } } as T
+                : await client.get<T>(path, params, options),
+          });
+        },
+      },
+      {
+        name: "run-before",
+        expectedReason: "run-readback-before-failed",
+        expectedErrorType: "InvalidRunReadback",
+        expectedWrites: 0,
+        readbackFor(client: RecordingClient): RuntimeOwnershipProbeApiClient {
+          return createReadbackClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) => isRunPath(path) ? null as T : await client.get<T>(path, params, options),
+          });
+        },
+      },
+      {
+        name: "event-after",
+        expectedReason: "event-readback-after-failed",
+        expectedErrorType: "InvalidRunEventsReadback",
+        expectedWrites: 1,
+        readbackFor(client: RecordingClient): RuntimeOwnershipProbeApiClient {
+          let eventReads = 0;
+          return createReadbackClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) => {
+              if (!isRunEventsPath(path)) return await client.get<T>(path, params, options);
+              eventReads++;
+              return eventReads === 2
+                ? { data: "not-an-array", page_info: { next: null } } as T
+                : await client.get<T>(path, params, options);
+            },
+          });
+        },
+      },
+      {
+        name: "run-after",
+        expectedReason: "run-readback-after-failed",
+        expectedErrorType: "InvalidRunReadback",
+        expectedWrites: 1,
+        readbackFor(client: RecordingClient): RuntimeOwnershipProbeApiClient {
+          let runReads = 0;
+          return createReadbackClient(client, {
+            get: async <T>(
+              path: string,
+              params?: Record<string, string>,
+              options?: { signal?: AbortSignal },
+            ) => {
+              if (!isRunPath(path)) return await client.get<T>(path, params, options);
+              runReads++;
+              return runReads === 2 ? null as T : await client.get<T>(path, params, options);
+            },
+          });
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const receipts: RuntimeOwnershipProbeReceipt[] = [];
+      const client = boundaryRecordingClient();
+      const session = createProjectRunRuntimeOwnershipProbe(
+        activation,
+        (receipt) => receipts.push(receipt),
+      )
+        .createSession({
+          ...baseSessionInput(client),
+          createReadbackClient: () => testCase.readbackFor(client),
+          createEventAppendClient: () => createEventAppendClient(client),
+          createHeartbeatClient: () => createHeartbeatClient(client),
+        });
+      assertExists(session, testCase.name);
+
+      await session.beforeExecute();
+
+      assertEquals(receipts[0]!.status, "error", testCase.name);
+      assertEquals(receipts[0]!.reason, testCase.expectedReason, testCase.name);
+      assertEquals(receipts[0]!.errorType, testCase.expectedErrorType, testCase.name);
+      assertEquals(client.writes.length, testCase.expectedWrites, testCase.name);
+    }
+  });
+
+  it("reports absent event and heartbeat append clients after canonical readback succeeds", async () => {
+    const missingEventReceipts: RuntimeOwnershipProbeReceipt[] = [];
+    const missingEventClient = boundaryRecordingClient();
+    const missingEventSession = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => missingEventReceipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(missingEventClient),
+        createReadbackClient: () => createReadbackClient(missingEventClient),
+        createEventAppendClient: () => createEventAppendClient(missingEventClient, { post: null }),
+      });
+    assertExists(missingEventSession);
+
+    await missingEventSession.beforeExecute();
+
+    assertEquals(missingEventReceipts[0]!.status, "error");
+    assertEquals(missingEventReceipts[0]!.reason, "event-append-client-unavailable");
+
+    const missingHeartbeatReceipts: RuntimeOwnershipProbeReceipt[] = [];
+    const missingHeartbeatClient = boundaryRecordingClient();
+    const missingHeartbeatSession = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => missingHeartbeatReceipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(missingHeartbeatClient),
+        createReadbackClient: () => createReadbackClient(missingHeartbeatClient),
+        createEventAppendClient: () => createEventAppendClient(missingHeartbeatClient),
+        createHeartbeatClient: () => createHeartbeatClient(missingHeartbeatClient, { post: null }),
+      });
+    assertExists(missingHeartbeatSession);
+
+    await missingHeartbeatSession.beforeExecute();
+
+    assertEquals(missingHeartbeatReceipts[0]!.status, "error");
+    assertEquals(missingHeartbeatReceipts[0]!.reason, "heartbeat-client-unavailable");
+  });
+
+  it("reports rejected current writes without continuing into event or heartbeat writes", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = boundaryRecordingClient();
+    const rejectingCanonicalClient = createReadbackClient(client, {
+      put: async () => {
+        throw new Error("Veryfront API request failed: 403 Forbidden");
+      },
+    });
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(rejectingCanonicalClient),
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => createEventAppendClient(client),
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+
+    assertEquals(receipts[0]!.status, "error");
+    assertEquals(receipts[0]!.errorType, "Error");
+    assertEquals(client.writes.length, 0);
+    assertEquals(client.posts.length, 0);
+  });
+
+  it("detects stale event append mutations after stale canonical writes are denied", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = boundaryRecordingClient();
+    let stale = false;
+    const canonicalClient = createReadbackClient(client, {
+      put: async (path, body, options) => {
+        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await client.put(path, body, options);
+      },
+    });
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(canonicalClient),
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => createEventAppendClient(client),
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    stale = true;
+    await session.afterStopAcknowledged();
+
+    assertEquals(receipts[0]!.status, "ok");
+    assertEquals(receipts[1]!.status, "error");
+    assertEquals(receipts[1]!.reason, "stale-event-append-mutated-events");
+  });
+
+  it("detects stale heartbeat mutations to run state after stale event writes are rejected", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = boundaryRecordingClient();
+    let stale = false;
+    const canonicalClient = createReadbackClient(client, {
+      put: async (path, body, options) => {
+        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        return await client.put(path, body, options);
+      },
+    });
+    const eventClient = createEventAppendClient(client, {
+      post: async (path, body, options) => {
+        if (stale) throw new Error("Veryfront API request failed: 409 Conflict");
+        return await client.post(path, body, options);
+      },
+    });
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(canonicalClient),
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => eventClient,
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    stale = true;
+    await session.afterStopAcknowledged();
+
+    assertEquals(receipts[0]!.status, "ok");
+    assertEquals(receipts[1]!.status, "error");
+    assertEquals(receipts[1]!.reason, "stale-heartbeat-mutated-run");
+  });
+
+  it("uses fresh session-owned paths for the same canonical run and retry attempt", async () => {
+    const firstReceipts: RuntimeOwnershipProbeReceipt[] = [];
+    const staleRetryReceipts: RuntimeOwnershipProbeReceipt[] = [];
+    const freshRetryReceipts: RuntimeOwnershipProbeReceipt[] = [];
+    const client = boundaryRecordingClient();
+    const request = { runId, canonicalRunId: runId, projectId: "proj-1", attempt: 1 };
+    const firstSession = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => firstReceipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(client),
+        request,
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => createEventAppendClient(client),
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(firstSession);
+
+    await firstSession.beforeExecute();
+
+    const firstWrite = client.writes[0]!;
+    const firstEventPost = client.posts.find((post) => isRunEventsPath(post.path));
+    assertExists(firstEventPost);
+    assertEquals(firstReceipts[0]!.status, "ok");
+    assertMatch(firstReceipts[0]!.sourcePath, /attempt-1\/session-/);
+
+    const noOpCanonicalClient = createReadbackClient(client, {
+      put: async <T>() => ({ stored: false }) as T,
+    });
+    const staleRetrySession = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => staleRetryReceipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(noOpCanonicalClient),
+        request,
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => createEventAppendClient(client),
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(staleRetrySession);
+
+    await staleRetrySession.beforeExecute();
+
+    assertEquals(staleRetryReceipts[0]!.phase, "current");
+    assertEquals(staleRetryReceipts[0]!.status, "error");
+    assertEquals(staleRetryReceipts[0]!.reason, "canonical-readback-after-absent");
+
+    const freshRetrySession = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => freshRetryReceipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(client),
+        request,
+        createReadbackClient: () => createReadbackClient(client),
+        createEventAppendClient: () => createEventAppendClient(client),
+        createHeartbeatClient: () => createHeartbeatClient(client),
+      });
+    assertExists(freshRetrySession);
+
+    await freshRetrySession.beforeExecute();
+
+    const freshWrite = client.writes.at(-1)!;
+    const freshEventPost = client.posts.filter((post) => isRunEventsPath(post.path)).at(-1);
+    assertExists(freshEventPost);
+    const firstContent = (firstWrite.body as { content: string }).content;
+    const freshContent = (freshWrite.body as { content: string }).content;
+    const firstEventKind = (firstEventPost.body as { events: Array<{ kind?: unknown }> }).events[0]
+      ?.kind;
+    const freshEventKind = (freshEventPost.body as { events: Array<{ kind?: unknown }> }).events[0]
+      ?.kind;
+
+    assertEquals(freshRetryReceipts[0]!.status, "ok");
+    assertEquals(firstWrite.path === freshWrite.path, false);
+    assertEquals(firstContent === freshContent, false);
+    assertEquals(firstEventKind === freshEventKind, false);
   });
 });

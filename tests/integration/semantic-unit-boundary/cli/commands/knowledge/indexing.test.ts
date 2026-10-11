@@ -19,8 +19,20 @@ const published = {
   path: "knowledge/topic.md",
   file_id: fileId,
   version_id: versionId,
-  checksum: "fixture-checksum",
 };
+
+type PublishedFixture = typeof published & { checksum: string };
+
+async function publishedForLocalPath(
+  localPath: string,
+  overrides: Partial<typeof published> = {},
+): Promise<PublishedFixture> {
+  return {
+    ...published,
+    checksum: await computeHash(await Deno.readTextFile(localPath)),
+    ...overrides,
+  };
+}
 
 function embedder(
   onEmbed: (texts: string[], signal?: AbortSignal) => void | Promise<void> = () => {},
@@ -46,12 +58,13 @@ it("ordinary ingestion automatically commits searchable canonical chunks on its 
     let committedPath = "";
     let committedBody: unknown;
     let embeddings = 0;
+    let uploaded: PublishedFixture | undefined;
     const client = createMockClient({
       post: async (path, body) => {
         committedPath = path;
         committedBody = body;
         return {
-          ...published,
+          ...uploaded,
           indexed_chunk_count: 1,
           model: { name: "text-embedding-3-small", provider: "openai", dimension: 1536 },
         };
@@ -69,7 +82,8 @@ it("ordinary ingestion automatically commits searchable canonical chunks on its 
         uploadKnowledgeFile: async (_path, output) => {
           const bytes = await Deno.readTextFile(output);
           assertEquals(bytes.includes("A unique searchable ingestion marker"), true);
-          return published;
+          uploaded = await publishedForLocalPath(output);
+          return uploaded;
         },
         indexKnowledgeDocument: (input) =>
           indexKnowledgeDocument({
@@ -106,12 +120,13 @@ it("canonical indexing preserves imported bytes and links and rejects stale ackn
   try {
     const localPath = `${root}/topic.md`;
     await Deno.writeTextFile(localPath, source);
+    const currentPublished = await publishedForLocalPath(localPath);
     let payload: unknown;
     const client = createMockClient({
       post: async (_path, body) => {
         payload = body;
         return {
-          ...published,
+          ...currentPublished,
           version_id: fileId,
           indexed_chunk_count: 1,
           model: { name: "text-embedding-3-small", provider: "openai", dimension: 1536 },
@@ -124,7 +139,7 @@ it("canonical indexing preserves imported bytes and links and rejects stale ackn
           client,
           projectSlug: "project",
           branch: "preview",
-          published,
+          published: currentPublished,
           localPath,
           embedder: embedder(),
         }),
@@ -152,7 +167,14 @@ it("missing publication receipt, oversized complete sets and provider failures n
         return {};
       },
     });
-    const input = { client, projectSlug: "project", branch: "preview", published, localPath };
+    const currentPublished = await publishedForLocalPath(localPath);
+    const input = {
+      client,
+      projectSlug: "project",
+      branch: "preview",
+      published: currentPublished,
+      localPath,
+    };
     await assertRejects(
       () =>
         indexKnowledgeDocument({
@@ -175,10 +197,12 @@ it("missing publication receipt, oversized complete sets and provider failures n
       "credentials unavailable",
     );
     await Deno.writeTextFile(localPath, "a".repeat(1_100_000));
+    const oversizedPublished = await publishedForLocalPath(localPath);
     await assertRejects(
       () =>
         indexKnowledgeDocument({
           ...input,
+          published: oversizedPublished,
           embedder: embedder(() => {
             throw new Error("must not embed oversized source");
           }),
@@ -398,11 +422,12 @@ it("rejects empty canonical sources when status is denied, stale, or not ready",
   try {
     const localPath = `${root}/empty.md`;
     await Deno.writeTextFile(localPath, "");
+    const emptyPublished = await publishedForLocalPath(localPath);
     let embeddings = 0;
     const baseInput = {
       projectSlug: "project",
       branch: "main",
-      published,
+      published: emptyPublished,
       localPath,
       embedder: embedder(() => {
         embeddings++;
@@ -448,6 +473,7 @@ it("rejects empty canonical sources when named branch lookup is absent, ambiguou
   try {
     const localPath = `${root}/empty.md`;
     await Deno.writeTextFile(localPath, "");
+    const emptyPublished = await publishedForLocalPath(localPath);
     const cases = [
       {
         name: "absent",
@@ -495,7 +521,7 @@ it("rejects empty canonical sources when named branch lookup is absent, ambiguou
             }),
             projectSlug: "project",
             branch: "preview",
-            published,
+            published: emptyPublished,
             localPath,
             embedder: embedder(() => {
               throw new Error("empty source must not embed");
@@ -515,6 +541,7 @@ it("cancellation during provider work settles before returning and never commits
   try {
     const localPath = `${root}/topic.md`;
     await Deno.writeTextFile(localPath, "Text to index");
+    const currentPublished = await publishedForLocalPath(localPath);
     const controller = new AbortController();
     let commits = 0;
     let settled = false;
@@ -530,7 +557,7 @@ it("cancellation during provider work settles before returning and never commits
           client,
           projectSlug: "project",
           branch: "preview",
-          published,
+          published: currentPublished,
           localPath,
           signal: controller.signal,
           embedder: embedder(async (_texts, signal) => {
@@ -583,19 +610,20 @@ it("repeated text chunks retain their actual canonical offsets", async () => {
   try {
     const localPath = `${root}/topic.md`;
     await Deno.writeTextFile(localPath, "a".repeat(6_000));
+    const currentPublished = await publishedForLocalPath(localPath);
     let starts: number[] = [];
     const client = createMockClient({
       post: async (_path, payload) => {
         const body = JSON.parse(JSON.stringify(payload));
         starts = body.chunks.map((item: { start_offset: number }) => item.start_offset);
-        return { ...published, indexed_chunk_count: starts.length, model: body.model };
+        return { ...currentPublished, indexed_chunk_count: starts.length, model: body.model };
       },
     });
     await indexKnowledgeDocument({
       client,
       projectSlug: "project",
       branch: "preview",
-      published,
+      published: currentPublished,
       localPath,
       embedder: embedder(),
     });
@@ -611,6 +639,7 @@ it("publishes more than one embedding batch as one complete canonical index with
     const localPath = `${root}/topic.md`;
     const source = "---\ntype: Topic\n---\n" + "a".repeat(250_000);
     await Deno.writeTextFile(localPath, source);
+    const currentPublished = await publishedForLocalPath(localPath);
     let commits = 0;
     let chunkCount = 0;
     const client = createMockClient({
@@ -622,14 +651,14 @@ it("publishes more than one embedding batch as one complete canonical index with
           assertEquals(source.slice(item.start_offset, item.end_offset), item.content);
           assertEquals(item.metadata.source, published.path);
         }
-        return { ...published, indexed_chunk_count: chunkCount, model: body.model };
+        return { ...currentPublished, indexed_chunk_count: chunkCount, model: body.model };
       },
     });
     await indexKnowledgeDocument({
       client,
       projectSlug: "project",
       branch: "preview",
-      published,
+      published: currentPublished,
       localPath,
       embedder: embedder(),
     });
@@ -679,11 +708,13 @@ it("rejects noncanonical paths before reading source, embedding, or committing",
 
 it("indexes accepted uppercase Markdown without changing its authored path", async () => {
   const root = await makeTempDir();
-  const uppercasePublished = { ...published, path: "knowledge/Concept.MD" };
   try {
     const localPath = `${root}/Concept.MD`;
     const source = "---\ntype: Topic\n---\n# Uppercase concept\nAuthored content.\n";
     await Deno.writeTextFile(localPath, source);
+    const uppercasePublished = await publishedForLocalPath(localPath, {
+      path: "knowledge/Concept.MD",
+    });
     let committedPath = "";
     const receipt = await indexKnowledgeDocument({
       client: createMockClient({
@@ -763,5 +794,59 @@ it("legacy null index acknowledgements require verified existing-version eligibi
     assertEquals(providerCalls, before);
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("rejects changed local bytes before embedding against a published checksum", async () => {
+  const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-index-" });
+  const localPath = `${tempDir}/doc.md`;
+  try {
+    await Deno.writeTextFile(localPath, "# Title\n\nChanged body.\n");
+
+    let embedCalls = 0;
+    let postCalls = 0;
+    const publishedChecksum = await computeHash("# Title\n\nPublished body.\n");
+
+    await assertRejects(
+      () =>
+        indexKnowledgeDocument({
+          client: createMockClient({
+            post: async () => {
+              postCalls++;
+              return {
+                file_id: fileId,
+                version_id: versionId,
+                path: "knowledge/doc.md",
+                checksum: publishedChecksum,
+                indexed_chunk_count: 1,
+                model: { provider: "test", name: "embedding", dimension: 768 },
+              };
+            },
+          }),
+          projectSlug: "project",
+          branch: "main",
+          published: {
+            path: "knowledge/doc.md",
+            file_id: fileId,
+            version_id: versionId,
+            checksum: publishedChecksum,
+          },
+          localPath,
+          embedder: {
+            model: "veryfront-cloud/test/embedding",
+            embedMany: async () => {
+              embedCalls++;
+              return [Array.from({ length: 768 }, () => 0.1)];
+            },
+          },
+        }),
+      Error,
+      "Canonical indexing requires the verified complete source checksum.",
+    );
+
+    assertEquals(embedCalls, 0);
+    assertEquals(postCalls, 0);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
   }
 });

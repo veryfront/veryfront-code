@@ -680,12 +680,22 @@ jobs:
           github-token: ${{ github.token }}
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+      # The public pool runs its trusted main definition, so PR-only collector
+      # additions must execute here against the checked-out source.
+      - name: Collect context ownership coverage from checked-out source
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
       - name: Merge coverage reports for SonarQube
         run: |
           deno task coverage:ci:merge -- --threshold=0 \
             coverage-profiles/coverage-shard-* \
             coverage-profiles/coverage-native-executor \
-            coverage-profiles/coverage-integration-client
+            coverage-profiles/coverage-integration-client \
+            coverage-profiles/coverage-context-ownership
       - name: Upload merged Sonar coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
