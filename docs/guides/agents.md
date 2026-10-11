@@ -539,12 +539,36 @@ successful parse sets `response.object`, and a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
-When the hosted runtime runs an agent, its AG-UI stream reports the parsed value
-as `result` on the `RunFinished` event, and the Runs API stores it as the run's
-`output`. The event has no `result` when the agent declares no `outputSchema`,
-when the output did not parse, or when the run failed or was cancelled. See
-[Run input and output](./run-input-output.md) for what an agent run stores as
-input and output.
+When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
+of the parsed value as `result` on the `RunFinished` event, and the Runs API
+stores that snapshot as the run's `output`. The event has no `result` when the
+agent declares no `outputSchema`, when the output did not parse, or when the run
+failed or was cancelled. See [Run input and output](./run-input-output.md) for
+what an agent run stores as input and output.
+
+`response.object` in your own code is always the parsed value. The snapshot
+equals it when the value is plain JSON: strings, finite numbers, booleans,
+`null`, arrays and plain objects. Otherwise, for example when an `outputSchema`
+transform returns a `Date`, a `bigint` or `undefined`, the stored value is a
+marker object instead:
+
+```json
+{
+  "captureStatus": "partial",
+  "reasons": ["unsupported_object", "unsupported_property"],
+  "value": { "title": "Report", "createdAt": "[unsupported object]" }
+}
+```
+
+- `captureStatus` is `partial` when some of the value was captured, or
+  `unsupported` when none of it could be.
+- `reasons` lists why, for example `unsupported_object`, `unsupported_bigint`,
+  `unsupported_undefined`, `unsupported_property`, `accessor_property`,
+  `circular`, `max_depth`, `array_truncated` or `object_keys_truncated`.
+- `value` holds the JSON-safe part. Values that could not be captured are
+  replaced with `"[unsupported object]"` or `"[unsupported accessor]"`. The
+  snapshot keeps at most 100 array items or object keys per level, 32 levels and
+  1,000 nodes in total.
 
 ## Runtime UTC context
 
