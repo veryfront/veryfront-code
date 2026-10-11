@@ -59,26 +59,24 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
           type: "integer",
           minimum: 0,
           maximum: 1_000,
-          description: "Pagination cursor from the prompt or a previous skill inventory response.",
         },
       },
       additionalProperties: false,
     },
     reference: {
       type: "object",
-      description: "Read one advertised reference file inside a loaded skill.",
       properties: {
         skillId: {
           type: "string",
           maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
           pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-          description: "The skillId returned when the parent skill was loaded.",
+          description: "The loaded skill's ID.",
         },
         file: {
           type: "string",
           minLength: 1,
           maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-          description: "The exact relative file path from the loaded skill's references list.",
+          description: "A path from the loaded skill's references list.",
         },
       },
       required: ["skillId", "file"],
@@ -91,15 +89,7 @@ const STATIC_LOAD_SKILL_INPUT_SCHEMA = {
           type: "string",
           maxLength: SKILL_ID_MAX_LENGTH + ".md".length,
           pattern: "^[a-zA-Z0-9_-]+(?:\\.md)?$",
-          description:
-            'The listed skill ID to load. A lowercase ".md" suffix is accepted for a listed ID.',
-        },
-        file: {
-          type: "string",
-          minLength: 1,
-          maxLength: SKILL_RELATIVE_PATH_MAX_LENGTH,
-          description:
-            "A listed reference file inside the loaded skill. Set load.file to a listed reference path and leave load.skillId unchanged. Reference filenames are not skill IDs.",
+          description: 'A listed skill ID. A lowercase ".md" suffix is accepted.',
         },
       },
       required: ["skillId"],
@@ -254,6 +244,101 @@ it("reads advertised references through the explicit reference operation without
     reference: { skillId: "plan", file: "references/private.md" },
   });
   assertEquals("error" in denied, true);
+});
+
+function createReferenceFixtureTool() {
+  return createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", {
+        instructions: "# Plan",
+        references: ["references/project.md"],
+      }]]),
+      references: new Map([["plan/references/project.md", "Plan reference"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+}
+
+it("advertises only the reference object for reference reads", () => {
+  const tool = createReferenceFixtureTool();
+  const schema = tool.inputSchemaJson as {
+    properties: { load: { properties: Record<string, unknown> } };
+  };
+  assertEquals(Object.keys(schema.properties.load.properties), ["skillId"]);
+  assertEquals(tool.description.includes("load.file"), false);
+  assertEquals(JSON.stringify(schema).includes("load.file"), false);
+});
+
+it("still executes the legacy load.file form with the same result as reference", async () => {
+  const viaReference = createReferenceFixtureTool();
+  await viaReference.execute({ load: { skillId: "plan" } });
+  const referenceResult = await viaReference.execute({
+    reference: { skillId: "plan", file: "references/project.md" },
+  });
+
+  const viaLegacy = createReferenceFixtureTool();
+  const advertised = viaLegacy.inputSchemaJson as {
+    properties: { load: { properties: Record<string, unknown> } };
+  };
+  assertEquals("file" in advertised.properties.load.properties, false);
+  await viaLegacy.execute({ load: { skillId: "plan" } });
+  const legacyResult = await viaLegacy.execute({
+    load: { skillId: "plan", file: "references/project.md" },
+  });
+
+  assertEquals(referenceResult, {
+    skillId: "plan",
+    file: "references/project.md",
+    content: "Plan reference",
+  });
+  assertEquals(legacyResult, referenceResult);
+});
+
+it("still rejects invalid references in both the reference and legacy forms", async () => {
+  const tool = createReferenceFixtureTool();
+  await tool.execute({ load: { skillId: "plan" } });
+  for (
+    const input of [
+      { reference: { skillId: "plan", file: "references/private.md" } },
+      { load: { skillId: "plan", file: "references/private.md" } },
+    ]
+  ) {
+    const denied = await tool.execute(input);
+    assertEquals("error" in denied, true);
+  }
+  for (
+    const input of [
+      { reference: { skillId: "plan" } },
+      { reference: { skillId: "../plan", file: "references/project.md" } },
+      { reference: { skillId: "plan", file: "references/project.md", extra: true } },
+    ]
+  ) {
+    await assertRejects(
+      () => tool.execute(input),
+      Error,
+      "input validation failed",
+    );
+  }
+});
+
+// The load_skill definition is sent with every model request. This budget
+// covers the serialized provider definition (description plus input schema) so
+// per-request context growth needs a deliberate change here.
+const LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS = 1_900;
+
+it("keeps the advertised load_skill definition within its character budget", () => {
+  const definition = toolToProviderDefinition(createReferenceFixtureTool());
+  const serialized = JSON.stringify({
+    description: definition.description,
+    parameters: definition.parameters,
+  });
+  assertEquals(
+    serialized.length <= LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS,
+    true,
+    `load_skill definition is ${serialized.length} characters; budget is ${LOAD_SKILL_PROVIDER_DEFINITION_MAX_CHARACTERS}`,
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
@@ -573,7 +658,7 @@ it("keeps the static provider schema constraints after provider sanitization", (
     assertEquals(sanitized.maxProperties, 1);
     assertEquals(Object.keys(sanitized.properties ?? {}), ["inventory", "reference", "load"]);
     assertEquals(Object.keys(sanitized.properties?.inventory?.properties ?? {}), ["cursor"]);
-    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId", "file"]);
+    assertEquals(Object.keys(sanitized.properties?.load?.properties ?? {}), ["skillId"]);
     assertEquals(sanitized.properties?.load?.required, ["skillId"]);
     assertEquals(sanitized.properties?.reference?.required, ["skillId", "file"]);
   }
@@ -3053,7 +3138,6 @@ it("createRuntimeLoadSkillTool keeps IDs out of the description and points to ru
   assertEquals(tool.description.includes("daily-briefing"), false);
   assertStringIncludes(tool.description, "<available_skills>");
   assertStringIncludes(tool.description, "<authorized_skill_ids>");
-  assertStringIncludes(tool.description, "Direct consumers can omit skillId");
   assertStringIncludes(tool.description, "You must not invent IDs");
   assertStringIncludes(tool.description, "inventory object");
 });
