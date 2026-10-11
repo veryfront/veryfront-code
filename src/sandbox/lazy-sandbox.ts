@@ -102,6 +102,9 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
 ]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const failedSessionLookups = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
@@ -282,6 +285,8 @@ export class LazySandbox {
             },
           );
         } catch (error) {
+          // An HTTP response proves dispatch occurred; its diagnostic body cannot authorize replay.
+          if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) throw error;
           const cause = error instanceof Error ? error.cause : undefined;
           const code = cause && typeof cause === "object" && "code" in cause
             ? cause.code
@@ -759,7 +764,9 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw await createSandboxHttpError(res, "Failed to get sandbox");
+      const error = await createSandboxHttpError(res, "Failed to get sandbox");
+      applyIntrinsic(weakSetAdd, failedSessionLookups, [error]);
+      throw error;
     }
 
     return await res.json() as SandboxSessionRecord;
@@ -1049,11 +1056,7 @@ export class LazySandbox {
           return res;
         }
 
-        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
-          await this.waitForExecStartRetry();
-          continue;
-        }
-
+        // HTTP failures may follow command dispatch; replay requires a pre-response failure.
         throw await createSandboxHttpError(res, "Exec failed");
       } catch (error) {
         if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
@@ -1185,10 +1188,6 @@ export class LazySandbox {
   }
 }
 
-function isRetryableExecStartStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504;
-}
-
 function commandStreamUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands/stream" : "/exec"}`;
 }
@@ -1205,11 +1204,13 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
  * requires a code update to restore automatic retry.
  */
 function isRetryableExecStartError(error: unknown): boolean {
+  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
   return error instanceof Error && /fetch failed/i.test(error.message);
 }
 
 function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
-  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status;
+  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status &&
+    applyIntrinsic(weakSetHas, failedSessionLookups, [error]);
 }
 
 /**
@@ -1234,6 +1235,7 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
  * failures where the sandbox pod is no longer reachable.
  */
 function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
+  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
   if (!(error instanceof Error)) {
     return false;
   }

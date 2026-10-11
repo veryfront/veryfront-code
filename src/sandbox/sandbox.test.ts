@@ -3107,6 +3107,55 @@ describe("Sandbox", () => {
       await sandbox.close();
     });
 
+    it("keeps a retained temporary workspace cached after a reconnect heartbeat 404", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        textResponse("", 404),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        deleteOnClose: false,
+      });
+
+      await sandbox.ensure();
+      await sandbox.close();
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed: 404");
+      assertEquals(sandbox.id, "retained-temporary");
+
+      await sandbox.ensure();
+      assertEquals(sandbox.id, "retained-temporary");
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
+    });
+
     it("retains identity without silently replacing an inaccessible always-on workspace", async () => {
       mockFetch([
         jsonResponse({

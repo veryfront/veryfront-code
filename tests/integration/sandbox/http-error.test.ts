@@ -164,4 +164,204 @@ describe("Sandbox HTTP error projection", () => {
       await sandbox.close();
     }
   });
+  it("does not expose opaque response fields to a replaced JSON parser", async () => {
+    const original = JSON.parse;
+    const marker = "opaque-response-parser-secret";
+    let observed = false;
+    reply({ debug: marker }, 500);
+    JSON.parse = (...args: Parameters<typeof JSON.parse>) => {
+      if (args[0].includes(marker)) observed = true;
+      return original(...args);
+    };
+    try {
+      await rejected(() => Sandbox.get("fixture", options));
+      assertEquals(observed, false);
+    } finally {
+      JSON.parse = original;
+    }
+  });
+  it("does not expose opaque response objects to inherited property accessors", async () => {
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "status");
+    const own = Object.getOwnPropertyDescriptor;
+    const define = Object.defineProperty;
+    const marker = "opaque-response-prototype-secret";
+    let observed = false;
+    reply({ debug: marker }, 500);
+    define(Object.prototype, "status", {
+      configurable: true,
+      get() {
+        if (own(this, "debug")?.value === marker) observed = true;
+        return undefined;
+      },
+      set(value: unknown) {
+        define(this, "status", { value, configurable: true, writable: true, enumerable: true });
+      },
+    });
+    try {
+      await rejected(() => Sandbox.get("fixture", options));
+      assertEquals(observed, false);
+    } finally {
+      if (original) define(Object.prototype, "status", original);
+      else Reflect.deleteProperty(Object.prototype, "status");
+    }
+  });
+  for (const status of [403, 502, 503, 504]) {
+    it(`does not replay HTTP ${status} even when problem text says fetch failed`, async () => {
+      let commands = 0;
+      const session = {
+        id: "command-fixture",
+        endpoint: options.apiUrl,
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      };
+      const failure = {
+        ...problem,
+        status,
+        detail: "fetch failed after the command response began",
+      };
+      installMockFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/commands/stream")) {
+          commands++;
+          return new Response(JSON.stringify(failure), { status });
+        }
+        if (path.endsWith("/heartbeat") || path.endsWith("/readyz")) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        if (path === "/sandboxes" || path === "/sandboxes/command-fixture") {
+          return new Response(JSON.stringify(session), { status: 200 });
+        }
+        throw new Error(`Unexpected fixture request ${path}`);
+      });
+      const sandbox = Sandbox.createLazy({
+        ...options,
+        projectReference: "fixture-project",
+        deleteOnClose: false,
+        execStartMaxAttempts: 2,
+        execStartRetryDelayMs: 0,
+      });
+      try {
+        const error = await rejected(() =>
+          (async () => {
+            for await (const _event of sandbox.streamCommand("fixture command")) {
+              /* exhaust stream */
+            }
+          })()
+        );
+        assertEquals(error.status, status);
+        assertEquals(
+          commands,
+          1,
+          "An HTTP response must not be treated as a pre-response network failure",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+  }
+  it("does not reprovision or replay after an HTTP error body connection reset", async () => {
+    let commands = 0;
+    const session = {
+      id: "command-fixture",
+      endpoint: options.apiUrl,
+      status: "running",
+      workspace_storage: "ephemeral",
+      ttl_mode: "default",
+    };
+    installMockFetch(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/commands/stream")) {
+        commands++;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(Object.assign(new Error("body reset"), { code: "ECONNRESET" }));
+            },
+          }),
+          { status: 503 },
+        );
+      }
+      if (path.endsWith("/heartbeat") || path.endsWith("/readyz")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (path === "/sandboxes" || path === "/sandboxes/command-fixture") {
+        return new Response(JSON.stringify(session), { status: 200 });
+      }
+      throw new Error(`Unexpected fixture request ${path}`);
+    });
+    const sandbox = Sandbox.createLazy({
+      ...options,
+      projectReference: "fixture-project",
+      deleteOnClose: false,
+      execStartMaxAttempts: 1,
+      execStartRetryDelayMs: 0,
+    });
+    try {
+      const error = await rejected(() =>
+        (async () => {
+          for await (const _event of sandbox.streamCommand("fixture command")) {
+            /* exhaust stream */
+          }
+        })()
+      );
+      assertEquals(error.status, 503);
+      assertEquals(
+        commands,
+        1,
+        "An HTTP response must not be treated as a pre-response network failure",
+      );
+    } finally {
+      await sandbox.close();
+    }
+  });
+  it("does not replay a proxy command after an HTTP error body host failure", async () => {
+    let commands = 0;
+    const session = {
+      id: "command-fixture",
+      endpoint: options.apiUrl,
+      status: "running",
+      workspace_storage: "ephemeral",
+      ttl_mode: "default",
+    };
+    installMockFetch(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/commands/run")) {
+        commands++;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(Object.assign(new Error("body reset"), { code: "EHOSTUNREACH" }));
+            },
+          }),
+          { status: 503 },
+        );
+      }
+      if (path.endsWith("/heartbeat") || path.endsWith("/readyz")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (path === "/sandboxes" || path === "/sandboxes/command-fixture") {
+        return new Response(JSON.stringify(session), { status: 200 });
+      }
+      throw new Error(`Unexpected fixture request ${path}`);
+    });
+    const sandbox = Sandbox.createLazy({
+      ...options,
+      projectReference: "fixture-project",
+      deleteOnClose: false,
+      execStartMaxAttempts: 2,
+      execStartRetryDelayMs: 0,
+    });
+    try {
+      const error = await rejected(() => sandbox.runCommand("fixture command"));
+      assertEquals(error.status, 503);
+      assertEquals(
+        commands,
+        1,
+        "An HTTP response must not be treated as a pre-response network failure",
+      );
+    } finally {
+      await sandbox.close();
+    }
+  });
 });
