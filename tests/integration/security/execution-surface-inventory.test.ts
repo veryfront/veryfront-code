@@ -184,6 +184,10 @@ const GUARDED_SURFACES: Record<
     surface: "CORS preflight route inspection",
     guards: 2,
   },
+  "src/server/isolated-http/hosted-http-composition.ts": {
+    surface: "Hosted HTTP isolation startup posture",
+    guards: 1,
+  },
   "src/server/production-server.ts": {
     surface: "Startup execution posture",
     guards: 6,
