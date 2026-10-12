@@ -163,12 +163,17 @@ function upsertParsedToolResult(
 
 // --- Ordered-part building ---
 
-function ambiguousToolOwnership(calls: unknown[], results: unknown[]): Set<string> {
+function ambiguousToolOwnership(
+  calls: unknown[],
+  results: unknown[],
+): { ambiguous: Set<string>; conflictingNames: Set<string> } {
   const evidence = createPrivateMap<
     string,
     { calls: number; results: number; name?: string; owner?: boolean }
   >();
   const ambiguous = createPrivateSet<string>();
+  // Call ids whose records name different tools: the output belongs to none of them.
+  const conflictingNames = createPrivateSet<string>();
   for (const [role, records] of [["calls", calls], ["results", results]] as const) {
     for (const record of records) {
       if (!isRecord(record) || typeof record.toolCallId !== "string") continue;
@@ -185,12 +190,15 @@ function ambiguousToolOwnership(calls: unknown[], results: unknown[]): Set<strin
       ) {
         ambiguous.add(record.toolCallId);
       }
+      if (name !== undefined && entry.name !== undefined && name !== entry.name) {
+        conflictingNames.add(record.toolCallId);
+      }
       entry.name ??= name;
       entry.owner ??= owner;
       evidence.set(record.toolCallId, entry);
     }
   }
-  return ambiguous;
+  return { ambiguous, conflictingNames };
 }
 
 function serializeToolResultValue(record: Record<string, unknown>): string | null {
@@ -204,9 +212,14 @@ function serializeToolResultValue(record: Record<string, unknown>): string | nul
 
 // Results are collapsed by toolCallId before ownership is read, so conflicting
 // duplicates must be recorded from the raw records.
-function conflictingToolResults(results: unknown[]): Set<string> {
+function conflictingToolResults(
+  results: unknown[],
+  conflictingNames: Set<string>,
+): Set<string> {
   const firstValues = createPrivateMap<string, string | null>();
   const conflicting = createPrivateSet<string>();
+  // A result joined by id to a call for another tool is not that call's output.
+  for (const toolCallId of conflictingNames) conflicting.add(toolCallId);
   for (const record of results) {
     if (!isRecord(record) || typeof record.toolCallId !== "string") continue;
     const value = serializeToolResultValue(record);
@@ -248,7 +261,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
       ? message.content.filter(isToolResultPart)
       : []
   );
-  const ambiguous = ambiguousToolOwnership(
+  const { ambiguous, conflictingNames } = ambiguousToolOwnership(
     messages.flatMap((message) =>
       isRecord(message) && Array.isArray(message.content)
         ? message.content.filter(isToolCallPart)
@@ -256,7 +269,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
     ),
     contentToolResults,
   );
-  const conflictingResults = conflictingToolResults(contentToolResults);
+  const conflictingResults = conflictingToolResults(contentToolResults, conflictingNames);
   const toolCallsById = new Map<string, FinalStepToolCall>();
   const toolResultsById = new Map<string, FinalStepToolResult>();
 
@@ -375,7 +388,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
       ? message.parts.filter((part) => isRecord(part) && part.type === "tool-result")
       : []
   );
-  const ambiguous = ambiguousToolOwnership(
+  const { ambiguous, conflictingNames } = ambiguousToolOwnership(
     messages.flatMap((message) =>
       isRecord(message) && message.role === "assistant" && Array.isArray(message.parts)
         ? message.parts
@@ -387,7 +400,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
         : []
     ),
   );
-  const conflictingResults = conflictingToolResults(uiToolResults);
+  const conflictingResults = conflictingToolResults(uiToolResults, conflictingNames);
 
   for (const message of messages) {
     if (!isRecord(message) || !Array.isArray(message.parts)) {
@@ -732,11 +745,11 @@ function buildToolChunkDescriptorsFromStep(input: {
   const stepToolResults = isRecord(input.step) && Array.isArray(input.step.toolResults)
     ? input.step.toolResults
     : [];
-  const ambiguous = ambiguousToolOwnership(
+  const { ambiguous, conflictingNames } = ambiguousToolOwnership(
     isRecord(input.step) && Array.isArray(input.step.toolCalls) ? input.step.toolCalls : [],
     stepToolResults,
   );
-  const conflictingResults = conflictingToolResults(stepToolResults);
+  const conflictingResults = conflictingToolResults(stepToolResults, conflictingNames);
   const toolCalls = input.extractFinalStepToolCalls(input.step);
   const toolResults = new Map(
     input.extractFinalStepToolResults(input.step).map((
