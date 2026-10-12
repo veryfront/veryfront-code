@@ -390,6 +390,29 @@ function isTrue(node: unknown): boolean {
   }
 }
 
+const FUNCTION_NODES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "ObjectMethod",
+  "ClassMethod",
+  "ClassPrivateMethod",
+]);
+
+/** Whether a function body has a `return` of a value that can be a literal true. */
+function returnsTrue(body: unknown): boolean {
+  if (!isNode(body)) return false;
+  if (body.type === "ReturnStatement") return isTrue(body.argument);
+  for (const [key, value] of Object.entries(body)) {
+    if (SKIPPED_KEYS.has(key)) continue;
+    for (const child of Array.isArray(value) ? value : [value]) {
+      // A nested function's returns are its own.
+      if (isNode(child) && !FUNCTION_NODES.has(child.type) && returnsTrue(child)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The names a call may resolve to: `p()`, `receiver.p()`, and every branch of a fallback
  * such as `(override ?? p)()`, `(flag ? p : q)()`, `(0, p)()` or `p!()`.
@@ -608,13 +631,9 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
         // A getter `get allowHostProjectCodeExecution() { return true; }` is a grant; any
         // other accessor or method of that name is a use.
         if (propertyName(node.key, node.computed) === FLAG) {
-          const body = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
-          const only = body.length === 1 && isNode(body[0]) ? body[0] : undefined;
-          if (node.kind === "get" && only?.type === "ReturnStatement" && isTrue(only.argument)) {
-            result.grants++;
-            return;
-          }
-          result.guards++;
+          // Any return of a literal true grants, whatever else the body does.
+          if (node.kind === "get" && returnsTrue(node.body)) result.grants++;
+          else result.guards++;
           visitChildren(node, false, node.key);
           return;
         }
@@ -1076,6 +1095,31 @@ describe("execution surface inventory", () => {
     );
     // The first four can evaluate to a literal true; the last cannot.
     assertEquals(analysis.grants, 4);
+  });
+
+  it("counts a getter with any true return as a grant", () => {
+    const analysis = analyzeSource(
+      [
+        "const audited = { get allowHostProjectCodeExecution() { audit(); return true; } };",
+        "class Branching {",
+        "  get allowHostProjectCodeExecution() {",
+        "    if (this.locked) return false;",
+        "    return true;",
+        "  }",
+        "}",
+        "class Nested {",
+        "  get allowHostProjectCodeExecution() {",
+        "    const inner = () => { return true; };",
+        "    return inner();",
+        "  }",
+        "}",
+      ].join("\n"),
+      "ts",
+    );
+    // The first two getters can return a literal true. The third returns a computed
+    // value; the `true` belongs to a nested function.
+    assertEquals(analysis.grants, 2);
+    assertEquals(analysis.guards, 1);
   });
 
   it("parses JavaScript sources, including JSX", () => {
