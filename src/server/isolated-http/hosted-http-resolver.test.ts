@@ -329,6 +329,36 @@ describe("hosted HTTP resolver", () => {
     for (const settle of stalled.splice(0)) settle(record());
   });
 
+  it("keeps a check that ignored cancellation in admission after a sibling refuses", async () => {
+    const stalled: Array<(value: unknown) => void> = [];
+    let lookups = 0;
+    const resolve = createHostedHttpResolver(options({
+      maxPendingResolutions: 2,
+      api: fakeApi({
+        // Refuses at once, so the resolution settles while the lookup is still running.
+        authorizeEnvironment: () => Promise.reject(new Error("environment mismatch")),
+      }).api,
+      // Ignores its abort signal and settles only when released.
+      lookupSourceImage: () => {
+        lookups++;
+        return new Promise((settle) => stalled.push(settle));
+      },
+    }));
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    assertEquals(lookups, 2);
+
+    // Both lookups are still running, so a third resolution starts no read.
+    await assertRejects(() => resolve(authority, signal()), Error, "capacity is exhausted");
+    assertEquals(lookups, 2);
+
+    for (const settle of stalled.splice(0)) settle(record());
+    await new Promise((done) => setTimeout(done, 0));
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    assertEquals(lookups, 3);
+    for (const settle of stalled.splice(0)) settle(record());
+  });
+
   it("returns at the deadline even when an operation ignores its abort signal", async () => {
     let ignore = true;
     let lookups = 0;
