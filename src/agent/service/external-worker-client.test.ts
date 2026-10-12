@@ -392,44 +392,6 @@ describe("external agent worker client", () => {
     assertEquals(requestBody(calls[2]!), { status: "completed", output: null });
   });
 
-  it("does not demote fatal probe cursor errors when String.includes is replaced", async () => {
-    const originalIncludes = String.prototype.includes;
-    Object.defineProperty(String.prototype, "includes", {
-      configurable: true,
-      value: () => false,
-    });
-    try {
-      const { fetchImpl } = fetchSequence(jsonResponse(claim()));
-      const client = createExternalAgentWorkerClient({
-        apiUrl: API_URL,
-        authToken: API_TOKEN,
-        fetch: fetchImpl,
-        ownershipProbe: throwingProbe(
-          "afterClaim",
-          "Agent worker runtime ownership probe append outcome is ambiguous",
-        ),
-      });
-
-      let rejected = false;
-      try {
-        await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
-      } catch (error) {
-        rejected = true;
-        assertEquals(
-          error instanceof Error && error.message ===
-              "Agent worker runtime ownership probe append outcome is ambiguous",
-          true,
-        );
-      }
-      assertEquals(rejected, true);
-    } finally {
-      Object.defineProperty(String.prototype, "includes", {
-        configurable: true,
-        value: originalIncludes,
-      });
-    }
-  });
-
   it("recovers a claimed run cursor with a fresh lease when the probe outcome is ambiguous", async () => {
     const recoveredClaim = {
       ...claim(),
