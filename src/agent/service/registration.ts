@@ -547,7 +547,14 @@ async function heartbeatAgentPushRuntimeService(
   });
 }
 
-/** Create agent service registration lifecycle. */
+/**
+ * Create agent service registration lifecycle.
+ *
+ * Registers the service through the Veryfront API operation
+ * `createAgentPushRuntimeService` (`POST /agent-runtimes/push-services`).
+ * Each heartbeat calls `heartbeatAgentPushRuntimeService`
+ * (`POST /agent-runtimes/push-services/{service_id}/heartbeat`).
+ */
 export async function createAgentServiceRegistrationLifecycle(
   options: CreateAgentServiceRegistrationLifecycleOptions,
 ): Promise<AgentServiceRegistrationLifecycle> {
