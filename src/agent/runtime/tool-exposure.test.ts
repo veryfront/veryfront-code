@@ -1271,6 +1271,7 @@ const VERYFRONT_LIST_TOOL_NAMES = [
   "list_agents",
   "list_child_agent_runs",
   "list_child_agent_runs_by_parent_conversation",
+  "list_connected_agents",
   "list_eval_runs",
   "list_evals",
   "list_external_files",

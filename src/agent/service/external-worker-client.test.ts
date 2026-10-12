@@ -142,6 +142,8 @@ describe("external agent worker client", () => {
       `${API_URL}/agent-workers/workers/${WORKER_ID}/heartbeat`,
     );
     assertEquals(authorization(calls[1]!), `Bearer ${WORKER_TOKEN}`);
+    assertEquals(calls[0]?.[1]?.method, "POST", "registering a worker must POST the registration");
+    assertEquals(calls[1]?.[1]?.method, "POST", "a worker heartbeat must POST to the endpoint");
   });
 
   it("claims runs, records sessions, appends events, and completes runs through the external worker contract", async () => {
@@ -278,6 +280,12 @@ describe("external agent worker client", () => {
       "Current worker claim authority is required",
     );
     assertEquals(calls.length, 2);
+    assertEquals(
+      String(calls[1]?.[0]),
+      `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/lease`,
+    );
+    assertEquals(calls[1]?.[1]?.method, "POST", "renewing a lease must POST to the lease endpoint");
+    assertEquals(requestBody(calls[1]!), { lease_duration_seconds: 30 });
   });
 
   it("forwards the terminal error of a failed completion", async () => {
