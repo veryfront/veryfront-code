@@ -17,6 +17,7 @@ import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/erro
 import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
+import { isRetriableConnectFailure } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import {
   fetchSandboxRuntimeUrl,
   fetchSandboxUrl,
@@ -39,6 +40,10 @@ import {
   type CommandStreamEvent,
   type SandboxOptions,
 } from "./types.ts";
+
+type CommandFetchAttempt<T> =
+  | { kind: "result"; result: T }
+  | { kind: "fetch-failure"; error: unknown };
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -94,14 +99,10 @@ const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
 const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
 const DATA_PLANE_READINESS_FAILURE_PREFIX = "Sandbox data plane did not become ready:";
 const RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES = new Set([404, 502, 503, 504]);
-const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "EHOSTUNREACH",
-]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const getOwnDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 const failedSessionLookups = new WeakSet<object>();
 const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
@@ -268,36 +269,33 @@ export class LazySandbox {
     const route = this.#resolveDataPlaneRoute();
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
-        try {
-          return await withSandboxRequestDeadline(
-            sandboxCommandRequestTimeoutMs(options),
-            async (signal) => {
-              const response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, {
-                method: "POST",
-                headers: this.#jsonHeaders(),
-                signal,
-                body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
-              });
-              if (!response.ok) {
-                throw await createSandboxHttpError(response, "Sandbox command failed", signal);
-              }
-              return parseSandboxCommandResult(await response.json());
-            },
-          );
-        } catch (error) {
-          // An HTTP response proves dispatch occurred; its diagnostic body cannot authorize replay.
-          if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) throw error;
-          const cause = error instanceof Error ? error.cause : undefined;
-          const code = cause && typeof cause === "object" && "code" in cause
-            ? cause.code
-            : undefined;
-          // These failures occur before dispatch. Other failures may have executed the command.
-          if (
-            attempt >= this.execStartMaxAttempts ||
-            !["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EAI_AGAIN"].includes(String(code))
-          ) throw error;
-          await this.waitForExecStartRetry();
+        const outcome = await withSandboxRequestDeadline<CommandFetchAttempt<CommandResult>>(
+          sandboxCommandRequestTimeoutMs(options),
+          async (signal) => {
+            const init: RequestInit = {
+              method: "POST",
+              headers: this.#jsonHeaders(),
+              signal,
+              body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+            };
+            let response: Response;
+            try {
+              response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, init);
+            } catch (error) {
+              return { kind: "fetch-failure", error };
+            }
+            // A received response ends retry admission, including later body/decoder failures.
+            if (!response.ok) {
+              throw await createSandboxHttpError(response, "Sandbox command failed", signal);
+            }
+            return { kind: "result", result: parseSandboxCommandResult(await response.json()) };
+          },
+        );
+        if (outcome.kind === "result") return outcome.result;
+        if (attempt >= this.execStartMaxAttempts || !isPreDispatchExecStartFailure(outcome.error)) {
+          throw outcome.error;
         }
+        await this.waitForExecStartRetry();
       }
     }
     let stdout = "";
@@ -326,18 +324,16 @@ export class LazySandbox {
     options?: CommandOptions,
   ): AsyncGenerator<CommandStreamEvent> {
     await this.touchSession();
-    let res: Response;
-    try {
-      res = await this.startExec(command, options);
-    } catch (error) {
-      if (!shouldReprovisionAfterExecStartFailure(error)) {
-        throw error;
-      }
-
+    let outcome = await this.startExec(command, options);
+    if (outcome.kind === "fetch-failure") {
+      if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
       await this.reprovisionAfterExecStartFailure();
       await this.touchSession();
-      res = await this.startExec(command, options);
+      outcome = await this.startExec(command, options);
+      if (outcome.kind === "fetch-failure") throw outcome.error;
     }
+    const res = outcome.result;
+    if (!res.ok) throw await createSandboxHttpError(res, "Exec failed");
 
     if (!res.body) {
       throw new Error("Exec response has no body");
@@ -1036,37 +1032,24 @@ export class LazySandbox {
     return active;
   }
 
-  private async startExec(command: string, options?: CommandOptions): Promise<Response> {
+  private async startExec(
+    command: string,
+    options?: CommandOptions,
+  ): Promise<CommandFetchAttempt<Response>> {
     const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) });
-
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
-      try {
-        const res = await this.#fetchExecStart(
-          commandStreamUrl(route),
-          {
-            method: "POST",
-            headers: this.#jsonHeaders(),
-            body,
-          },
-          route.kind,
-        );
-
-        if (res.ok) {
-          return res;
-        }
-
-        // HTTP failures may follow command dispatch; replay requires a pre-response failure.
-        throw await createSandboxHttpError(res, "Exec failed");
-      } catch (error) {
-        if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
-          throw error;
-        }
-
-        await this.waitForExecStartRetry();
+      const outcome = await this.#fetchExecStart(
+        commandStreamUrl(route),
+        { method: "POST", headers: this.#jsonHeaders(), body },
+        route.kind,
+      );
+      if (outcome.kind === "result") return outcome;
+      if (!isPreDispatchExecStartFailure(outcome.error) || attempt >= this.execStartMaxAttempts) {
+        return outcome;
       }
+      await this.waitForExecStartRetry();
     }
-
     throw new Error("Sandbox exec failed before a request was made");
   }
 
@@ -1074,8 +1057,19 @@ export class LazySandbox {
     url: string,
     init: RequestInit,
     routeKind: DataPlaneRoute["kind"],
-  ): Promise<Response> {
-    return fetchWithTimeout(url, this.execStartTimeoutMs, init, routeKind === "internal");
+  ): Promise<CommandFetchAttempt<Response>> {
+    const fetchUrl = routeKind === "internal" ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
+    return await withSandboxRequestDeadline<CommandFetchAttempt<Response>>(
+      this.execStartTimeoutMs,
+      async (signal) => {
+        try {
+          const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+          return { kind: "result", result: response };
+        } catch (error) {
+          return { kind: "fetch-failure", error };
+        }
+      },
+    );
   }
 
   async #fetchControl(
@@ -1196,18 +1190,6 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands" : "/exec/commands"}`;
 }
 
-/**
- * Heuristic: Deno's fetch throws an `Error` with message "fetch failed" (case-
- * insensitive) when the TCP connection is refused or the host is unreachable.
- * If Deno changes this wording the check stops matching, causing exec failures
- * to be treated as non-retryable — fail-safe (agent surfaces an error) but
- * requires a code update to restore automatic retry.
- */
-function isRetryableExecStartError(error: unknown): boolean {
-  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
-  return error instanceof Error && /fetch failed/i.test(error.message);
-}
-
 function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
   return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status &&
     applyIntrinsic(weakSetHas, failedSessionLookups, [error]);
@@ -1228,25 +1210,41 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
     detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
-/**
- * Heuristic: reprovisioning is triggered by known Node.js/Deno error codes on
- * the error's `cause` (ECONNREFUSED, ECONNRESET, ENOTFOUND, EHOSTUNREACH).
- * These codes are stable across Deno versions and represent network-layer
- * failures where the sandbox pod is no longer reachable.
- */
-function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
-  if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
-  if (!(error instanceof Error)) {
+function ownTransportData(value: unknown, key: string): unknown {
+  const descriptor = getOwnDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!hasOwn(descriptor, "value")) throw new TypeError("Unsupported transport metadata");
+  return descriptor.value;
+}
+
+/** Admit retries/replacement only when native data identifies failed connection setup. */
+function isPreDispatchExecStartFailure(error: unknown): boolean {
+  try {
+    if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
+    if (!(error instanceof Error)) return false;
+    let code = ownTransportData(error, "code");
+    let syscall = ownTransportData(error, "syscall");
+    // Pinned Node/Bun transports preserve the native error directly. Native
+    // fetch instead wraps it in cause. Direct metadata must not be overridden
+    // by an inner cause that claims a different phase.
+    if (code === undefined && syscall === undefined) {
+      const cause = ownTransportData(error, "cause");
+      if (typeof cause !== "object" || cause === null) return false;
+      code = ownTransportData(cause, "code");
+      syscall = ownTransportData(cause, "syscall");
+    }
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+      return syscall === undefined || syscall === "getaddrinfo";
+    }
+    if (
+      syscall !== undefined && syscall !== "connect" &&
+      !(code === "EADDRNOTAVAIL" && syscall === "bind")
+    ) return false;
+    return isRetriableConnectFailure({ code, syscall });
+  } catch {
+    // Uninspectable metadata cannot authorize replay; callers retain the original failure.
     return false;
   }
-
-  const cause = error.cause;
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
-    return false;
-  }
-
-  return typeof cause.code === "string" &&
-    REPROVISIONABLE_EXEC_START_ERROR_CODES.has(cause.code);
 }
 
 async function fetchWithTimeout(

@@ -2973,7 +2973,9 @@ describe("Sandbox", () => {
 
     it("retries synchronous commands only after a connection refusal before dispatch", async () => {
       mockFetch([jsonResponse({ ok: true }), () => {
-        throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+        throw new TypeError("fetch failed", {
+          cause: { code: "ECONNREFUSED", syscall: "connect" },
+        });
       }, jsonResponse({ stdout: "ok", stderr: "", exit_code: 0 })]);
       const sandbox = Sandbox.createLazy({
         sandboxId: "existing",
@@ -3893,7 +3895,9 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         () => {
-          throw new TypeError("fetch failed");
+          throw new TypeError("fetch failed", {
+            cause: { code: "ECONNREFUSED", syscall: "connect" },
+          });
         },
         ndjsonResponse([
           { type: "stdout", data: "ok\n" },
@@ -4023,7 +4027,7 @@ describe("Sandbox", () => {
 
     it("reprovisions lazy exec after exhausted in-cluster transport failures", async () => {
       const connectionRefusedError = () =>
-        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", syscall: "connect" } });
 
       mockFetch([
         jsonResponse({
