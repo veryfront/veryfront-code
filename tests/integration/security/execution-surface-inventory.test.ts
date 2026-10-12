@@ -371,10 +371,27 @@ function boundFunction(node: unknown): unknown {
   return callee.object;
 }
 
-/** A literal `true`, also through `true as const`, `<const>true` or parentheses. */
+/**
+ * A value that can evaluate to a literal `true`: `true` itself, also through
+ * `true as const`, `<const>true` or parentheses, and any branch of a fallback such as
+ * `configured ?? true`, `flag ? true : false` or `(audit(), true)`.
+ */
 function isTrue(node: unknown): boolean {
   const value = unwrapExpression(node);
-  return isNode(value) && value.type === "BooleanLiteral" && value.value === true;
+  if (!isNode(value)) return false;
+  switch (value.type) {
+    case "BooleanLiteral":
+      return value.value === true;
+    case "LogicalExpression":
+      // `a && true` yields its right side; `a ?? true` and `a || true` may yield either.
+      return isTrue(value.right) || (value.operator !== "&&" && isTrue(value.left));
+    case "ConditionalExpression":
+      return isTrue(value.consequent) || isTrue(value.alternate);
+    case "SequenceExpression":
+      return Array.isArray(value.expressions) && isTrue(value.expressions.at(-1));
+    default:
+      return false;
+  }
 }
 
 /**
@@ -1048,6 +1065,21 @@ describe("execution surface inventory", () => {
     // The initialization is the grant; the shorthand property is one use.
     assertEquals(analysis.grants, 1);
     assertEquals(analysis.guards, 1);
+  });
+
+  it("counts a value that can fall back to true as a grant", () => {
+    const analysis = analyzeSource(
+      [
+        "run({ allowHostProjectCodeExecution: configured ?? true });",
+        "run({ allowHostProjectCodeExecution: configured || (true as const) });",
+        "run({ allowHostProjectCodeExecution: trusted ? true : false });",
+        "const allowHostProjectCodeExecution = (audit(), true);",
+        "run({ allowHostProjectCodeExecution: configured ?? false });",
+      ].join("\n"),
+      "ts",
+    );
+    // The first four can evaluate to a literal true; the last cannot.
+    assertEquals(analysis.grants, 4);
   });
 
   it("parses JavaScript sources, including JSX", () => {
