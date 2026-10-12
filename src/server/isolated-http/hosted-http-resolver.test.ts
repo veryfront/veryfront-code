@@ -301,6 +301,34 @@ describe("hosted HTTP resolver", () => {
     assertEquals(dispatches, 1);
   });
 
+  it("refuses new resolutions while work that ignored its deadline is still pending", async () => {
+    const stalled: Array<(value: unknown) => void> = [];
+    let lookups = 0;
+    const resolve = createHostedHttpResolver(options({
+      resolutionTimeoutMs: 20,
+      maxPendingResolutions: 2,
+      // Ignores its abort signal and settles only when released.
+      lookupSourceImage: () => {
+        lookups++;
+        return new Promise((settle) => stalled.push(settle));
+      },
+    }));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    assertEquals(lookups, 2);
+
+    // At the bound a resolution is refused before any read starts.
+    await assertRejects(() => resolve(authority, signal()), Error, "capacity is exhausted");
+    assertEquals(lookups, 2);
+
+    // Once the detached work settles, resolutions are admitted again.
+    for (const settle of stalled.splice(0)) settle(record());
+    await new Promise((done) => setTimeout(done, 0));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    assertEquals(lookups, 3);
+    for (const settle of stalled.splice(0)) settle(record());
+  });
+
   it("returns at the deadline even when an operation ignores its abort signal", async () => {
     let ignore = true;
     let lookups = 0;
@@ -696,6 +724,8 @@ describe("hosted HTTP resolver", () => {
         { configurationKey: new Uint8Array(16) },
         { resolutionTimeoutMs: 0 },
         { resolutionTimeoutMs: 60_001 },
+        { maxPendingResolutions: 0 },
+        { maxPendingResolutions: 4097 },
         { prepareTimeoutMs: 0 },
         { hardTimeoutMs: 10 },
         { prepareTimeoutMs: 120_000, hardTimeoutMs: 60_000 },
