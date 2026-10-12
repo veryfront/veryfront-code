@@ -25,6 +25,7 @@ const MAX_SOURCE_RECORDS = 4096;
 const MAX_SOURCE_RECORD_BYTES = 16 * 1024;
 const DEFAULT_PREPARE_TIMEOUT_MS = 60_000;
 const DEFAULT_RESOLUTION_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_PENDING_RESOLUTIONS = 256;
 const DEFAULT_HARD_TIMEOUT_MS = 5 * 60_000;
 // The isolated application has no host config evaluator, so the authorized
 // project environment alone decides whether its own trace exporter is enabled.
@@ -88,6 +89,13 @@ export interface HostedHttpResolverOptions {
    * API read cannot hold an ingress preparation permit. Default 10 seconds, maximum 60.
    */
   resolutionTimeoutMs?: number;
+  /**
+   * Bound on resolutions that have not settled, including one still running after its
+   * deadline because an operation ignored its abort signal. At the bound, further
+   * resolutions are refused before any read starts, so a stalled dependency cannot
+   * accumulate detached work. Default 256, maximum 4096.
+   */
+  maxPendingResolutions?: number;
   /** Default 60 seconds, maximum 10 minutes. */
   prepareTimeoutMs?: number;
   /** Default 5 minutes, maximum 1 hour, and not shorter than preparation. */
@@ -521,6 +529,13 @@ export function createHostedHttpResolver(
     throw new TypeError("Hosted HTTP resolver requires a bounded resolution timeout");
   }
 
+  const maxPending = options.maxPendingResolutions ?? DEFAULT_MAX_PENDING_RESOLUTIONS;
+  if (!Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 4096) {
+    throw new TypeError("Hosted HTTP resolver requires a bounded number of pending resolutions");
+  }
+  // Every resolution that has not settled, whether or not its caller is still waiting.
+  const pendingResolutions = new Set<Promise<unknown>>();
+
   async function resolveWithin(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     signal.throwIfAborted();
     const token = authority.sourceToken;
@@ -609,6 +624,13 @@ export function createHostedHttpResolver(
 
   return async (authority, requestSignal) => {
     requestSignal.throwIfAborted();
+    // Returning at the deadline releases the caller's ingress permit while the work may
+    // still be running. Admission here keeps that detached work bounded.
+    if (pendingResolutions.size >= maxPending) {
+      throw PROJECT_EXECUTION_UNAVAILABLE.create({
+        detail: "Hosted HTTP resolution capacity is exhausted",
+      });
+    }
     // Race the resolution against its deadline and the request, so the resolver
     // returns on time even when an operation ignores its abort signal.
     const deadline = new AbortController();
@@ -627,7 +649,9 @@ export function createHostedHttpResolver(
       requestSignal.addEventListener("abort", onRequestAbort, { once: true });
     });
     const work = resolveWithin(authority, deadline.signal);
-    work.catch(() => {});
+    pendingResolutions.add(work);
+    const settled = () => pendingResolutions.delete(work);
+    work.then(settled, settled);
     try {
       return await Promise.race([work, stopped]);
     } finally {
