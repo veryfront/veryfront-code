@@ -1,7 +1,28 @@
 {
-  "_source": "Introspection of the integration query and mutation types served by the Veryfront API (captured 2026-09-27; integrationReadiness and runIntegrationTool added 2026-10-12 from the API type definitions). Refresh when those GraphQL types change. executeIntegrationTool is the deprecated alias of runIntegrationTool.",
+  "_source": "Introspection of the integration query and mutation types served by the Veryfront API (captured 2026-09-27; integrationReadiness, integrationTools and runIntegrationTool added 2026-10-12 from the API type definitions). Refresh when those GraphQL types change. executeIntegrationTool is the deprecated alias of runIntegrationTool.",
   "Boolean": {
     "kind": "SCALAR"
+  },
+  "ConnectionPagination": {
+    "fields": {
+      "first": {
+        "args": {},
+        "type": "String"
+      },
+      "next": {
+        "args": {},
+        "type": "String"
+      },
+      "prev": {
+        "args": {},
+        "type": "String"
+      },
+      "self": {
+        "args": {},
+        "type": "String"
+      }
+    },
+    "kind": "OBJECT"
   },
   "ExecuteIntegrationToolInput": {
     "inputFields": {
@@ -209,6 +230,40 @@
     },
     "kind": "OBJECT"
   },
+  "IntegrationToolDefinition": {
+    "fields": {
+      "description": {
+        "args": {},
+        "type": "String!"
+      },
+      "inputSchema": {
+        "args": {},
+        "type": "JSON!"
+      },
+      "name": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationToolList": {
+    "fields": {
+      "pageInfo": {
+        "args": {},
+        "type": "ConnectionPagination"
+      },
+      "tools": {
+        "args": {},
+        "type": "[IntegrationToolDefinition!]!"
+      },
+      "total": {
+        "args": {},
+        "type": "Int"
+      }
+    },
+    "kind": "OBJECT"
+  },
   "IntegrationToolResult": {
     "fields": {
       "_meta": {
@@ -267,6 +322,17 @@
           "toolName": "String!"
         },
         "type": "SelectedIntegrationReadiness!"
+      },
+      "integrationTools": {
+        "args": {
+          "cursor": "String",
+          "integration": "String",
+          "limit": "Int",
+          "name": "String",
+          "order": "String",
+          "projectReference": "String"
+        },
+        "type": "IntegrationToolList!"
       }
     },
     "kind": "OBJECT"

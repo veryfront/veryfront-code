@@ -1,5 +1,9 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  type GraphqlSchemaSnapshot,
+  validateGraphqlOperation,
+} from "../../scripts/docs/guide-snippets.ts";
 
 interface GuideContract {
   references: string[];
@@ -1145,5 +1149,32 @@ describe("Connect-runtime worker admission", () => {
     );
     assertStringIncludes(beforeAdmission, 'role: "user"');
     assertStringIncludes(beforeAdmission, 'parts: [{ type: "text", text: prompt }]');
+  });
+});
+
+describe("integration credentials guide GraphQL reference", () => {
+  it("names a tool schema operation that the GraphQL schema snapshot serves", async () => {
+    const root = new URL("../../", import.meta.url);
+    const snapshot = JSON.parse(
+      await Deno.readTextFile(
+        new URL("scripts/docs/fixtures/integrations-graphql-schema.json", root),
+      ),
+    ) as GraphqlSchemaSnapshot;
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/integrations/credentials.md", root),
+    );
+    const row = guide.split("\n").find((line) => line.startsWith("| GraphQL "));
+    const cell = row?.split("|").at(-2) ?? "";
+    const [field, property] = [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    assertEquals([field, property], ["integrationTools", "inputSchema"]);
+
+    const query = `query Tools($projectReference: String, $integration: String) {
+  ${field}(projectReference: $projectReference, integration: $integration) {
+    tools { name description ${property} }
+    total
+    pageInfo { next }
+  }
+}`;
+    assertEquals(validateGraphqlOperation(query, snapshot), []);
   });
 });
