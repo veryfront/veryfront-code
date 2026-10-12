@@ -604,8 +604,11 @@ async function handleModuleEndpoint({
       });
     }
 
-    rscEndpointRouterLog.debug("module build failed", {
+    // Warn with the message: a bare error name at debug level left hosted
+    // 500s undiagnosable (#5109). Bundler messages use project-relative paths.
+    rscEndpointRouterLog.warn("module build failed", {
       errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message.slice(0, 500) : undefined,
     });
     return new Response("Internal Error", {
       status: HTTP_SERVER_ERROR,

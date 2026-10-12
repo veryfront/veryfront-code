@@ -91,6 +91,43 @@ describe(
       assertEquals(output.includes(tenantMarker), false);
     });
 
+    it("bundles JSON imported by a client page dependency", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/page.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        [
+          '"use client";',
+          'import { label } from "../components/Dashboard.tsx";',
+          "export default function Page() { return label; }",
+        ].join("\n"),
+      );
+      adapter.fs.files.set(
+        `${projectDir}/components/Dashboard.tsx`,
+        [
+          'import chart from "../config/chart.json" with { type: "json" };',
+          "export const label = chart.label;",
+        ].join("\n"),
+      );
+      adapter.fs.files.set(
+        `${projectDir}/config/chart.json`,
+        '{ "label": "JSON_DEPENDENCY_MARKER" }',
+      );
+
+      const bundle = await bundleBrowserModuleWithMetadata(entryPath, {
+        adapter,
+        projectDir,
+        requireClientBoundary: true,
+      });
+
+      assertStringIncludes(bundle.source, "JSON_DEPENDENCY_MARKER");
+      assertEquals(
+        bundle.dependencies.some((dependency) => dependency.path.endsWith("/config/chart.json")),
+        true,
+      );
+    });
+
     it("rejects a browser entry reached through a symbolic link", async () => {
       const projectDir = "/project";
       const entryPath = `${projectDir}/app/Leak.ts`;

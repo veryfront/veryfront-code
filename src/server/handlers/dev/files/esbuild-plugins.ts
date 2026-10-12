@@ -43,7 +43,7 @@ import { appendSameOriginDependencyPinningPathKey } from "#veryfront/transforms/
 
 const logger = serverLogger.component("bare-ext");
 
-type EsbuildLoader = "tsx" | "ts" | "jsx" | "js";
+type EsbuildLoader = "tsx" | "ts" | "jsx" | "js" | "json";
 
 const SCRIPT_EXTENSIONS = [
   ".tsx",
@@ -55,7 +55,10 @@ const SCRIPT_EXTENSIONS = [
   ".cts",
   ".cjs",
 ] as const;
-const SCRIPT_PATH_PATTERN = /\.(?:[jt]sx?|[cm][jt]s)$/i;
+// JSON imports resolve into the project namespace too; without an onLoad
+// esbuild loads them as empty files and the build fails.
+const LOADABLE_PATH_PATTERN = /\.(?:[jt]sx?|[cm][jt]s|json)$/i;
+const JSON_PATH_PATTERN = /\.json$/i;
 const PROJECT_FS_NAMESPACE = "veryfront-project-fs";
 
 interface ProjectFsPluginData {
@@ -76,6 +79,7 @@ function getLoaderForPath(path: string): EsbuildLoader {
   if (/\.tsx$/i.test(path)) return "tsx";
   if (/\.(?:ts|[cm]ts)$/i.test(path)) return "ts";
   if (/\.jsx$/i.test(path)) return "jsx";
+  if (JSON_PATH_PATTERN.test(path)) return "json";
   return "js";
 }
 
@@ -265,7 +269,7 @@ export function createRelativeFsPlugin(
           const contents = enforceBrowserBoundaries && options.readBrowserModule
             ? await options.readBrowserModule(filePath)
             : await adapter.fs.readFile(filePath);
-          if (enforceBrowserBoundaries) {
+          if (enforceBrowserBoundaries && !JSON_PATH_PATTERN.test(filePath)) {
             try {
               await assertNoConfiguredCommonJsBrowserImports(contents, {
                 filePath,
@@ -317,14 +321,14 @@ export function createRelativeFsPlugin(
       }
 
       build.onLoad(
-        { filter: SCRIPT_PATH_PATTERN, namespace: "file" },
+        { filter: LOADABLE_PATH_PATTERN, namespace: "file" },
         wrapWithCurrentContext((args: OnLoadArgs) => {
           return loadModule(args.path, false);
         }),
       );
 
       build.onLoad(
-        { filter: SCRIPT_PATH_PATTERN, namespace: PROJECT_FS_NAMESPACE },
+        { filter: LOADABLE_PATH_PATTERN, namespace: PROJECT_FS_NAMESPACE },
         wrapWithCurrentContext((args: OnLoadArgs) => {
           const absolutePath = getProjectFsPluginPath(args);
           if (!absolutePath) {
