@@ -50,7 +50,7 @@ export interface TaskContext {
    * Writable scratch directory for this run, under the OS temp root. Hosted runtimes mount the
    * project filesystem read-only, so relative writes such as `.data/` fail there; write here
    * instead. `runTask` creates it before `run()` and removes it after, so nothing persists
-   * across runs. Optional only so hand-built contexts can omit it.
+   * across runs. Unset in hand-built contexts and when the process cannot write to the temp root.
    */
   dataDir?: string;
   /**

@@ -97,15 +97,19 @@ export interface TaskScratchFs {
 
 const liveScratchFs: TaskScratchFs = { makeTempDir, remove };
 
-/** Native mkdtemp errors name the host temp root, so the failure text stays generic. */
-async function createTaskDataDir(scratchFs: TaskScratchFs): Promise<string> {
+/**
+ * A process without temp-write access still runs tasks that need no scratch space, so a
+ * creation failure leaves `ctx.dataDir` unset. Only the error code is logged: native mkdtemp
+ * messages name the host temp root.
+ */
+async function createTaskDataDir(scratchFs: TaskScratchFs): Promise<string | undefined> {
   try {
     return await scratchFs.makeTempDir({ prefix: "veryfront-task-" });
   } catch (error) {
-    logger.warn("Task data directory could not be created", {
+    logger.warn("Task data directory could not be created; ctx.dataDir is unset", {
       code: ownErrorField(error, "code"),
     });
-    throw new Error("The task data directory could not be created");
+    return undefined;
   }
 }
 
@@ -329,6 +333,7 @@ export async function runTask(
     const allEnv = host.env.toObject();
     assertInjectedTaskEnvIsValid(allEnv);
     const env = buildTaskContextEnv(allEnv, envAllowlist);
+    dataDir = await createTaskDataDir(scratchFs);
     const ctx: TaskContext = {
       ...(runChild === undefined ? {} : { runChild }),
       env,
@@ -339,9 +344,8 @@ export async function runTask(
       environmentId,
       ...(signal === undefined ? {} : { signal }),
       attempt,
-      dataDir: await createTaskDataDir(scratchFs),
+      ...(dataDir === undefined ? {} : { dataDir }),
     };
-    dataDir = ctx.dataDir;
 
     // Schema identity and input validation await; a cancel in that window must not start the task.
     signal?.throwIfAborted();

@@ -545,32 +545,32 @@ describe("src/task/runner", () => {
       assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
     });
 
-    it("reports a generic failure without the temp path when the data directory cannot be created", async () => {
-      let ran = false;
+    it("runs the task without ctx.dataDir when the data directory cannot be created", async () => {
+      let seen: unknown = "unset";
+      let removeCalls = 0;
       const task = makeTask({
-        run: () => {
-          ran = true;
+        run: (ctx: TaskContext) => {
+          seen = ctx.dataDir;
+          return "pure";
         },
       });
       const scratchFs: TaskScratchFs = {
         makeTempDir: () =>
-          Promise.reject(
-            Object.assign(
-              new Error("No such file or directory: mkdtemp '/srv/tmp/veryfront-task-x'"),
-              {
-                code: "ENOENT",
-              },
-            ),
-          ),
-        remove: () => Promise.resolve(),
+          Promise.reject(Object.assign(new Error("Permission denied: mkdtemp '/srv/tmp/x'"), {
+            code: "EACCES",
+          })),
+        remove: () => {
+          removeCalls++;
+          return Promise.resolve();
+        },
       };
 
       const result = await runTask({ task }, createInMemoryHostRuntime(), scratchFs);
 
-      assertEquals(ran, false);
-      assertEquals(result.success, false);
-      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
-      assertEquals(result.error, "The task data directory could not be created");
+      assertEquals(result.success, true);
+      assertEquals(result.result, "pure");
+      assertEquals(seen, undefined);
+      assertEquals(removeCalls, 0);
     });
 
     it("keeps a successful result when the data directory cannot be removed", async () => {

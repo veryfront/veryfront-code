@@ -124,7 +124,8 @@ interface TaskContext {
   the project filesystem read-only, so writes to relative paths such as
   `.data/` fail there with `TASK_FILESYSTEM_READ_ONLY`. Write temporary files
   under `ctx.dataDir` instead. It is removed when the run ends; keep durable
-  state in a database or blob store
+  state in a database or blob store. It is unset when the process cannot write
+  to the OS temp directory
 
 Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
