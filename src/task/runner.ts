@@ -81,13 +81,12 @@ function replaceAllLiteral(text: string, search: string, replacement: string): s
 
 /** The failure text for a result or a log line, without the run's scratch directory path. */
 function describeTaskFailure(error: unknown, dataDir: string | undefined): string {
-  let message = getErrorMessage(error);
+  const message = getErrorMessage(error);
   if (dataDir === undefined || dataDir === "") return message;
-  // The temp root can be reached through a symlinked prefix, as on macOS.
-  for (const path of [`/private${dataDir}`, dataDir]) {
-    message = replaceAllLiteral(message, path, TASK_DATA_DIR_PLACEHOLDER);
-  }
-  return message;
+  // The temp root can be reached through a symlinked prefix, as on macOS. Two direct calls
+  // rather than a loop, since array iteration dispatches through a replaceable hook.
+  const unprefixed = replaceAllLiteral(message, `/private${dataDir}`, TASK_DATA_DIR_PLACEHOLDER);
+  return replaceAllLiteral(unprefixed, dataDir, TASK_DATA_DIR_PLACEHOLDER);
 }
 
 /** Creates and removes the per-run `ctx.dataDir`. */
