@@ -694,6 +694,80 @@ describe("conversations SDK request handling", () => {
     assertEquals(error.status, 502);
   });
 
+  it("rejects a list body without a data array or page_info instead of an empty page", async () => {
+    const bodies: unknown[] = [
+      {},
+      { error: "unavailable" },
+      { data: null, page_info: EMPTY_PAGE_INFO },
+      { data: [WIRE_MESSAGE, "not-an-object"], page_info: EMPTY_PAGE_INFO },
+      { data: [] },
+      { data: [], page_info: null },
+      { data: [], page_info: { self: null, first: null, prev: null } },
+      { data: [], page_info: { ...EMPTY_PAGE_INFO, next: 2 } },
+    ];
+    for (const body of bodies) {
+      const { transport } = createRecordingTransport([Response.json(body)]);
+      const listError = await assertRejects(
+        () => Conversation.list({}, { transport }),
+        VeryfrontError,
+        "invalid response",
+      ) as VeryfrontError;
+      assertEquals(listError.status, 502);
+
+      for (
+        const read of [
+          (c: Conversation) => c.listMessages(),
+          (c: Conversation) => c.listMessageBranches(MESSAGE_ID),
+          (c: Conversation) => c.listParticipants(),
+        ]
+      ) {
+        const { conversation } = attached([Response.json(body)]);
+        await assertRejects(() => read(conversation), VeryfrontError, "invalid response");
+      }
+    }
+  });
+
+  it("rejects a resource body with a missing or mistyped field and does not echo the value", async () => {
+    const cases: Array<[string, (c: Conversation) => Promise<unknown>, unknown]> = [
+      ["id", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, id: undefined }],
+      ["seq", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, seq: "secret-seq" }],
+      ["parts", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, parts: undefined }],
+      ["metadata", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, metadata: "secret" }],
+      ["message_count", (c) => c.update({ title: "x" }), {
+        ...WIRE_CONVERSATION,
+        message_count: undefined,
+      }],
+      ["participants", (c) => c.update({ title: "x" }), {
+        ...WIRE_CONVERSATION,
+        participants: "secret",
+      }],
+      ["joined_at", (c) => c.createParticipant({ userId: USER_ID }), {
+        ...WIRE_PARTICIPANT,
+        joined_at: undefined,
+      }],
+      ["unread_count", (c) => c.getReadState(), { last_read_message_id: null }],
+      ["last_read_message_id", (c) => c.getReadState(), { unread_count: 0 }],
+      ["message_id", (c) => c.updateBranchSelection(MESSAGE_ID), {}],
+    ];
+    for (const [field, call, body] of cases) {
+      const { conversation } = attached([Response.json(body)]);
+      const error = await assertRejects(
+        () => call(conversation),
+        VeryfrontError,
+        `invalid response: ${field} must be`,
+      ) as VeryfrontError;
+      assertEquals(error.status, 502);
+      assert(!error.message.includes("secret"));
+    }
+
+    const { transport } = createRecordingTransport([Response.json({ error: "unavailable" })]);
+    await assertRejects(
+      () => Conversation.get(CONVERSATION_ID, { transport }),
+      VeryfrontError,
+      "invalid response: id must be",
+    );
+  });
+
   it("returns undefined for errors the SDK did not throw", () => {
     assertEquals(conversationsProblemOf(new Error("boom")), undefined);
   });

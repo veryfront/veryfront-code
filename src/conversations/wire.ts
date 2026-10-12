@@ -2,6 +2,7 @@
  * Maps SDK inputs to the REST spelling and REST results to the SDK spelling. Message parts
  * and metadata pass through unchanged in both directions.
  */
+import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ConversationsWireInput } from "./request.ts";
 import type {
   ConversationBranchSelection,
@@ -33,8 +34,56 @@ function defined(fields: Record<string, unknown>): Wire {
   return body;
 }
 
-function nullable<T>(value: unknown): T | null {
-  return (value ?? null) as T | null;
+/** Reject a success body that does not have the documented shape. The value is not echoed. */
+function invalid(field: string, expected: string): never {
+  throw API_CLIENT_ERROR.create({
+    detail: `The conversations API returned an invalid response: ${field} must be ${expected}`,
+    status: 502,
+    context: { field },
+  });
+}
+
+function isObject(value: unknown): value is Wire {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function str<T extends string = string>(wire: Wire, field: string): T {
+  const value = wire[field];
+  if (typeof value !== "string") invalid(field, "a string");
+  return value as T;
+}
+
+function num(wire: Wire, field: string): number {
+  const value = wire[field];
+  if (typeof value !== "number" || !Number.isFinite(value)) invalid(field, "a number");
+  return value;
+}
+
+/** A string field that the API may omit or send as `null`. */
+function optStr<T extends string = string>(wire: Wire, field: string): T | null {
+  const value = wire[field];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") invalid(field, "a string or null");
+  return value as T;
+}
+
+/** A string field that the API always sends, as a string or `null`. */
+function nullableStr(wire: Wire, field: string): string | null {
+  if (!(field in wire)) invalid(field, "a string or null");
+  return optStr(wire, field);
+}
+
+/** An object field that the API may omit or send as `null`. */
+function optObj(wire: Wire, field: string): Wire | null {
+  const value = wire[field];
+  if (value === undefined || value === null) return null;
+  if (!isObject(value)) invalid(field, "an object or null");
+  return value;
+}
+
+function objects(value: unknown, field: string): Wire[] {
+  if (!Array.isArray(value) || !value.every(isObject)) invalid(field, "an array of objects");
+  return value;
 }
 
 function userMessageFields(input: CreateConversationInitialMessageInput): Wire {
@@ -111,41 +160,44 @@ export function toCreateParticipantBody(input: CreateConversationParticipantInpu
 
 function fromParticipantSummary(wire: Wire): ConversationParticipantSummary {
   return {
-    id: wire.id as string,
-    participantId: nullable(wire.participant_id),
-    participantType: (wire.participant_type ?? "user") as ConversationParticipantSummary[
-      "participantType"
-    ],
-    userId: nullable(wire.user_id),
-    agentId: nullable(wire.agent_id),
-    displayName: nullable(wire.display_name),
-    avatarUrl: nullable(wire.avatar_url),
-    role: wire.role as ConversationParticipantSummary["role"],
+    id: str(wire, "id"),
+    participantId: optStr(wire, "participant_id"),
+    participantType: optStr<ConversationParticipantSummary["participantType"]>(
+      wire,
+      "participant_type",
+    ) ?? "user",
+    userId: optStr(wire, "user_id"),
+    agentId: optStr(wire, "agent_id"),
+    displayName: optStr(wire, "display_name"),
+    avatarUrl: optStr(wire, "avatar_url"),
+    role: str<ConversationParticipantSummary["role"]>(wire, "role"),
   };
 }
 
 /** A conversation in the SDK spelling. */
 export function fromConversation(wire: Wire): ConversationDetails {
-  const participants = Array.isArray(wire.participants) ? wire.participants as Wire[] : [];
+  const participants = wire.participants === undefined
+    ? []
+    : objects(wire.participants, "participants");
   return {
-    id: wire.id as string,
-    projectId: nullable(wire.project_id),
-    respondingAgentId: nullable(wire.responding_agent_id),
-    type: wire.type as ConversationDetails["type"],
-    title: nullable(wire.title),
-    summary: nullable(wire.summary),
-    status: wire.status as ConversationDetails["status"],
-    currentNode: nullable(wire.current_node),
-    messageCount: wire.message_count as number,
-    lastMessageAt: nullable(wire.last_message_at),
-    metadata: nullable(wire.metadata),
-    createdBy: nullable(wire.created_by),
-    archivedAt: nullable(wire.archived_at),
-    createdAt: wire.created_at as string,
-    updatedAt: wire.updated_at as string,
+    id: str(wire, "id"),
+    projectId: optStr(wire, "project_id"),
+    respondingAgentId: optStr(wire, "responding_agent_id"),
+    type: str<ConversationDetails["type"]>(wire, "type"),
+    title: optStr(wire, "title"),
+    summary: optStr(wire, "summary"),
+    status: str<ConversationDetails["status"]>(wire, "status"),
+    currentNode: optStr(wire, "current_node"),
+    messageCount: num(wire, "message_count"),
+    lastMessageAt: optStr(wire, "last_message_at"),
+    metadata: optObj(wire, "metadata"),
+    createdBy: optStr(wire, "created_by"),
+    archivedAt: optStr(wire, "archived_at"),
+    createdAt: str(wire, "created_at"),
+    updatedAt: str(wire, "updated_at"),
     participants: participants.map(fromParticipantSummary),
     ...("initial_message_id" in wire
-      ? { initialMessageId: nullable<string>(wire.initial_message_id) }
+      ? { initialMessageId: optStr(wire, "initial_message_id") }
       : {}),
   };
 }
@@ -153,27 +205,27 @@ export function fromConversation(wire: Wire): ConversationDetails {
 /** A message in the SDK spelling. */
 export function fromMessage(wire: Wire): ConversationMessage {
   return {
-    id: wire.id as string,
-    conversationId: wire.conversation_id as string,
-    parentId: nullable(wire.parent_id),
-    seq: wire.seq as number,
-    role: wire.role as ConversationMessage["role"],
-    createdBy: nullable(wire.created_by),
-    senderType: (wire.sender_type ?? "user") as ConversationMessage["senderType"],
-    senderId: nullable(wire.sender_id),
-    senderDisplayName: nullable(wire.sender_display_name),
-    parts: Array.isArray(wire.parts) ? wire.parts as ConversationMessage["parts"] : [],
-    model: nullable(wire.model),
-    runUsage: nullable(wire.run_usage),
-    tokenUsage: nullable(wire.token_usage),
-    finishReason: nullable(wire.finish_reason),
-    costCredits: nullable(wire.cost_credits),
-    status: wire.status as ConversationMessage["status"],
-    editedAt: nullable(wire.edited_at),
-    idempotencyKey: nullable(wire.idempotency_key),
-    metadata: nullable(wire.metadata),
-    createdAt: wire.created_at as string,
-    updatedAt: nullable(wire.updated_at),
+    id: str(wire, "id"),
+    conversationId: str(wire, "conversation_id"),
+    parentId: optStr(wire, "parent_id"),
+    seq: num(wire, "seq"),
+    role: str<ConversationMessage["role"]>(wire, "role"),
+    createdBy: optStr(wire, "created_by"),
+    senderType: optStr<ConversationMessage["senderType"]>(wire, "sender_type") ?? "user",
+    senderId: optStr(wire, "sender_id"),
+    senderDisplayName: optStr(wire, "sender_display_name"),
+    parts: objects(wire.parts, "parts") as ConversationMessage["parts"],
+    model: optStr(wire, "model"),
+    runUsage: optObj(wire, "run_usage"),
+    tokenUsage: optObj(wire, "token_usage"),
+    finishReason: optStr(wire, "finish_reason"),
+    costCredits: optStr(wire, "cost_credits"),
+    status: str<ConversationMessage["status"]>(wire, "status"),
+    editedAt: optStr(wire, "edited_at"),
+    idempotencyKey: optStr(wire, "idempotency_key"),
+    metadata: optObj(wire, "metadata"),
+    createdAt: str(wire, "created_at"),
+    updatedAt: optStr(wire, "updated_at"),
   };
 }
 
@@ -181,10 +233,10 @@ export function fromMessage(wire: Wire): ConversationMessage {
 export function fromParticipant(wire: Wire): ConversationParticipant {
   return {
     ...fromParticipantSummary(wire),
-    conversationId: wire.conversation_id as string,
-    lastReadMessageId: nullable(wire.last_read_message_id),
-    notificationPreference: wire.notification_preference as string,
-    joinedAt: wire.joined_at as string,
+    conversationId: str(wire, "conversation_id"),
+    lastReadMessageId: optStr(wire, "last_read_message_id"),
+    notificationPreference: str(wire, "notification_preference"),
+    joinedAt: str(wire, "joined_at"),
   };
 }
 
@@ -192,28 +244,32 @@ export function fromParticipant(wire: Wire): ConversationParticipant {
 export function fromReadState(wire: Wire, conversationId: string): ConversationReadState {
   return {
     conversationId,
-    lastReadMessageId: nullable(wire.last_read_message_id),
-    unreadCount: wire.unread_count as number,
+    lastReadMessageId: nullableStr(wire, "last_read_message_id"),
+    unreadCount: num(wire, "unread_count"),
   };
 }
 
 /** A branch selection in the SDK spelling. */
 export function fromBranchSelection(wire: Wire): ConversationBranchSelection {
-  return { messageId: nullable(wire.message_id) };
+  return { messageId: nullableStr(wire, "message_id") };
 }
 
 function fromPageInfo(wire: unknown): ConversationPageInfo {
-  const info = (typeof wire === "object" && wire !== null ? wire : {}) as Wire;
+  if (!isObject(wire)) invalid("page_info", "an object");
   return {
-    self: nullable(info.self),
-    first: nullable(info.first),
-    next: nullable(info.next),
-    prev: nullable(info.prev),
+    self: optStr(wire, "self"),
+    first: optStr(wire, "first"),
+    // A page without `next` would read as the last page, so the cursor must be present.
+    next: nullableStr(wire, "next"),
+    prev: optStr(wire, "prev"),
   };
 }
 
-/** A page in the SDK spelling, with each item mapped by `item`. */
+/**
+ * A page in the SDK spelling, with each item mapped by `item`. A body without a `data` array
+ * or a `page_info` object is rejected, so it cannot read as an empty list.
+ */
 export function fromPage<T>(wire: Wire, item: (wire: Wire) => T): ConversationPageOf<T> {
-  const data = Array.isArray(wire.data) ? wire.data as Wire[] : [];
+  const data = objects(wire.data, "data");
   return { data: data.map(item), pageInfo: fromPageInfo(wire.page_info) };
 }
