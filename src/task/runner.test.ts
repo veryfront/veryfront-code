@@ -463,5 +463,47 @@ describe("src/task/runner", () => {
       assertEquals(result.success, false);
       assertEquals(result.error, "Unknown error");
     });
+
+    it("classifies a read-only filesystem write as TASK_FILESYSTEM_READ_ONLY", async () => {
+      const task = makeTask({
+        run: () => {
+          throw new Error("Read-only file system (os error 30): mkdir '.data/core'");
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.success, false);
+      assertEquals(result.errorCode, "TASK_FILESYSTEM_READ_ONLY");
+      assertEquals(result.error?.startsWith("Read-only file system (os error 30)"), true);
+      assertEquals(result.error?.includes("ctx.dataDir"), true);
+    });
+
+    it("classifies a Node EROFS error as TASK_FILESYSTEM_READ_ONLY", async () => {
+      const task = makeTask({
+        run: () => {
+          throw Object.assign(new Error("EROFS: read-only file system, mkdir '.data'"), {
+            code: "EROFS",
+          });
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.errorCode, "TASK_FILESYSTEM_READ_ONLY");
+    });
+
+    it("gives any other thrown error the stable TASK_EXECUTION_FAILED code", async () => {
+      const task = makeTask({
+        run: () => {
+          throw new Error("boom");
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
+      assertEquals(result.error, "boom");
+    });
   });
 });

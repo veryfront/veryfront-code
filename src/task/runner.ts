@@ -6,6 +6,7 @@
  */
 
 import { getErrorMessage } from "#veryfront/errors";
+import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
 import {
@@ -27,6 +28,20 @@ import type { TaskDefinition } from "./types.ts";
 
 const logger = baseLogger.component("task-runner");
 const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
+
+/** A task wrote outside `ctx.dataDir` on a runtime whose project filesystem is read-only. */
+export const TASK_FILESYSTEM_READ_ONLY_CODE = "TASK_FILESYSTEM_READ_ONLY";
+/** A task threw an error that no more specific code describes. */
+export const TASK_EXECUTION_FAILED_CODE = "TASK_EXECUTION_FAILED";
+
+const READ_ONLY_FS_HINT =
+  "The project filesystem is read-only in hosted runtimes; write scratch files under ctx.dataDir instead.";
+
+function isReadOnlyFilesystemError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ((error as { code?: unknown }).code === "EROFS") return true;
+  return /\(os error 30\)|\bEROFS\b|read-only file system/i.test(error.message);
+}
 
 export interface RunnableTask {
   /** Stable task id used by CLI, triggers, and cloud runs. */
@@ -97,7 +112,10 @@ export interface TaskRunResult {
   retryable?: true;
 
   /** Machine-readable failure code, such as `INPUT_VALIDATION_FAILED`. */
-  errorCode?: typeof INPUT_VALIDATION_FAILED_CODE;
+  errorCode?:
+    | typeof INPUT_VALIDATION_FAILED_CODE
+    | typeof TASK_FILESYSTEM_READ_ONLY_CODE
+    | typeof TASK_EXECUTION_FAILED_CODE;
 
   /** Validation errors for an `INPUT_VALIDATION_FAILED` failure. */
   errorDetail?: { errors: SchemaValidationError[] };
@@ -192,6 +210,7 @@ export async function runTask(
   let schemaViolation: SchemaViolation | null = null;
   let inputSchemaSha256: string | null = null;
   let outputSchemaSha256: string | null = null;
+  let dataDir: string | undefined;
 
   const recordViolation = (violation: SchemaViolation): void => {
     // One record per run: the first mismatch detected wins.
@@ -253,7 +272,9 @@ export async function runTask(
       environmentId,
       ...(signal === undefined ? {} : { signal }),
       attempt,
+      dataDir: await makeTempDir({ prefix: "veryfront-task-" }),
     };
+    dataDir = ctx.dataDir;
 
     // Schema identity and input validation await; a cancel in that window must not start the task.
     signal?.throwIfAborted();
@@ -283,18 +304,31 @@ export async function runTask(
     return { success: true, result, durationMs, ...identities, schemaViolation };
   } catch (error) {
     const durationMs = elapsedMilliseconds(start);
-    const errorMsg = getErrorMessage(error);
+    const readOnly = isReadOnlyFilesystemError(error);
+    const errorMsg = readOnly
+      ? `${getErrorMessage(error)}. ${READ_ONLY_FS_HINT}`
+      : getErrorMessage(error);
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);
 
     return {
       success: false,
       error: errorMsg,
+      errorCode: readOnly ? TASK_FILESYSTEM_READ_ONLY_CODE : TASK_EXECUTION_FAILED_CODE,
       durationMs,
       ...(isRetryableError(error) ? { retryable: true as const } : {}),
       inputSchemaSha256,
       outputSchemaSha256,
       schemaViolation,
     };
+  } finally {
+    if (dataDir !== undefined) {
+      await remove(dataDir, { recursive: true }).catch((error: unknown) => {
+        logger.warn("Task data directory cleanup failed", {
+          target: `task:${task.id}`,
+          error: getErrorMessage(error),
+        });
+      });
+    }
   }
 }

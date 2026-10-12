@@ -398,7 +398,9 @@ export interface ProjectRunExecuteResponse {
     | "RUN_TIMEOUT"
     | "INPUT_VALIDATION_FAILED"
     | "OUTPUT_VALIDATION_FAILED"
-    | "OUTPUT_TOO_LARGE";
+    | "OUTPUT_TOO_LARGE"
+    | "TASK_FILESYSTEM_READ_ONLY"
+    | "TASK_EXECUTION_FAILED";
   /**
    * Structured failure detail, such as schema validation errors, or
    * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.

@@ -102,6 +102,7 @@ interface TaskContext {
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
+  dataDir?: string;
 }
 ```
 
@@ -119,6 +120,11 @@ interface TaskContext {
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal
+- **`dataDir`**: writable scratch directory for this run. Hosted runtimes mount
+  the project filesystem read-only, so writes to relative paths such as
+  `.data/` fail there with `TASK_FILESYSTEM_READ_ONLY`. Write temporary files
+  under `ctx.dataDir` instead. It is removed when the run ends; keep durable
+  state in a database or blob store
 
 Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
@@ -166,6 +172,10 @@ run from its first start, including any retry attempts. The runtime aborts
 ignores the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
 can continue executing inside the runtime process after the response returns;
 a timeout does not roll back side effects.
+
+A task that throws fails with error code `TASK_EXECUTION_FAILED`, or
+`TASK_FILESYSTEM_READ_ONLY` when it wrote outside `ctx.dataDir` on a read-only
+filesystem.
 
 ### Retries
 
