@@ -531,25 +531,19 @@ describe("hosted HTTP generation broker", () => {
     const idle = fixture(() => new Response("idle"));
     idle.holdRelease();
     const cold = fixture(() => new Response("cold"), undefined, "project-b");
-    const waiting = fixture(() => new Response("waiting"), undefined, "project-c");
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
       const admitted = broker.fetch(new Request("https://b.example"), cold.input);
-      // A second cold request shares the retirement already under way.
-      const shared = broker.fetch(new Request("https://c.example"), waiting.input);
-      shared.catch(() => {});
       await idle.releaseEntered.promise;
-      await tick();
+      await new Promise((resolve) => setTimeout(resolve, 50));
       assertEquals(cold.calls, []);
-      assertEquals(waiting.calls, []);
       idle.releaseAllowed.resolve();
       assertEquals(await (await admitted).text(), "cold");
       assertEquals(count(idle.calls, "release:completed"), 1);
-      // One slot was freed; the other cold request finds its executor serving or idle.
-      await shared.then((response) => response.text(), () => undefined);
-      assertEquals(broker.active <= 1, true);
+      assertEquals(cold.calls, ["allocate", "install"]);
     } finally {
+      idle.releaseAllowed.resolve();
       await broker.shutdown();
       await broker.settled;
     }
@@ -557,41 +551,45 @@ describe("hosted HTTP generation broker", () => {
 
   it("does not retire a slot that a concurrent cold request has just reserved", async () => {
     const idle = fixture(() => new Response("idle"));
-    const colds = ["project-b", "project-c"].map((projectId) =>
-      fixture(() => new Response(projectId), undefined, projectId)
-    );
+    idle.holdRelease();
+    const colds = [heldFixture("project-b"), heldFixture("project-c")];
     const next = fixture(() => new Response("next"), undefined, "project-d");
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
-      // Both wait for the same retirement; only one can take the freed slot.
-      const outcomes = await Promise.all(
-        colds.map((f) =>
-          broker.fetch(new Request("https://cold.example"), f.input).then(
-            (response) => response.text(),
-            (error) => error as Error,
-          )
-        ),
+      const outcomes = colds.map((f) =>
+        broker.fetch(new Request("https://cold.example"), f.input).then(
+          (response) => response.text(),
+          (error) => error as Error,
+        )
       );
-      const served = outcomes.filter((outcome) => typeof outcome === "string");
-      assertEquals(served.length, 1);
-      assertEquals(
-        outcomes.filter((outcome) => outcome instanceof Error && /capacity/.test(outcome.message))
-          .length,
-        1,
-      );
-      const winner = colds[outcomes.findIndex((outcome) => typeof outcome === "string")]!;
-      const loser = colds.find((f) => f !== winner)!;
-      assertEquals(winner.calls, ["allocate", "install"]);
-      assertEquals(loser.calls, []);
+      // Hold the retirement until both cold requests wait on it, so both resume together
+      // and only one can take the freed slot.
+      await idle.releaseEntered.promise;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      idle.releaseAllowed.resolve();
+      const winner = await Promise.race(colds.map((f, index) => f.entered.then(() => index)));
+      const loser = 1 - winner;
+      // The loser is refused; it must not reach its own executor by retiring the winner's.
+      const refused = await Promise.race([
+        outcomes[loser]!,
+        colds[loser]!.entered.then(() => "served"),
+      ]);
+      assertEquals(refused instanceof Error && /capacity/.test(refused.message), true);
+      assertEquals(colds[loser]!.calls, []);
+      colds[winner]!.respond(new Response("cold"));
+      assertEquals(await outcomes[winner], "cold");
+      assertEquals(colds[winner]!.calls, ["allocate", "install"]);
       assertEquals(broker.generations, 1);
       // The winner's executor is tracked: a later cold request retires it and is admitted.
       assertEquals(
         await (await broker.fetch(new Request("https://d.example"), next.input)).text(),
         "next",
       );
-      assertEquals(count(winner.calls, "release:completed"), 1);
+      assertEquals(count(colds[winner]!.calls, "release:completed"), 1);
     } finally {
+      idle.releaseAllowed.resolve();
+      for (const f of colds) f.respond(new Response("late"));
       await broker.shutdown();
       await broker.settled;
     }
