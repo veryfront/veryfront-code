@@ -5,6 +5,7 @@ import type { components, operations, paths } from "#veryfront/runs/contract/run
 import {
   type CanonicalRunStreamFrame,
   createRunsSdk,
+  type RunsDeleteAcknowledgement,
   type RunsInput,
   type RunsOperationId,
   type RunsOutput,
@@ -44,7 +45,7 @@ export type RunsSdkTypeChecks = [
   >,
   Expect<Equal<RunsOutput<"getRun">, Schemas["Run"]>>,
   Expect<Equal<RunsOutput<"createRun">, Schemas["CreateRunResult"]>>,
-  Expect<Equal<RunsOutput<"deleteRun">, undefined>>,
+  Expect<Equal<RunsOutput<"deleteRun">, RunsDeleteAcknowledgement | undefined>>,
   Expect<Equal<RunsResult<"streamRunEvents">, AsyncIterable<RunStreamFrame>>>,
   Expect<Equal<RunStreamFrame["event"], CanonicalRunStreamFrame>>,
   Expect<Equal<RunStreamFrame["event"]["event_id"], number | null>>,
@@ -330,6 +331,18 @@ describe("Runs target SDK", () => {
       sdk.getRun({ path: { run_id: RUN_ID } }, { signal: controller.signal })
     );
     assertEquals(requests.length, 1);
+  });
+
+  it("accepts a deleteRun acknowledgement body as well as an empty 204", async () => {
+    const { sdk, requests } = sdkWith([
+      Response.json({ ok: true }, { status: 200 }),
+      fixtureResponse("deleteRun"),
+    ]);
+    const acknowledged: RunsOutput<"deleteRun"> = await sdk.deleteRun({ path: { run_id: RUN_ID } });
+    const empty: RunsOutput<"deleteRun"> = await sdk.deleteRun({ path: { run_id: RUN_ID } });
+    assertEquals(acknowledged, { ok: true });
+    assertEquals(empty, undefined);
+    assertEquals(requests.map((request) => request.method), ["DELETE", "DELETE"]);
   });
 
   it("hands success headers to onHeaders so a getRun ETag can guard updateRun", async () => {
