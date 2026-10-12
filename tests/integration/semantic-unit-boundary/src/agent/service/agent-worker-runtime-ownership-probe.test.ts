@@ -1441,6 +1441,48 @@ it("tests retained authority after the original lease deadline passes", async ()
   assert(calls.some((call) => call.headers.get("Authorization") === "Bearer writer-expired"));
 });
 
+it("rejects unrelated authorization and stop-text errors as cancelled child proof", async () => {
+  for (
+    const [status, body] of [
+      [401, { slug: "invalid-token", detail: "Invalid token" }],
+      [403, {
+        slug: "authorization-denied",
+        detail: "You do not have permission to invoke this task",
+      }],
+      [403, {
+        slug: "authorization-denied",
+        detail: "Workflow child admission requires its signed current execution attempt",
+      }],
+      [409, { slug: "state-conflict", detail: "A different operation stopped" }],
+      [409, { slug: "idempotency-conflict", detail: "Parent run no longer accepts child runs" }],
+      [409, { error: "parent cancelled" }],
+    ] as const
+  ) {
+    const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterCancelled({
+      apiUrl: "https://api.example.test",
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        return Promise.resolve(
+          request.method === "POST"
+            ? Response.json(body, { status })
+            : Response.json({ data: [{ id: 1, toolCallId: "tool-call-1" }] }),
+        );
+      },
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+    assertEquals(receipts[0]?.status, "error", `${status}: ${JSON.stringify(body)}`);
+    assertEquals(receipts[0]?.reason, "cancelled-child-create-not-denied");
+  }
+});
+
 it("proves cancelled child creation denial through the canonical runs route", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const calls: Request[] = [];
@@ -1454,7 +1496,12 @@ it("proves cancelled child creation denial through the canonical runs route", as
       const request = new Request(input, init);
       calls.push(request);
       if (request.method === "POST" && new URL(request.url).pathname === "/runs") {
-        return Promise.resolve(Response.json({ error: "parent cancelled" }, { status: 409 }));
+        return Promise.resolve(
+          Response.json({
+            slug: "state-conflict",
+            detail: "This execution generation is no longer current; stop execution",
+          }, { status: 409 }),
+        );
       }
       return Promise.resolve(Response.json({ data: [{ id: 1, toolCallId: "tool-call-1" }] }));
     },
@@ -1484,9 +1531,10 @@ it("proves cancelled child creation denial through the canonical runs route", as
 
 it("keeps cancelled child idempotency keys within the runs API limit", async () => {
   const calls: Request[] = [];
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     { ...activation, probeId: "a".repeat(64) },
-    () => {},
+    (receipt) => receipts.push(receipt),
   );
 
   await probe.afterCancelled({
@@ -1495,7 +1543,12 @@ it("keeps cancelled child idempotency keys within the runs API limit", async () 
       const request = new Request(input, init);
       calls.push(request);
       if (request.method === "POST" && new URL(request.url).pathname === "/runs") {
-        return Promise.resolve(Response.json({ error: "parent cancelled" }, { status: 409 }));
+        return Promise.resolve(
+          Response.json({
+            slug: "state-conflict",
+            detail: "Parent run no longer accepts child runs",
+          }, { status: 409 }),
+        );
       }
       return Promise.resolve(Response.json({ data: [{ id: 1, toolCallId: "tool-call-1" }] }));
     },
@@ -1505,6 +1558,7 @@ it("keeps cancelled child idempotency keys within the runs API limit", async () 
     embedder: managedTestEmbedder(),
   });
 
+  assertEquals(receipts[0]?.status, "ok");
   const idempotencyKey = calls[1]?.headers.get("Idempotency-Key") ?? "";
   assertEquals(idempotencyKey.startsWith("agent-worker-child:"), true);
   assert(idempotencyKey.length <= 128);

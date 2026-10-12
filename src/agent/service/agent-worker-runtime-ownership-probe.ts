@@ -875,9 +875,11 @@ function validateCanonicalIndexStateResponse(
   return undefined;
 }
 
-function isCancellationOrStopRejection(body: unknown): boolean {
-  const text = stableJson(body).toLowerCase();
-  return text.includes("cancel") || text.includes("stopped") || text.includes("stop");
+function isCancelledChildAuthorityProblem(status: number, body: unknown): boolean {
+  if (status !== 409 || readProblemSlug(body) !== "state-conflict") return false;
+  const detail = readProblemStringField(body, "detail");
+  return detail === "Parent run no longer accepts child runs" ||
+    detail === "This execution generation is no longer current; stop execution";
 }
 
 async function readCanonicalIndexStateHash(
@@ -1757,8 +1759,7 @@ async function cancelledChildDenied(
     );
     const beforeHash = before.hash;
     const afterHash = after.hash;
-    const deniedByStatus = child.status === 401 || child.status === 403 ||
-      (child.status === 409 && isCancellationOrStopRejection(child.body));
+    const deniedByStatus = isCancelledChildAuthorityProblem(child.status, child.body);
     const unchanged = before.ok && after.ok && beforeHash === afterHash;
     sink({
       ...base,
