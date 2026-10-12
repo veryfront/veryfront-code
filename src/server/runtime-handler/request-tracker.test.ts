@@ -54,6 +54,16 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
+    it("keeps overlapping requests that reuse a request id distinct", () => {
+      const first = requestTracker.start("dup", "p", "/first", "GET");
+      const second = requestTracker.start("dup", "p", "/second", "GET");
+      assertEquals(first === second, false);
+      requestTracker.complete(first, 200);
+      assertEquals(requestTracker.getInFlightRequests().map((r) => r.path), ["/second"]);
+      requestTracker.complete(second, 200);
+      assertEquals(requestTracker.getInFlightCount(), 0);
+    });
+
     it("should handle completing an unknown request gracefully", () => {
       requestTracker.complete("nonexistent", 200);
       assertEquals(requestTracker.getInFlightCount(), 0);
