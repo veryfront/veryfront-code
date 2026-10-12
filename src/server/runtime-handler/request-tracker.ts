@@ -27,7 +27,16 @@ interface TrackedRequest {
   verySlowTimer?: ReturnType<typeof setTimeout>;
 }
 
-const RECENTLY_COMPLETED_CAP = 64;
+/**
+ * Only a request that ran at least this long can explain a reportable stall
+ * (the detector's threshold is 2s), so fast traffic never enters the ring and
+ * cannot evict the culprit before the overdue sampler runs.
+ */
+const RECENTLY_COMPLETED_MIN_DURATION_MS = 1_000;
+/** Long enough to outlive any delayed sampler tick. */
+const RECENTLY_COMPLETED_RETENTION_MS = 5 * 60_000;
+/** Memory bound only; reached only by sustained slow traffic. */
+const RECENTLY_COMPLETED_CAP = 1_024;
 
 /** Threshold in ms before logging a warning about a slow request */
 const SLOW_REQUEST_THRESHOLD_MS = 10_000; // 10 seconds
@@ -245,8 +254,7 @@ class RequestTracker {
     if (this.inFlight.size === 0) this.stopStatusLogging();
 
     const endTime = performance.now();
-    this.recentlyCompleted.push({ ...tracked, endTime });
-    if (this.recentlyCompleted.length > RECENTLY_COMPLETED_CAP) this.recentlyCompleted.shift();
+    this.rememberCompletion(tracked, endTime);
 
     const durationMs = Math.round(endTime - tracked.startTime);
 
@@ -302,6 +310,16 @@ class RequestTracker {
 
   getInFlightRequests(): TrackedRequest[] {
     return Array.from(this.inFlight.values());
+  }
+
+  private rememberCompletion(tracked: TrackedRequest, endTime: number): void {
+    const cutoff = endTime - RECENTLY_COMPLETED_RETENTION_MS;
+    while (this.recentlyCompleted.length > 0 && this.recentlyCompleted[0]!.endTime < cutoff) {
+      this.recentlyCompleted.shift();
+    }
+    if (endTime - tracked.startTime < RECENTLY_COMPLETED_MIN_DURATION_MS) return;
+    this.recentlyCompleted.push({ ...tracked, endTime });
+    if (this.recentlyCompleted.length > RECENTLY_COMPLETED_CAP) this.recentlyCompleted.shift();
   }
 
   /** Requests completed at or after `sinceMs` (performance.now() clock), newest last. */
