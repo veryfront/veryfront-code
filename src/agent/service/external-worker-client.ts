@@ -485,12 +485,15 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
             }),
         );
       } catch (error) {
+        const runId = response.run.run_id;
         const recovered = await this.#recoverRunAfterProbeCursorFailure({
           workerId: input.workerId,
-          runId: response.run.run_id,
+          runId,
           leaseDurationSeconds: input.leaseDurationSeconds,
         }).catch(() => null);
         if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
         throw error;
       }
       response.run = this.#withProbeCursor(response.run, probeCursor);
@@ -543,12 +546,15 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
             }),
         );
       } catch (error) {
+        const runId = response.run.run_id;
         const recovered = await this.#recoverRunAfterProbeCursorFailure({
           workerId: input.workerId,
-          runId: response.run.run_id,
+          runId,
           leaseDurationSeconds: input.leaseDurationSeconds,
         }).catch(() => null);
         if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
         throw error;
       }
       response.run = this.#withProbeCursor(response.run, probeCursor);

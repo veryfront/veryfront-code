@@ -521,6 +521,79 @@ describe("external agent worker client", () => {
     });
   });
 
+  it("clears a failed claim when ambiguous probe recovery cannot prove the cursor", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({ error: "lease failed" }, 503),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterClaim",
+        "Agent worker runtime ownership probe append outcome is ambiguous",
+      ),
+    });
+
+    await assertRejects(
+      () => client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 }),
+      Error,
+      "append outcome is ambiguous",
+    );
+    await assertRejects(
+      () =>
+        client.appendRunEvents({
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          events: [{ type: "AFTER_FAILED_RECOVERY" }],
+          expectedPreviousExternalEventSequence: 0,
+        }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 2);
+  });
+
+  it("clears a failed renewal when ambiguous probe recovery cannot prove the cursor", async () => {
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({
+        ...claim(),
+        run: { ...claim().run, latest_external_event_sequence: 8 },
+      }),
+      jsonResponse({ error: "lease failed" }, 503),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterRenew",
+        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+      ),
+    });
+
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    await assertRejects(
+      () => client.renewLease({ workerId: WORKER_ID, runId: RUN_ID, leaseDurationSeconds: 30 }),
+      Error,
+      "stale generation outcome is ambiguous",
+    );
+    await assertRejects(
+      () =>
+        client.appendRunEvents({
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          events: [{ type: "AFTER_FAILED_RENEWAL_RECOVERY" }],
+          expectedPreviousExternalEventSequence: 8,
+        }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 3);
+  });
+
   it("preserves a claim when the ownership probe returns a reconciled append cursor", async () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse(claim()),
