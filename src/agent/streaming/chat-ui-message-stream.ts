@@ -704,6 +704,39 @@ function parseTrustedRuntimeObservation(
   return parsedRuntimeObservation.data;
 }
 
+/**
+ * The reasoning events the response message records for one stream event. Reasoning passes
+ * through the replay step, so the recorded spans and ids are the ones the emitted chunks
+ * carry; private end metadata stays on the end event. Other events pass through.
+ */
+function* observedReasoningSpans(
+  event: ChatStreamEvent,
+  dedupe: (
+    chunk: ChatUiMessageChunk<MessageMetadata>,
+  ) => Iterable<ChatUiMessageChunk<MessageMetadata>>,
+): Iterable<ChatStreamEvent> {
+  if (
+    event.type !== "reasoning-start" && event.type !== "reasoning-delta" &&
+    event.type !== "reasoning-end"
+  ) {
+    yield event;
+    return;
+  }
+  const chunk: ChatUiMessageChunk<MessageMetadata> = event.type === "reasoning-delta"
+    ? { type: "reasoning-delta", id: event.id, delta: event.delta }
+    : { type: event.type, id: event.id };
+  for (const span of dedupe(chunk)) {
+    if (span.type === "reasoning-start") yield { type: "reasoning-start", id: span.id };
+    else if (span.type === "reasoning-delta") {
+      yield { type: "reasoning-delta", id: span.id, delta: span.delta };
+    } else if (span.type === "reasoning-end") {
+      yield event.type === "reasoning-end"
+        ? { ...event, id: span.id }
+        : { type: "reasoning-end", id: span.id };
+    }
+  }
+}
+
 /** Create chat UI message stream from data stream. */
 export function createChatUiMessageStreamFromDataStream<TMessageMetadata = MessageMetadata>(
   input: { stream: ReadableStream<Uint8Array> },
@@ -720,7 +753,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
   const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
   let manuallyPaused = false;
-  const dedupeObservedReasoning = createChatUiMessageChunkDeduper<MessageMetadata>();
+  const dedupeReasoning = createChatUiMessageChunkDeduper<MessageMetadata>();
 
   return normalizeChatUiMessageStream(
     (async function* () {
@@ -778,13 +811,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           // The response message follows the reasoning spans the client stream emits: a
           // restarted id replays its content, and diverging content continues under the
           // same replacement id the emitted chunks carry.
-          const observed = observedEvent.type === "reasoning-start" ||
-              observedEvent.type === "reasoning-delta" || observedEvent.type === "reasoning-end"
-            ? dedupeObservedReasoning(
-              observedEvent as unknown as ChatUiMessageChunk<MessageMetadata>,
-            ) as unknown as Iterable<typeof observedEvent>
-            : [observedEvent];
-          for (const observedPart of observed) {
+          for (const observedPart of observedReasoningSpans(observedEvent, dedupeReasoning)) {
             observeChatStreamEvent({
               event: observedPart,
               responseMessageId,
