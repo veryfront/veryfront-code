@@ -154,6 +154,27 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("drops the output when a call and its result name different tools", () => {
+    // One call id, two tool names: the result is not this call's output.
+    const content = [
+      { type: "tool-call", toolCallId: "c", toolName: "bash", input: { command: "ls" } },
+      { type: "tool-result", toolCallId: "c", toolName: "web_fetch", output: "fetched" },
+    ];
+    for (
+      const step of [
+        { response: { messages: [{ role: "assistant", content }] } },
+        { toolCalls: [content[0]], toolResults: [content[1]] },
+      ]
+    ) {
+      const parts = buildFallbackUiMessageParts(step);
+      assertEquals(JSON.stringify(parts).includes("fetched"), false);
+      assertEquals(
+        parts.some((part) => "state" in part && part.state === "output-available"),
+        false,
+      );
+    }
+  });
+
   it("preserves reasoning parts from response message content", () => {
     const step = {
       response: {
@@ -181,6 +202,54 @@ describe("chat/final-step-fallback", () => {
       },
       { type: "text", text: "Use the saved draft." },
     ]);
+  });
+
+  it("drops empty reasoning shells from response message content", () => {
+    const step = {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), []);
+    assertEquals(buildFallbackUiMessageChunks(step, "assistant-1"), []);
+  });
+
+  it("uses lower-priority step output when response messages contain only an empty reasoning shell", () => {
+    const step = {
+      text: "Recovered top-level text.",
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [{
+      type: "text",
+      text: "Recovered top-level text.",
+    }]);
+  });
+
+  it("retains opaque reasoning fallback data without text", () => {
+    const step = {
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "reasoning", text: "", redactedData: "opaque_123" }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [{
+      type: "reasoning",
+      text: "",
+      redactedData: "opaque_123",
+    }]);
   });
 
   it("builds fallback chunks from response message reasoning, tool calls, tool results, and text", () => {
@@ -390,6 +459,22 @@ describe("chat/final-step-fallback", () => {
       { type: "text-delta", id: "assistant-1", delta: "Here are 3 options." },
       { type: "text-end", id: "assistant-1" },
     ]);
+  });
+
+  it("recognizes complete split text across space, newline, paragraph and contiguous boundaries", () => {
+    const parts = [{ type: "text" as const, text: "Hello" }, {
+      type: "text" as const,
+      text: "world",
+    }];
+    for (const separator of [" ", "\n", "\n\n", ""]) {
+      const step = { text: ["Hello", "world"].join(separator) };
+      assertEquals(appendMissingFallbackTextPart(parts, step), parts);
+      assertEquals(buildMissingFallbackTextChunks(parts, step, "m"), []);
+      assertEquals(appendMissingFallbackTextPart(parts, { text: step.text + " again" }), [
+        ...parts,
+        { type: "text", text: "again" },
+      ]);
+    }
   });
 
   it("builds only missing tool chunks from steps and finalized parts", () => {

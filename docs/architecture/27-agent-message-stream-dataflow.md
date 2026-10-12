@@ -416,3 +416,15 @@ Phase 5 target
                               -> source-tagged Stream Delivery envelope
                               -> live / durable / AG-UI Adapters
 ```
+
+### Recovered provider tool ownership in durable replay
+
+A finalized tool result can carry `providerExecuted: true` after its input has already been persisted. The version 1 writer retains that explicit marker on `TOOL_CALL_RESULT`; it does not reopen the completed input lifecycle. Replay recovers ownership at the existing `TOOL_CALL_END` only for a single ordered start/end/result occurrence with no explicit ownership on the call. Explicit local ownership, ambiguous reused IDs, incomplete calls, and out-of-order results retain their compatibility behavior. Stored events remain unchanged.
+
+### Completed tool ownership correction
+
+Hosted finalization can learn provider ownership after a completed tool result is already durable. It retains that result and appends reserved `CUSTOM` metadata named `veryfront.tool_result_ownership`. The value contains only `schemaVersion: 1`, `toolCallId`, `toolName`, `parentMessageId`, and `providerExecuted: true`. It contains no input or output payload. External `data-*` chunks cannot use this name.
+
+The reader applies the correction only to one ordered, unmarked start/end/result occurrence under the matching parent and tool name. It projects the original result once at its original position and consumes the metadata. Explicit ownership, malformed bindings, repeated results, and repeated corrections cannot grant ownership. Version 1 retains invalid metadata as a compatibility custom event; version 2 rejects it as a lifecycle violation. Normal version 2 sequence, idempotency, and duplicate-result checks still apply.
+
+The current hosted production mirror writes version 1, so finalization uses its existing `appendEvents` seam before flushing. Version 2 fixtures require the normal version 2 envelope. A future production version 2 writer must publish correction metadata through lifecycle frames; raw mirror append does not add version 2 sequence or idempotency fields.
