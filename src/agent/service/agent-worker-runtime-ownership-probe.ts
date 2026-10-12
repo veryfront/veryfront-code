@@ -21,16 +21,21 @@ const PROBE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const RuntimeAbortSignalTimeout = AbortSignal.timeout;
 const RuntimeError = Error;
 const RuntimeArrayIsArray = Array.isArray;
+const RuntimeArrayPrototypeFind = Array.prototype.find;
 const RuntimeArrayPrototypeSome = Array.prototype.some;
 const RuntimeArrayPrototypeSort = Array.prototype.sort;
 const RuntimeAtob = atob;
 const RuntimeJSONParse = JSON.parse;
 const RuntimeJSONstringify = JSON.stringify;
+const RuntimeNumberIsFinite = Number.isFinite;
+const RuntimeNumberIsSafeInteger = Number.isSafeInteger;
 const RuntimeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const RuntimeObjectKeys = Object.keys;
 const RuntimeMathFround = Math.fround;
 const RuntimeStringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const RuntimeStringPrototypeSlice = String.prototype.slice;
+const RuntimeStringPrototypeStartsWith = String.prototype.startsWith;
+const RuntimeStringPrototypeToLowerCase = String.prototype.toLowerCase;
 const RuntimeStringPrototypeReplaceAll = String.prototype.replaceAll;
 const RuntimeStringPrototypeIncludes = String.prototype.includes;
 const RuntimeStringPrototypeSplit = String.prototype.split;
@@ -173,16 +178,16 @@ export interface AgentWorkerRuntimeOwnershipProbe {
 function parsePositiveInteger(value: string | undefined): number | undefined {
   if (value === undefined || value.trim() === "") return undefined;
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  if (!RuntimeNumberIsSafeInteger(parsed) || parsed <= 0) return undefined;
   return parsed;
 }
 
 function parseExpiry(value: string | undefined): number | undefined {
   if (value === undefined || value.trim() === "") return undefined;
   const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (RuntimeNumberIsFinite(numeric) && numeric > 0) return numeric;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return RuntimeNumberIsFinite(parsed) ? parsed : undefined;
 }
 
 function readActivationFromEnv(
@@ -299,9 +304,14 @@ function readProblemStringField(body: unknown, field: "slug" | "type" | "code" |
 
 function readProblemSlug(body: unknown): string | undefined {
   const slug = readProblemStringField(body, "slug");
-  if (slug !== undefined) return slug.toLowerCase();
+  if (slug !== undefined) {
+    return RuntimeReflectApply(RuntimeStringPrototypeToLowerCase, slug, []) as string;
+  }
   const type = readProblemStringField(body, "type");
-  return type?.toLowerCase().split("/").at(-1);
+  if (type === undefined) return undefined;
+  const normalizedType = RuntimeReflectApply(RuntimeStringPrototypeToLowerCase, type, []) as string;
+  const parts = RuntimeReflectApply(RuntimeStringPrototypeSplit, normalizedType, ["/"]) as string[];
+  return parts[parts.length - 1];
 }
 
 type ReplayAuthorityOperation = "source" | "index" | "event";
@@ -462,7 +472,8 @@ function hasProbeEvent(body: unknown, identity: string): boolean {
     : body;
   if (!RuntimeArrayIsArray(candidates)) return false;
   return RuntimeReflectApply(RuntimeArrayPrototypeSome, candidates, [
-    (item: unknown) => stableJson(item).includes(identity),
+    (item: unknown) =>
+      RuntimeReflectApply(RuntimeStringPrototypeIncludes, stableJson(item), [identity]) as boolean,
   ]) as boolean;
 }
 
@@ -533,12 +544,16 @@ function readLatestExternalEventSequence(body: unknown): number | undefined {
   if (body === null || typeof body !== "object") return undefined;
   const direct =
     (body as { latest_external_event_sequence?: unknown }).latest_external_event_sequence;
-  if (typeof direct === "number" && Number.isSafeInteger(direct) && direct >= 0) return direct;
+  if (typeof direct === "number" && RuntimeNumberIsSafeInteger(direct) && direct >= 0) {
+    return direct;
+  }
   const run = (body as { run?: unknown }).run;
   if (run !== null && typeof run === "object") {
     const nested =
       (run as { latest_external_event_sequence?: unknown }).latest_external_event_sequence;
-    if (typeof nested === "number" && Number.isSafeInteger(nested) && nested >= 0) return nested;
+    if (typeof nested === "number" && RuntimeNumberIsSafeInteger(nested) && nested >= 0) {
+      return nested;
+    }
   }
   return undefined;
 }
@@ -712,7 +727,7 @@ function readStringFieldFromRecord(body: unknown, fields: readonly string[]): st
 function readNumberFieldFromRecord(body: unknown, field: string): number | undefined {
   if (body !== null && typeof body === "object") {
     const value = (body as Record<string, unknown>)[field];
-    if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+    if (typeof value === "number" && RuntimeNumberIsSafeInteger(value)) return value;
   }
   return undefined;
 }
@@ -766,7 +781,11 @@ function defaultCanonicalEmbedder(input: AgentWorkerRuntimeOwnershipProbeClaimIn
 }
 
 function normalizedEmbeddingModel(model: string): string {
-  return model.startsWith("veryfront-cloud/") ? model.slice("veryfront-cloud/".length) : model;
+  return RuntimeReflectApply(RuntimeStringPrototypeStartsWith, model, [
+      "veryfront-cloud/",
+    ]) as boolean
+    ? RuntimeReflectApply(RuntimeStringPrototypeSlice, model, ["veryfront-cloud/".length]) as string
+    : model;
 }
 
 function validateCanonicalEmbedder(embedder: Embedding): void {
@@ -797,12 +816,11 @@ async function canonicalIndexBody(
   if (
     vectors.length !== 1 || !RuntimeArrayIsArray(vector) ||
     vector.length !== CANONICAL_KNOWLEDGE_MODEL.dimension ||
-    RuntimeArrayPrototypeSome.call(
-      vector,
+    RuntimeReflectApply(RuntimeArrayPrototypeSome, vector, [
       (value) =>
-        typeof value !== "number" || !Number.isFinite(value) ||
-        !Number.isFinite(RuntimeMathFround(value)),
-    )
+        typeof value !== "number" || !RuntimeNumberIsFinite(value) ||
+        !RuntimeNumberIsFinite(RuntimeMathFround(value)),
+    ]) as boolean
   ) {
     throw new Error("canonical embedding provider returned an invalid 1536-dimensional vector");
   }
@@ -873,12 +891,14 @@ function validateCanonicalIndexStateResponse(
     return "canonical-index-state-response-invalid";
   }
   const data = (body as { data?: unknown }).data;
-  if (!Array.isArray(data)) return "canonical-index-state-response-invalid";
-  const matching = data.find((item) => {
-    if (item === null || typeof item !== "object") return false;
-    const record = item as Record<string, unknown>;
-    return record.path === input.sourcePath;
-  });
+  if (!RuntimeArrayIsArray(data)) return "canonical-index-state-response-invalid";
+  const matching = RuntimeReflectApply(RuntimeArrayPrototypeFind, data, [
+    (item: unknown) => {
+      if (item === null || typeof item !== "object") return false;
+      const record = item as Record<string, unknown>;
+      return record.path === input.sourcePath;
+    },
+  ]) as unknown;
   if (matching === undefined || matching === null || typeof matching !== "object") {
     return "canonical-index-state-missing";
   }

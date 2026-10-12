@@ -133,9 +133,11 @@ type ClaimFetchOptions = {
   replayEventDenial?:
     | "authority-403"
     | "authority-409"
+    | "wrong-slug-authority-409"
     | "generic-409"
     | "generic-401"
     | "generic-403";
+  eventReadbackUnrelated?: boolean;
 };
 
 function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
@@ -349,6 +351,14 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
             }, { status: 403 }),
           );
         }
+        if (options.replayEventDenial === "wrong-slug-authority-409") {
+          return Promise.resolve(
+            Response.json({
+              slug: "invalid-token",
+              detail: "This execution generation is no longer current; stop execution",
+            }, { status: 409 }),
+          );
+        }
         if (options.replayEventDenial === "generic-409") {
           return Promise.resolve(
             Response.json({ slug: "state-conflict", detail: "Sequence conflict" }, { status: 409 }),
@@ -412,7 +422,11 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
         return Promise.resolve(Response.json({ data: [], page_info: { next: "cursor-2" } }));
       }
       return Promise.resolve(Response.json({
-        data: postedEvent ? indexedEvents : [],
+        data: postedEvent
+          ? options.eventReadbackUnrelated
+            ? [{ event: "unrelated-runtime-log-entry" }]
+            : indexedEvents
+          : [],
         page_info: { next: null },
       }));
     }
@@ -918,6 +932,197 @@ it("rejects embeddings that would overflow the float32 index vector schema", asy
   assertEquals(receipts[0]?.errorType, "Error");
 });
 
+it("does not let replaced String model helpers validate a wrong embedder", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalStartsWith = String.prototype.startsWith;
+  const originalSlice = String.prototype.slice;
+  Object.defineProperty(String.prototype, "startsWith", {
+    configurable: true,
+    value(this: string, searchString: string, position?: number) {
+      if (String(this) === "local/bad-model" && searchString === "veryfront-cloud/") return true;
+      return Reflect.apply(originalStartsWith, this, [searchString, position]);
+    },
+  });
+  Object.defineProperty(String.prototype, "slice", {
+    configurable: true,
+    value(this: string, start?: number, end?: number) {
+      if (String(this) === "local/bad-model") return "openai/text-embedding-3-small";
+      return Reflect.apply(originalSlice, this, [start, end]);
+    },
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch(),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: { ...managedTestEmbedder(), model: "local/bad-model" },
+    });
+  } finally {
+    Object.defineProperty(String.prototype, "startsWith", {
+      configurable: true,
+      value: originalStartsWith,
+    });
+    Object.defineProperty(String.prototype, "slice", {
+      configurable: true,
+      value: originalSlice,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.errorType, "Error");
+});
+
+it("does not let replaced Number.isFinite bypass canonical vector validation", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalIsFinite = Number.isFinite;
+  Object.defineProperty(Number, "isFinite", {
+    configurable: true,
+    value: () => true,
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch(),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: overflowingTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(Number, "isFinite", {
+      configurable: true,
+      value: originalIsFinite,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.errorType, "Error");
+});
+
+it("does not let replaced Function.call bypass canonical vector validation", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalCall = Function.prototype.call;
+  Object.defineProperty(Function.prototype, "call", {
+    configurable: true,
+    value(this: (...args: never[]) => unknown, thisArg: unknown, ...args: unknown[]) {
+      if (this === Array.prototype.some) return false;
+      return Reflect.apply(originalCall, this, [thisArg, ...args]);
+    },
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch(),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: overflowingTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(Function.prototype, "call", {
+      configurable: true,
+      value: originalCall,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.errorType, "Error");
+});
+
+it("does not let replaced String.includes fabricate canonical event readback", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalIncludes = String.prototype.includes;
+  Object.defineProperty(String.prototype, "includes", {
+    configurable: true,
+    value(this: string, searchString: string, position?: number) {
+      if (searchString.startsWith("stage-probe:")) return true;
+      return Reflect.apply(originalIncludes, this, [searchString, position]);
+    },
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ eventReadbackUnrelated: true }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(String.prototype, "includes", {
+      configurable: true,
+      value: originalIncludes,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "probe-event-not-indexed");
+});
+
+it("does not let replaced Array.find fabricate canonical index readiness", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalFind = Array.prototype.find;
+  Object.defineProperty(Array.prototype, "find", {
+    configurable: true,
+    value(this: unknown[], predicate: (item: unknown, index: number, array: unknown[]) => unknown) {
+      const found = Reflect.apply(originalFind, this, [predicate]);
+      if (found !== undefined) return found;
+      return {
+        path:
+          "knowledge/agent-worker-runtime-ownership-probe-20261011/stage-probe/22222222-2222-4222-8222-222222222222/fabricated/ownership.md",
+        file_id: "11111111-1111-4111-8111-111111111111",
+        file_version_id: "22222222-2222-4222-8222-222222222222",
+        index_ready: true,
+      };
+    },
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ indexStatus: "empty" }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(Array.prototype, "find", {
+      configurable: true,
+      value: originalFind,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.errorType, "Error");
+});
+
 it("fails canonical source/index proof when index status is missing, wrong-file, stale, or not ready", async () => {
   for (const indexStatus of ["empty", "wrong-file", "wrong-version", "not-ready"] as const) {
     const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
@@ -1208,6 +1413,46 @@ it("rejects current-generation 409 canonical replay denials as source/index auth
   assertEquals(receipts[0]?.phase, "replaced-generation-denial");
   assertEquals(receipts[0]?.status, "error");
   assertEquals(receipts[0]?.reason, "stale-generation-mutated-source-index-or-events");
+});
+
+it("does not let replaced String.toLowerCase forge event authority slugs", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalToLowerCase = String.prototype.toLowerCase;
+  Object.defineProperty(String.prototype, "toLowerCase", {
+    configurable: true,
+    value(this: string) {
+      if (String(this) === "invalid-token") return "state-conflict";
+      return Reflect.apply(originalToLowerCase, this, []);
+    },
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterLeaseLost({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({
+        denyReplayCredentials: true,
+        denyReplayEvent: true,
+        replayEventDenial: "wrong-slug-authority-409",
+      }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-expired"),
+      currentCredentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(String.prototype, "toLowerCase", {
+      configurable: true,
+      value: originalToLowerCase,
+    });
+  }
+
+  assertEquals(receipts[0]?.phase, "expired-lease-denial");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "expired-lease-source-index-or-event-write-not-denied");
 });
 
 it("rejects generic 409 event conflicts as replaced-generation authority proof", async () => {

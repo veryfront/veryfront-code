@@ -48,6 +48,22 @@ function claim() {
   };
 }
 
+function workerResponse() {
+  return {
+    worker: {
+      id: WORKER_ID,
+      project_id: PROJECT_ID,
+      implementation_kind: "external",
+      worker_key: "worker",
+      display_name: "External",
+      status: "online",
+      metadata: null,
+      last_heartbeat_at: null,
+    },
+    token: "worker-token",
+  };
+}
+
 type FetchCall = [RequestInfo | URL, RequestInit | undefined];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -74,6 +90,10 @@ function fetchSequence(...responses: Response[]): {
       return next;
     }) as typeof fetch,
   };
+}
+
+function authorization(call: FetchCall): string | null {
+  return new Headers(call[1]?.headers).get("Authorization");
 }
 
 function throwingProbe(
@@ -126,4 +146,64 @@ it("does not demote fatal probe cursor errors when String.includes is replaced",
       value: originalIncludes,
     });
   }
+});
+
+it("installs claim credentials with probe construction guarded from project-mutated Date.parse", async () => {
+  const { calls, fetchImpl } = fetchSequence(
+    jsonResponse({
+      ...claim(),
+      run: { ...claim().run, lease_expires_at: "2026-10-12T00:00:00.000Z" },
+    }),
+    jsonResponse({ appended: true }),
+  );
+  const originalDateParse = Date.parse;
+  Date.parse = () => {
+    throw new Error("project Date.parse poison");
+  };
+  try {
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+    });
+    const claimed = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    assertEquals(claimed?.run_id, RUN_ID);
+    await client.appendRunEvents({
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      events: [{ type: "AFTER_POISONED_INTRINSICS" }],
+      expectedPreviousExternalEventSequence: claimed?.latest_external_event_sequence,
+    });
+    assertEquals(authorization(calls[1]!), "Bearer event-token");
+  } finally {
+    Date.parse = originalDateParse;
+  }
+});
+
+it("keeps worker token routing stable when Map.prototype.get is replaced", async () => {
+  const { calls, fetchImpl } = fetchSequence(
+    jsonResponse(workerResponse(), 201),
+    jsonResponse({ worker: workerResponse().worker }),
+  );
+  const originalMapGet = Map.prototype.get;
+  const client = createExternalAgentWorkerClient({
+    apiUrl: API_URL,
+    authToken: API_TOKEN,
+    fetch: fetchImpl,
+  });
+  const worker = await client.registerWorker({
+    projectReference: "proj",
+    implementationKind: "external",
+    implementationDisplayName: "External",
+    workerKey: "worker",
+  });
+  Map.prototype.get = function (_key: unknown) {
+    return "evil-token";
+  };
+  try {
+    await client.heartbeatWorker(worker.id);
+  } finally {
+    Map.prototype.get = originalMapGet;
+  }
+  assertEquals(authorization(calls[1]!), "Bearer worker-token");
 });

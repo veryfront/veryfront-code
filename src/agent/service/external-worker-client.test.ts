@@ -18,17 +18,20 @@ const RUN_ID = "run_123";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
 
 const CANONICAL_RUN_ID = "77777777-7777-4777-8777-777777777777";
-const TERMINAL_TOKEN = `header.${
-  btoa(
-    JSON.stringify({
-      runId: RUN_ID,
-      canonicalRunId: CANONICAL_RUN_ID,
-      tokenUse: "run_event_writer",
-      writerPurpose: "current_run_terminal",
-      dispatchNonce: "generation",
-    }),
-  )
-}.signature`;
+function terminalToken(runId = RUN_ID): string {
+  return `header.${
+    btoa(
+      JSON.stringify({
+        runId,
+        canonicalRunId: CANONICAL_RUN_ID,
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        dispatchNonce: "generation",
+      }),
+    )
+  }.signature`;
+}
+const TERMINAL_TOKEN = terminalToken();
 const credentials = {
   auth_token: "invocation-token",
   run_event_token: "event-token",
@@ -481,6 +484,45 @@ describe("external agent worker client", () => {
       events: [{ type: "AFTER_RECOVERED_RENEWAL" }],
       expected_previous_external_event_sequence: 10,
     });
+  });
+
+  it("rejects ambiguous claim recovery when the recovered terminal token is not bound to the run", async () => {
+    const recoveredClaim = {
+      ...claim(),
+      credentials: { ...credentials, run_terminal_token: terminalToken("run_other") },
+      run: { ...claim().run, latest_external_event_sequence: 7 },
+    };
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse(recoveredClaim),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterClaim",
+        "Agent worker runtime ownership probe append outcome is ambiguous",
+      ),
+    });
+
+    await assertRejects(
+      () => client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 }),
+      Error,
+      "append outcome is ambiguous",
+    );
+    await assertRejects(
+      () =>
+        client.appendRunEvents({
+          conversationId: CONVERSATION_ID,
+          runId: RUN_ID,
+          events: [{ type: "AFTER_WRONG_RECOVERY_TOKEN" }],
+          expectedPreviousExternalEventSequence: 7,
+        }),
+      Error,
+      "Current worker claim authority is required",
+    );
+    assertEquals(calls.length, 2);
   });
 
   it("clears a failed claim when ambiguous probe recovery cannot prove the cursor", async () => {

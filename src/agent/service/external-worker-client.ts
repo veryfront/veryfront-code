@@ -1,5 +1,6 @@
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
+
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
@@ -11,6 +12,9 @@ import {
   type AgentWorkerRuntimeOwnershipProbeRun,
   createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
 } from "./agent-worker-runtime-ownership-probe.ts";
+
+const DateParse = Date.parse;
+const NumberIsFinite = Number.isFinite;
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
@@ -290,7 +294,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #fetch: typeof fetch;
   readonly #runCredentials = new NativeMap<string, RunCredentials>();
   readonly #runClaims = new NativeMap<string, { workerId: string; run: ExternalAgentWorkerRun }>();
-  readonly #workerTokensByWorkerId = new Map<string, string>();
+  readonly #workerTokensByWorkerId = new NativeMap<string, string>();
   readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
@@ -308,7 +312,8 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     options: { workerId?: string } = {},
   ): Promise<T> {
     const token = options.workerId
-      ? this.#workerTokensByWorkerId.get(options.workerId) ?? this.#authToken
+      ? (apply(mapGet, this.#workerTokensByWorkerId, [options.workerId]) as string | undefined) ??
+        this.#authToken
       : this.#authToken;
     const response = await this.#fetch(`${this.#apiUrl}${path}`, {
       ...init,
@@ -347,7 +352,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     );
 
-    this.#workerTokensByWorkerId.set(response.worker.id, response.token);
+    apply(mapSet, this.#workerTokensByWorkerId, [response.worker.id, response.token]);
     return response.worker;
   }
 
@@ -373,21 +378,28 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     };
   }
 
+  #validatedTerminalRoute(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): ReturnType<typeof terminalRoute> {
+    return terminalRoute(credentials.run_terminal_token, run.run_id);
+  }
+
   #probeRun(
     run: ExternalAgentWorkerRun,
     credentials: RunCredentials,
   ): AgentWorkerRuntimeOwnershipProbeRun {
-    const route = terminalRoute(credentials.run_terminal_token, run.run_id);
+    const route = this.#validatedTerminalRoute(run, credentials);
     const leaseExpiresAtMs = run.lease_expires_at === null
       ? undefined
-      : Date.parse(run.lease_expires_at);
+      : DateParse(run.lease_expires_at);
     return {
       runId: run.run_id,
       canonicalRunId: route.id,
       projectId: run.project_id,
       agentId: run.agent_id,
       latestExternalEventSequence: run.latest_external_event_sequence,
-      leaseExpiresAtMs: leaseExpiresAtMs !== undefined && Number.isFinite(leaseExpiresAtMs)
+      leaseExpiresAtMs: leaseExpiresAtMs !== undefined && NumberIsFinite(leaseExpiresAtMs)
         ? leaseExpiresAtMs
         : undefined,
     };
@@ -444,6 +456,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
+      this.#validatedTerminalRoute(response.run, response.credentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
         workerId: input.workerId,
@@ -470,8 +483,8 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     );
     if (response.run && response.credentials) {
       const responseCredentials = response.credentials;
-      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
       const probeRun = this.#probeRun(response.run, responseCredentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
       let probeCursor: number | undefined;
       try {
         probeCursor = await this.#observeOwnershipProbeCursor(
