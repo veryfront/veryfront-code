@@ -33,7 +33,8 @@ Use these operating controls:
 ## Prerequisites
 
 - A Veryfront project with the `veryfront` package pinned in its lockfile.
-- A dedicated project API key stored in the CI secret manager.
+- A dedicated project API key stored in the CI secret manager. See
+  [API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.
 - The project slug stored as a CI variable.
 - A protected `staging` environment in Veryfront.
 - A protected `production` environment in Veryfront before promotion.
