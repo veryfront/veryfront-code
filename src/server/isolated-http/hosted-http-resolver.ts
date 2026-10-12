@@ -566,9 +566,14 @@ export function createHostedHttpResolver(
       [, , image] = await Promise.all(pending);
     } catch (error) {
       // Abort and detach the other checks; an operation that ignores its signal
-      // must not keep this resolution, or its ingress permit, pending.
+      // must not keep this resolution, or its ingress permit, pending. It stays in
+      // admission until it settles, so detached checks remain bounded as well.
       checks.abort();
-      for (const check of pending) check.catch(() => {});
+      for (const check of pending) {
+        pendingResolutions.add(check);
+        const settled = () => pendingResolutions.delete(check);
+        check.then(settled, settled);
+      }
       throw error;
     }
     signal.throwIfAborted();

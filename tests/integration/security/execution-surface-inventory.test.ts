@@ -615,6 +615,10 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
       case "StringLiteral":
         if (node.value === OPERATOR_GATE_VARIABLE) result.gateReads++;
         break;
+      case "TemplateLiteral":
+        // A template without substitutions is a string: `process.env[\`VERYFRONT_...\`]`.
+        if (propertyName(node, true) === OPERATOR_GATE_VARIABLE) result.gateReads++;
+        break;
       case "MemberExpression":
       case "OptionalMemberExpression":
         // `options["allowHostProjectCodeExecution"]` is a read like `options.allowHost...`.
@@ -1140,10 +1144,13 @@ describe("execution surface inventory", () => {
         "const direct = process.env.VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION;",
         'const quoted = process.env["VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION"];',
         "const named = read(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);",
+        "const templated = process.env[`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`];",
+        "const other = process.env[`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION_${suffix}`];",
       ].join("\n"),
       "ts",
     );
-    assertEquals(analysis.gateReads, 3);
+    // The substituted template names a different variable.
+    assertEquals(analysis.gateReads, 4);
   });
 
   it("counts a true-initialized binding passed by shorthand as a grant", () => {
