@@ -6,6 +6,9 @@ import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-
 import {
   clearPushReceipt,
   computeSourceDigest,
+  gitProbesAreIndeterminate,
+  gitSourceComparisonWitness,
+  gitSourceProbeWitness,
   normalizeControlPlane,
   type PushReceipt,
   readPushReceipt,
@@ -1050,5 +1053,98 @@ describe("resolveGitSource", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+});
+
+describe("Git probe classification", () => {
+  for (const code of [124, 125, 130, 1, 128]) {
+    it(`refuses failed HEAD code ${code} despite successful status`, () => {
+      assertEquals(
+        gitProbesAreIndeterminate(
+          { success: false, code },
+          { success: true, code: 0, stdout: "" },
+          null,
+          true,
+          false,
+        ),
+        true,
+      );
+    });
+  }
+  it("does not admit an abnormal HEAD even with an unborn flag", () => {
+    assertEquals(
+      gitProbesAreIndeterminate(
+        { success: false, code: 124 },
+        { success: true, code: 0 },
+        null,
+        true,
+        false,
+        true,
+      ),
+      true,
+    );
+  });
+  it("admits only independently verified unborn HEAD", () => {
+    assertEquals(
+      gitProbesAreIndeterminate(
+        { success: false, code: 128 },
+        { success: true, code: 0, stdout: "" },
+        null,
+        true,
+        false,
+        true,
+      ),
+      false,
+    );
+  });
+});
+
+describe("Git probe failure evidence", () => {
+  it("rejects a corrupt branch instead of treating exit 128 as unborn", async () => {
+    const projectDir = await makeTempDir();
+    try {
+      const initialized = await new Deno.Command("git", {
+        args: ["init", "--quiet", "--initial-branch=main"],
+        cwd: projectDir,
+      }).output();
+      assertEquals(initialized.success, true);
+      await Deno.mkdir(`${projectDir}/.git/refs/heads`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/.git/refs/heads/main`, "not-a-commit\n");
+      const source = await resolveGitSource(projectDir);
+      assertEquals(source.indeterminate, true);
+      const witness = gitSourceProbeWitness(source);
+      assertExists(witness);
+      const parsed = JSON.parse(witness);
+      assertEquals(Object.keys(parsed).sort(), ["head", "status"]);
+      for (const value of Object.values(parsed) as Array<Record<string, unknown>>) {
+        assertEquals(Object.keys(value).sort(), ["code", "outcome"]);
+        assertEquals(typeof value.code, "number");
+      }
+      assertEquals(witness.includes(projectDir), false);
+      assertEquals(witness.includes("not-a-commit"), false);
+      assertEquals(Object.keys(source).sort(), [
+        "clean",
+        "commitSha",
+        "indeterminate",
+        "repositoryAvailable",
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("Git source comparison witness", () => {
+  it("reports changed fields as booleans without source identifiers", () => {
+    const before = { commitSha: "a".repeat(40), clean: true, repositoryAvailable: true };
+    const after = { commitSha: "b".repeat(40), clean: false, repositoryAvailable: true };
+    const witness = gitSourceComparisonWitness(before, after);
+    assertEquals(JSON.parse(witness), {
+      before: null,
+      after: null,
+      changed: { commitSha: true, clean: true, repositoryAvailable: false, indeterminate: false },
+    });
+    assertEquals(witness.includes(before.commitSha), false);
+    assertEquals(witness.includes(after.commitSha), false);
   });
 });

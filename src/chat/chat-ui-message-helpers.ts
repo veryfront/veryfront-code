@@ -392,14 +392,18 @@ export function normalizeChatUiMessageChunk(
   }
 }
 
-/** Dedupe chat UI message chunks. */
-export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
-  stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
-): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
+/**
+ * @internal The replay state of one stream as a synchronous step: feed chunks in order
+ * and receive the de-duplicated ones. A restarted text or reasoning id replays its
+ * content; content that diverges continues under a `:replacement:N` id.
+ */
+export function createChatUiMessageChunkDeduper<TMessageMetadata>(): (
+  chunk: ChatUiMessageChunk<TMessageMetadata>,
+) => Iterable<ChatUiMessageChunk<TMessageMetadata>> {
   const textStates = new Map<string, ReplayState>();
   const reasoningStates = new Map<string, ReplayState>();
 
-  for await (const chunk of stream) {
+  return function* dedupe(chunk) {
     if (chunk.type === "text-start" || chunk.type === "reasoning-start") {
       const stateMap = chunk.type === "text-start" ? textStates : reasoningStates;
       const state = getReplayState(stateMap, replayChunkIdentity(chunk));
@@ -407,13 +411,13 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       if (state.started) {
         state.replayOffset = 0;
         state.replayContent = "";
-        continue;
+        return;
       }
 
       state.started = true;
       state.outputOpen = true;
       yield chunk;
-      continue;
+      return;
     }
 
     if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
@@ -455,12 +459,12 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
         };
         retainRuntimeObservation(chunk, deltaChunk);
         yield deltaChunk;
-        continue;
+        return;
       }
 
       state.replayOffset = nextReplayOffset;
       if (!emit) {
-        continue;
+        return;
       }
 
       if (!state.outputOpen) {
@@ -484,7 +488,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
         };
         retainRuntimeObservation(chunk, deltaChunk);
         yield deltaChunk;
-        continue;
+        return;
       }
 
       state.replayContent = "";
@@ -496,7 +500,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       };
       retainRuntimeObservation(chunk, deltaChunk);
       yield deltaChunk;
-      continue;
+      return;
     }
 
     if (chunk.type === "text-end" || chunk.type === "reasoning-end") {
@@ -504,7 +508,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       const state = stateMap.get(replayChunkIdentity(chunk));
 
       if (!state || !state.outputOpen) {
-        continue;
+        return;
       }
 
       state.replayOffset = null;
@@ -513,11 +517,19 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       const endChunk = { ...chunk, ...replayOutputIdentity(chunk, state.outputId) };
       retainRuntimeObservation(chunk, endChunk);
       yield endChunk;
-      continue;
+      return;
     }
 
     yield chunk;
-  }
+  };
+}
+
+/** Dedupe chat UI message chunks. */
+export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
+  stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
+): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
+  const dedupe = createChatUiMessageChunkDeduper<TMessageMetadata>();
+  for await (const chunk of stream) yield* dedupe(chunk);
 }
 
 /** Normalizes chat UI message stream. */

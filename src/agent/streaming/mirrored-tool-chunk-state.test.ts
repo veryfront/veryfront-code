@@ -878,3 +878,32 @@ describe("mirrored-tool-chunk-state", () => {
     assertEquals(disposed, true);
   });
 });
+
+Deno.test("recovered reasoning reserves actual IDs and clones them independently", () => {
+  const state = createMirroredToolChunkState();
+  for (const type of ["reasoning-start", "reasoning-delta", "reasoning-end"] as const) {
+    recordMirroredToolChunkState(
+      state,
+      type === "reasoning-delta"
+        ? { type, id: "streamed-reasoning", delta: "Thinking" }
+        : { type, id: "streamed-reasoning" },
+    );
+  }
+  assertEquals([...(state.reasoningContentIds ?? [])], ["streamed-reasoning"]);
+  const clone = cloneMirroredToolChunkState(state);
+  recordMirroredToolChunkState(clone, { type: "reasoning-start", id: "recovered-reasoning" });
+  assertEquals([...(state.reasoningContentIds ?? [])], ["streamed-reasoning"]);
+  assertEquals([...(clone.reasoningContentIds ?? [])], [
+    "streamed-reasoning",
+    "recovered-reasoning",
+  ]);
+});
+
+Deno.test("reasoning ID recording accepts existing mirrored state without the optional tracker", () => {
+  const state = createMirroredToolChunkState();
+  delete state.reasoningContentIds;
+  recordMirroredToolChunkState(state, { type: "reasoning-end", id: "earlier-sdk-reasoning" });
+  assertEquals([...(cloneMirroredToolChunkState(state).reasoningContentIds ?? [])], [
+    "earlier-sdk-reasoning",
+  ]);
+});

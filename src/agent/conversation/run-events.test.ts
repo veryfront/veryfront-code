@@ -1094,3 +1094,151 @@ describe("agent/conversation-run-events", () => {
     );
   });
 });
+
+Deno.test("review denied fallback provider ownership survives version1 replay", async () => {
+  const { readConversationRunLifecycleFrames } = await import("./legacy-run-read-adapter.ts");
+  for (const ownership of [true, false]) {
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "tool-input-start", toolCallId: "denied", toolName: "web_fetch" }),
+      ...encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "denied",
+        toolName: "web_fetch",
+        input: {},
+      }),
+      ...encoder.encode({
+        type: "tool-output-denied",
+        toolCallId: "denied",
+        providerExecuted: ownership,
+      }),
+    ];
+    assertEquals(
+      events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+      ownership,
+    );
+    const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      assertEquals(
+        replay.frames.some((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ),
+        ownership,
+      );
+    }
+  }
+});
+
+Deno.test("explicit local input ownership survives encoding and normalization before a provider-marked result", async () => {
+  const { readConversationRunLifecycleFrames } = await import("./legacy-run-read-adapter.ts");
+  for (const outcome of ["success", "error", "denied"] as const) {
+    for (
+      const inputMarker of ["start", "end", "true-start-false-end", "false-start-true-end"] as const
+    ) {
+      const startOwnership = inputMarker === "start" || inputMarker === "false-start-true-end"
+        ? false
+        : inputMarker === "true-start-false-end"
+        ? true
+        : undefined;
+      const endOwnership = inputMarker === "end" || inputMarker === "true-start-false-end"
+        ? false
+        : inputMarker === "false-start-true-end"
+        ? true
+        : undefined;
+      const toolCallId = `${outcome}:${inputMarker}`;
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "start", messageId: "assistant-message-1" },
+        {
+          type: "tool-input-start",
+          toolCallId,
+          toolName: "web_fetch",
+          ...(startOwnership === undefined ? {} : { providerExecuted: startOwnership }),
+        },
+        {
+          type: "tool-input-available",
+          toolCallId,
+          toolName: "web_fetch",
+          input: {},
+          ...(endOwnership === undefined ? {} : { providerExecuted: endOwnership }),
+        },
+        outcome === "success"
+          ? { type: "tool-output-available", toolCallId, output: "found", providerExecuted: true }
+          : outcome === "error"
+          ? { type: "tool-output-error", toolCallId, errorText: "failure", providerExecuted: true }
+          : { type: "tool-output-denied", toolCallId, providerExecuted: true },
+      ]);
+      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "provider_tool_result"
+          ),
+          [],
+        );
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "custom" && frame.event.name === "legacy-tool-result"
+          ).length,
+          1,
+        );
+      }
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_START")?.providerExecuted,
+        startOwnership,
+      );
+      assertEquals(
+        "providerExecuted" in events.find((event) => event.type === "TOOL_CALL_START")!,
+        startOwnership !== undefined,
+      );
+      assertEquals(
+        "providerExecuted" in events.find((event) => event.type === "TOOL_CALL_END")!,
+        endOwnership !== undefined,
+      );
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_END")?.providerExecuted,
+        endOwnership,
+      );
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        true,
+      );
+    }
+    const toolCallId = `provider:${outcome}`;
+    const positive = normalizeEncodedConversationRunEvents([
+      { type: "tool-input-start", toolCallId, toolName: "web_fetch" },
+      {
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "web_fetch",
+        input: {},
+        providerExecuted: true,
+      },
+      outcome === "success"
+        ? { type: "tool-output-available", toolCallId, output: "found", providerExecuted: true }
+        : outcome === "error"
+        ? { type: "tool-output-error", toolCallId, errorText: "failure", providerExecuted: true }
+        : { type: "tool-output-denied", toolCallId, providerExecuted: true },
+    ]);
+    assertEquals(
+      "providerExecuted" in positive.find((event) => event.type === "TOOL_CALL_START")!,
+      false,
+    );
+    const replay = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: positive,
+    });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      assertEquals(
+        replay.frames.filter((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ).length,
+        1,
+      );
+    }
+  }
+});
