@@ -8,15 +8,15 @@ import {
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import type { RenderGenerationBinding } from "#veryfront/rendering/render-generation-binding.ts";
-import { fetchProjectEnvVars } from "../project-env/fetcher.ts";
-import { ProjectEnvironmentIdentityResolver } from "../project-env/production-environment-resolver.ts";
-import { filterSharedRuntimeProjectEnv } from "../project-env/reserved-env.ts";
-import { resolveProjectTraceConfig } from "../project-env/telemetry-config.ts";
-import type { HostedHttpInput } from "./hosted-http-broker.ts";
+import { fetchProjectEnvVars } from "#veryfront/server/project-env/fetcher.ts";
+import { ProjectEnvironmentIdentityResolver } from "#veryfront/server/project-env/production-environment-resolver.ts";
+import { filterSharedRuntimeProjectEnv } from "#veryfront/server/project-env/reserved-env.ts";
+import { resolveProjectTraceConfig } from "#veryfront/server/project-env/telemetry-config.ts";
+import type { HostedHttpInput } from "#veryfront/server/isolated-http/hosted-http-broker.ts";
 import type {
   HostedHttpIngressOptions,
   HostedHttpRequestAuthority,
-} from "./hosted-http-ingress.ts";
+} from "#veryfront/server/isolated-http/hosted-http-ingress.ts";
 
 const PROJECT_LOOKUP_TIMEOUT_MS = 5_000;
 const PROJECT_RESPONSE_MAX_BYTES = 64 * 1024;
