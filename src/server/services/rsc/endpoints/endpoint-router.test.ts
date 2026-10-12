@@ -657,8 +657,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       );
       assertEquals(
         describeModuleBuildFailure(
-          new Error("read failed at C:/tenant/project/app/page.tsx"),
-          "C:\\tenant\\project",
+          new Error("read failed at c:/tenant/project/app/page.tsx"),
+          "C:\\Tenant\\Project",
         ).errorMessage,
         "read failed at <project>/app/page.tsx",
       );

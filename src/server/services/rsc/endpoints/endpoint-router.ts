@@ -7,6 +7,7 @@ import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils"
 import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -638,13 +639,8 @@ export function describeModuleBuildFailure(
   projectDir: string,
 ): { errorName: string; errorMessage?: string } {
   if (!(error instanceof Error)) return { errorName: "UnknownError" };
-  // Reads use normalized paths, so redact both the raw and normalized root.
-  let message = error.message;
-  if (projectDir) {
-    for (const root of new Set([projectDir, normalizePath(projectDir)])) {
-      message = message.replaceAll(root, "<project>");
-    }
-  }
+  // Matches either slash style, and Windows roots case-insensitively.
+  const message = redactPathFromText(error.message, projectDir, "<project>");
   return { errorName: error.name, errorMessage: message.slice(0, 500) };
 }
 
