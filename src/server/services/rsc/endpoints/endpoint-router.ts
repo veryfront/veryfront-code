@@ -638,7 +638,13 @@ export function describeModuleBuildFailure(
   projectDir: string,
 ): { errorName: string; errorMessage?: string } {
   if (!(error instanceof Error)) return { errorName: "UnknownError" };
-  const message = projectDir ? error.message.replaceAll(projectDir, "<project>") : error.message;
+  // Reads use normalized paths, so redact both the raw and normalized root.
+  let message = error.message;
+  if (projectDir) {
+    for (const root of new Set([projectDir, normalizePath(projectDir)])) {
+      message = message.replaceAll(root, "<project>");
+    }
+  }
   return { errorName: error.name, errorMessage: message.slice(0, 500) };
 }
 

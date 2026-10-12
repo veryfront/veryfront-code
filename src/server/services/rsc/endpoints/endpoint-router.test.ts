@@ -655,6 +655,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         ),
         { errorName: "TypeError", errorMessage: "read failed at <project>/app/page.tsx" },
       );
+      assertEquals(
+        describeModuleBuildFailure(
+          new Error("read failed at C:/tenant/project/app/page.tsx"),
+          "C:\\tenant\\project",
+        ).errorMessage,
+        "read failed at <project>/app/page.tsx",
+      );
       assertEquals(describeModuleBuildFailure("boom", "/srv/tenant-a/project"), {
         errorName: "UnknownError",
       });
