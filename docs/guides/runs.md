@@ -419,8 +419,16 @@ veryfront project runs fail --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"error":{"code":"TASK_FAILED","message":"Task failed"}}'
 ```
 
-To run a webhook manually, use `create` with `source.type` set to `webhook`. See
-[Webhooks](https://veryfront.com/docs/cloud/webhooks) for webhooks and webhook events.
+To run a webhook manually, use `create` with `source.type` set to `webhook`.
+The body requires `project_id`, `source.id` with the webhook ID, and `input`
+with the payload as a JSON value:
+
+```sh
+veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
+  --body '{"project_id":"<PROJECT_ID>","source":{"type":"webhook","id":"<WEBHOOK_ID>"},"input":{}}'
+```
+
+See [Webhooks](https://veryfront.com/docs/cloud/webhooks) for webhooks and webhook events.
 
 Use `--ndjson` on a paginated list command to receive items as they arrive:
 

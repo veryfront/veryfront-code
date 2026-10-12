@@ -1267,6 +1267,15 @@ describe("guide content contracts", () => {
       guide,
       "To run a webhook manually, use `create` with `source.type` set to `webhook`.",
     );
+    // A webhook run request requires all three; `input` has no default.
+    assertStringIncludes(
+      guide,
+      "The body requires `project_id`, `source.id` with the webhook ID, and `input`",
+    );
+    assertStringIncludes(
+      guide,
+      `--body '{"project_id":"<PROJECT_ID>","source":{"type":"webhook","id":"<WEBHOOK_ID>"},"input":{}}'`,
+    );
     assertStringIncludes(
       guide,
       "[Webhooks](https://veryfront.com/docs/cloud/webhooks)",
