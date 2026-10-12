@@ -104,6 +104,8 @@ interface WarmGeneration {
    * left out of the project's bound while it drains, so a deploy does not refuse requests.
    */
   predecessor: boolean;
+  /** Settles when a retirement requested before construction has completed. */
+  starting?: PromiseWithResolvers<void>;
 }
 
 /** Refuse a request whose own allocation deadline has passed. */
@@ -192,9 +194,15 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     forget(key);
     const slot = warm.get(key.generationId);
     if (slot) slot.retiring = true;
+    if (slot && slot.active > 0 && !constructed.has(key.generationId)) {
+      // Its first request has reserved the slot but not yet constructed the generation,
+      // so the pool has nothing to retire. Keep the slot; construction retires it.
+      return (slot.starting ??= Promise.withResolvers<void>()).promise;
+    }
     return generations.retire(key).then(() => {
       constructed.delete(key.generationId);
       warm.delete(key.generationId);
+      slot?.starting?.resolve();
     });
   }
 
@@ -424,6 +432,8 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         retireBeforeDeadlineMs: drainTimeoutMs,
       });
       void executor.ended.then(() => retire(owned));
+      // A retirement that arrived while this generation was being constructed.
+      if (warm.get(owned.generationId)?.retiring) retire(owned);
       return new RenderGeneration({
         executor,
         // Executor images own their artifacts; the allocator release retires them.

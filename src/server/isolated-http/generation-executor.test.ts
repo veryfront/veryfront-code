@@ -826,6 +826,33 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("leaves no untracked executor when two releases of an environment start together", async () => {
+    const old = fixture(() => new Response("old"));
+    old.input.session.request.requestedAt -= 1_000;
+    const next = fixture(() => new Response("next"));
+    next.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 2, idleTimeoutMs: 60_000 });
+    try {
+      const outcomes = await Promise.allSettled([
+        broker.fetch(new Request("https://a.example"), old.input).then((r) => r.text()),
+        broker.fetch(new Request("https://a.example"), next.input).then((r) => r.text()),
+      ]);
+      // Whatever order the two were admitted in, the newer release is served.
+      assertEquals(outcomes[1], { status: "fulfilled", value: "next" });
+      // The older release either was refused or drains; it never stays allocated unseen.
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (count(old.calls, "allocate") === count(old.calls, "release:completed")) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assertEquals(count(old.calls, "allocate"), count(old.calls, "release:completed"));
+      assertEquals(broker.generations, 1);
+      assertEquals(broker.active, 1);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("keeps generation order for an environment whose executor was retired to make room", async () => {
     const current = fixture(() => new Response("current"));
     current.input.installation.configurationId = "config-b";
