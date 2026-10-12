@@ -33,7 +33,7 @@ function harness(
   };
 }
 
-describe("server/event-loop-stall-detector", () => {
+describe("observability/event-loop-stall-detector", () => {
   it("reports no stall while the loop keeps its cadence", () => {
     const h = harness();
     h.detector.start();

@@ -10,7 +10,7 @@
  */
 
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { unrefTimer } from "#veryfront/compat/process.ts";
+import { unrefTimer } from "#veryfront/compat/process/lifecycle.ts";
 
 const logger = serverLogger.component("event-loop");
 
