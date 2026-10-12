@@ -325,6 +325,11 @@ function nameOf(node: unknown): string | undefined {
   if (!isNode(node)) return undefined;
   if (node.type === "Identifier") return node.name as string;
   if (node.type === "StringLiteral") return node.value as string;
+  // A private name `#check` keeps its `#`, so it never collides with a public `check`.
+  if (node.type === "PrivateName") {
+    const name = nameOf(node.id);
+    return name === undefined ? undefined : `#${name}`;
+  }
   return undefined;
 }
 
@@ -472,6 +477,15 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`,
       // through the same wrappers, binds and fallbacks a direct call resolves.
       for (const from of calleeNames(node.right)) links.push([from, node.left.name as string]);
+    } else if (
+      node.type === "AssignmentExpression" && isNode(node.left) &&
+      (node.left.type === "MemberExpression" || node.left.type === "OptionalMemberExpression")
+    ) {
+      // `policy.check = p` or `this.#check = p`: a later call of that property calls it.
+      const key = propertyName(node.left.property, node.left.computed);
+      if (key !== undefined) {
+        for (const from of calleeNames(node.right)) links.push([from, key]);
+      }
     } else if (node.type === "ObjectExpression" && Array.isArray(node.properties)) {
       // `{ check: p }`: a later `policy.check(ctx)` calls the predicate.
       for (const property of node.properties) {
@@ -593,7 +607,10 @@ function analyzeSource(source: string, language: "ts" | "tsx" | "js" = "ts"): So
         return;
       case "Identifier":
         if (node.name === FLAG) result.guards++;
-        if (node.name === OPERATOR_GATE_CONSTANT) result.gateReads++;
+        // The constant, or the variable read by name as `process.env.VERYFRONT_...`.
+        if (node.name === OPERATOR_GATE_CONSTANT || node.name === OPERATOR_GATE_VARIABLE) {
+          result.gateReads++;
+        }
         break;
       case "StringLiteral":
         if (node.value === OPERATOR_GATE_VARIABLE) result.gateReads++;
@@ -1098,6 +1115,35 @@ describe("execution surface inventory", () => {
     );
     // `policy.check(ctx)` and `Policy.verify(ctx)`; `other` is not a predicate.
     assertEquals(analysis.guards, 2);
+  });
+
+  it("resolves predicate aliases in private fields and property assignments", () => {
+    const analysis = analyzeSource(
+      [
+        "class Policy {",
+        "  #check = requiresIsolatedProjectRuntime;",
+        "  run(ctx) { return this.#check(ctx); }",
+        "}",
+        "policy.verify = isSharedProjectRuntime;",
+        "policy.verify(ctx);",
+        "policy.check(ctx);",
+      ].join("\n"),
+      "ts",
+    );
+    // `this.#check(ctx)` and `policy.verify(ctx)`; a public `check` is not the private one.
+    assertEquals(analysis.guards, 2);
+  });
+
+  it("counts a dot-property read of the operator gate variable", () => {
+    const analysis = analyzeSource(
+      [
+        "const direct = process.env.VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION;",
+        'const quoted = process.env["VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION"];',
+        "const named = read(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);",
+      ].join("\n"),
+      "ts",
+    );
+    assertEquals(analysis.gateReads, 3);
   });
 
   it("counts a true-initialized binding passed by shorthand as a grant", () => {
