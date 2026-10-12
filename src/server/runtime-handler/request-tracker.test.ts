@@ -64,6 +64,24 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
+    it("never reuses a generated key that a client id already occupies", () => {
+      const keys = [
+        requestTracker.start("foo#1", "p", "/a", "GET"),
+        requestTracker.start("foo", "p", "/b", "GET"),
+        requestTracker.start("foo", "p", "/c", "GET"),
+        requestTracker.start("foo", "p", "/d", "GET"),
+      ];
+      assertEquals(new Set(keys).size, 4);
+      assertEquals(requestTracker.getInFlightCount(), 4);
+      requestTracker.complete(keys[0]!, 200);
+      assertEquals(requestTracker.getInFlightRequests().map((r) => r.path).sort(), [
+        "/b",
+        "/c",
+        "/d",
+      ]);
+      for (const key of keys.slice(1)) requestTracker.complete(key, 200);
+    });
+
     it("should handle completing an unknown request gracefully", () => {
       requestTracker.complete("nonexistent", 200);
       assertEquals(requestTracker.getInFlightCount(), 0);

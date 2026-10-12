@@ -162,9 +162,11 @@ class RequestTracker {
     this.startStatusLogging();
     // Clients may reuse x-request-id across overlapping requests; give each its
     // own key so completing one never removes or reports the other.
-    const trackingKey = this.inFlight.has(requestId)
-      ? `${requestId}#${++this.duplicateKeySeq}`
-      : requestId;
+    // A client id may itself look like a generated key, so probe until free.
+    let trackingKey = requestId;
+    while (this.inFlight.has(trackingKey)) {
+      trackingKey = `${requestId}#${++this.duplicateKeySeq}`;
+    }
 
     const startTime = performance.now();
     this.totalRequests++;
