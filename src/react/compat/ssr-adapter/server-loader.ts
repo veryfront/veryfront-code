@@ -12,6 +12,7 @@ import { rendererLogger } from "#veryfront/utils";
 import type { SSROptions } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 
 const logger = rendererLogger.component("server-loader");
 
@@ -131,6 +132,8 @@ async function loadFromCachedHttpModule<T>(
   label: string,
   reactVersion: string,
 ): Promise<T> {
+  const localPath = getLocalReactPath(label === "React" ? "react" : label, reactVersion);
+  if (localPath) return (await import(localPath)) as T;
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir, reactVersion);
   logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });

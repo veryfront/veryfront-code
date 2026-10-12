@@ -19,8 +19,13 @@ import {
 import { isContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
-import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
+import { parseConfiguredExternalEsmShUrl } from "../shared/esm-sh-specifier.ts";
+import {
+  isServerOnlyPackage,
+  matchConfiguredServerExternalSpecifier,
+} from "../shared/server-only-packages.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 
 import {
   type CacheOptions,
@@ -178,6 +183,24 @@ async function resolveSpecifier(
     options.moduleServerOrigin,
   );
   if (isExternalScheme(specifier)) return null;
+  if (options.localReact) {
+    const candidate = baseUrl && isHttpUrl(baseUrl) && isRelative(specifier)
+      ? new URL(specifier, baseUrl).toString()
+      : specifier;
+    const match = matchConfiguredServerExternalSpecifier(candidate, ["react", "react-dom"]);
+    const runtimeSpecifier = match?.runtimeSpecifier ?? candidate;
+    const localReactPath = getLocalReactPath(runtimeSpecifier, options.reactVersion);
+    if (localReactPath) {
+      const authoredVersion = parseConfiguredExternalEsmShUrl(candidate)?.version ??
+        parseBarePackageSpecifier(
+          stringStartsWith(candidate, "npm:") ? stringSlice(candidate, 4) : candidate,
+        )
+          ?.version ??
+        null;
+      if (authoredVersion !== null) getLocalReactPath(runtimeSpecifier, authoredVersion);
+      return localReactPath;
+    }
+  }
 
   // The "@/" project alias always denotes the project's own module transport.
   // An alias that escaped every upstream rewrite must land there too: treating

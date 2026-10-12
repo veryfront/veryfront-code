@@ -13,8 +13,13 @@
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
+
+const ReflectApply = Reflect.apply;
+const StringStartsWith = String.prototype.startsWith;
+const StringReplace = String.prototype.replace;
 
 let localReactPathsCache: Readonly<Record<string, string>> | null = null;
 const EMPTY_REACT_PATHS: Readonly<Record<string, string>> = Object.freeze({});
@@ -29,6 +34,10 @@ const REACT_SPECIFIERS = [
 ] as const;
 
 function resolveReactSpecifier(specifier: string): string | undefined {
+  // Resolve from the framework, never from an application or writable cache.
+  // Node imports CJS through file URLs with its normal ESM interop.
+  // Missing peers are fatal: falling back to a CDN could split React identity.
+  if (isNode) return pathToFileURL(createRequire(import.meta.url).resolve(specifier)).href;
   try {
     if (isBun && typeof Bun?.resolveSync === "function") {
       const resolved = Bun.resolveSync(specifier, cwd());
@@ -42,12 +51,8 @@ function resolveReactSpecifier(specifier: string): string | undefined {
 }
 
 export function getLocalReactPaths(): Readonly<Record<string, string>> {
-  // On Deno, return empty - use esm.sh URLs instead (handled elsewhere).
-  // On Node.js, return empty - keep React as bare specifiers and let Node.js
-  // handle CJS/ESM interop naturally. Using file:// URLs for React's CJS
-  // modules doesn't work because Node.js can't import CJS via file:// in ESM.
-  // Bun handles this correctly, so we only resolve paths for Bun.
-  if (isDeno || isNode) return EMPTY_REACT_PATHS;
+  // Deno owns its HTTP import graph; Node/Bun use the framework's local peers.
+  if (isDeno) return EMPTY_REACT_PATHS;
   if (localReactPathsCache) return localReactPathsCache;
 
   const paths: Record<string, string> = {};
@@ -61,12 +66,27 @@ export function getLocalReactPaths(): Readonly<Record<string, string>> {
   return localReactPathsCache;
 }
 
+/** Resolve SSR React imports against the same peers as the framework renderer. */
+export function getLocalReactPath(specifier: string, reactVersion?: string): string | undefined {
+  if (!isReactSpecifier(specifier)) return undefined;
+  if (isNode && reactVersion !== undefined) {
+    const installedVersion = createRequire(import.meta.url)("react/package.json").version;
+    if (ReflectApply(StringReplace, reactVersion, [/^[~^]?v?/, ""]) !== installedVersion) {
+      throw new TypeError("Local React runtime does not match the selected project version");
+    }
+  }
+  const mapped = getLocalReactPaths()[specifier];
+  if (mapped) return mapped;
+  // Unsupported or missing Node subpaths must fail through package exports.
+  return isNode ? resolveReactSpecifier(specifier) : undefined;
+}
+
 export function isReactSpecifier(specifier: string): boolean {
   return (
     specifier === "react" ||
     specifier === "react-dom" ||
-    specifier.startsWith("react/") ||
-    specifier.startsWith("react-dom/")
+    ReflectApply(StringStartsWith, specifier, ["react/"]) ||
+    ReflectApply(StringStartsWith, specifier, ["react-dom/"])
   );
 }
 

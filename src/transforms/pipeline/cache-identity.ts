@@ -1,6 +1,6 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
-import { fingerprintImportMap } from "../esm/http-cache-helpers.ts";
+import { fingerprintImportMap, getSSRReactRuntimeCacheScope } from "../esm/http-cache-helpers.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { PipelineConfig, TransformPlugin } from "./types.ts";
 import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
@@ -507,6 +507,9 @@ export async function computePipelineConfigIdentity(
   if (ssrImports === "references") identity += "ssr-imports=references-v1;";
   identity += `base=${encodeIdentityPrimitive(baseIdentity)};`;
   identity += `ssr=${encodeIdentityPrimitive(ssr)};`;
+  if (ssr) {
+    identity += `react-runtime=${encodeIdentityPrimitive(await getSSRReactRuntimeCacheScope())};`;
+  }
   identity += `project=${encodeIdentityPrimitive(projectDir)};`;
   const moduleServerUrl = boundedOption(
     readOwnDataProperty(input, "moduleServerUrl", "Transform pipeline identity"),

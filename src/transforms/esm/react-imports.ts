@@ -1,7 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
-import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -27,16 +26,15 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  const ssrReactImports = isDeno || isNode
-    ? reactImports
-    : { ...reactImports, ...getLocalReactPaths() };
-
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...ssrReactImports,
+    ...reactImports,
   };
 
-  return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);
+  return replaceSpecifiers(
+    code,
+    (specifier) => getLocalReactPath(specifier, reactVersion) ?? ssrImports[specifier] ?? null,
+  );
 }
 
 export function addDepsToEsmShUrls(

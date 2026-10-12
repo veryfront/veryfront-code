@@ -281,6 +281,7 @@ async function cacheHttpImports(
     cacheDir: getHttpBundleCacheDir(),
     importMap,
     reactVersion: context.reactVersion,
+    localReact: !sourceCapture,
     serverExternalPackages: context.serverExternalPackages,
   }, sourceCapture);
   return result.code;

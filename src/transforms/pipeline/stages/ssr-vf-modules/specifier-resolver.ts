@@ -5,6 +5,7 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
 
@@ -26,6 +27,8 @@ export function resolveReactSpecifier(
   reactVersion: string,
   reactImportMap: Record<string, string> = getReactImportMap(reactVersion),
 ): string | null {
+  const localPath = getLocalReactPath(specifier, reactVersion);
+  if (localPath) return localPath;
   const mapped = reactImportMap[specifier];
   if (mapped) return mapped;
   if (specifier.startsWith("react/")) {

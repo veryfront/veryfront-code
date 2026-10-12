@@ -404,6 +404,7 @@ async function rewriteFallbackRelativeImports(
     abortSignal: ctx.abortSignal,
     onProgress: ctx.onProgress,
     reactVersion: ctx.reactVersion,
+    localReact: true,
   });
   return cacheResult.code;
 }
@@ -715,6 +716,7 @@ async function transformFrameworkCodeUncoalesced(
       abortSignal: ctx.abortSignal,
       onProgress: ctx.onProgress,
       reactVersion: ctx.reactVersion,
+      localReact: true,
     });
 
     // Cache the final transformed code

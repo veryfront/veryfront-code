@@ -1,8 +1,8 @@
 import { BUNDLE_ERROR } from "#veryfront/errors";
 import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
-import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { assertContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
@@ -158,17 +158,10 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 }
 
 function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  // For Bun: Use local React paths from veryfront's node_modules.
-  // Bun handles CJS/ESM interop correctly with file:// URLs.
-  if (!isDeno && !isNode) {
-    const localPath = getLocalReactPaths()[specifier];
-    if (localPath) return localPath;
-    // If not found in local paths, fall through to esm.sh for subpath imports
-  }
+  const localPath = getLocalReactPath(specifier, version);
+  if (localPath) return localPath;
 
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
-  // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
-  // The cached bundles are ESM-compatible and can be imported via file:// URLs.
   const v = version ?? DEFAULT_REACT_VERSION;
   const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
