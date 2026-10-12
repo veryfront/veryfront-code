@@ -4750,6 +4750,7 @@ async function executeEvalTaskRun(
       error: taskResult.error,
       logs: progressLogs.join("\n") || null,
       duration_ms: taskResult.durationMs,
+      ...(taskResult.errorCode === undefined ? {} : { error_code: taskResult.errorCode }),
       ...(taskResult.retryable ? { retryable: true as const } : {}),
     };
   }

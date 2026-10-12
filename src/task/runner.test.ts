@@ -4,7 +4,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RetryableError } from "./errors.ts";
 import { type RunnableTask, runTask } from "./runner.ts";
-import type { TaskDefinition } from "./types.ts";
+import type { TaskContext, TaskDefinition } from "./types.ts";
 
 function makeTask(definition: TaskDefinition, id = "test-task"): RunnableTask {
   return {
@@ -491,6 +491,41 @@ describe("src/task/runner", () => {
       const result = await runTask({ task }, createInMemoryHostRuntime());
 
       assertEquals(result.errorCode, "TASK_FILESYSTEM_READ_ONLY");
+    });
+
+    it("returns a stable code when the thrown error's own fields cannot be read", async () => {
+      const task = makeTask({
+        run: () => {
+          const error = new Error("boom");
+          Object.defineProperty(error, "code", {
+            get() {
+              throw new Error("hostile code getter");
+            },
+          });
+          throw error;
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.success, false);
+      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
+    });
+
+    it("keeps the scratch directory path out of the failure text", async () => {
+      let seen: string | undefined;
+      const task = makeTask({
+        run: (ctx: TaskContext) => {
+          seen = ctx.dataDir;
+          throw new Error(`ENOENT: no such file, open '${ctx.dataDir}/missing.json'`);
+        },
+      });
+
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(typeof seen, "string");
+      assertEquals(result.error?.includes(seen!), false);
+      assertEquals(result.error, "ENOENT: no such file, open '<task data dir>/missing.json'");
     });
 
     it("gives any other thrown error the stable TASK_EXECUTION_FAILED code", async () => {

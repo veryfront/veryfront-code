@@ -47,6 +47,38 @@ describe("task ctx.dataDir", () => {
     assertEquals(await pathExists(seen!), false);
   });
 
+  it("is removed and the result returned when the task replaces Promise.prototype.catch", async () => {
+    let seen: string | undefined;
+    const original = Promise.prototype.catch;
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      result = await runTask(
+        {
+          task: {
+            id: "mutates",
+            name: "mutates",
+            definition: {
+              run: (ctx: TaskContext) => {
+                seen = ctx.dataDir;
+                Promise.prototype.catch = () => {
+                  throw new Error("task-replaced catch");
+                };
+                return "done";
+              },
+            },
+          },
+        },
+        createInMemoryHostRuntime(),
+      );
+    } finally {
+      Promise.prototype.catch = original;
+    }
+
+    assertEquals(result.success, true);
+    assertEquals(result.result, "done");
+    assertEquals(await pathExists(seen!), false);
+  });
+
   it("is removed after a failed run", async () => {
     let seen: string | undefined;
     const result = await runTask(

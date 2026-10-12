@@ -37,10 +37,48 @@ export const TASK_EXECUTION_FAILED_CODE = "TASK_EXECUTION_FAILED";
 const READ_ONLY_FS_HINT =
   "The project filesystem is read-only in hosted runtimes; write scratch files under ctx.dataDir instead.";
 
+const TASK_DATA_DIR_PLACEHOLDER = "<task data dir>";
+// Task code shares this process and may replace built-ins before it fails.
+const reflectApply = Reflect.apply;
+const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const regExpTest = RegExp.prototype.test;
+const stringReplaceAll = String.prototype.replaceAll;
+const READ_ONLY_FS_PATTERN = /\(os error 30\)|\bEROFS\b|read-only file system/i;
+
+/** An own data property of a thrown value; an accessor or a hostile object yields nothing. */
+function ownErrorField(error: unknown, key: "code" | "message"): unknown {
+  try {
+    if (error === null || typeof error !== "object") return undefined;
+    const descriptor = reflectApply(ownPropertyDescriptor, Object, [error, key]) as
+      | PropertyDescriptor
+      | undefined;
+    return descriptor?.value;
+  } catch {
+    return undefined;
+  }
+}
+
 function isReadOnlyFilesystemError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if ((error as { code?: unknown }).code === "EROFS") return true;
-  return /\(os error 30\)|\bEROFS\b|read-only file system/i.test(error.message);
+  if (ownErrorField(error, "code") === "EROFS") return true;
+  const message = ownErrorField(error, "message");
+  return typeof message === "string" &&
+    reflectApply(regExpTest, READ_ONLY_FS_PATTERN, [message]) as boolean;
+}
+
+/** The failure text for a result or a log line, without the run's scratch directory path. */
+function describeTaskFailure(error: unknown, dataDir: string | undefined): string {
+  let message: string;
+  try {
+    message = getErrorMessage(error);
+  } catch {
+    message = "Task failed";
+  }
+  if (dataDir === undefined || dataDir === "") return message;
+  // The temp root can be reached through a symlinked prefix, as on macOS.
+  for (const path of [`/private${dataDir}`, dataDir]) {
+    message = reflectApply(stringReplaceAll, message, [path, TASK_DATA_DIR_PLACEHOLDER]) as string;
+  }
+  return message;
 }
 
 export interface RunnableTask {
@@ -305,9 +343,8 @@ export async function runTask(
   } catch (error) {
     const durationMs = elapsedMilliseconds(start);
     const readOnly = isReadOnlyFilesystemError(error);
-    const errorMsg = readOnly
-      ? `${getErrorMessage(error)}. ${READ_ONLY_FS_HINT}`
-      : getErrorMessage(error);
+    const failure = describeTaskFailure(error, dataDir);
+    const errorMsg = readOnly ? `${failure}. ${READ_ONLY_FS_HINT}` : failure;
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);
 
@@ -323,12 +360,16 @@ export async function runTask(
     };
   } finally {
     if (dataDir !== undefined) {
-      await remove(dataDir, { recursive: true }).catch((error: unknown) => {
+      // Awaited in a try block rather than through the promise's own methods, which task
+      // code may have replaced.
+      try {
+        await remove(dataDir, { recursive: true });
+      } catch (error) {
         logger.warn("Task data directory cleanup failed", {
           target: `task:${task.id}`,
-          error: getErrorMessage(error),
+          error: describeTaskFailure(error, dataDir),
         });
-      });
+      }
     }
   }
 }
