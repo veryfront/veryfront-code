@@ -305,10 +305,12 @@ function resolveAliasSpecifier(specifier, scope) {
   // React is vendored under ./npm/node_modules for Node tests. Match on the
   // package the target points at, not on the specifier, so the aliases the
   // react workspace member declares (`@veryfront/react-dom-server-upstream` ->
-  // esm.sh/react-dom/server) land on the same vendored files.
+  // esm.sh/react-dom/server) land on the same vendored files. Before an npm
+  // build, delegate these aliases to the already installed Node dependencies.
   const remoteBare = bareSpecifierFromRemoteTarget(target);
   if (remoteBare && reactImportMap[remoteBare]) {
-    return findActualFile(reactImportMap[remoteBare].replace(/^\.\//, ""));
+    return findActualFile(reactImportMap[remoteBare].replace(/^\.\//, "")) ??
+      { nodeSpecifier: remoteBare };
   }
 
   if (target.startsWith("npm:")) {

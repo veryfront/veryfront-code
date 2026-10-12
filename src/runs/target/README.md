@@ -41,3 +41,28 @@ Contract fixtures exercise the real host HTTP stack in
 `tests/integration/integrations/runs-target-sdk/client.test.ts`, included in the
 existing client-coverage job. Transport boundary regressions and the real
 redirect test live under `tests/integration/semantic-unit-boundary/src/runs/target/`.
+
+### Canonical-v1 compatible event reads
+
+Select `runs.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Register the schema validator described in `veryfront/events` before decoding these values.
+
+```ts
+const page = await runs.canonicalEventsV1.list("<RUN_ID>", {
+  limit: 20,
+  sort_order: "asc",
+});
+for (const member of page.entries) {
+  if (member.kind === "canonical") console.log(member.event.type);
+  else console.log(member.reason, member.legacy.event_type);
+}
+const sameRecord = await runs.canonicalEventsV1.get("<RUN_ID>", "42");
+const supported = await runs.canonicalEventsV1.discover();
+for await (const member of runs.canonicalEventsV1.stream("<RUN_ID>", "42")) {
+  // Only persisted members have a durable resume position.
+  if (member.kind !== "transient") console.log(member.metadata.event_id);
+}
+```
+
+The decoder validates the selected public or diagnostic schema and producing identity. Legacy payloads remain caller-visible opaque JSON. A legacy source type can contain arbitrary JSON String characters. It never becomes an SSE event name. Derived history is available through list/get and cannot enter durable streams. Stream error frames throw `CanonicalEventsV1StreamError`; they do not appear as a successful end of history. Keep the last persisted member ID when resuming. Keepalive controls and transient members do not advance it.
+
+`next_cursor` identifies the last returned member only when the server reports qualifying lookahead. Retain the same filters, sort order and descendants setting between pages.

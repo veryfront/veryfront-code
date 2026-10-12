@@ -7,9 +7,17 @@ import { createRunsApiTransport } from "./transport.ts";
 import { RUNS_OPERATIONS } from "./operations.ts";
 
 const expectedRuntimeExports = [
+  "CanonicalEventsV1Error",
+  "CanonicalEventsV1StreamError",
   "RUNS_OPERATIONS",
+  "createCanonicalEventsV1Facade",
   "createRunsApiTransport",
   "createRunsSdk",
+  "parseEventDiscoveryV1",
+  "parseEventErrorV1",
+  "parseRunReadMemberV1",
+  "parseRunReadPageV1",
+  "parseStreamMemberV1",
   "runsProblemOf",
 ];
 

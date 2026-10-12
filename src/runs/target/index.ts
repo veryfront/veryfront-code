@@ -54,3 +54,12 @@ export type RunsContractComponents = components;
 export type RunsContractOperations = operations;
 /** Paths of the pinned Runs contract, keyed by URL template. */
 export type RunsContractPaths = paths;
+
+export {
+  CanonicalEventsV1Error,
+  type CanonicalEventsV1Facade,
+  type CanonicalEventsV1ListOptions,
+  CanonicalEventsV1StreamError,
+  createCanonicalEventsV1Facade,
+} from "./canonical-v1.ts";
+export * from "#veryfront/events/canonical-v1/index.ts";

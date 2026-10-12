@@ -141,3 +141,5 @@ export {
   type JsonObject,
   type JsonValue,
 } from "./types.ts";
+
+export * from "./canonical-v1/index.ts";

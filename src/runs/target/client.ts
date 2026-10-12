@@ -1,3 +1,4 @@
+import { type CanonicalEventsV1Facade, createCanonicalEventsV1Facade } from "./canonical-v1.ts";
 /**
  * Typed SDK for the Runs target contract (veryfront-issue-inbox#2522). One method per
  * contract operation; request and response types come from the pinned contract.
@@ -134,6 +135,7 @@ export type RunsPaginatedOperationId = {
 export type RunsSdk =
   & { readonly [K in RunsOperationId]: (...args: RunsArgs<K>) => RunsResult<K> }
   & {
+    readonly canonicalEventsV1: CanonicalEventsV1Facade;
     /** Yields every item of a paginated list, following `page_info.next`. */
     paginate<K extends RunsPaginatedOperationId>(
       operationId: K,
@@ -244,7 +246,10 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     }
   }
 
-  const methods: Record<string, unknown> = { paginate };
+  const methods: Record<string, unknown> = {
+    paginate,
+    canonicalEventsV1: createCanonicalEventsV1Facade(config.transport),
+  };
   for (const [operationId, route] of Object.entries(RUNS_OPERATIONS)) {
     methods[operationId] = "stream" in route
       ? (input?: WireInput, options?: RunsCallOptions) =>
