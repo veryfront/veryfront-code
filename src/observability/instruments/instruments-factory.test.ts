@@ -37,7 +37,7 @@ describe("observability/instruments/instruments-factory", () => {
     failRenderFamily = false;
     const initialized = initializeInstruments(meter, config, runtimeState);
     assertNotEquals(initialized.cacheSizeGauge, null);
-    assertEquals(callbacks.size, 5);
+    assertEquals(callbacks.size, 6);
 
     disposeInstruments(initialized);
     assertEquals(callbacks.size, 0);

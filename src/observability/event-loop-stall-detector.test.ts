@@ -1,0 +1,70 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createEventLoopStallDetector, type EventLoopStall } from "./event-loop-stall-detector.ts";
+
+function harness(
+  inFlight: Array<{ requestId: string; path: string; method: string; startTime: number }> = [],
+) {
+  let clock = 0;
+  let tick: (() => void) | undefined;
+  const stalls: EventLoopStall[] = [];
+  const detector = createEventLoopStallDetector({
+    intervalMs: 1_000,
+    stallThresholdMs: 5_000,
+    now: () => clock,
+    schedule: (fn) => {
+      tick = fn;
+      return () => (tick = undefined);
+    },
+    getInFlightRequests: () => inFlight,
+    onStall: (stall) => stalls.push(stall),
+  });
+  return {
+    detector,
+    stalls,
+    advance(ms: number) {
+      clock += ms;
+      tick?.();
+    },
+    get scheduled() {
+      return tick !== undefined;
+    },
+  };
+}
+
+describe("server/event-loop-stall-detector", () => {
+  it("reports no stall while the loop keeps its cadence", () => {
+    const h = harness();
+    h.detector.start();
+    h.advance(1_000);
+    h.advance(1_050);
+    assertEquals(h.stalls.length, 0);
+    assertEquals(h.detector.takeMaxLagMs(), 50);
+    assertEquals(h.detector.takeMaxLagMs(), 0);
+  });
+
+  it("names the requests in flight across a 57s block when the loop resumes", () => {
+    const h = harness([
+      { requestId: "a", path: "/api/articles-2", method: "GET", startTime: 500 },
+      { requestId: "b", path: "/late", method: "GET", startTime: 58_500 },
+    ]);
+    h.detector.start();
+    h.advance(1_000);
+    h.advance(58_000); // 57s of lag beyond the 1s interval
+    assertEquals(h.stalls.length, 1);
+    const stall = h.stalls[0]!;
+    assertEquals(stall.lagMs, 57_000);
+    assertEquals(stall.stalledFromMs, 1_000);
+    assertEquals(stall.inFlight.map((r) => r.requestId), ["a"]);
+    assertEquals(stall.inFlight[0]!.path, "/api/articles-2");
+    assertEquals(h.detector.takeMaxLagMs(), 57_000);
+  });
+
+  it("stops sampling after stop()", () => {
+    const h = harness();
+    h.detector.start();
+    h.detector.stop();
+    assertEquals(h.scheduled, false);
+  });
+});
