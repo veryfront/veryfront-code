@@ -31,6 +31,7 @@ import {
   hostedHttpInstallationKey,
   type PreparedHostedHttpInput,
   prepareHostedHttpInput,
+  scheduleOnHostedHttpInputClock,
 } from "./generation-executor.ts";
 import { buildHostedHttpGenerationBindingInput } from "./hosted-http-resolver.ts";
 
@@ -422,8 +423,10 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     assertBoundedAllocation(input);
     assertWithinDeadline(input);
     const expiry = new AbortController();
-    // Cleared when the request settles, so a finished request leaves no timer behind.
-    const expiryTimer = setTimeout(
+    // Scheduled on the same clock the deadline is read from, and cancelled when the
+    // request settles, so a finished request leaves no timer behind.
+    const cancelExpiryTimer = scheduleOnHostedHttpInputClock(
+      input,
       () =>
         expiry.abort(
           new DOMException("HTTP executor allocation deadline has passed", "TimeoutError"),
@@ -442,7 +445,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       // from being retired to make room.
       key = await currentKey(identity, input.allocation.requestedAt, projectId, signal);
     } catch (error) {
-      clearTimeout(expiryTimer);
+      cancelExpiryTimer();
       throw error;
     }
     const slot = warm.get(key.generationId);
@@ -450,7 +453,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const finish = () => {
       if (finished) return;
       finished = true;
-      clearTimeout(expiryTimer);
+      cancelExpiryTimer();
       if (!slot) return;
       slot.active--;
       slot.usedAt = ++clock;

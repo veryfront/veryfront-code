@@ -79,6 +79,25 @@ export function hostedHttpInputNow(input: PreparedHostedHttpInput): number {
   return input.session.clock?.now() ?? Date.now();
 }
 
+/**
+ * Schedule `callback` after `delayMs` on the session clock a caller configured, or on
+ * wall time. A deadline computed from that clock must also fire on it. Returns a
+ * function that cancels the timer.
+ */
+export function scheduleOnHostedHttpInputClock(
+  input: PreparedHostedHttpInput,
+  callback: () => void,
+  delayMs: number,
+): () => void {
+  const clock = input.session.clock;
+  if (clock) {
+    const handle = clock.schedule(callback, delayMs);
+    return () => clock.cancel(handle);
+  }
+  const handle = setTimeout(callback, delayMs);
+  return () => clearTimeout(handle);
+}
+
 /** Per-request data the broker attaches to each request it admits to a generation. */
 export interface HostedHttpGenerationRequest {
   /** `hostedHttpInstallationKey` of the request's own prepared input. */
@@ -179,7 +198,7 @@ export function createHostedHttpGenerationExecutor(
   let client: ReturnType<typeof createExecutorHttpClient> | undefined;
   let ready: Promise<void> | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  let cancelDeadlineTimer: (() => void) | undefined;
   let active = 0;
   let retired = false;
   let released = false;
@@ -190,7 +209,7 @@ export function createHostedHttpGenerationExecutor(
     if (retired) return;
     retired = true;
     clearTimeout(idleTimer);
-    clearTimeout(deadlineTimer);
+    cancelDeadlineTimer?.();
     ended.resolve();
   }
 
@@ -237,7 +256,8 @@ export function createHostedHttpGenerationExecutor(
       retire();
     } else {
       started.signal.addEventListener("abort", retire, { once: true });
-      deadlineTimer = setTimeout(retire, timerDelay(admissible));
+      // The deadline comes from the session clock, so it fires on that clock too.
+      cancelDeadlineTimer = scheduleOnHostedHttpInputClock(input, retire, timerDelay(admissible));
     }
     return (async () => {
       channel = await started.ready;

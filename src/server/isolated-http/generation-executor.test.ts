@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedExecutorSessionPool } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import { createHostedHttpFixture as fixture } from "../../../tests/fixtures/hosted-http-broker.ts";
@@ -413,6 +413,60 @@ describe("hosted HTTP generation broker", () => {
         );
       }
       assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("expires an in-flight request when the configured clock reaches its deadline", async () => {
+    // Timers run on real time, but every schedule call is recorded so the test can fire
+    // the request's expiry as the configured clock would, long before wall time gets there.
+    const startedAt = Date.now();
+    const scheduled: Array<{ callback: () => void; delayMs: number; cancelled: boolean }> = [];
+    const clock = {
+      now: () => 1_000_000 + (Date.now() - startedAt),
+      schedule(callback: () => void, delayMs: number) {
+        const entry = { callback, delayMs, cancelled: false };
+        scheduled.push(entry);
+        return { entry, timer: setTimeout(callback, delayMs) };
+      },
+      cancel(handle: unknown) {
+        const { entry, timer } = handle as {
+          entry: (typeof scheduled)[number];
+          timer: ReturnType<typeof setTimeout>;
+        };
+        entry.cancelled = true;
+        clearTimeout(timer);
+      },
+    };
+    const f = fixture(() => new Promise<Response>(() => {}));
+    f.input.session.clock = clock;
+    const allocator = f.input.session.allocator;
+    const restamp = <T>(view: T): T => ({ ...(view as object), expiresAt: 1_030_000 }) as T;
+    f.input.session.allocator = {
+      allocate: async (...args) => restamp(await allocator.allocate(...args)),
+      observe: async (...args) => restamp(await allocator.observe(...args)),
+      renew: async (...args) => restamp(await allocator.renew(...args)),
+      release: async (...args) => restamp(await allocator.release(...args)),
+    };
+    f.input.session.request.requestedAt = 1_000_000;
+    f.input.session.request.prepareDeadlineAt = 1_005_000;
+    f.input.session.request.hardDeadlineAt = 1_030_000;
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const pending = broker.fetch(new Request("https://app.example"), f.input);
+      pending.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // The request's expiry is the timer scheduled for the whole remaining lifetime.
+      const expiry = scheduled.find((entry) =>
+        !entry.cancelled && entry.delayMs > 29_000 && entry.delayMs <= 30_000
+      );
+      assert(expiry, "the request expiry must be scheduled on the configured clock");
+      expiry.callback();
+      // The clock's own timer ends the request; wall time is nowhere near the deadline.
+      await assertRejects(() => pending, Error, "cancelled");
+      assert(Date.now() - startedAt < 5_000);
     } finally {
       await broker.shutdown();
       await broker.settled;
