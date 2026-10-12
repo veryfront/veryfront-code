@@ -472,6 +472,23 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`,
       // through the same wrappers, binds and fallbacks a direct call resolves.
       for (const from of calleeNames(node.right)) links.push([from, node.left.name as string]);
+    } else if (node.type === "ObjectExpression" && Array.isArray(node.properties)) {
+      // `{ check: p }`: a later `policy.check(ctx)` calls the predicate.
+      for (const property of node.properties) {
+        if (!isNode(property) || property.type !== "ObjectProperty") continue;
+        const key = propertyName(property.key, property.computed);
+        if (key === undefined) continue;
+        for (const from of calleeNames(property.value)) links.push([from, key]);
+      }
+    } else if (
+      node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
+      node.type === "ClassAccessorProperty"
+    ) {
+      // `class Policy { check = p }` and `static check = p`.
+      const key = propertyName(node.key, node.computed);
+      if (key !== undefined) {
+        for (const from of calleeNames(node.value)) links.push([from, key]);
+      }
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
       // `const q = p as Guard`, `const q = (policy.p)!`: aliases through transparent wrappers.
       // Also `const check = policy.p`, `p.bind(policy)` and every branch of a fallback
@@ -1066,6 +1083,21 @@ describe("execution surface inventory", () => {
     );
     // `first(ctx)`, `second(ctx)`, `third(ctx)` and `fourth(ctx)`.
     assertEquals(analysis.guards, 4);
+  });
+
+  it("resolves predicate aliases stored as object or class properties", () => {
+    const analysis = analyzeSource(
+      [
+        "const policy = { check: requiresIsolatedProjectRuntime, other: unrelated };",
+        "policy.check(ctx);",
+        "class Policy { static verify = override ?? isSharedProjectRuntime; }",
+        "Policy.verify(ctx);",
+        "policy.other(ctx);",
+      ].join("\n"),
+      "ts",
+    );
+    // `policy.check(ctx)` and `Policy.verify(ctx)`; `other` is not a predicate.
+    assertEquals(analysis.guards, 2);
   });
 
   it("counts a true-initialized binding passed by shorthand as a grant", () => {
