@@ -340,6 +340,48 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("ends a warm request at its own allocation deadline without retiring the executor", async () => {
+    const gate = Promise.withResolvers<void>();
+    let arrived = 0;
+    const f = fixture(async () => {
+      if (++arrived === 2) await gate.promise;
+      return new Response("served");
+    });
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      // This request's authority ends long before the allocation that created the executor.
+      const now = Date.now();
+      await assertRejects(() =>
+        broker.fetch(new Request("https://app.example"), {
+          ...f.input,
+          session: {
+            ...f.input.session,
+            request: {
+              ...f.input.session.request,
+              requestedAt: now,
+              prepareDeadlineAt: now + 100,
+              hardDeadlineAt: now + 150,
+            },
+          },
+        })
+      );
+      gate.resolve();
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      gate.resolve();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("refuses a request whose own allocation deadline has passed, also on a warm executor", async () => {
     const f = fixture(() => new Response("served"));
     const broker = createHostedHttpBroker({ maxActive: 1 });
@@ -1033,6 +1075,40 @@ describe("hosted HTTP generation executor", () => {
       await executor.ended;
       assertEquals(f.calls, []);
       // The test runner fails this case if a timer armed by the executor is still pending.
+    } finally {
+      await sessions.shutdown();
+      await sessions.settled;
+    }
+  });
+
+  it("refuses a warm request inside the retirement window before its timer has run", async () => {
+    const f = fixture(() => new Response("served"));
+    const sessions = createHostedExecutorSessionPool({ maxActive: 1 });
+    const input = prepareHostedHttpInput(f.input);
+    const key = hostedHttpInstallationKey(input);
+    const retireBeforeDeadlineMs = input.allocation.hardDeadlineAt - Date.now() - 300;
+    const executor = createHostedHttpGenerationExecutor({
+      input,
+      sessions,
+      context: () => ({ key }),
+      idleTimeoutMs: 60_000,
+      retireBeforeDeadlineMs,
+    });
+    try {
+      assertEquals(
+        await (await executor.render(new Request("https://app.example"))).text(),
+        "served",
+      );
+      // Pass the boundary without yielding, as a busy event loop would delay the timer.
+      const boundary = input.allocation.hardDeadlineAt - retireBeforeDeadlineMs;
+      while (Date.now() < boundary) { /* spin */ }
+      await assertRejects(
+        () => executor.render(new Request("https://app.example")),
+        Error,
+        "retirement window",
+      );
+      await executor.ended;
+      await executor.stop();
     } finally {
       await sessions.shutdown();
       await sessions.settled;

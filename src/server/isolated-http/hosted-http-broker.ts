@@ -15,6 +15,7 @@ import {
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
 import { SERVICE_OVERLOADED } from "#veryfront/errors";
 import { serverLogger as logger } from "#veryfront/utils";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { RenderGenerationPool } from "#veryfront/rendering/render-generation-pool.ts";
@@ -378,21 +379,40 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     projectId: string,
     tracing = input.tracing,
   ): Promise<Response> {
+    // A warm executor runs under the allocation that created it, so each request's own
+    // execution authority is checked here, before and after any wait for a slot, and its
+    // own hard deadline ends the request through its response body.
+    assertWithinDeadline(input);
+    const expiry = new AbortController();
+    // Cleared when the request settles, so a finished request leaves no timer behind.
+    const expiryTimer = setTimeout(
+      () =>
+        expiry.abort(
+          new DOMException("HTTP executor allocation deadline has passed", "TimeoutError"),
+        ),
+      Math.min(input.allocation.hardDeadlineAt - Date.now(), MAX_TIMER_DELAY_MS),
+    );
     // Each caller's owner signal bounds its own request, also on a warm executor.
     const owner = input.session.ownerSignal;
-    const signal = owner ? AbortSignal.any([request.signal, owner]) : request.signal;
-    signal.throwIfAborted();
-    // A warm executor runs under the allocation that created it, so each request's own
-    // execution authority is checked here, before and after any wait for a slot.
-    assertWithinDeadline(input);
-    // Admission counts this request on its slot; a request in flight keeps its executor
-    // from being retired to make room.
-    const key = await currentKey(identity, input.allocation.requestedAt, projectId);
+    const signal = AbortSignal.any(
+      owner ? [request.signal, owner, expiry.signal] : [request.signal, expiry.signal],
+    );
+    let key: Readonly<WorkerGenerationIdentity>;
+    try {
+      signal.throwIfAborted();
+      // Admission counts this request on its slot; a request in flight keeps its executor
+      // from being retired to make room.
+      key = await currentKey(identity, input.allocation.requestedAt, projectId);
+    } catch (error) {
+      clearTimeout(expiryTimer);
+      throw error;
+    }
     const slot = warm.get(key.generationId);
     let finished = false;
     const finish = () => {
       if (finished) return;
       finished = true;
+      clearTimeout(expiryTimer);
       if (!slot) return;
       slot.active--;
       slot.usedAt = ++clock;

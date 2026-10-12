@@ -298,6 +298,11 @@ export function createHostedHttpGenerationExecutor(
       if (context?.key !== key) {
         throw new TypeError("HTTP executor generation is bound to another installation");
       }
+      // The deadline timer can run late under load; the boundary itself is absolute.
+      if (Date.now() >= input.allocation.hardDeadlineAt - retireBeforeDeadlineMs) {
+        retire();
+        throw new Error("HTTP executor allocation is inside its retirement window");
+      }
       if (retired) throw new Error("HTTP executor generation is retired");
       request.signal.throwIfAborted();
       if (!ready) {
