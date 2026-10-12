@@ -303,6 +303,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     }
   }
 
+  /** The generation key for a request, with the request counted on its slot. */
   async function currentKey(
     identity: Readonly<WorkerGenerationIdentity>,
     requestedAt: number,
@@ -311,7 +312,14 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     for (let attempt = 0;; attempt++) {
       order(identity, requestedAt);
       const current = scopes.get(identity.scopeId);
-      if (current?.generationId.startsWith(`${identity.generationId}:`)) return current;
+      if (current?.generationId.startsWith(`${identity.generationId}:`)) {
+        const slot = warm.get(current.generationId);
+        if (slot) {
+          slot.active++;
+          slot.usedAt = ++clock;
+        }
+        return current;
+      }
       const room = makeRoom(projectId, current);
       if (room) {
         if (attempt >= MAX_ROOM_ATTEMPTS) throw exhausted();
@@ -334,10 +342,12 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         generationId: `${identity.generationId}:${++epoch}`,
       });
       scopes.set(key.scopeId, key);
+      // The caller's request is counted before this function yields, so a slot that is
+      // only reserved is never mistaken for an idle executor.
       warm.set(key.generationId, {
         key,
         projectId,
-        active: 0,
+        active: 1,
         usedAt: ++clock,
         retiring: false,
         predecessor: false,
@@ -357,13 +367,10 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const owner = input.session.ownerSignal;
     const signal = owner ? AbortSignal.any([request.signal, owner]) : request.signal;
     signal.throwIfAborted();
+    // Admission counts this request on its slot; a request in flight keeps its executor
+    // from being retired to make room.
     const key = await currentKey(identity, input.allocation.requestedAt, projectId);
-    // A request in flight keeps its executor from being retired to make room.
     const slot = warm.get(key.generationId);
-    if (slot) {
-      slot.active++;
-      slot.usedAt = ++clock;
-    }
     let finished = false;
     const finish = () => {
       if (finished) return;

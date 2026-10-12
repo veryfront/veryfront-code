@@ -555,6 +555,48 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("does not retire a slot that a concurrent cold request has just reserved", async () => {
+    const idle = fixture(() => new Response("idle"));
+    const colds = ["project-b", "project-c"].map((projectId) =>
+      fixture(() => new Response(projectId), undefined, projectId)
+    );
+    const next = fixture(() => new Response("next"), undefined, "project-d");
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
+      // Both wait for the same retirement; only one can take the freed slot.
+      const outcomes = await Promise.all(
+        colds.map((f) =>
+          broker.fetch(new Request("https://cold.example"), f.input).then(
+            (response) => response.text(),
+            (error) => error as Error,
+          )
+        ),
+      );
+      const served = outcomes.filter((outcome) => typeof outcome === "string");
+      assertEquals(served.length, 1);
+      assertEquals(
+        outcomes.filter((outcome) => outcome instanceof Error && /capacity/.test(outcome.message))
+          .length,
+        1,
+      );
+      const winner = colds[outcomes.findIndex((outcome) => typeof outcome === "string")]!;
+      const loser = colds.find((f) => f !== winner)!;
+      assertEquals(winner.calls, ["allocate", "install"]);
+      assertEquals(loser.calls, []);
+      assertEquals(broker.generations, 1);
+      // The winner's executor is tracked: a later cold request retires it and is admitted.
+      assertEquals(
+        await (await broker.fetch(new Request("https://d.example"), next.input)).text(),
+        "next",
+      );
+      assertEquals(count(winner.calls, "release:completed"), 1);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("refuses a cold request and keeps the slot when the retired executor's release is unconfirmed", async () => {
     const idle = fixture(() => new Response("idle"));
     const release = idle.input.session.allocator.release;
