@@ -427,6 +427,35 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     }
   }
 
+  async #recoverRunAfterProbeCursorFailure(input: {
+    workerId: string;
+    runId: string;
+    leaseDurationSeconds: number;
+  }): Promise<ExternalAgentWorkerRun | null> {
+    const response = await this.#request(
+      `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
+        encodeURIComponent(input.runId)
+      }/lease`,
+      WorkerClaimSchema,
+      {
+        method: "POST",
+        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+      },
+      { workerId: input.workerId },
+    );
+    if (response.run && response.credentials) {
+      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
+      return response.run;
+    }
+    apply(mapDelete, this.#runCredentials, [input.runId]);
+    apply(mapDelete, this.#runClaims, [input.runId]);
+    return null;
+  }
+
   async claimRun(
     input: ClaimExternalAgentWorkerRunInput,
   ): Promise<ExternalAgentWorkerRun | null> {
@@ -443,16 +472,27 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       const responseCredentials = response.credentials;
       apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
       const probeRun = this.#probeRun(response.run, responseCredentials);
-      const probeCursor = await this.#observeOwnershipProbeCursor(
-        () =>
-          this.#ownershipProbe?.afterClaim({
-            apiUrl: this.#apiUrl,
-            fetch: this.#fetch,
-            workerId: input.workerId,
-            run: probeRun,
-            credentials: this.#probeCredentials(responseCredentials),
-          }),
-      );
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterClaim({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(responseCredentials),
+            }),
+        );
+      } catch (error) {
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId: response.run.run_id,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        throw error;
+      }
       response.run = this.#withProbeCursor(response.run, probeCursor);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
         workerId: input.workerId,
@@ -487,19 +527,30 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       const responseCredentials = response.credentials;
       const probeRun = this.#probeRun(response.run, responseCredentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
-      const probeCursor = await this.#observeOwnershipProbeCursor(
-        () =>
-          this.#ownershipProbe?.afterRenew({
-            apiUrl: this.#apiUrl,
-            fetch: this.#fetch,
-            workerId: input.workerId,
-            run: probeRun,
-            credentials: this.#probeCredentials(responseCredentials),
-            previousCredentials: previousCredentials
-              ? this.#probeCredentials(previousCredentials)
-              : undefined,
-          }),
-      );
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterRenew({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(responseCredentials),
+              previousCredentials: previousCredentials
+                ? this.#probeCredentials(previousCredentials)
+                : undefined,
+            }),
+        );
+      } catch (error) {
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId: response.run.run_id,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        throw error;
+      }
       response.run = this.#withProbeCursor(response.run, probeCursor);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
         workerId: input.workerId,

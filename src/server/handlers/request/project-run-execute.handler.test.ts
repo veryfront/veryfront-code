@@ -1,3 +1,7 @@
+import {
+  createProjectRunRuntimeOwnershipProbe,
+  type RuntimeOwnershipProbeReceipt,
+} from "./project-run-runtime-ownership-probe.ts";
 import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -2843,8 +2847,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             const headers = new Headers(observeFetchRequestInit(init).headers);
             assertEquals(
               headers.has("X-Veryfront-Run-Event-Token"),
-              knowledgePath.startsWith("knowledge/") &&
-                (url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`)),
+              url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`),
             );
             assertEquals(
               headers.get("Authorization"),
@@ -5315,6 +5318,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           return await uploadEvalReportToProjectFiles(input);
         },
       }));
+      const eventToken = createProjectRunEventToken({
+        runId: "run_eval_report_http",
+        projectId: "proj-1",
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
+      });
       const signed = await signedRequest(
         "/api/control-plane/runs/run_eval_report_http/execute",
         {
@@ -5324,7 +5332,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           projectId: "proj-1",
           config: { eval_id: "eval:deep-research" },
         },
-        { "x-token": "runtime-token" },
+        { "x-token": "runtime-token", "x-veryfront-run-event-token": eventToken },
       );
       const controller = new AbortController();
       const request = new Request(signed.request, { signal: controller.signal });
@@ -5336,6 +5344,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const options = observeFetchRequestInit(init);
         assertStringIncludes(String(url), "/files/evals%2Freports%2Fdeep-research%2F");
         assertEquals(options.method, "PUT");
+        assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), eventToken);
         signal = options.signal;
         uploads++;
         uploadStarted.resolve();
@@ -18257,5 +18266,148 @@ describe("knowledge ingest observation authority", () => {
       assertEquals(executions, authority === "current" ? 1 : 0);
       assertEquals(cursor > 0, authority === "current");
     });
+  }
+});
+
+describe("runtime ownership actual client problem transport", () => {
+  for (const surface of ["events", "heartbeats"] as const) {
+    for (const authority of [true, false]) {
+      it(`${surface}: actual failed-response body ${authority ? "qualifies signed generation denial" : "rejects unrelated conflict"}`, async () => {
+        const started = Promise.withResolvers<void>();
+        const settled = Promise.withResolvers<void>();
+        const controller = new AbortController();
+        const receipts: RuntimeOwnershipProbeReceipt[] = [];
+        const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+        const runId = "run_ownership_problem_transport";
+        const clock = manualTaskDeadlineClock();
+        let stale = false;
+        let content: string | undefined;
+        let eventPayload: unknown;
+        const handler = new ProjectRunExecuteHandler(
+          createDeps({
+            createRuntimeOwnershipProbe: (nowMs) => ({
+              createSession(input) {
+                return createProjectRunRuntimeOwnershipProbe({
+                  probeId: "stage-problem-transport",
+                  projectId: "proj-1",
+                  environmentId: "env-staging",
+                  expiresAtMs: nowMs + 60_000,
+                  operationTimeoutMs: 1_000,
+                }, (receipt) => receipts.push(receipt)).createSession({
+                  ...input,
+                  ctx: {
+                    ...input.ctx,
+                    environmentId: "env-staging",
+                    environmentName: "staging",
+                    resolvedEnvironment: "preview",
+                  },
+                });
+              },
+            }),
+            executeKnowledgeIngest: async () => {
+              assertEquals(receipts[0]?.status, "ok");
+              started.resolve();
+              await settled.promise;
+              return { success: false, error: "Run cancelled", duration_ms: 1 };
+            },
+          }),
+          clock,
+        );
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+          runId,
+          canonicalRunId,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "branch-preview",
+        }, {
+          "x-token": "test-runtime-bearer",
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId,
+            projectId: "proj-1",
+            canonicalRunId,
+          }),
+          "x-veryfront-run-stop-token": "opaque-stop-capability",
+        });
+        await withMockFetch(async (url, init) => {
+          const observed = observeFetchRequestInit(init);
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/cancellation-ack")) {
+            stale = true;
+            return Response.json({ acknowledged: true });
+          }
+          if (observed.method === "GET") {
+            if (path.endsWith("/events")) {
+              return Response.json({
+                data: eventPayload === undefined ? [] : [{
+                  event_id: 1,
+                  event_type: "RUNTIME_EVENT_RECORDED",
+                  payload: eventPayload,
+                  created_at: "2026-10-11T05:45:00.000Z",
+                }],
+                page_info: { next: null },
+              });
+            }
+            if (path.startsWith("/runs/")) {
+              return Response.json({
+                id: canonicalRunId,
+                project_id: "proj-1",
+                status: stale ? "cancelled" : "running",
+              });
+            }
+            return content === undefined
+              ? Response.json({}, { status: 404 })
+              : Response.json({ content, version_id: "current-owned-version" });
+          }
+          if (observed.method === "PUT") {
+            if (stale) {
+              return Response.json({ status: 403, slug: "authorization-denied" }, { status: 403 });
+            }
+            assertEquals(typeof observed.body, "string");
+            const body = JSON.parse(String(observed.body));
+            content = body.content;
+            return Response.json({ version_id: "current-owned-version" });
+          }
+          if (stale) {
+            return Response.json({
+              status: path.endsWith(`/${surface}`) ? 409 : 403,
+              slug: path.endsWith(`/${surface}`) ? "state-conflict" : "authorization-denied",
+              detail: authority
+                ? surface === "events"
+                  ? "Streamed run appends require the current signed executor generation"
+                  : "This execution generation is no longer current; stop execution"
+                : "The event idempotency key conflicts with existing data",
+            }, { status: path.endsWith(`/${surface}`) ? 409 : 403 });
+          }
+          if (path.endsWith("/events")) {
+            const body = JSON.parse(String(observed.body));
+            eventPayload = body.events[0];
+            return Response.json({ appended_count: 1, latest_event_id: 1, run_id: canonicalRunId });
+          }
+          return Response.json({ run_id: canonicalRunId, expires_at: "2026-10-11T05:46:00.000Z" });
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            createCtx(signed.publicKeyPem),
+          );
+          await started.promise;
+          controller.abort(new Error("Run cancelled"));
+          settled.resolve();
+          await pending;
+        });
+        assertEquals(receipts.length, 2);
+        assertEquals(receipts[1]!.status, authority ? "ok" : "error");
+        if (!authority) {
+          assertEquals(
+            receipts[1]!.reason,
+            surface === "events"
+              ? "stale-event-append-failed-without-expected-rejection"
+              : "stale-heartbeat-failed-without-expected-rejection",
+          );
+        }
+        assertEquals(JSON.stringify(receipts).includes("stop execution"), false);
+      });
+    }
   }
 });

@@ -430,6 +430,97 @@ describe("external agent worker client", () => {
     }
   });
 
+  it("recovers a claimed run cursor with a fresh lease when the probe outcome is ambiguous", async () => {
+    const recoveredClaim = {
+      ...claim(),
+      credentials: { ...credentials, run_event_token: "recovered-event-token" },
+      run: { ...claim().run, latest_external_event_sequence: 7 },
+    };
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse(recoveredClaim),
+      jsonResponse({ appended: true }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterClaim",
+        "Agent worker runtime ownership probe append outcome is ambiguous",
+      ),
+    });
+
+    const claimed = await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    assertEquals(claimed?.latest_external_event_sequence, 7);
+    assertEquals(
+      String(calls[1]?.[0]),
+      `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/lease`,
+    );
+
+    await client.appendRunEvents({
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      events: [{ type: "AFTER_RECOVERED_CLAIM" }],
+      expectedPreviousExternalEventSequence: claimed?.latest_external_event_sequence,
+    });
+    assertEquals(authorization(calls[2]!), "Bearer recovered-event-token");
+    assertEquals(requestBody(calls[2]!), {
+      events: [{ type: "AFTER_RECOVERED_CLAIM" }],
+      expected_previous_external_event_sequence: 7,
+    });
+  });
+
+  it("recovers a renewed lease cursor with a fresh lease when the probe outcome is ambiguous", async () => {
+    const recoveredClaim = {
+      ...claim(),
+      credentials: { ...credentials, run_event_token: "renewed-recovered-event-token" },
+      run: { ...claim().run, latest_external_event_sequence: 10 },
+    };
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse({
+        ...claim(),
+        run: { ...claim().run, latest_external_event_sequence: 8 },
+      }),
+      jsonResponse(recoveredClaim),
+      jsonResponse({ appended: true }),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterRenew",
+        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+      ),
+    });
+
+    await client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 });
+    const renewed = await client.renewLease({
+      workerId: WORKER_ID,
+      runId: RUN_ID,
+      leaseDurationSeconds: 30,
+    });
+    assertEquals(renewed?.latest_external_event_sequence, 10);
+    assertEquals(
+      String(calls[2]?.[0]),
+      `${API_URL}/agent-workers/workers/${WORKER_ID}/runs/${RUN_ID}/lease`,
+    );
+
+    await client.appendRunEvents({
+      conversationId: CONVERSATION_ID,
+      runId: RUN_ID,
+      events: [{ type: "AFTER_RECOVERED_RENEWAL" }],
+      expectedPreviousExternalEventSequence: renewed?.latest_external_event_sequence,
+    });
+    assertEquals(authorization(calls[3]!), "Bearer renewed-recovered-event-token");
+    assertEquals(requestBody(calls[3]!), {
+      events: [{ type: "AFTER_RECOVERED_RENEWAL" }],
+      expected_previous_external_event_sequence: 10,
+    });
+  });
+
   it("preserves a claim when the ownership probe returns a reconciled append cursor", async () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse(claim()),

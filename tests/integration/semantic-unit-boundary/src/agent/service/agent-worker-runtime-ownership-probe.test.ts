@@ -113,11 +113,29 @@ type ClaimFetchOptions = {
   paginatedReadback?: boolean;
   wrongIndexVersion?: boolean;
   wrongIndexFile?: boolean;
+  indexAckChecksum?: "missing" | "wrong";
   indexStatus?: "empty" | "wrong-file" | "wrong-version" | "not-ready";
   denyReplayCredentials?: boolean;
-  replayCredentialDenial?: "authority-409" | "generic-409";
+  replayCredentialDenial?:
+    | "authority-403"
+    | "authority-409"
+    | "source-detail-for-index"
+    | "index-detail-for-source"
+    | "missing-event-authority-403"
+    | "missing-project-attempt-403"
+    | "branch-mismatch-403"
+    | "index-branch-mismatch-403"
+    | "empty-409"
+    | "generic-409"
+    | "generic-401"
+    | "generic-403";
   denyReplayEvent?: boolean;
-  replayEventDenial?: "authority-409" | "generic-409";
+  replayEventDenial?:
+    | "authority-403"
+    | "authority-409"
+    | "generic-409"
+    | "generic-401"
+    | "generic-403";
 };
 
 function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
@@ -147,14 +165,89 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
           }, { status: 409 }),
         );
       }
+      if (
+        options.replayCredentialDenial === "authority-403" ||
+        options.replayCredentialDenial === undefined
+      ) {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: url.pathname.endsWith("/index")
+              ? "Run no longer permits canonical indexing"
+              : "Run no longer permits canonical source writes",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "source-detail-for-index") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "Run no longer permits canonical source writes",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "index-detail-for-source") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "Run no longer permits canonical indexing",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "missing-event-authority-403") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "A signed current run event writer authority is required",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "missing-project-attempt-403") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "A signed current project execution attempt is required",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "branch-mismatch-403") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "Run source destination differs from its trusted runtime branch",
+          }, { status: 403 }),
+        );
+      }
+      if (options.replayCredentialDenial === "index-branch-mismatch-403") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "Run indexing destination differs from its trusted runtime branch",
+          }, { status: 403 }),
+        );
+      }
       if (options.replayCredentialDenial === "generic-409") {
         return Promise.resolve(
           Response.json({ slug: "state-conflict", detail: "Version conflict" }, { status: 409 }),
         );
       }
-      return Promise.resolve(
-        Response.json({ error: "stale or expired worker generation" }, { status: 403 }),
-      );
+      if (options.replayCredentialDenial === "empty-409") {
+        return Promise.resolve(Response.json({}, { status: 409 }));
+      }
+      if (options.replayCredentialDenial === "generic-401") {
+        return Promise.resolve(
+          Response.json({ slug: "invalid-token", detail: "Invalid token" }, { status: 401 }),
+        );
+      }
+      if (options.replayCredentialDenial === "generic-403") {
+        return Promise.resolve(
+          Response.json({
+            slug: "authorization-denied",
+            detail: "The caller does not have project permission",
+          }, { status: 403 }),
+        );
+      }
+      throw new Error("unreachable replay credential denial");
     }
     if (request.method === "PUT" && url.pathname.includes("/files/")) {
       return request.json().then((body) => {
@@ -198,7 +291,11 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
           path: decodeURIComponent(
             url.pathname.split("/files/")[1]?.slice(0, -"/index".length) ?? "",
           ),
-          checksum: "source-checksum",
+          ...(options.indexAckChecksum === "missing" ? {} : {
+            checksum: options.indexAckChecksum === "wrong"
+              ? "wrong-source-checksum"
+              : "source-checksum",
+          }),
           indexed_chunk_count: 1,
           model: index.model,
         });
@@ -234,7 +331,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
         return Promise.resolve(Response.json({ latest_external_event_sequence: 2 }));
       }
       if (options.denyReplayEvent && replayCredential) {
-        if (options.replayEventDenial === "authority-409") {
+        if (
+          options.replayEventDenial === "authority-409" || options.replayEventDenial === undefined
+        ) {
           return Promise.resolve(
             Response.json({
               slug: "state-conflict",
@@ -242,14 +341,33 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
             }, { status: 409 }),
           );
         }
+        if (options.replayEventDenial === "authority-403") {
+          return Promise.resolve(
+            Response.json({
+              slug: "authorization-denied",
+              detail: "Run no longer permits canonical source writes",
+            }, { status: 403 }),
+          );
+        }
         if (options.replayEventDenial === "generic-409") {
           return Promise.resolve(
             Response.json({ slug: "state-conflict", detail: "Sequence conflict" }, { status: 409 }),
           );
         }
-        return Promise.resolve(
-          Response.json({ error: "stale or expired worker generation" }, { status: 403 }),
-        );
+        if (options.replayEventDenial === "generic-401") {
+          return Promise.resolve(
+            Response.json({ slug: "invalid-token", detail: "Invalid token" }, { status: 401 }),
+          );
+        }
+        if (options.replayEventDenial === "generic-403") {
+          return Promise.resolve(
+            Response.json({
+              slug: "authorization-denied",
+              detail: "The caller does not have project permission",
+            }, { status: 403 }),
+          );
+        }
+        throw new Error("unreachable replay event denial");
       }
       if (options.failEventAppend === "reject" && eventAppendFailures++ === 0) {
         return Promise.reject(new TypeError("connection closed"));
@@ -316,13 +434,13 @@ it("does not expose private proof material through replaced Object or Map intrin
   const originalSplit = String.prototype.split;
   const originalReplace = String.prototype.replace;
   const originalReplaceAll = String.prototype.replaceAll;
+  const originalStringify = JSON.stringify;
   let exposedPrivateMaterial = false;
   const markIfPrivate = (value: unknown) => {
     if (originalStringify(value).includes("writer") || originalStringify(value).includes("auth")) {
       exposedPrivateMaterial = true;
     }
   };
-  const originalStringify = JSON.stringify;
   Object.assign = function (...args: Parameters<typeof Object.assign>) {
     markIfPrivate(args);
     return originalAssign(...args);
@@ -399,35 +517,6 @@ it("does not expose private proof material through replaced Object or Map intrin
   );
 });
 
-it("redacts account and execution identifiers from the default receipt log", async () => {
-  const originalInfo = console.info;
-  const logged: unknown[] = [];
-  console.info = (...args: unknown[]) => {
-    logged.push(args);
-  };
-  try {
-    const probe = createAgentWorkerRuntimeOwnershipProbe(activation);
-    await probe.afterClaim({
-      apiUrl: "https://api.example.test",
-      fetch: claimProofFetch(),
-      workerId,
-      run: probeRun(),
-      credentials: credentials(),
-      embedder: managedTestEmbedder(),
-    });
-  } finally {
-    console.info = originalInfo;
-  }
-
-  const logJson = JSON.stringify(logged);
-  assert(logJson.includes("canonical-source-index"));
-  assertEquals(logJson.includes(uuid), false);
-  assertEquals(logJson.includes(workerId), false);
-  assertEquals(logJson.includes(publicRunId), false);
-  assertEquals(logJson.includes(canonicalRunId), false);
-  assertEquals(logJson.includes("knowledge/agent-worker-runtime-ownership-probe-20261011"), false);
-});
-
 it("records canonical source, index and event proof without leaking claim credentials", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const calls: Request[] = [];
@@ -471,6 +560,7 @@ it("records canonical source, index and event proof without leaking claim creden
   assertEquals(new URL(calls[6]!.url).pathname, `/runs/${canonicalRunId}/events`);
   assertEquals(calls[0]?.headers.get("Authorization"), "Bearer auth");
   assertEquals(calls[1]?.headers.get("Authorization"), "Bearer auth");
+  assertEquals(calls[1]?.headers.get("X-Veryfront-Run-Event-Token"), "writer");
   assertEquals(calls[3]?.headers.get("Authorization"), "Bearer writer");
   assertEquals(calls[4]?.headers.get("Authorization"), "Bearer auth");
   assertEquals(calls[5]?.headers.get("Authorization"), "Bearer writer");
@@ -482,11 +572,17 @@ it("records canonical source, index and event proof without leaking claim creden
 
 it("keeps canonical request bytes and receipt hashes stable when JSON serialization is poisoned", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
-  const captures: Array<{ method: string; path: string; authorization: string; wire: string }> = [];
+  const captures: Array<{
+    method: string;
+    path: string;
+    authorization: string;
+    runEventToken: string | null;
+    wire: string;
+  }> = [];
   const currentCredentials = credentials();
   const expiredCredentials = credentials("-expired");
-  const originalStringify = JSON.stringify;
   const originalParse = JSON.parse;
+  const originalStringify = JSON.stringify;
   const originalToJsonDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
   let sourceContent = "";
   const indexedEvents: unknown[] = [];
@@ -517,14 +613,23 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
     const path = url.pathname;
     const readWire = async () => {
       const wire = await request.text();
-      captures.push({ method: request.method, path, authorization, wire });
+      captures.push({
+        method: request.method,
+        path,
+        authorization,
+        runEventToken: request.headers.get("X-Veryfront-Run-Event-Token"),
+        wire,
+      });
       assertEquals(wire.includes("poisoned"), false);
       return wire;
     };
     if (request.method === "PUT" && path.includes("/files/")) {
       const wire = await readWire();
       if (authorization.includes("expired")) {
-        return jsonResponse({ error: "stale generation" }, { status: 403 });
+        return jsonResponse({
+          slug: "authorization-denied",
+          detail: "Run no longer permits canonical source writes",
+        }, { status: 403 });
       }
       const body = originalParse(wire) as { content?: unknown };
       sourceContent = String(body.content ?? "");
@@ -548,7 +653,10 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
     if (request.method === "POST" && path.endsWith("/index")) {
       const wire = await readWire();
       if (authorization.includes("expired")) {
-        return jsonResponse({ error: "stale generation" }, { status: 403 });
+        return jsonResponse({
+          slug: "authorization-denied",
+          detail: "Run no longer permits canonical indexing",
+        }, { status: 403 });
       }
       const index = originalParse(wire) as {
         expected_version_id?: unknown;
@@ -583,7 +691,10 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
     if (request.method === "POST" && path.endsWith("/events")) {
       const wire = await readWire();
       if (authorization.includes("expired")) {
-        return jsonResponse({ error: "stale generation" }, { status: 403 });
+        return jsonResponse({
+          slug: "state-conflict",
+          detail: "Detached run appends require the current signed lease generation",
+        }, { status: 409 });
       }
       indexedEvents.push(...((originalParse(wire) as { events?: unknown[] }).events ?? []));
       return jsonResponse({ latest_external_event_sequence: 2 });
@@ -642,6 +753,8 @@ it("keeps canonical request bytes and receipt hashes stable when JSON serializat
     const replayIndex = indexWrites.find((capture) =>
       capture.authorization === "Bearer writer-expired"
     )!;
+    assertEquals(currentSource.runEventToken, currentCredentials.runEventToken);
+    assertEquals(replaySource.runEventToken, expiredCredentials.runEventToken);
     assertEquals(replaySource.wire, currentSource.wire);
     assertEquals(replayIndex.wire, currentIndex.wire);
     assertEquals(receipts[0]?.indexRequestHash, await computeHash(currentIndex.wire));
@@ -742,6 +855,29 @@ it("fails canonical source/index proof when index acknowledgement does not match
   assertEquals(receipts[0]?.errorType, "Error");
 });
 
+it("fails canonical source/index proof when index acknowledgement omits or changes the source checksum", async () => {
+  for (const indexAckChecksum of ["missing", "wrong"] as const) {
+    const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ indexAckChecksum }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+
+    assertEquals(receipts[0]?.phase, "canonical-source-index");
+    assertEquals(receipts[0]?.status, "error");
+    assertEquals(receipts[0]?.errorType, "Error");
+  }
+});
+
 it("follows paginated event pages before reporting event append/readback success", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const paths: string[] = [];
@@ -791,7 +927,7 @@ it("proves replaced generation denial with unchanged before and after hashes", a
   assertEquals(receipts.map((receipt) => receipt.phase), ["replaced-generation-denial"]);
   assertEquals(receipts[0]?.phase, "replaced-generation-denial");
   assertEquals(receipts[0]?.status, "ok");
-  assertEquals(receipts[0]?.deniedStatus, 403);
+  assertEquals(receipts[0]?.deniedStatus, 409);
   assertEquals(receipts[0]?.beforeHash, receipts[0]?.afterHash);
   assert(calls.some((call) => call.headers.get("Authorization") === "Bearer old"));
   assert(
@@ -829,7 +965,95 @@ it("rejects generic 409 replay conflicts as authority proof", async () => {
   assertEquals(receipts[0]?.reason, "stale-generation-mutated-source-index-or-events");
 });
 
-it("accepts current-generation 409 replay denials as authority proof", async () => {
+it("rejects unrelated 401 and 403 replay denials as generation authority proof", async () => {
+  for (
+    const replayCredentialDenial of [
+      "generic-401",
+      "generic-403",
+      "missing-event-authority-403",
+      "missing-project-attempt-403",
+      "branch-mismatch-403",
+      "index-branch-mismatch-403",
+      "source-detail-for-index",
+      "index-detail-for-source",
+    ] as const
+  ) {
+    const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({
+        denyReplayCredentials: true,
+        replayCredentialDenial,
+        denyReplayEvent: true,
+      }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-new"),
+      previousCredentials: {
+        authToken: "old-auth",
+        runEventToken: "old",
+        runTerminalToken: terminalToken(),
+      },
+      embedder: managedTestEmbedder(),
+    });
+
+    assertEquals(receipts[0]?.phase, "replaced-generation-denial");
+    assertEquals(receipts[0]?.status, "error");
+    assertEquals(receipts[0]?.reason, "stale-generation-mutated-source-index-or-events");
+  }
+});
+
+it("rejects inherited problem fields as generation authority proof", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const originalSlug = Object.getOwnPropertyDescriptor(Object.prototype, "slug");
+  const originalDetail = Object.getOwnPropertyDescriptor(Object.prototype, "detail");
+  Object.defineProperty(Object.prototype, "slug", {
+    configurable: true,
+    value: "state-conflict",
+  });
+  Object.defineProperty(Object.prototype, "detail", {
+    configurable: true,
+    value: "This execution generation is no longer current; stop execution",
+  });
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    );
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({
+        denyReplayCredentials: true,
+        replayCredentialDenial: "empty-409",
+        denyReplayEvent: true,
+      }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-new"),
+      previousCredentials: {
+        authToken: "old-auth",
+        runEventToken: "old",
+        runTerminalToken: terminalToken(),
+      },
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    if (originalSlug) Object.defineProperty(Object.prototype, "slug", originalSlug);
+    else delete (Object.prototype as { slug?: unknown }).slug;
+    if (originalDetail) Object.defineProperty(Object.prototype, "detail", originalDetail);
+    else delete (Object.prototype as { detail?: unknown }).detail;
+  }
+
+  assertEquals(receipts[0]?.phase, "replaced-generation-denial");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "stale-generation-mutated-source-index-or-events");
+});
+
+it("rejects current-generation 409 canonical replay denials as source/index authority proof", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const probe = createAgentWorkerRuntimeOwnershipProbe(
     activation,
@@ -854,7 +1078,8 @@ it("accepts current-generation 409 replay denials as authority proof", async () 
   });
 
   assertEquals(receipts[0]?.phase, "replaced-generation-denial");
-  assertEquals(receipts[0]?.status, "ok");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "stale-generation-mutated-source-index-or-events");
 });
 
 it("rejects generic 409 event conflicts as replaced-generation authority proof", async () => {
@@ -1087,7 +1312,7 @@ it("proves expired or lost lease authority is denied without exposing the retain
 
   assertEquals(receipts[0]?.phase, "expired-lease-denial");
   assertEquals(receipts[0]?.status, "ok");
-  assertEquals(receipts[0]?.deniedStatus, 403);
+  assertEquals(receipts[0]?.deniedStatus, 409);
   assert(calls.some((call) => new URL(call.url).pathname === `/runs/${canonicalRunId}/events`));
   assert(calls.some((call) => call.headers.get("Authorization") === "Bearer writer-expired"));
   assertEquals(JSON.stringify(receipts[0]).includes("writer-expired"), false);
@@ -1967,4 +2192,108 @@ it("external worker client installs renewed authority before awaiting renewal pr
   await client.claimRun({ workerId, leaseDurationSeconds: 30 });
   await client.renewLease({ workerId, runId: publicRunId, leaseDurationSeconds: 30 });
   assertEquals(authorizations, ["Bearer writer-new"]);
+});
+
+it("sends probe authority only to the API origin when String.prototype.replace is replaced", async () => {
+  const calls: Request[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(activation, () => {});
+  const originalReplace = String.prototype.replace;
+  // deno-lint-ignore no-explicit-any
+  (String.prototype as any).replace = function (this: string, ...args: unknown[]) {
+    if (String(this) === "https://api.example.test/") return "https://attacker.example.test";
+    return Reflect.apply(originalReplace, this, args);
+  };
+  try {
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test/",
+      fetch: claimProofFetch({ calls, denyReplayCredentials: true, denyReplayEvent: true }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-new"),
+      previousCredentials: {
+        authToken: "old-auth",
+        runEventToken: "old",
+        runTerminalToken: terminalToken(),
+      },
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    String.prototype.replace = originalReplace;
+  }
+
+  assert(calls.length > 0);
+  assertEquals(
+    [...new Set(calls.map((call) => new URL(call.url).origin))],
+    ["https://api.example.test"],
+  );
+  assertEquals(calls.some((call) => new URL(call.url).pathname.startsWith("//")), false);
+});
+
+it("logs default receipts with hashed identifiers only", async () => {
+  const logged: unknown[][] = [];
+  const currentCredentials = credentials("-new");
+  const staleCredentials = {
+    authToken: "old-auth",
+    runEventToken: "old",
+    runTerminalToken: terminalToken(),
+  };
+  const originalInfo = console.info;
+  const originalArrayIterator = Array.prototype[Symbol.iterator];
+  const originalTextEncoder = globalThis.TextEncoder;
+  console.info = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  Object.defineProperty(globalThis, "TextEncoder", {
+    configurable: true,
+    value: class PoisonedTextEncoder {
+      encode(input?: string): Uint8Array {
+        if (input?.includes(workerId) || input?.includes(publicRunId)) {
+          throw new Error("project TextEncoder must not hash receipt identifiers");
+        }
+        throw new Error("project TextEncoder must not redact receipts");
+      }
+    },
+  });
+  Array.prototype[Symbol.iterator] = function (this: unknown[]) {
+    if (this[0] === "workerId" && this[4] === "sourcePath") {
+      return Reflect.apply(originalArrayIterator, [], []) as ArrayIterator<unknown>;
+    }
+    return Reflect.apply(originalArrayIterator, this, []) as ArrayIterator<unknown>;
+  };
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(activation);
+    await probe.afterRenew({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ calls: [], denyReplayCredentials: true, denyReplayEvent: true }),
+      workerId,
+      run: probeRun(),
+      credentials: currentCredentials,
+      previousCredentials: staleCredentials,
+      embedder: managedTestEmbedder(),
+    });
+    // The default sink hashes asynchronously after the phase settles.
+    for (let turn = 0; turn < 50 && logged.length === 0; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  } finally {
+    console.info = originalInfo;
+    Object.defineProperty(globalThis, "TextEncoder", {
+      configurable: true,
+      value: originalTextEncoder,
+    });
+    Array.prototype[Symbol.iterator] = originalArrayIterator;
+  }
+
+  assertEquals(logged.length, 1);
+  const receipt = logged[0]![1] as Record<string, unknown>;
+  assertEquals(receipt.phase, "replaced-generation-denial");
+  assertEquals(receipt.status, "ok");
+  const serialized = JSON.stringify(logged);
+  for (const identifier of [uuid, workerId, publicRunId, canonicalRunId]) {
+    assertEquals(serialized.includes(identifier), false);
+  }
+  for (const field of ["workerId", "runId", "canonicalRunId", "projectId"]) {
+    assertEquals(field in receipt, false);
+    assertEquals(typeof receipt[`${field}Hash`], "string");
+  }
 });

@@ -1,7 +1,9 @@
 import {
   __resetProjectRunRuntimeOwnershipProbeFlightsForTests,
+  classifyRuntimeOwnershipProbeApiResponse,
   createProjectRunRuntimeOwnershipProbe,
   createProjectRunRuntimeOwnershipProbeFromHostEnv,
+  createRuntimeOwnershipProbeApiError,
   type RuntimeOwnershipProbeApiClient,
   type RuntimeOwnershipProbeReceipt,
 } from "../../../../../../src/server/handlers/request/project-run-runtime-ownership-probe.ts";
@@ -483,7 +485,16 @@ describe("project-run runtime ownership probe", () => {
         createHeartbeatClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            if (denyWrites) {
+              throw createRuntimeOwnershipProbeApiError(
+                409,
+                JSON.stringify({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                }),
+              );
+            }
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -606,7 +617,16 @@ describe("project-run runtime ownership probe", () => {
         createHeartbeatClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            if (denyWrites) {
+              throw createRuntimeOwnershipProbeApiError(
+                409,
+                JSON.stringify({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                }),
+              );
+            }
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -656,7 +676,16 @@ describe("project-run runtime ownership probe", () => {
         createHeartbeatClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 409 Conflict");
+            if (denyWrites) {
+              throw createRuntimeOwnershipProbeApiError(
+                409,
+                JSON.stringify({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                }),
+              );
+            }
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -705,7 +734,16 @@ describe("project-run runtime ownership probe", () => {
     const staleClient: RuntimeOwnershipProbeApiClient = {
       get: (path, params, options) => client.get(path, params, options),
       post: async (path, body, options) => {
-        if (stale) throw new NativeError("Veryfront API request failed: 409 Conflict");
+        if (stale) {
+          throw createRuntimeOwnershipProbeApiError(
+            409,
+            JSON.stringify({
+              status: 409,
+              slug: "state-conflict",
+              detail: "This execution generation is no longer current; stop execution",
+            }),
+          );
+        }
         return await client.post(path, body, options);
       },
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
@@ -1451,7 +1489,16 @@ describe("project-run runtime ownership probe", () => {
     });
     const eventClient = createEventAppendClient(client, {
       post: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 409 Conflict");
+        if (stale) {
+          throw createRuntimeOwnershipProbeApiError(
+            409,
+            JSON.stringify({
+              status: 409,
+              slug: "state-conflict",
+              detail: "This execution generation is no longer current; stop execution",
+            }),
+          );
+        }
         return await client.post(path, body, options);
       },
     });
@@ -1555,4 +1602,132 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(firstContent === freshContent, false);
     assertEquals(firstEventKind === freshEventKind, false);
   });
+});
+
+describe("stale API problem classification through bounded response bodies", () => {
+  for (const surface of ["events", "heartbeats"] as const) {
+    for (
+      const scenario of [
+        "authority",
+        "unrelated",
+        "generic",
+        "wrong-slug",
+        "oversized",
+        "invalid",
+        "mutated-builtins",
+        "mutated-species",
+      ] as const
+    ) {
+      it(`${surface}: ${scenario} conflict cannot substitute generic status for authority`, async () => {
+        const receipts: RuntimeOwnershipProbeReceipt[] = [];
+        const client = new RecordingClient();
+        let stale = false;
+        const problem = {
+          status: 409,
+          slug: scenario === "wrong-slug" ? "concurrency-error" : "state-conflict",
+          detail: (scenario === "unrelated" || scenario === "mutated-builtins" ||
+              scenario === "mutated-species")
+            ? "An event idempotency key conflicts with existing data"
+            : surface === "events"
+            ? "Streamed run appends require the current signed executor generation"
+            : "This execution generation is no longer current; stop execution",
+        };
+        const response = () =>
+          new Response(
+            scenario === "invalid"
+              ? "not JSON"
+              : scenario === "oversized"
+              ? " ".repeat(16_385) + JSON.stringify(problem)
+              : JSON.stringify(problem),
+            { status: 409 },
+          );
+        const denying: RuntimeOwnershipProbeApiClient = {
+          get: (path, params, options) => client.get(path, params, options),
+          put: (path, body, options) =>
+            stale
+              ? Promise.reject(new NativeError("Veryfront API request failed: 403 Forbidden"))
+              : client.put(path, body, options),
+          post: (path, body, options) => client.post(path, body, options),
+        };
+        const surfaceClient = (kind: "events" | "heartbeats"): RuntimeOwnershipProbeApiClient => ({
+          ...denying,
+          post: async (path, body, options) => {
+            if (!stale) return await client.post(path, body, options);
+            if (kind !== surface) {
+              throw new NativeError("Veryfront API request failed: 403 Forbidden");
+            }
+            const error = new NativeError("Veryfront API request failed: 409 Conflict");
+            if (scenario === "mutated-species") {
+              const actualResponse = response();
+              const forgedBytes = new TextEncoder().encode(
+                JSON.stringify({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                }),
+              );
+              const originalSpecies = Object.getOwnPropertyDescriptor(Uint8Array, Symbol.species);
+              Object.defineProperty(Uint8Array, Symbol.species, {
+                configurable: true,
+                value: function () {
+                  return forgedBytes;
+                },
+              });
+              try {
+                throw await classifyRuntimeOwnershipProbeApiResponse(actualResponse, error);
+              } finally {
+                if (originalSpecies) {
+                  Object.defineProperty(Uint8Array, Symbol.species, originalSpecies);
+                } else Reflect.deleteProperty(Uint8Array, Symbol.species);
+              }
+            }
+            if (scenario === "mutated-builtins") {
+              const actualResponse = response();
+              const originalParse = JSON.parse;
+              const originalHas = WeakSet.prototype.has;
+              try {
+                JSON.parse = () => ({
+                  status: 409,
+                  slug: "state-conflict",
+                  detail: "This execution generation is no longer current; stop execution",
+                });
+                WeakSet.prototype.has = () => true;
+                throw await classifyRuntimeOwnershipProbeApiResponse(actualResponse, error);
+              } finally {
+                JSON.parse = originalParse;
+                WeakSet.prototype.has = originalHas;
+              }
+            }
+            throw scenario === "generic"
+              ? error
+              : await classifyRuntimeOwnershipProbeApiResponse(response(), error);
+          },
+        });
+        const session = createProjectRunRuntimeOwnershipProbe(
+          activation,
+          (receipt) => receipts.push(receipt),
+        )
+          .createSession({
+            ...baseSessionInput(denying),
+            createEventAppendClient: () => surfaceClient("events"),
+            createHeartbeatClient: () => surfaceClient("heartbeats"),
+          });
+        assertExists(session);
+        await session.beforeExecute();
+        stale = true;
+        await session.afterStopAcknowledged();
+        assertEquals(receipts[0]!.status, "ok");
+        assertEquals(receipts[1]!.status, scenario === "authority" ? "ok" : "error");
+        if (scenario !== "authority") {
+          assertEquals(
+            receipts[1]!.reason,
+            surface === "events"
+              ? "stale-event-append-failed-without-expected-rejection"
+              : "stale-heartbeat-failed-without-expected-rejection",
+          );
+        }
+        assertEquals(JSON.stringify(receipts).includes(problem.detail), false);
+      });
+    }
+  }
 });

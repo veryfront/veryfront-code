@@ -1,3 +1,4 @@
+import { isRuntimeFileMutationRequest } from "./runtime-file-mutation-authority.ts";
 import { createRuntimeOwnershipChildProbe } from "./project-run-runtime-ownership-child-probe.ts";
 import { createRuntimeOwnershipIndexProbe } from "./project-run-runtime-ownership-index-probe.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
@@ -184,6 +185,7 @@ import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import {
+  classifyRuntimeOwnershipProbeApiResponse,
   createProjectRunRuntimeOwnershipProbeFromHostEnv,
   type RuntimeOwnershipProbe,
 } from "./project-run-runtime-ownership-probe.ts";
@@ -425,6 +427,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  eventToken?: string;
   content?: string;
   signal?: AbortSignal;
 }
@@ -3706,11 +3709,6 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-const CanonicalKnowledgeSourcePath = /^\/projects\/[^/]+\/files\/knowledge%2[fF][^?]+(?:\?[^#]*)?$/;
-const CanonicalKnowledgeIndexPath =
-  /^\/projects\/[^/]+\/branches\/[^/]+\/files\/knowledge%2[fF][^/]+\/index$/;
-const RuntimeRegExpExec = RegExp.prototype.exec;
-
 function requireCanonicalWriterHttps(apiUrl: string): string {
   const scheme = ReflectApply(StringPrototypeSlice, apiUrl, [0, 8]) as string;
   if (ReflectApply(StringPrototypeToLowerCase, scheme, []) !== "https://") {
@@ -3761,10 +3759,7 @@ function createRuntimeApiClient(
       url.searchParams.set(key, value);
     }
 
-    const canonicalMutation = (method === "PUT" &&
-      ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeSourcePath, [path]) !== null) ||
-      (method === "POST" &&
-        ReflectApply(RuntimeRegExpExec, CanonicalKnowledgeIndexPath, [path]) !== null);
+    const canonicalMutation = isRuntimeFileMutationRequest(method, path);
     const response = await send(
       url.toString(),
       createNativeRequestInit(undefined, {
@@ -3786,10 +3781,12 @@ function createRuntimeApiClient(
       }),
     );
 
-    if (!response.ok) {
-      throw API_CLIENT_ERROR.create({
-        detail: `Veryfront API request failed: ${response.status} ${response.statusText}`,
+    if (!ReflectApply(ResponseOkGetter, response, [])) {
+      const status = ReflectApply(ResponseStatusGetter, response, []) as number;
+      const error = API_CLIENT_ERROR.create({
+        detail: `Veryfront API request failed: ${status} ${response.statusText}`,
       });
+      throw await classifyRuntimeOwnershipProbeApiResponse(response, error);
     }
 
     if (response.status === 204) return undefined as T;
@@ -3873,7 +3870,7 @@ function createRuntimeApiClient(
 export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.req, input.ctx, input.signal, true, input.eventToken);
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
   const response = await client.put<{ path?: string }>(
@@ -4613,6 +4610,7 @@ async function executeEvalRun(
     signal?: AbortSignal;
     summaryOnly?: boolean;
     progressLogs?: string[];
+    eventToken?: string;
   } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -4703,6 +4701,7 @@ async function executeEvalRun(
       report,
       projectReference,
       reportPath: requestedReportPath,
+      eventToken: options.eventToken,
       content: reportContent,
       signal: options.signal,
     });
@@ -4741,6 +4740,7 @@ async function executeEvalTaskRun(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
+  retainedEventToken?: string,
 ): Promise<ProjectRunExecuteResponse> {
   const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
   if (!evalId) {
@@ -4767,6 +4767,7 @@ async function executeEvalTaskRun(
             signal: taskContext.signal ?? taskSignal,
             summaryOnly: true,
             progressLogs,
+            eventToken: retainedEventToken,
           }),
       },
     },
@@ -5402,7 +5403,15 @@ async function executeProjectRun(
           const execute = async (): Promise<ProjectRunExecuteResponse> => {
             switch (request.target) {
               case "task:eval":
-                return await executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
+                return await executeEvalTaskRun(
+                  request,
+                  ctx,
+                  req,
+                  req.signal,
+                  deps,
+                  control,
+                  retainedEventToken,
+                );
               case "task:knowledge-ingest":
                 return await deps.executeKnowledgeIngest({
                   request,

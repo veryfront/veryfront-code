@@ -333,9 +333,107 @@ function isAuthorizationRejection(error: unknown): boolean {
   return status === 401 || status === 403;
 }
 
+const ownershipAuthorityErrors = new WeakSet<Error>();
+const OwnershipWeakSetAdd = WeakSet.prototype.add;
+const OwnershipWeakSetHas = WeakSet.prototype.has;
+const OwnershipJSONParse = JSON.parse;
+const OwnershipError = Error;
+const OwnershipGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+/** @internal Retain only a bounded, verified API authority classification, never the problem body. */
+export function createRuntimeOwnershipProbeApiError(
+  status: number,
+  problemText: string,
+  error: Error = new OwnershipError(`Veryfront API request failed: ${status}`),
+): Error {
+  if (status !== 409 || problemText.length > 16_384) return error;
+  let problem: unknown;
+  try {
+    problem = OwnershipJSONParse(problemText);
+  } catch {
+    return error;
+  }
+  if (problem === null || typeof problem !== "object") return error;
+  const statusField = OwnershipGetOwnPropertyDescriptor(problem, "status");
+  const slugField = OwnershipGetOwnPropertyDescriptor(problem, "slug");
+  const detailField = OwnershipGetOwnPropertyDescriptor(problem, "detail");
+  if (statusField?.value !== 409 || slugField?.value !== "state-conflict" || !detailField) {
+    return error;
+  }
+  const detail: unknown = detailField.value;
+  if (
+    detail === "The run is cancelled; stop execution" ||
+    detail === "This execution generation is no longer current; stop execution" ||
+    detail === "Streamed run appends require the current signed executor generation" ||
+    detail === "Delegated run appends require the current root execution generation" ||
+    detail === "Detached run appends require the current signed lease generation"
+  ) {
+    RuntimeReflectApply(OwnershipWeakSetAdd, ownershipAuthorityErrors, [error]);
+  }
+  return error;
+}
+
+const OwnershipResponseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const OwnershipResponseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const OwnershipGetReader = ReadableStream.prototype.getReader;
+const OwnershipReaderRead = ReadableStreamDefaultReader.prototype.read;
+const OwnershipReaderCancel = ReadableStreamDefaultReader.prototype.cancel;
+const OwnershipReaderRelease = ReadableStreamDefaultReader.prototype.releaseLock;
+const OwnershipTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const OwnershipDecode = TextDecoder.prototype.decode;
+const OwnershipUint8Array = Uint8Array;
+const OwnershipByteLength = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "byteLength",
+)!.get!;
+
+/** @internal Consume only a bounded failed-response body; unreadable bodies retain generic rejection. */
+export async function classifyRuntimeOwnershipProbeApiResponse(
+  response: Response,
+  error: Error,
+): Promise<Error> {
+  const status = RuntimeReflectApply(OwnershipResponseStatus, response, []) as number;
+  if (status !== 409) return error;
+  const body = RuntimeReflectApply(OwnershipResponseBody, response, []) as
+    | ReadableStream<Uint8Array>
+    | null;
+  if (body === null) return error;
+  const reader = RuntimeReflectApply(OwnershipGetReader, body, []) as ReadableStreamDefaultReader<
+    Uint8Array
+  >;
+  const bytes = new OwnershipUint8Array(16_384);
+  let total = 0;
+  try {
+    while (true) {
+      const part = await RuntimeReflectApply(
+        OwnershipReaderRead,
+        reader,
+        [],
+      ) as ReadableStreamReadResult<Uint8Array>;
+      if (part.done) break;
+      const length = RuntimeReflectApply(OwnershipByteLength, part.value, []) as number;
+      if (length > 16_384 - total) {
+        await RuntimeReflectApply(OwnershipReaderCancel, reader, []);
+        return error;
+      }
+      for (let index = 0; index < length; index += 1) {
+        bytes[total++] = part.value[index]!;
+      }
+    }
+    const exactBytes = new OwnershipUint8Array(total);
+    for (let index = 0; index < total; index += 1) exactBytes[index] = bytes[index]!;
+    const text = RuntimeReflectApply(OwnershipDecode, OwnershipTextDecoder, [exactBytes]) as string;
+    return createRuntimeOwnershipProbeApiError(status, text, error);
+  } catch {
+    return error;
+  } finally {
+    RuntimeReflectApply(OwnershipReaderRelease, reader, []);
+  }
+}
+
 function isAuthorizationOrConflictRejection(error: unknown): boolean {
-  const status = httpStatusFromError(error);
-  return status === 401 || status === 403 || status === 409;
+  return isAuthorizationRejection(error) ||
+    RuntimeReflectApply(OwnershipWeakSetHas, ownershipAuthorityErrors, [error]) === true;
 }
 
 function readCanonicalContent(value: unknown): string | undefined {

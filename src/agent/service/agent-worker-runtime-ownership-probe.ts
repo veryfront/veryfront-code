@@ -26,6 +26,7 @@ const RuntimeArrayPrototypeSort = Array.prototype.sort;
 const RuntimeAtob = atob;
 const RuntimeJSONParse = JSON.parse;
 const RuntimeJSONstringify = JSON.stringify;
+const RuntimeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const RuntimeObjectKeys = Object.keys;
 const RuntimeMathFround = Math.fround;
 const RuntimeStringPrototypeReplace = String.prototype.replace;
@@ -276,56 +277,69 @@ function readJwtPayload(token: string): Record<string, unknown> | undefined {
   }
 }
 
-function responseText(body: unknown): string {
-  return stableJson(body).toLowerCase();
+function readProblemStringField(body: unknown, field: "slug" | "type" | "code" | "detail") {
+  if (body === null || typeof body !== "object") return undefined;
+  const descriptor = RuntimeReflectApply(RuntimeObjectGetOwnPropertyDescriptor, Object, [
+    body,
+    field,
+  ]) as PropertyDescriptor | undefined;
+  const value = descriptor?.value;
+  return typeof value === "string" ? value : undefined;
 }
 
 function readProblemSlug(body: unknown): string | undefined {
-  if (body === null || typeof body !== "object") return undefined;
-  const record = body as Record<string, unknown>;
-  const slug = record.slug;
-  if (typeof slug === "string") return slug.toLowerCase();
-  const type = record.type;
-  if (typeof type === "string") return type.toLowerCase().split("/").at(-1);
-  return undefined;
+  const slug = readProblemStringField(body, "slug");
+  if (slug !== undefined) return slug.toLowerCase();
+  const type = readProblemStringField(body, "type");
+  return type?.toLowerCase().split("/").at(-1);
 }
 
-function readProblemCode(body: unknown): string | undefined {
-  if (body === null || typeof body !== "object") return undefined;
-  const code = (body as Record<string, unknown>).code;
-  return typeof code === "string" ? code.toLowerCase() : undefined;
+type ReplayAuthorityOperation = "source" | "index" | "event";
+
+function isCanonicalSourceAuthorityProblem(
+  status: number,
+  slug: string | undefined,
+  detail: string | undefined,
+): boolean {
+  return status === 403 && slug === "authorization-denied" &&
+    detail === "Run no longer permits canonical source writes";
 }
 
-function isCurrentWorkerAuthorityProblem(body: unknown): boolean {
-  const slug = readProblemSlug(body);
-  const code = readProblemCode(body);
-  const text = responseText(body);
-  if (slug === "invalid-token" || slug === "authorization-denied") return true;
-  if (code === "invalid_token" || code === "authorization_denied" || code === "run_forbidden") {
-    return true;
+function isCanonicalIndexAuthorityProblem(
+  status: number,
+  slug: string | undefined,
+  detail: string | undefined,
+): boolean {
+  return status === 403 && slug === "authorization-denied" &&
+    detail === "Run no longer permits canonical indexing";
+}
+
+function isCurrentWorkerEventAuthorityProblem(
+  status: number,
+  slug: string | undefined,
+  detail: string | undefined,
+): boolean {
+  if (slug !== "state-conflict" || status !== 409) return false;
+  return detail === "This execution generation is no longer current; stop execution" ||
+    detail === "Streamed run appends require the current signed executor generation" ||
+    detail === "Delegated run appends require the current root execution generation" ||
+    detail === "Detached run appends require the current signed lease generation";
+}
+
+function isReplayAuthorityDenied(
+  response: { status: number; body: unknown },
+  operation: ReplayAuthorityOperation,
+): boolean {
+  const slug = readProblemSlug(response.body);
+  const detail = readProblemStringField(response.body, "detail");
+  switch (operation) {
+    case "source":
+      return isCanonicalSourceAuthorityProblem(response.status, slug, detail);
+    case "index":
+      return isCanonicalIndexAuthorityProblem(response.status, slug, detail);
+    case "event":
+      return isCurrentWorkerEventAuthorityProblem(response.status, slug, detail);
   }
-  return (
-    text.includes("execution generation is no longer current") ||
-    text.includes("generation is no longer current") ||
-    text.includes("stale generation") ||
-    text.includes("expired generation") ||
-    text.includes("superseded generation") ||
-    text.includes("lease is no longer current") ||
-    text.includes("no longer holds a detached lease") ||
-    text.includes("credential cannot") ||
-    text.includes("credential is not authorized") ||
-    text.includes("current generation required") ||
-    text.includes("permission") ||
-    text.includes("authority")
-  );
-}
-
-function isReplayAuthorityDenied(response: { status: number; body: unknown }): boolean {
-  if (response.status === 401 || response.status === 403) {
-    return isCurrentWorkerAuthorityProblem(response.body) || responseText(response.body).length > 0;
-  }
-  if (response.status !== 409) return false;
-  return isCurrentWorkerAuthorityProblem(response.body);
 }
 
 function workerGenerationHeaders(
@@ -342,6 +356,12 @@ function workerGenerationHeaders(
     throw new Error("worker generation authority is unavailable");
   }
   return { "X-Veryfront-Worker-Generation": generation };
+}
+
+function runEventAuthorityHeaders(
+  credentials: AgentWorkerRuntimeOwnershipProbeCredentials,
+): Record<string, string> {
+  return { "X-Veryfront-Run-Event-Token": credentials.runEventToken };
 }
 
 function buildProbeRequestUrl(apiUrl: string, path: string): string {
@@ -804,7 +824,7 @@ function validateCanonicalIndexResponse(
   if (indexedChunkCount !== input.indexedChunkCount) return "canonical-index-chunk-count-mismatch";
   const checksum = readStringFieldFromRecord(body, ["checksum"]);
   if (
-    input.sourceChecksum !== undefined && checksum !== undefined &&
+    input.sourceChecksum !== undefined &&
     checksum !== input.sourceChecksum
   ) {
     return "canonical-index-checksum-mismatch";
@@ -915,6 +935,7 @@ async function publishCanonicalSourceAndIndex(
     source,
     input.credentials.authToken,
     sourceWire,
+    runEventAuthorityHeaders(input.credentials),
   );
   if (!published.ok) {
     throw new Error(`canonical source write failed with HTTP ${published.status}`);
@@ -1027,6 +1048,7 @@ async function proveCanonicalSourceIndexReplayDenied(
     source,
     input.credentials.authToken,
     sourceWire,
+    runEventAuthorityHeaders(input.credentials),
   );
   if (!published.ok) {
     throw new Error(`canonical replay source setup failed with HTTP ${published.status}`);
@@ -1089,7 +1111,7 @@ async function proveCanonicalSourceIndexReplayDenied(
     source,
     replayCredentials.authToken,
     sourceWire,
-    generationHeaders,
+    { ...generationHeaders, ...runEventAuthorityHeaders(replayCredentials) },
   );
   const replayIndex = await requestJsonWire(
     input,
@@ -1118,8 +1140,8 @@ async function proveCanonicalSourceIndexReplayDenied(
     indexResponseHash,
     indexStateHash: afterIndexStateHash,
   });
-  const sourceDenied = isReplayAuthorityDenied(replaySource);
-  const indexDenied = isReplayAuthorityDenied(replayIndex);
+  const sourceDenied = isReplayAuthorityDenied(replaySource, "source");
+  const indexDenied = isReplayAuthorityDenied(replayIndex, "index");
   return {
     sourcePath: path,
     sourceHash,
@@ -1156,7 +1178,7 @@ async function proveRetainedCanonicalSourceIndexReplayDenied(
     sourceApiPath(activation, proof.sourcePath),
     replayCredentials.authToken,
     proof.sourceWire,
-    generationHeaders,
+    { ...generationHeaders, ...runEventAuthorityHeaders(replayCredentials) },
   );
   const replayIndex = await requestJsonWire(
     input,
@@ -1190,8 +1212,8 @@ async function proveRetainedCanonicalSourceIndexReplayDenied(
     indexResponseHash: proof.indexResponseHash,
     indexStateHash: afterIndexStateHash,
   });
-  const sourceDenied = isReplayAuthorityDenied(replaySource);
-  const indexDenied = isReplayAuthorityDenied(replayIndex);
+  const sourceDenied = isReplayAuthorityDenied(replaySource, "source");
+  const indexDenied = isReplayAuthorityDenied(replayIndex, "index");
   return {
     sourcePath: proof.sourcePath,
     sourceHash: proof.sourceHash,
@@ -1539,7 +1561,7 @@ async function replacedGenerationDenied(
     );
     const eventBeforeHash = before.hash;
     const eventAfterHash = after.hash;
-    const deniedByStatus = isReplayAuthorityDenied(denied);
+    const deniedByStatus = isReplayAuthorityDenied(denied, "event");
     const eventsUnchanged = before.ok && after.ok && eventBeforeHash === eventAfterHash &&
       !after.containsIdentity;
     const ok = deniedByStatus && eventsUnchanged && canonicalReplay.deniedByStatus;
@@ -1649,7 +1671,7 @@ async function expiredLeaseDenied(
       },
       workerGenerationHeaders(input.credentials),
     );
-    const deniedByStatus = isReplayAuthorityDenied(denied);
+    const deniedByStatus = isReplayAuthorityDenied(denied, "event");
     const ok = deniedByStatus && canonicalReplay.deniedByStatus;
     sink({
       ...base,
@@ -1754,23 +1776,38 @@ async function cancelledChildDenied(
   }
 }
 
-function redactReceiptForDefaultLog(
+async function redactReceiptIdentifier(
+  redacted: Record<string, unknown>,
+  field: "workerId" | "runId" | "canonicalRunId" | "projectId" | "sourcePath",
+  value: string | undefined,
+): Promise<void> {
+  if (value === undefined) return;
+  delete redacted[field];
+  redacted[`${field}Hash`] = await computeHash(value);
+}
+
+/**
+ * Log form of a receipt. Account and execution identifiers are replaced by
+ * their hashes, which still correlate receipts of one run. A custom sink
+ * receives the unredacted receipt.
+ */
+async function redactAgentWorkerRuntimeOwnershipProbeReceipt(
   receipt: AgentWorkerRuntimeOwnershipProbeReceipt,
-): AgentWorkerRuntimeOwnershipProbeReceipt {
-  return {
-    ...receipt,
-    projectId: receipt.projectId === undefined ? undefined : "[redacted]",
-    workerId: "[redacted]",
-    runId: "[redacted]",
-    canonicalRunId: "[redacted]",
-    sourcePath: receipt.sourcePath === undefined ? undefined : "[redacted]",
-  };
+): Promise<Record<string, unknown>> {
+  const redacted: Record<string, unknown> = { ...receipt };
+  await redactReceiptIdentifier(redacted, "workerId", receipt.workerId);
+  await redactReceiptIdentifier(redacted, "runId", receipt.runId);
+  await redactReceiptIdentifier(redacted, "canonicalRunId", receipt.canonicalRunId);
+  await redactReceiptIdentifier(redacted, "projectId", receipt.projectId);
+  await redactReceiptIdentifier(redacted, "sourcePath", receipt.sourcePath);
+  return redacted;
 }
 
 function defaultReceiptSink(receipt: AgentWorkerRuntimeOwnershipProbeReceipt): void {
-  console.info(
-    "[agent-worker-runtime-ownership-probe] receipt",
-    redactReceiptForDefaultLog(receipt),
+  void redactAgentWorkerRuntimeOwnershipProbeReceipt(receipt).then(
+    (redacted) => console.info("[agent-worker-runtime-ownership-probe] receipt", redacted),
+    // A receipt that cannot be redacted is not logged.
+    () => console.info("[agent-worker-runtime-ownership-probe] receipt unavailable"),
   );
 }
 
