@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { runTask } from "#veryfront/task/runner.ts";
+import { captureNodeScratchFs, runTask } from "#veryfront/task/runner.ts";
 import type { TaskContext } from "#veryfront/task/types.ts";
 
 async function pathExists(path: string): Promise<boolean> {
@@ -172,5 +172,17 @@ describe("task ctx.dataDir", () => {
     assertEquals(seen === victim, false);
     assertEquals(await pathExists(victim), true);
     assertEquals(await pathExists(seen!), false);
+  });
+
+  it("creates and removes Node scratch directories under the temp root", async () => {
+    const scratchFs = await captureNodeScratchFs();
+    const os = await import("node:os");
+    const dir = await scratchFs.makeTempDir({ prefix: "veryfront-task-" });
+
+    assertEquals(dir.startsWith(os.tmpdir()), true);
+    assertEquals(await pathExists(dir), true);
+    await Deno.writeTextFile(`${dir}/state.json`, "{}");
+    await scratchFs.remove(dir, { recursive: true });
+    assertEquals(await pathExists(dir), false);
   });
 });

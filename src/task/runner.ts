@@ -6,7 +6,6 @@
  */
 
 import { getErrorMessage } from "#veryfront/errors";
-import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
 import {
@@ -108,17 +107,51 @@ export interface TaskScratchFs {
   remove(path: string, options: { recursive: boolean }): Promise<void>;
 }
 
-// Task modules load after this module and may replace `Deno.makeTempDir` or `Deno.remove`; the
-// compat wrappers look those up per call, so on Deno the native functions are captured here.
+/**
+ * Native scratch operations for Node and Bun, taken from `node:fs/promises` and `node:os`.
+ * The compat filesystem imports those lazily, after task modules have loaded and could have
+ * replaced them, so the runner captures them itself when it loads.
+ */
+export async function captureNodeScratchFs(): Promise<TaskScratchFs> {
+  const fsPromises = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const mkdtemp = fsPromises.mkdtemp;
+  const rm = fsPromises.rm;
+  const tempRoot = os.tmpdir();
+  const separator = path.sep;
+  const tempRootPrefix = tempRoot.endsWith(separator) ? tempRoot : `${tempRoot}${separator}`;
+  return {
+    makeTempDir: ({ prefix }) =>
+      reflectApply(mkdtemp, fsPromises, [`${tempRootPrefix}${prefix}`]) as Promise<string>,
+    remove: (target, { recursive }) =>
+      reflectApply(rm, fsPromises, [target, { recursive, force: false }]),
+  };
+}
+
+// Task modules load after this module and may replace `Deno.makeTempDir`, `Deno.remove` or the
+// `node:fs` functions, which the compat wrappers look up per call. Capture the native ones now.
 const nativeDeno = (globalThis as { Deno?: typeof Deno }).Deno;
 const nativeMakeTempDir = nativeDeno?.makeTempDir;
 const nativeRemove = nativeDeno?.remove;
-const liveScratchFs: TaskScratchFs = nativeMakeTempDir && nativeRemove
-  ? {
-    makeTempDir: (options) => reflectApply(nativeMakeTempDir, nativeDeno, [options]),
-    remove: (path, options) => reflectApply(nativeRemove, nativeDeno, [path, options]),
+
+function liveScratchFsForRuntime(): TaskScratchFs {
+  if (nativeMakeTempDir && nativeRemove) {
+    return {
+      makeTempDir: (options) => reflectApply(nativeMakeTempDir, nativeDeno, [options]),
+      remove: (target, options) => reflectApply(nativeRemove, nativeDeno, [target, options]),
+    };
   }
-  : { makeTempDir, remove };
+  const captured = captureNodeScratchFs();
+  // A failed capture surfaces when a run creates its directory, which leaves ctx.dataDir unset.
+  captured.catch(() => undefined);
+  return {
+    makeTempDir: async (options) => (await captured).makeTempDir(options),
+    remove: async (target, options) => (await captured).remove(target, options),
+  };
+}
+
+const liveScratchFs = liveScratchFsForRuntime();
 
 /**
  * A process without temp-write access still runs tasks that need no scratch space, so a
