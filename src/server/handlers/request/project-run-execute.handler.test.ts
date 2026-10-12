@@ -264,6 +264,61 @@ Deno.test("uploadEvalReportToProjectFiles uses ordinary runtime API client witho
   );
 });
 
+Deno.test("runtime API client parses responses with the reader captured at load", async () => {
+  const report: EvalReport = {
+    kind: "eval-report",
+    runId: "run_eval_report_captured_reader",
+    definitionId: "eval:deep-research",
+    targetKind: "agent",
+    target: "agent:researcher",
+    startedAt: "2026-09-30T10:00:00.000Z",
+    endedAt: "2026-09-30T10:00:01.000Z",
+    summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+    records: [],
+  };
+  const req = new Request(
+    "https://runtime.example.test/api/control-plane/runs/run_eval_report_captured_reader/execute",
+    { headers: { "x-token": "runtime-token" } },
+  );
+  const request: ProjectRunExecuteRequest = {
+    runId: "run_eval_report_captured_reader",
+    kind: "task",
+    target: "task:eval",
+    projectId: "proj-1",
+    config: { eval_id: "eval:deep-research" },
+  };
+  const descriptor = Object.getOwnPropertyDescriptor(Response.prototype, "json")!;
+  let intercepted = 0;
+  _setEnvironmentConfigForTesting({ apiBaseUrl: "http://self-hosted-api.example.test:8787" });
+  // Project code in the same process replaces the reader and fabricates a result.
+  Object.defineProperty(Response.prototype, "json", {
+    ...descriptor,
+    value: function () {
+      intercepted++;
+      return Promise.resolve({ path: "fabricated/by-project-code.json" });
+    },
+  });
+  try {
+    const path = await withMockFetch(
+      () => Promise.resolve(Response.json({ path: "evals/reports/actual.json" })),
+      () =>
+        uploadEvalReportToProjectFiles({
+          request,
+          ctx: createCtx("unused-public-key"),
+          req,
+          report,
+          projectReference: "proj-1",
+          reportPath: "evals/reports/requested.json",
+        }),
+    );
+    assertEquals(path, "evals/reports/actual.json");
+    assertEquals(intercepted, 0);
+  } finally {
+    Object.defineProperty(Response.prototype, "json", descriptor);
+    _resetEnvironmentConfig();
+  }
+});
+
 class SynchronousInMemorySpanExporter implements SpanExporter {
   private finishedSpans: ReadableSpan[] = [];
 

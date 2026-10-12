@@ -525,6 +525,48 @@ describe("external agent worker client", () => {
     assertEquals(calls.length, 2);
   });
 
+  it("rejects ambiguous claim recovery that answers for a different run", async () => {
+    // The run and its terminal token agree with each other, but name another run.
+    const recoveredClaim = {
+      ...claim(),
+      credentials: { ...credentials, run_terminal_token: terminalToken("run_other") },
+      run: { ...claim().run, run_id: "run_other", latest_external_event_sequence: 7 },
+    };
+    const { calls, fetchImpl } = fetchSequence(
+      jsonResponse(claim()),
+      jsonResponse(recoveredClaim),
+    );
+    const client = createExternalAgentWorkerClient({
+      apiUrl: API_URL,
+      authToken: API_TOKEN,
+      fetch: fetchImpl,
+      ownershipProbe: throwingProbe(
+        "afterClaim",
+        "Agent worker runtime ownership probe append outcome is ambiguous",
+      ),
+    });
+
+    await assertRejects(
+      () => client.claimRun({ workerId: WORKER_ID, leaseDurationSeconds: 30 }),
+      Error,
+      "append outcome is ambiguous",
+    );
+    for (const runId of [RUN_ID, "run_other"]) {
+      await assertRejects(
+        () =>
+          client.appendRunEvents({
+            conversationId: CONVERSATION_ID,
+            runId,
+            events: [{ type: "AFTER_WRONG_RECOVERY_RUN" }],
+            expectedPreviousExternalEventSequence: 7,
+          }),
+        Error,
+        "Current worker claim authority is required",
+      );
+    }
+    assertEquals(calls.length, 2);
+  });
+
   it("clears a failed claim when ambiguous probe recovery cannot prove the cursor", async () => {
     const { calls, fetchImpl } = fetchSequence(
       jsonResponse(claim()),

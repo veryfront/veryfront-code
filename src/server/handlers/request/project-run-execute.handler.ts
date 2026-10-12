@@ -3791,9 +3791,11 @@ function createRuntimeApiClient(
       throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }
 
-    if (response.status === 204) return undefined as T;
+    if (ReflectApply(ResponseStatusGetter, response, []) === 204) return undefined as T;
 
-    return response.json() as Promise<T>;
+    // Project code shares this process and can replace Response.prototype.json; probe
+    // readbacks and other API results are parsed with the reader captured at load.
+    return await ReflectApply(ResponsePrototypeJson, response, []) as T;
   }
 
   return {

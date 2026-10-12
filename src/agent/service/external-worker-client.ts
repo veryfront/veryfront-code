@@ -456,6 +456,11 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
+      // The lease route names one run. A response for any other run proves nothing about
+      // the requested one and must not install credentials under either id.
+      if (response.run.run_id !== input.runId) {
+        throw new Error("Recovered worker run does not match the requested run");
+      }
       this.#validatedTerminalRoute(response.run, response.credentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
       apply(mapSet, this.#runClaims, [response.run.run_id, {
