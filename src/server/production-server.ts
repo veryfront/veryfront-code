@@ -317,7 +317,10 @@ export function startProductionServerWithDependencies(
       // Probe timeouts and hard request timeouts on a blocked loop look like
       // network faults. Name the block and the requests that were running.
       const eventLoopStallDetector = startProcessEventLoopStallDetector({
-        getInFlightRequests: () => requestTracker.getInFlightRequests(),
+        getInFlightRequests: (sinceMs) => [
+          ...requestTracker.getInFlightRequests(),
+          ...requestTracker.getRecentlyCompletedRequests(sinceMs),
+        ],
       });
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped

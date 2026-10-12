@@ -4,12 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createEventLoopStallDetector,
   type EventLoopStall,
+  type InFlightRequestSample,
   isProcessEventLoopStallDetectorRunning,
   startProcessEventLoopStallDetector,
 } from "./event-loop-stall-detector.ts";
 
 function harness(
-  inFlight: Array<{ requestId: string; path: string; method: string; startTime: number }> = [],
+  inFlight: InFlightRequestSample[] = [],
 ) {
   let clock = 0;
   let tick: (() => void) | undefined;
@@ -75,6 +76,17 @@ describe("observability/event-loop-stall-detector", () => {
     h.advance(1_000);
     h.advance(58_000); // tick due at 2_000, block ended at 59_000
     assertEquals(h.stalls[0]!.inFlight.map((r) => r.requestId), ["culprit", "stream"]);
+  });
+
+  it("names a request that blocked and completed before the overdue tick ran", () => {
+    const h = harness([
+      { requestId: "done-early", path: "/old", method: "GET", startTime: 100, endTime: 900 },
+      { requestId: "sync", path: "/api/block", method: "GET", startTime: 1_500, endTime: 58_900 },
+    ]);
+    h.detector.start();
+    h.advance(1_000);
+    h.advance(58_000);
+    assertEquals(h.stalls[0]!.inFlight.map((r) => r.requestId), ["sync"]);
   });
 
   it("stops sampling after stop()", () => {

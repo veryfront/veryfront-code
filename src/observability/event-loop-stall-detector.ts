@@ -25,6 +25,8 @@ export interface InFlightRequestSample {
   path: string;
   method: string;
   startTime: number;
+  /** Set when the request completed; a request that finished during the block is still a candidate. */
+  endTime?: number;
 }
 
 export interface EventLoopStall {
@@ -40,7 +42,12 @@ export interface EventLoopStallDetectorOptions {
   now?: () => number;
   /** Schedules a repeating tick and returns a cancel function. */
   schedule?: (tick: () => void, intervalMs: number) => () => void;
-  getInFlightRequests?: () => readonly InFlightRequestSample[];
+  /**
+   * Requests in flight, plus requests that completed at or after `sinceMs`
+   * (the last on-time tick), so a handler that blocked and then returned
+   * before the overdue tick ran is still reported.
+   */
+  getInFlightRequests?: (sinceMs: number) => readonly InFlightRequestSample[];
   onStall?: (stall: EventLoopStall) => void;
 }
 
@@ -92,8 +99,10 @@ export function createEventLoopStallDetector(
     // on-time tick but before that point is the likeliest culprit; newest
     // first so long-lived streams cannot push it past the report cap.
     const blockStartedByMs = current - lagMs;
-    const inFlight = getInFlight()
-      .filter((r) => r.startTime <= blockStartedByMs)
+    const inFlight = getInFlight(stalledFromMs)
+      .filter((r) =>
+        r.startTime <= blockStartedByMs && (r.endTime === undefined || r.endTime >= stalledFromMs)
+      )
       .sort((a, b) => b.startTime - a.startTime)
       .slice(0, MAX_REPORTED_REQUESTS)
       .map((r) => ({
@@ -130,7 +139,7 @@ export function createEventLoopStallDetector(
 }
 
 let processDetector: EventLoopStallDetector | undefined;
-const processSources = new Set<() => readonly InFlightRequestSample[]>();
+const processSources = new Set<(sinceMs: number) => readonly InFlightRequestSample[]>();
 
 /** Handle for one server's registration with the process-wide detector. */
 export interface ProcessEventLoopStallRegistration {
@@ -151,7 +160,14 @@ export function startProcessEventLoopStallDetector(
   processSources.add(source);
   if (!processDetector) {
     processDetector = createEventLoopStallDetector({
-      getInFlightRequests: () => [...processSources].flatMap((get) => get()),
+      // Servers in one process can share a tracker; report each request once.
+      getInFlightRequests: (sinceMs) => {
+        const byId = new Map<string, InFlightRequestSample>();
+        for (const get of processSources) {
+          for (const request of get(sinceMs)) byId.set(request.requestId, request);
+        }
+        return [...byId.values()];
+      },
     });
     processDetector.start();
   }

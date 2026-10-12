@@ -27,6 +27,8 @@ interface TrackedRequest {
   verySlowTimer?: ReturnType<typeof setTimeout>;
 }
 
+const RECENTLY_COMPLETED_CAP = 64;
+
 /** Threshold in ms before logging a warning about a slow request */
 const SLOW_REQUEST_THRESHOLD_MS = 10_000; // 10 seconds
 
@@ -104,6 +106,8 @@ function logRequestCompletion(
 
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
+  /** Recently completed requests, kept so a stall sampled after a synchronous handler returns still names it. */
+  private recentlyCompleted: Array<TrackedRequest & { endTime: number }> = [];
   private statusInterval: ReturnType<typeof setInterval> | undefined;
   private totalRequests = 0;
   private totalCompleted = 0;
@@ -230,7 +234,11 @@ class RequestTracker {
     this.inFlight.delete(requestId);
     if (this.inFlight.size === 0) this.stopStatusLogging();
 
-    const durationMs = Math.round(performance.now() - tracked.startTime);
+    const endTime = performance.now();
+    this.recentlyCompleted.push({ ...tracked, endTime });
+    if (this.recentlyCompleted.length > RECENTLY_COMPLETED_CAP) this.recentlyCompleted.shift();
+
+    const durationMs = Math.round(endTime - tracked.startTime);
 
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
@@ -284,6 +292,11 @@ class RequestTracker {
 
   getInFlightRequests(): TrackedRequest[] {
     return Array.from(this.inFlight.values());
+  }
+
+  /** Requests completed at or after `sinceMs` (performance.now() clock), newest last. */
+  getRecentlyCompletedRequests(sinceMs: number): Array<TrackedRequest & { endTime: number }> {
+    return this.recentlyCompleted.filter((r) => r.endTime >= sinceMs);
   }
 
   getStats(): { inFlight: number; total: number; completed: number; timedOut: number } {
