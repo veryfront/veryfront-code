@@ -27,9 +27,9 @@ import {
   MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_DEPTH,
 } from "./limits.ts";
 import {
-  executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
+  runRemoteIntegrationTool,
 } from "./remote-tools.ts";
 
 const ENV_KEYS = [
@@ -165,7 +165,7 @@ describe("integrations/remote-tools hardening", () => {
           getRemoteIntegrationToolDefinitions({ abortSignal: caller.signal })
         ),
         execution: await captureRejection(() =>
-          executeRemoteIntegrationTool(
+          runRemoteIntegrationTool(
             "github__list_repos",
             {},
             { abortSignal: caller.signal },
@@ -207,7 +207,7 @@ describe("integrations/remote-tools hardening", () => {
       },
       () =>
         captureRejection(() =>
-          executeRemoteIntegrationTool("github__list_repos", {}, { abortSignal: signal })
+          runRemoteIntegrationTool("github__list_repos", {}, { abortSignal: signal })
         ),
     );
 
@@ -280,7 +280,7 @@ describe("integrations/remote-tools hardening", () => {
       async () => pending.response,
       () =>
         captureRejection(() =>
-          executeRemoteIntegrationTool(
+          runRemoteIntegrationTool(
             "github__list_repos",
             {},
             { abortSignal: caller.signal },
@@ -306,7 +306,7 @@ describe("integrations/remote-tools hardening", () => {
         return Response.json({ content: [], structuredContent: { ok: true } });
       },
       () =>
-        executeRemoteIntegrationTool(
+        runRemoteIntegrationTool(
           "github__list_repos",
           {},
           { abortSignal: caller.signal },
@@ -331,7 +331,7 @@ describe("integrations/remote-tools hardening", () => {
         requestSignal = requestSignalFromInit(init);
         return await rejectFetchWhenAborted(requestSignalFromInit(init), started);
       },
-      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
+      () => captureRejection(() => runRemoteIntegrationTool("github__list_repos", {})),
     );
     await started.promise;
     time.tick(INTEGRATION_REQUEST_TIMEOUT_MS);
@@ -404,7 +404,7 @@ describe("integrations/remote-tools hardening", () => {
 
     const error = await withMockFetch(
       async () => oversized.response,
-      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
+      () => captureRejection(() => runRemoteIntegrationTool("github__list_repos", {})),
     );
 
     assertEquals(error instanceof Error, true);
@@ -424,7 +424,7 @@ describe("integrations/remote-tools hardening", () => {
 
     const result = await withMockFetch(
       async () => oversized.response,
-      () => executeRemoteIntegrationTool("github__list_repos", {}),
+      () => runRemoteIntegrationTool("github__list_repos", {}),
     );
 
     assertEquals(result, {
@@ -578,10 +578,10 @@ describe("integrations/remote-tools hardening", () => {
       },
       async () => ({
         accessor: await captureRejection(() =>
-          executeRemoteIntegrationTool("github__list_repos", args)
+          runRemoteIntegrationTool("github__list_repos", args)
         ),
         cycle: await captureRejection(() =>
-          executeRemoteIntegrationTool("github__list_repos", cyclicArgs)
+          runRemoteIntegrationTool("github__list_repos", cyclicArgs)
         ),
       }),
     );
@@ -613,7 +613,7 @@ describe("integrations/remote-tools hardening", () => {
       async () => ({
         discovery: await captureRejection(() => getRemoteIntegrationToolDefinitions(context)),
         execution: await captureRejection(() =>
-          executeRemoteIntegrationTool(
+          runRemoteIntegrationTool(
             "github__list_repos",
             {},
             context,
@@ -642,7 +642,7 @@ describe("integrations/remote-tools hardening", () => {
         oversizedDiscovery: await getRemoteIntegrationToolDefinitions({
           authToken: oversizedToken,
         }),
-        oversizedExecution: await executeRemoteIntegrationTool(
+        oversizedExecution: await runRemoteIntegrationTool(
           "github__list_repos",
           {},
           { authToken: oversizedToken },
@@ -652,7 +652,7 @@ describe("integrations/remote-tools hardening", () => {
           projectSlug: "not_a_canonical_slug",
         }),
         invalidSlugExecution: await captureRejection(() =>
-          executeRemoteIntegrationTool(
+          runRemoteIntegrationTool(
             "github__list_repos",
             {},
             {
@@ -680,7 +680,7 @@ describe("integrations/remote-tools hardening", () => {
 
     const error = await withMockFetch(
       async () => Response.json(deeplyNestedResult),
-      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
+      () => captureRejection(() => runRemoteIntegrationTool("github__list_repos", {})),
     );
 
     assertEquals(error instanceof TypeError, true);
@@ -699,7 +699,7 @@ describe("integrations/remote-tools hardening", () => {
           content: [],
           structuredContent: "not-an-object",
         }),
-      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
+      () => captureRejection(() => runRemoteIntegrationTool("github__list_repos", {})),
     );
 
     assertEquals(error instanceof TypeError, true);
@@ -714,7 +714,7 @@ describe("integrations/remote-tools hardening", () => {
         Response.json({
           content: [{ type: "text", text: deeplyNestedText }],
         }),
-      () => executeRemoteIntegrationTool("github__list_repos", {}),
+      () => runRemoteIntegrationTool("github__list_repos", {}),
     );
 
     assertEquals(result, deeplyNestedText);
@@ -731,7 +731,7 @@ describe("integrations/remote-tools hardening", () => {
       },
       () =>
         captureRejection(() =>
-          executeRemoteIntegrationTool(
+          runRemoteIntegrationTool(
             "github__list_repos",
             {},
             { runId: "r".repeat(MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH + 1) },
@@ -763,7 +763,7 @@ describe("integrations/remote-tools hardening", () => {
         fetchCalls += 1;
         return Response.json({ structuredContent: { ok: true } });
       },
-      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", args)),
+      () => captureRejection(() => runRemoteIntegrationTool("github__list_repos", args)),
     );
 
     assertEquals(error instanceof RangeError, true);

@@ -451,7 +451,7 @@ async function exercise(
           ),
         });
       }
-      if (path === "/integrations/tools/list") {
+      if (path === "/integration-tools") {
         assertEquals(outgoing.headers.get("authorization"), `Bearer ${SOURCE_CREDENTIAL}`);
         return Response.json({ tools: [] });
       }

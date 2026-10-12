@@ -745,6 +745,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
       "List integration tools with a typed available or unavailable status",
     getRemoteIntegrationToolDefinitions:
       "List integration tool definitions, returning an empty list when discovery is unavailable",
+    runRemoteIntegrationTool: "Run a remote integration tool through the API",
+    executeRemoteIntegrationTool: "Deprecated. Use `runRemoteIntegrationTool`",
     listConnectors: "Return readonly array of all connectors",
     registerIntegrationMCP:
       "Register integration tools into the MCP tool registry",

@@ -68,9 +68,9 @@ REST serves the same operations under
 
 Other surfaces call the same tools:
 
-- REST: `POST /integrations/<name>/tools/<tool>/call` with `arguments`,
+- REST: `POST /integration-tools/<name>__<tool>/run` with `arguments`,
   `connection_id`, and `expected_connection_generation_id`.
-- GraphQL: the `executeIntegrationTool` mutation with `projectReference`,
+- GraphQL: the `runIntegrationTool` mutation with `projectReference`,
   `toolName`, `connectionId`, `expectedConnectionGenerationId`, and `args`.
 - MCP: `https://api.veryfront.com/projects/<PROJECT_SLUG>/mcp`, `tools/call`
   with the canonical tool name, `_meta.connection_id`, and

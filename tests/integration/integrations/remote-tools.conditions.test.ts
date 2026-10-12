@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { executeRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
+import { runRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
 
 const context = { authToken: "synthetic-test-token", projectSlug: "test-project" };
 
@@ -20,7 +20,7 @@ describe("remote integration failure conditions", () => {
         });
       },
       async () =>
-        await executeRemoteIntegrationTool(
+        await runRemoteIntegrationTool(
           "github__create_issue",
           { title: "Test issue" },
           context,
@@ -51,7 +51,7 @@ describe("remote integration failure conditions", () => {
             content: [{ type: "text", text: JSON.stringify(action) }],
             _meta: { condition },
           }),
-        async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+        async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
       );
       assertEquals(result, { ...action, condition });
     }
@@ -78,7 +78,7 @@ describe("remote integration failure conditions", () => {
             content: [{ type: "text", text: "Denied" }],
             _meta: { condition },
           }),
-        async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+        async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
       );
       assertEquals(result, { error: "tool_error", message: "Denied" });
     }
@@ -89,7 +89,7 @@ describe("remote integration failure conditions", () => {
           content: [{ type: "text", text: JSON.stringify({ error: "raw-error" }) }],
           _meta: { condition: { slug: "bad-condition", status: 200, retryable: false } },
         }),
-      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+      async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
     );
     assertEquals(preservedPayload, { error: "raw-error" });
 
@@ -97,7 +97,7 @@ describe("remote integration failure conditions", () => {
       Response.json({
         content: [{ type: "text", text: "Done" }],
         _meta: { condition: { slug: "authorization-denied", status: 403, retryable: false } },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(success, "Done");
   });
 
@@ -114,7 +114,7 @@ describe("remote integration failure conditions", () => {
           message: "Reconnect",
         },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(structured, {
       error: "authentication_required",
       integration: "github",
@@ -129,7 +129,7 @@ describe("remote integration failure conditions", () => {
         content: [],
         structuredContent: { message: "Remote search failed" },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(structuredMessage, {
       message: "Remote search failed",
       error: "provider-failed",
@@ -143,7 +143,7 @@ describe("remote integration failure conditions", () => {
         content: [{ type: "text", text: " " }, { type: "text", text: "\n" }],
         structuredContent: { message: "Remote search failed" },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(whitespaceMessage, {
       message: "Remote search failed",
       error: "provider-failed",
@@ -156,7 +156,7 @@ describe("remote integration failure conditions", () => {
         isError: true,
         content: [{ type: "text", text: JSON.stringify({ error: "authentication_required" }) }],
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(incompleteAuth, {
       error: "provider-failed",
       status: 503,
@@ -169,7 +169,7 @@ describe("remote integration failure conditions", () => {
         isError: true,
         content: [{ type: "text", text: "{}" }],
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(arbitraryJson, {
       error: "provider-failed",
       status: 503,
@@ -185,7 +185,7 @@ describe("remote integration failure conditions", () => {
           text: JSON.stringify({ error: "provider-error", message: "Remote search failed" }),
         }],
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(parsedMessage, {
       error: "provider-failed",
       status: 503,
@@ -199,7 +199,7 @@ describe("remote integration failure conditions", () => {
         content: [],
         structuredContent: { message: 42 },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+      }), async () => await runRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(nonStringStructuredMessage, {
       message: "",
       error: "provider-failed",
@@ -217,7 +217,7 @@ describe("remote integration failure conditions", () => {
               structuredContent: "malformed",
               _meta: { condition },
             }),
-          async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+          async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
         ),
       TypeError,
       "malformed MCP structured content",
@@ -230,13 +230,13 @@ describe("remote integration failure conditions", () => {
           content: [],
           structuredContent: { ok: true },
         }),
-      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+      async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
     );
     assertEquals(structuredSuccess, { ok: true });
 
     const rawSuccess = await withMockFetch(
       async () => Response.json({ ok: true }),
-      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+      async () => await runRemoteIntegrationTool("github__get_current_user", {}, context),
     );
     assertEquals(rawSuccess, { ok: true });
   });
