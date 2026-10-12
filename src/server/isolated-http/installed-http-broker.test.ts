@@ -134,8 +134,9 @@ describe("installed HTTP broker", () => {
       const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
       const request = input.session.request;
       assertEquals(request.requestedAt <= began, true);
-      // Deadlines still run from the end of authorization.
-      assertEquals(request.prepareDeadlineAt >= began + 40, true);
+      // The lifetime is measured from that same instant, authorization included.
+      assertEquals(request.hardDeadlineAt - request.requestedAt, 75_000);
+      assertEquals(request.prepareDeadlineAt - request.requestedAt, 30_000);
     } finally {
       await b.shutdown();
     }

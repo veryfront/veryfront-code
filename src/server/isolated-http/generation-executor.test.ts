@@ -984,6 +984,8 @@ describe("hosted HTTP generation broker", () => {
 
   it("does not allocate an executor inside its retirement window", async () => {
     const f = fixture(() => new Response("unreachable"));
+    // Four seconds remain of a thirty-second allocation; the window is ten.
+    f.input.session.request.requestedAt = Date.now() - 26_000;
     f.input.session.request.prepareDeadlineAt = Date.now() + 3_000;
     f.input.session.request.hardDeadlineAt = Date.now() + 4_000;
     const broker = createHostedHttpBroker({ maxActive: 1, drainTimeoutMs: 10_000 });
@@ -994,6 +996,22 @@ describe("hosted HTTP generation broker", () => {
         "retirement window",
       );
       assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("serves an allocation whose whole lifetime is shorter than the drain window", async () => {
+    // The fixture's allocation lives thirty seconds; the drain window is sixty.
+    const f = fixture(() => new Response("served"));
+    const broker = createHostedHttpBroker({ maxActive: 1, drainTimeoutMs: 60_000 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
       await broker.settled;
@@ -1083,6 +1101,8 @@ describe("hosted HTTP generation executor", () => {
 
   it("refuses a warm request inside the retirement window before its timer has run", async () => {
     const f = fixture(() => new Response("served"));
+    // A long allocation, so the window below is not shortened to half its lifetime.
+    f.input.session.request.requestedAt -= 60_000;
     const sessions = createHostedExecutorSessionPool({ maxActive: 1 });
     const input = prepareHostedHttpInput(f.input);
     const key = hostedHttpInstallationKey(input);

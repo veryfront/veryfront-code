@@ -145,7 +145,6 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     const requestedAt = Date.now();
     await authorize(Object.freeze({ ...binding, sourceToken }), lifetime);
     lifetime.throwIfAborted();
-    const now = Date.now();
     const configuration = selected.configuration;
     const source = { type: "release" as const, releaseId: binding.releaseId };
     const projectOwner = { scopeKind: "project" as const, projectId: binding.projectId };
@@ -158,8 +157,10 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
           source,
           executionProfile: "http",
           requestedAt,
-          prepareDeadlineAt: now + Math.min(30_000, requestLifetimeMs),
-          hardDeadlineAt: now + requestLifetimeMs,
+          // Deadlines run from the same instant, so the configured lifetime is the whole
+          // allocation lifetime, including the time authorization took.
+          prepareDeadlineAt: requestedAt + Math.min(30_000, requestLifetimeMs),
+          hardDeadlineAt: requestedAt + requestLifetimeMs,
         },
         expectedBrokerInstanceId,
         expectedImage: selected.image,

@@ -87,7 +87,10 @@ export interface HostedHttpGenerationExecutorOptions {
   context(request: Request): HostedHttpGenerationRequest | undefined;
   /** Stop admitting requests after this long without one in flight. */
   idleTimeoutMs: number;
-  /** Stop admitting requests this long before the allocation's hard deadline. */
+  /**
+   * Stop admitting requests this long before the allocation's hard deadline, and at most
+   * half of the allocation's lifetime before it.
+   */
   retireBeforeDeadlineMs: number;
 }
 
@@ -155,7 +158,12 @@ export function createHostedHttpGenerationExecutor(
   const sessions = options.sessions;
   const contextOf = options.context;
   const idleTimeoutMs = options.idleTimeoutMs;
-  const retireBeforeDeadlineMs = options.retireBeforeDeadlineMs;
+  // An allocation shorter than twice the configured window keeps half of its lifetime for
+  // serving, so a short lifetime remains usable.
+  const retireBeforeDeadlineMs = Math.min(
+    options.retireBeforeDeadlineMs,
+    Math.floor((input.allocation.hardDeadlineAt - input.allocation.requestedAt) / 2),
+  );
   const lifetime = new AbortController();
   const ended = Promise.withResolvers<void>();
   let session: HostedExecutorSession | undefined;
