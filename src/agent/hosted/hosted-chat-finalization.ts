@@ -29,6 +29,7 @@ import {
   buildFinalizedMessageFallbackChunks,
   buildFinalizedMessageState,
   buildToolResultOwnershipCorrectionEvents,
+  findUnambiguousFallbackRecord,
   persistToolResultOwnershipCorrections,
   terminalToolOutputState,
 } from "./finalized-message.ts";
@@ -163,11 +164,13 @@ function createHostedChatFinalizeDetachedBuildState(
       );
       const recoveredParts = input.mirroredMessage.parts.map((part) => {
         if (!isToolUiPart(part)) return part;
-        const fallback = fallbackTools.get(part.toolCallId);
+        // A final-step record completes this part only when it is for the same tool and
+        // unambiguous; a call id reused for another tool must not lend it an output.
+        const fallback = findUnambiguousFallbackRecord(recoveredFallback, part);
         fallbackTools.delete(part.toolCallId);
         if (input.isAborted || terminalToolOutputState(part.state) !== undefined) return part;
         if (
-          !fallback ||
+          !fallback || !isToolUiPart(fallback) ||
           (fallback.state !== "output-available" && fallback.state !== "output-error" &&
             fallback.state !== "output-denied")
         ) return part;

@@ -345,6 +345,29 @@ function findUnambiguousCompletingFallback(
   return completed;
 }
 
+/**
+ * The final-step record for a tool part's call id, in any state, when every record with
+ * that id carries the part's tool name and they all agree. A reused call id for another
+ * tool, or conflicting duplicates, yields nothing.
+ */
+export function findUnambiguousFallbackRecord(
+  fallbackParts: readonly ChatUiMessage["parts"][number][],
+  part: ChatUiMessage["parts"][number],
+): ChatUiMessage["parts"][number] | undefined {
+  if (!isToolUiPart(part)) return undefined;
+  const sameCall = fallbackParts.filter((fallback) =>
+    isToolUiPart(fallback) && fallback.toolCallId === part.toolCallId
+  );
+  const [record] = sameCall;
+  if (
+    !record ||
+    sameCall.some((fallback) =>
+      toolPartName(fallback) !== toolPartName(part) || !sameFallbackRecord(fallback, record)
+    )
+  ) return undefined;
+  return record;
+}
+
 /** State for build finalized message. */
 export function buildFinalizedMessageState(
   input: BuildFinalizedMessageStateInput,

@@ -2952,6 +2952,66 @@ describe("agent/hosted-chat-finalization", () => {
     });
   }
 
+  it("does not complete a detached tool from a final-step record for another tool with its call id", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const state = createMirroredToolChunkState();
+    for (
+      const chunk of [
+        { type: "tool-input-start", toolCallId: "c", toolName: "bash" },
+        { type: "tool-input-available", toolCallId: "c", toolName: "bash", input: {} },
+      ] as ChatUiMessageChunk<MessageMetadata>[]
+    ) recordMirroredToolChunkState(state, chunk);
+
+    await finalizeHostedChatRun({
+      kind: "detached",
+      isAborted: false,
+      mirroredDurableOutput: true,
+      mirroredMessage: createResponseMessage({
+        parts: [{ type: "tool-bash", toolCallId: "c", state: "input-available", input: {} }],
+      }),
+      // The final step reuses the call id for a different tool.
+      streamResult: createStreamResult({
+        response: {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "c", toolName: "web_fetch", input: {} }],
+          }, {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "c",
+              toolName: "web_fetch",
+              output: "fetched",
+            }],
+          }],
+        },
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: state,
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {},
+      streamError: null,
+    });
+
+    // The mirrored tool gets no output from the other tool; it ends as incomplete.
+    assertEquals(JSON.stringify(terminalStates).includes("fetched"), false);
+    assertEquals(JSON.stringify(chunks).includes("fetched"), false);
+    assertEquals(
+      chunks.some((chunk) => chunk.type === "tool-output-available" && chunk.toolCallId === "c"),
+      false,
+    );
+    assertEquals(getToolOutputErrorChunks(chunks, "c"), [
+      { type: "tool-output-error", toolCallId: "c", errorText: "Tool call did not complete" },
+    ]);
+  });
+
   it("emits one output-error chunk for detached unfinished fallback tools", async () => {
     const calls: string[] = [];
     const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
