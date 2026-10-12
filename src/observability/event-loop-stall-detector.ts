@@ -130,21 +130,50 @@ export function createEventLoopStallDetector(
 }
 
 let processDetector: EventLoopStallDetector | undefined;
+const processSources = new Set<() => readonly InFlightRequestSample[]>();
+
+/** Handle for one server's registration with the process-wide detector. */
+export interface ProcessEventLoopStallRegistration {
+  /** Unregisters this server; the detector stops when no server remains. */
+  stop(): void;
+}
 
 /**
- * Starts the process-wide detector read by the `event_loop.max_lag` gauge.
- * The server passes its request tracker so a stall names its requests.
+ * Registers a server with the process-wide detector read by the
+ * `event_loop.max_lag` gauge, starting it on the first registration. Each
+ * server passes its request tracker so a stall names requests from every
+ * server sharing the process.
  */
 export function startProcessEventLoopStallDetector(
   options: Pick<EventLoopStallDetectorOptions, "getInFlightRequests"> = {},
-): EventLoopStallDetector {
-  processDetector?.stop();
-  processDetector = createEventLoopStallDetector(options);
-  processDetector.start();
-  return processDetector;
+): ProcessEventLoopStallRegistration {
+  const source = options.getInFlightRequests ?? (() => []);
+  processSources.add(source);
+  if (!processDetector) {
+    processDetector = createEventLoopStallDetector({
+      getInFlightRequests: () => [...processSources].flatMap((get) => get()),
+    });
+    processDetector.start();
+  }
+  let active = true;
+  return {
+    stop() {
+      if (!active) return;
+      active = false;
+      processSources.delete(source);
+      if (processSources.size > 0) return;
+      processDetector?.stop();
+      processDetector = undefined;
+    },
+  };
 }
 
 /** Largest lag of the process detector since the last read; 0 when not running. */
 export function takeProcessEventLoopMaxLagMs(): number {
   return processDetector?.takeMaxLagMs() ?? 0;
+}
+
+/** True while at least one server is registered with the process detector. */
+export function isProcessEventLoopStallDetectorRunning(): boolean {
+  return processDetector !== undefined;
 }

@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createEventLoopStallDetector, type EventLoopStall } from "./event-loop-stall-detector.ts";
+import {
+  createEventLoopStallDetector,
+  type EventLoopStall,
+  isProcessEventLoopStallDetectorRunning,
+  startProcessEventLoopStallDetector,
+} from "./event-loop-stall-detector.ts";
 
 function harness(
   inFlight: Array<{ requestId: string; path: string; method: string; startTime: number }> = [],
@@ -77,5 +82,16 @@ describe("observability/event-loop-stall-detector", () => {
     h.detector.start();
     h.detector.stop();
     assertEquals(h.scheduled, false);
+  });
+
+  it("keeps the process detector running until every server stops", () => {
+    const first = startProcessEventLoopStallDetector();
+    const second = startProcessEventLoopStallDetector();
+    second.stop();
+    assertEquals(isProcessEventLoopStallDetectorRunning(), true);
+    second.stop();
+    assertEquals(isProcessEventLoopStallDetectorRunning(), true);
+    first.stop();
+    assertEquals(isProcessEventLoopStallDetectorRunning(), false);
   });
 });
