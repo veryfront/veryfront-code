@@ -292,13 +292,21 @@ function readJwtPayload(token: string): Record<string, unknown> | undefined {
   }
 }
 
-function readProblemStringField(body: unknown, field: "slug" | "type" | "code" | "detail") {
+/**
+ * An own data property of an API response object. Parsed JSON inherits Object.prototype,
+ * which worker code can extend, so an inherited or accessor value is never evidence.
+ */
+function ownValue(body: unknown, field: string): unknown {
   if (body === null || typeof body !== "object") return undefined;
   const descriptor = RuntimeReflectApply(RuntimeObjectGetOwnPropertyDescriptor, Object, [
     body,
     field,
   ]) as PropertyDescriptor | undefined;
-  const value = descriptor?.value;
+  return descriptor?.value;
+}
+
+function readProblemStringField(body: unknown, field: "slug" | "type" | "code" | "detail") {
+  const value = ownValue(body, field);
   return typeof value === "string" ? value : undefined;
 }
 
@@ -468,7 +476,7 @@ function pastProbeDeadline(input: AgentWorkerRuntimeOwnershipProbeClaimInput): b
 
 function hasProbeEvent(body: unknown, identity: string): boolean {
   const candidates = body !== null && typeof body === "object" && "data" in body
-    ? (body as { data?: unknown }).data
+    ? ownValue(body, "data")
     : body;
   if (!RuntimeArrayIsArray(candidates)) return false;
   return RuntimeReflectApply(RuntimeArrayPrototypeSome, candidates, [
@@ -518,15 +526,15 @@ function findToolCallId(value: unknown): string | undefined {
 
 function readNextCursor(body: unknown): string | undefined {
   if (body === null || typeof body !== "object" || !("page_info" in body)) return undefined;
-  const pageInfo = (body as { page_info?: unknown }).page_info;
+  const pageInfo = ownValue(body, "page_info");
   if (pageInfo === null || typeof pageInfo !== "object" || !("next" in pageInfo)) return undefined;
-  const next = (pageInfo as { next?: unknown }).next;
+  const next = ownValue(pageInfo, "next");
   return typeof next === "string" && next.length > 0 ? next : undefined;
 }
 
 function isEventPage(body: unknown): boolean {
   return body !== null && typeof body === "object" && "data" in body &&
-    RuntimeArrayIsArray((body as { data?: unknown }).data);
+    RuntimeArrayIsArray(ownValue(body, "data"));
 }
 
 function errorMessageIncludes(error: unknown, expected: string): boolean {
@@ -542,15 +550,13 @@ function fatalCursorError(message: string, cause?: unknown): Error {
 
 function readLatestExternalEventSequence(body: unknown): number | undefined {
   if (body === null || typeof body !== "object") return undefined;
-  const direct =
-    (body as { latest_external_event_sequence?: unknown }).latest_external_event_sequence;
+  const direct = ownValue(body, "latest_external_event_sequence");
   if (typeof direct === "number" && RuntimeNumberIsSafeInteger(direct) && direct >= 0) {
     return direct;
   }
-  const run = (body as { run?: unknown }).run;
+  const run = ownValue(body, "run");
   if (run !== null && typeof run === "object") {
-    const nested =
-      (run as { latest_external_event_sequence?: unknown }).latest_external_event_sequence;
+    const nested = ownValue(run, "latest_external_event_sequence");
     if (typeof nested === "number" && RuntimeNumberIsSafeInteger(nested) && nested >= 0) {
       return nested;
     }
@@ -699,7 +705,7 @@ function sourceIndexApiPath(
 
 function readSourceContent(body: unknown): string | undefined {
   if (body !== null && typeof body === "object") {
-    const content = (body as { content?: unknown }).content;
+    const content = ownValue(body, "content");
     if (typeof content === "string") return content;
   }
   return undefined;
@@ -715,9 +721,8 @@ function readSourceFileId(body: unknown): string | undefined {
 
 function readStringFieldFromRecord(body: unknown, fields: readonly string[]): string | undefined {
   if (body !== null && typeof body === "object") {
-    const record = body as Record<string, unknown>;
     for (const field of fields) {
-      const value = record[field];
+      const value = ownValue(body, field);
       if (typeof value === "string" && value.length > 0) return value;
     }
   }
@@ -726,7 +731,7 @@ function readStringFieldFromRecord(body: unknown, fields: readonly string[]): st
 
 function readNumberFieldFromRecord(body: unknown, field: string): number | undefined {
   if (body !== null && typeof body === "object") {
-    const value = (body as Record<string, unknown>)[field];
+    const value = ownValue(body, field);
     if (typeof value === "number" && RuntimeNumberIsSafeInteger(value)) return value;
   }
   return undefined;
@@ -735,11 +740,11 @@ function readNumberFieldFromRecord(body: unknown, field: string): number | undef
 function readSourceVersionMaterial(body: unknown): unknown {
   if (body === null || typeof body !== "object") return body;
   return {
-    id: (body as { id?: unknown }).id,
-    version_id: (body as { version_id?: unknown }).version_id,
-    versionId: (body as { versionId?: unknown }).versionId,
-    checksum: (body as { checksum?: unknown }).checksum,
-    path: (body as { path?: unknown }).path,
+    id: ownValue(body, "id"),
+    version_id: ownValue(body, "version_id"),
+    versionId: ownValue(body, "versionId"),
+    checksum: ownValue(body, "checksum"),
+    path: ownValue(body, "path"),
   };
 }
 
@@ -868,11 +873,11 @@ function validateCanonicalIndexResponse(
     return "canonical-index-checksum-mismatch";
   }
   if (body === null || typeof body !== "object") return "canonical-index-response-invalid";
-  const model = (body as { model?: unknown }).model;
+  const model = ownValue(body, "model");
   if (model === null || typeof model !== "object") return "canonical-index-model-missing";
-  const modelName = (model as { name?: unknown }).name;
-  const modelProvider = (model as { provider?: unknown }).provider;
-  const modelDimension = (model as { dimension?: unknown }).dimension;
+  const modelName = ownValue(model, "name");
+  const modelProvider = ownValue(model, "provider");
+  const modelDimension = ownValue(model, "dimension");
   if (
     modelName !== CANONICAL_KNOWLEDGE_MODEL.name ||
     modelProvider !== CANONICAL_KNOWLEDGE_MODEL.provider ||
@@ -890,7 +895,7 @@ function validateCanonicalIndexStateResponse(
   if (body === null || typeof body !== "object") {
     return "canonical-index-state-response-invalid";
   }
-  const data = (body as { data?: unknown }).data;
+  const data = ownValue(body, "data");
   if (!RuntimeArrayIsArray(data)) return "canonical-index-state-response-invalid";
   const matching = RuntimeReflectApply(RuntimeArrayPrototypeFind, data, [
     (item: unknown) => {

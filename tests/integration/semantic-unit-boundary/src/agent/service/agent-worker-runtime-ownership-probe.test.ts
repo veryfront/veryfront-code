@@ -1211,6 +1211,36 @@ it("fails canonical source/index proof when index acknowledgement omits or chang
   }
 });
 
+it("does not accept a field inherited from Object.prototype as index acknowledgement evidence", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+  // Earlier worker code supplies the checksum the acknowledgement omits.
+  Object.defineProperty(Object.prototype, "checksum", {
+    configurable: true,
+    enumerable: false,
+    value: "source-checksum",
+    writable: true,
+  });
+  try {
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ indexAckChecksum: "missing" }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    delete (Object.prototype as { checksum?: unknown }).checksum;
+  }
+
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+});
+
 it("follows paginated event pages before reporting event append/readback success", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const paths: string[] = [];
