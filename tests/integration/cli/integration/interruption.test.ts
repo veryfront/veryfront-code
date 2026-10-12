@@ -26,7 +26,7 @@ describe("integration user interruption", () => {
         async (input, init) => {
           const path = new URL(String(input)).pathname;
           if (path === "/projects/fixture") return Response.json(project);
-          if (path === "/integrations/tools/list") {
+          if (path === "/integration-tools") {
             return Response.json({ tools: [] }, {
               headers: { "x-veryfront-project-id": project.id },
             });
@@ -163,7 +163,7 @@ describe("interruption versus failure", () => {
         async (input) => {
           const path = new URL(String(input)).pathname;
           if (path === "/projects/fixture") return Response.json(project);
-          if (path === "/integrations/tools/list") {
+          if (path === "/integration-tools") {
             return Response.json({ tools: [] }, {
               headers: { "x-veryfront-project-id": project.id },
             });
@@ -201,7 +201,7 @@ describe("interactive callback interruption cleanup", () => {
       async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === "/projects/fixture") return Response.json(project);
-        if (path === "/integrations/tools/list") {
+        if (path === "/integration-tools") {
           return Response.json({ tools: [] }, {
             headers: { "x-veryfront-project-id": project.id },
           });

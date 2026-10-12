@@ -76,6 +76,7 @@ export {
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  runRemoteIntegrationTool,
 } from "./remote-tools.ts";
 export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export { createLocalIntegrationToolSource } from "./local-tool-source.ts";
