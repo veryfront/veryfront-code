@@ -184,11 +184,12 @@ export function createHostedHttpGenerationExecutor(
     if (admissible <= 0) {
       throw new Error("HTTP executor allocation is inside its retirement window");
     }
-    const owner = input.session.ownerSignal;
     const started = sessions.start({
       ...input.session,
       request: allocation,
-      ownerSignal: owner ? AbortSignal.any([lifetime.signal, owner]) : lifetime.signal,
+      // The session is shared by every request of this generation. Only the generation
+      // owns its lifetime; a caller's owner signal bounds that caller's request alone.
+      ownerSignal: lifetime.signal,
       createOperations(binding) {
         client = createExecutorHttpClient({
           binding: {

@@ -106,6 +106,13 @@ interface WarmGeneration {
   predecessor: boolean;
 }
 
+/** Refuse a request whose own allocation deadline has passed. */
+function assertWithinDeadline(input: PreparedHostedHttpInput): void {
+  if (input.allocation.hardDeadlineAt <= Date.now()) {
+    throw SERVICE_OVERLOADED.create({ detail: "HTTP executor allocation deadline has passed" });
+  }
+}
+
 function exhausted(): Error {
   return SERVICE_OVERLOADED.create({ detail: "Hosted HTTP executor capacity is exhausted" });
 }
@@ -367,6 +374,9 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     const owner = input.session.ownerSignal;
     const signal = owner ? AbortSignal.any([request.signal, owner]) : request.signal;
     signal.throwIfAborted();
+    // A warm executor runs under the allocation that created it, so each request's own
+    // execution authority is checked here, before and after any wait for a slot.
+    assertWithinDeadline(input);
     // Admission counts this request on its slot; a request in flight keeps its executor
     // from being retired to make room.
     const key = await currentKey(identity, input.allocation.requestedAt, projectId);
@@ -381,6 +391,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     };
     try {
       signal.throwIfAborted();
+      assertWithinDeadline(input);
       const admitted = new Request(request, { signal });
       contexts.set(admitted, { key: hostedHttpInstallationKey(input), tracing });
       const response = await generations.render(admitted, key, create);

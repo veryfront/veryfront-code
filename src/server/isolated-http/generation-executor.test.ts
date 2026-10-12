@@ -308,6 +308,76 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("does not end other callers' requests when the first caller's owner signal aborts", async () => {
+    const gate = Promise.withResolvers<void>();
+    let arrived = 0;
+    const both = Promise.withResolvers<void>();
+    const f = fixture(async () => {
+      if (++arrived === 2) both.resolve();
+      await gate.promise;
+      return new Response("served");
+    });
+    const owner = new AbortController();
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      // The first caller creates the executor under its own owner signal.
+      const first = broker.fetch(new Request("https://app.example"), {
+        ...f.input,
+        session: { ...f.input.session, ownerSignal: owner.signal },
+      });
+      first.catch(() => {});
+      const second = broker.fetch(new Request("https://app.example"), f.input);
+      await both.promise;
+      owner.abort(new Error("Owner stopped"));
+      await assertRejects(() => first);
+      gate.resolve();
+      assertEquals(await (await second).text(), "served");
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      gate.resolve();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("refuses a request whose own allocation deadline has passed, also on a warm executor", async () => {
+    const f = fixture(() => new Response("served"));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      const now = Date.now();
+      await assertRejects(
+        () =>
+          broker.fetch(new Request("https://app.example"), {
+            ...f.input,
+            session: {
+              ...f.input.session,
+              request: {
+                ...f.input.session.request,
+                requestedAt: now - 3_000,
+                prepareDeadlineAt: now - 2_000,
+                hardDeadlineAt: now - 1_000,
+              },
+            },
+          }),
+        Error,
+        "deadline",
+      );
+      // The executor keeps serving requests whose authority is current.
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("fails an aborted request without retiring its executor", async () => {
     const entered = Promise.withResolvers<void>();
     const f = fixture(async (request) => {
@@ -926,14 +996,14 @@ describe("hosted HTTP generation executor", () => {
 
   it("leaves no deadline timer behind when its session starts already stopped", async () => {
     const f = fixture(() => new Response("served"));
-    const owner = new AbortController();
-    owner.abort(new Error("owner stopped"));
-    f.input.session.ownerSignal = owner.signal;
     const { executor, sessions } = executorFor(f);
     try {
-      await assertRejects(() => executor.render(new Request("https://app.example")));
-      await executor.ended;
+      // Stop lands between the first request and the session start it scheduled.
+      const rendering = executor.render(new Request("https://app.example"));
+      rendering.catch(() => {});
       await executor.stop();
+      await assertRejects(() => rendering);
+      await executor.ended;
       assertEquals(f.calls, []);
       // The test runner fails this case if a timer armed by the executor is still pending.
     } finally {
