@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from "./index.ts";
+import { getMergePreview } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -264,5 +265,108 @@ describe("mergeBranch - error handling", () => {
       mergeBranch(mockClient, "my-project", "branch-123", "protected-main")
     );
     assertEquals(error?.message, "Permission denied: cannot merge to protected branch");
+  });
+});
+
+describe("merge command path encoding", () => {
+  it("URL-encodes the project slug when listing branches", async () => {
+    const requests: Array<{ url: string; params?: unknown }> = [];
+    const mockClient = createMockClient({
+      get: (url: string, params?: unknown) => {
+        requests.push({ url, params });
+        return Promise.resolve({ data: [] });
+      },
+    });
+
+    await getBranchByName(mockClient, "my project/x", "feature-x");
+
+    assertEquals(requests, [
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100" },
+      },
+    ]);
+  });
+
+  it("follows page_info.next with the same search and limit", async () => {
+    const requests: Array<{ url: string; params?: unknown }> = [];
+    const mockClient = createMockClient({
+      get: (url: string, params?: unknown) => {
+        requests.push({ url, params });
+        if (requests.length === 1) {
+          return Promise.resolve({
+            data: [{ id: "1", name: "feature-x-old", project_id: "proj" }],
+            page_info: { next: "cursor-2" },
+          });
+        }
+        return Promise.resolve({
+          data: [{ id: "2", name: "feature-x", project_id: "proj" }],
+        });
+      },
+    });
+
+    const branch = await getBranchByName(mockClient, "my-project", "feature-x");
+
+    assertEquals(branch?.id, "2");
+    assertEquals(requests, [
+      { url: "/projects/my-project/branches", params: { search: "feature-x", limit: "100" } },
+      {
+        url: "/projects/my-project/branches",
+        params: { search: "feature-x", limit: "100", cursor: "cursor-2" },
+      },
+    ]);
+  });
+
+  it("URL-encodes the project slug and branch ID when merging", async () => {
+    let capturedUrl = "";
+    let capturedBody: unknown = null;
+    const mockClient = createMockClient({
+      post: (url: string, body?: unknown) => {
+        capturedUrl = url;
+        capturedBody = body;
+        return Promise.resolve({ success: true });
+      },
+    });
+
+    await mergeBranch(mockClient, "my project/x", "branch/1?x=y");
+
+    assertEquals(capturedUrl, "/projects/my%20project%2Fx/branches/branch%2F1%3Fx%3Dy/merge");
+    assertEquals(capturedBody, { target_branch_id: null });
+  });
+
+  it("URL-encodes the project slug and branch ID for the merge preview", async () => {
+    const requests: Array<{ url: string; params?: unknown }> = [];
+    const mockClient = createMockClient({
+      get: (url: string, params?: unknown) => {
+        requests.push({ url, params });
+        return Promise.resolve({ diffs: [{ file_path: "app/page.tsx", has_conflicts: false }] });
+      },
+    });
+
+    const diffs = await getMergePreview(mockClient, "my project/x", "branch/1?x=y", "target-456");
+
+    assertEquals(diffs, [{ file_path: "app/page.tsx", has_conflicts: false }]);
+    assertEquals(requests, [
+      {
+        url: "/projects/my%20project%2Fx/branches/branch%2F1%3Fx%3Dy/merge-preview",
+        params: { target_branch_id: "target-456" },
+      },
+    ]);
+  });
+
+  it("keeps the merge preview URL and query unchanged for plain identifiers", async () => {
+    const requests: Array<{ url: string; params?: unknown }> = [];
+    const mockClient = createMockClient({
+      get: (url: string, params?: unknown) => {
+        requests.push({ url, params });
+        return Promise.resolve({ diffs: [] });
+      },
+    });
+
+    await getMergePreview(mockClient, "my-project", "branch-123");
+
+    assertEquals(requests, [
+      { url: "/projects/my-project/branches/branch-123/merge-preview", params: {} },
+    ]);
   });
 });
