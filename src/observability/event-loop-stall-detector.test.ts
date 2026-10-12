@@ -81,6 +81,13 @@ describe("observability/event-loop-stall-detector", () => {
   it("names a request that blocked and completed before the overdue tick ran", () => {
     const h = harness([
       { requestId: "done-early", path: "/old", method: "GET", startTime: 100, endTime: 900 },
+      {
+        requestId: "before-block",
+        path: "/quick",
+        method: "GET",
+        startTime: 1_100,
+        endTime: 1_500,
+      },
       { requestId: "sync", path: "/api/block", method: "GET", startTime: 1_500, endTime: 58_900 },
     ]);
     h.detector.start();

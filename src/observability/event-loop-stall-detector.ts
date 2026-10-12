@@ -101,7 +101,8 @@ export function createEventLoopStallDetector(
     const blockStartedByMs = current - lagMs;
     const inFlight = getInFlight(stalledFromMs)
       .filter((r) =>
-        r.startTime <= blockStartedByMs && (r.endTime === undefined || r.endTime >= stalledFromMs)
+        r.startTime <= blockStartedByMs &&
+        (r.endTime === undefined || r.endTime >= blockStartedByMs)
       )
       .sort((a, b) => b.startTime - a.startTime)
       .slice(0, MAX_REPORTED_REQUESTS)
@@ -160,14 +161,12 @@ export function startProcessEventLoopStallDetector(
   processSources.add(source);
   if (!processDetector) {
     processDetector = createEventLoopStallDetector({
-      // Servers in one process can share a tracker; report each request once.
-      getInFlightRequests: (sinceMs) => {
-        const byId = new Map<string, InFlightRequestSample>();
-        for (const get of processSources) {
-          for (const request of get(sinceMs)) byId.set(request.requestId, request);
-        }
-        return [...byId.values()];
-      },
+      // Servers in one process can share a tracker, which hands each of them the
+      // same sample objects. Dedupe by identity, not request id: a client may
+      // reuse an x-request-id across an active and a completed request.
+      getInFlightRequests: (sinceMs) => [
+        ...new Set([...processSources].flatMap((get) => get(sinceMs))),
+      ],
     });
     processDetector.start();
   }
