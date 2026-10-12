@@ -141,4 +141,36 @@ describe("task ctx.dataDir", () => {
       } else delete (String.prototype as unknown as Record<symbol, unknown>)[Symbol.replace];
     }
   });
+
+  it("keeps using the native temp directory after task code replaces Deno.makeTempDir", async () => {
+    const victim = `${await Deno.makeTempDir()}/veryfront-task-project`;
+    await Deno.mkdir(victim);
+    const original = Deno.makeTempDir;
+    let seen: string | undefined;
+    try {
+      Deno.makeTempDir = () => Promise.resolve(victim);
+      const result = await runTask(
+        {
+          task: {
+            id: "replaced-mkdtemp",
+            name: "replaced-mkdtemp",
+            definition: {
+              run: (ctx: TaskContext) => {
+                seen = ctx.dataDir;
+              },
+            },
+          },
+        },
+        createInMemoryHostRuntime(),
+      );
+
+      assertEquals(result.success, true);
+    } finally {
+      Deno.makeTempDir = original;
+    }
+    assertEquals(typeof seen, "string");
+    assertEquals(seen === victim, false);
+    assertEquals(await pathExists(victim), true);
+    assertEquals(await pathExists(seen!), false);
+  });
 });

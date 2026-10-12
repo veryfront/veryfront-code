@@ -108,7 +108,17 @@ export interface TaskScratchFs {
   remove(path: string, options: { recursive: boolean }): Promise<void>;
 }
 
-const liveScratchFs: TaskScratchFs = { makeTempDir, remove };
+// Task modules load after this module and may replace `Deno.makeTempDir` or `Deno.remove`; the
+// compat wrappers look those up per call, so on Deno the native functions are captured here.
+const nativeDeno = (globalThis as { Deno?: typeof Deno }).Deno;
+const nativeMakeTempDir = nativeDeno?.makeTempDir;
+const nativeRemove = nativeDeno?.remove;
+const liveScratchFs: TaskScratchFs = nativeMakeTempDir && nativeRemove
+  ? {
+    makeTempDir: (options) => reflectApply(nativeMakeTempDir, nativeDeno, [options]),
+    remove: (path, options) => reflectApply(nativeRemove, nativeDeno, [path, options]),
+  }
+  : { makeTempDir, remove };
 
 /**
  * A process without temp-write access still runs tasks that need no scratch space, so a
