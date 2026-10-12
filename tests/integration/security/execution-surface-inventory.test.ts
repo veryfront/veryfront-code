@@ -367,15 +367,6 @@ function boundFunction(node: unknown): unknown {
   return callee.object;
 }
 
-/** An alias source: the expression itself, or the function a `.bind(...)` call binds. */
-function aliasSource(node: unknown): unknown {
-  let source = unwrapExpression(node);
-  for (let bound = boundFunction(source); bound !== undefined; bound = boundFunction(source)) {
-    source = unwrapExpression(bound);
-  }
-  return source;
-}
-
 /** A literal `true`, also through `true as const`, `<const>true` or parentheses. */
 function isTrue(node: unknown): boolean {
   const value = unwrapExpression(node);
@@ -438,27 +429,15 @@ function predicateAliases(program: SyntaxNode): Set<string> {
       (node.type === "AssignmentPattern" || node.type === "AssignmentExpression") &&
       isNode(node.left) && node.left.type === "Identifier"
     ) {
-      // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`.
-      const source = aliasSource(node.right);
-      const from = isNode(source) && source.type === "Identifier"
-        ? source.name as string
-        : isNode(source) &&
-            (source.type === "MemberExpression" || source.type === "OptionalMemberExpression")
-        ? propertyName(source.property, source.computed)
-        : undefined;
-      if (from !== undefined) links.push([from, node.left.name as string]);
+      // A parameter or destructuring default `(check = p) => ...`, or a later `check = p`,
+      // through the same wrappers, binds and fallbacks a direct call resolves.
+      for (const from of calleeNames(node.right)) links.push([from, node.left.name as string]);
     } else if (node.type === "VariableDeclarator" && isNode(node.id)) {
       // `const q = p as Guard`, `const q = (policy.p)!`: aliases through transparent wrappers.
-      const init = aliasSource(node.init);
-      if (node.id.type === "Identifier" && isNode(init) && init.type === "Identifier") {
-        links.push([init.name as string, node.id.name as string]);
-      } else if (
-        node.id.type === "Identifier" && isNode(init) &&
-        (init.type === "MemberExpression" || init.type === "OptionalMemberExpression")
-      ) {
-        // `const check = policy.requiresIsolatedProjectRuntime`
-        const member = propertyName(init.property, init.computed);
-        if (member !== undefined) links.push([member, node.id.name as string]);
+      // Also `const check = policy.p`, `p.bind(policy)` and every branch of a fallback
+      // such as `override ?? p`: the names a call of the initializer may resolve to.
+      if (node.id.type === "Identifier") {
+        for (const from of calleeNames(node.init)) links.push([from, node.id.name as string]);
       } else if (node.id.type === "ObjectPattern" && Array.isArray(node.id.properties)) {
         for (const property of node.id.properties) {
           if (!isNode(property) || property.type !== "ObjectProperty") continue;
@@ -1031,6 +1010,26 @@ describe("execution surface inventory", () => {
     );
     // `check(ctx)` and `later(ctx)`.
     assertEquals(analysis.guards, 2);
+  });
+
+  it("resolves predicate aliases initialized through fallbacks", () => {
+    const analysis = analyzeSource(
+      [
+        "const first = override ?? requiresIsolatedProjectRuntime;",
+        "first(ctx);",
+        "const second = flag ? policy.isSharedProjectRuntime : other;",
+        "second(ctx);",
+        "let third;",
+        "third = (0, requiresIsolatedProjectRuntime);",
+        "third(ctx);",
+        "function run(fourth = injected || isSharedProjectRuntime.bind(policy)) {",
+        "  return fourth(ctx);",
+        "}",
+      ].join("\n"),
+      "ts",
+    );
+    // `first(ctx)`, `second(ctx)`, `third(ctx)` and `fourth(ctx)`.
+    assertEquals(analysis.guards, 4);
   });
 
   it("counts a true-initialized binding passed by shorthand as a grant", () => {
