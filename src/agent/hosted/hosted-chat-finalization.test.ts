@@ -3972,6 +3972,7 @@ for (const kind of ["response", "detached"] as const) {
     assertEquals(corrections, [{
       type: "CUSTOM",
       name: "veryfront.tool_result_ownership",
+      origin: "veryfront.finalization",
       value: {
         schemaVersion: 1,
         toolCallId: "completed",

@@ -1689,6 +1689,7 @@ Deno.test("completed mirrored tool ownership recovery reaches durable version1 r
   assertEquals(corrections[0], {
     type: "CUSTOM",
     name: "veryfront.tool_result_ownership",
+    origin: "veryfront.finalization",
     value: {
       schemaVersion: 1,
       toolCallId: "completed",
@@ -1955,6 +1956,7 @@ Deno.test("ownership metadata appends serialize three contenders without duplica
   const correction = (id: string) => [{
     type: "CUSTOM",
     name: "veryfront.tool_result_ownership",
+    origin: "veryfront.finalization",
     value: {
       schemaVersion: 1,
       toolCallId: id,

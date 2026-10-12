@@ -7,6 +7,7 @@ import { ConversationRunEventEncoder } from "./run-events.ts";
 const correction = {
   type: "CUSTOM",
   name: "veryfront.tool_result_ownership",
+  origin: "veryfront.finalization",
   value: {
     schemaVersion: 1,
     toolCallId: "c",
@@ -104,6 +105,22 @@ for (const [index, events] of invalidCases.entries()) {
     assertEquals(read(events, 2).status, "invalid");
   });
 }
+for (const version of [1, 2] as const) {
+  Deno.test(`a stored event with the name but no finalization marker is plain custom data in v${version}`, () => {
+    // The shape a data chunk could store before the name was reserved.
+    const { origin: _origin, ...unmarked } = correction;
+    const result = read([...original, unmarked], version);
+    assertEquals(result.status, "ok");
+    assertEquals(result.frames.some((frame) => frame.event.type === "provider_tool_result"), false);
+    assertEquals(
+      result.frames.some((frame) =>
+        frame.event.type === "custom" && frame.event.name === "veryfront.tool_result_ownership"
+      ),
+      true,
+    );
+  });
+}
+
 Deno.test("external data cannot forge an ownership correction", () => {
   const encoder = new ConversationRunEventEncoder();
   assertEquals(

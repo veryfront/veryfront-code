@@ -4,7 +4,10 @@ import {
 } from "#veryfront/chat/reasoning-part-identity.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
-import { TOOL_RESULT_OWNERSHIP_CORRECTION } from "../conversation/tool-result-ownership.ts";
+import {
+  TOOL_RESULT_OWNERSHIP_CORRECTION,
+  TOOL_RESULT_OWNERSHIP_ORIGIN,
+} from "../conversation/tool-result-ownership.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import {
   hasIncompleteToolParts,
@@ -811,6 +814,7 @@ export function buildToolResultOwnershipCorrectionEvents(input: {
     return [{
       type: "CUSTOM",
       name: TOOL_RESULT_OWNERSHIP_CORRECTION,
+      origin: TOOL_RESULT_OWNERSHIP_ORIGIN,
       value: {
         schemaVersion: 1,
         toolCallId: part.toolCallId,
