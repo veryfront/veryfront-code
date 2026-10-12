@@ -75,8 +75,10 @@ export interface HostedHttpBrokerOptions extends HostedExecutorSessionPoolOption
   /**
    * Warm executors one project may hold at once, counting any whose release is not yet
    * confirmed. At the bound the project's least recently used idle executor is retired
-   * first; when all of them are serving requests, the request is refused. Default 4, or
-   * `maxActive` when that is smaller.
+   * first; when all of them are serving requests, the request is refused. On a release
+   * change, one draining previous generation per environment is not counted, though it
+   * still occupies one of the `maxActive` slots. Default 4, or `maxActive` when that is
+   * smaller.
    */
   maxWarmGenerationsPerProject?: number;
   /** @internal Environments whose generation order is remembered; lowered in hermetic tests. */
@@ -97,6 +99,11 @@ interface WarmGeneration {
   /** Logical time of its latest admission or completion. */
   usedAt: number;
   retiring: boolean;
+  /**
+   * The generation its environment replaced on a release change. One per environment is
+   * left out of the project's bound while it drains, so a deploy does not refuse requests.
+   */
+  predecessor: boolean;
 }
 
 function exhausted(): Error {
@@ -223,6 +230,14 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     return eviction;
   }
 
+  /** Whether an environment still has a previous generation that is not released. */
+  function hasPredecessor(scopeId: string): boolean {
+    for (const slot of warm.values()) {
+      if (slot.predecessor && slot.key.scopeId === scopeId) return true;
+    }
+    return false;
+  }
+
   /**
    * Make room for one new generation of `projectId`. Returns nothing when a slot is free,
    * or the retirement to wait for. Only an executor with no request in flight is retired:
@@ -233,8 +248,15 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     projectId: string,
     replaced: Readonly<WorkerGenerationIdentity> | undefined,
   ): Promise<void> | undefined {
+    // The replaced generation becomes its environment's draining predecessor, which the
+    // project's bound leaves out, unless that environment already has one.
+    const exempt = replaced && !hasPredecessor(replaced.scopeId)
+      ? replaced.generationId
+      : undefined;
     let ofProject = 0;
-    for (const slot of warm.values()) if (slot.projectId === projectId) ofProject++;
+    for (const [id, slot] of warm) {
+      if (slot.projectId === projectId && !slot.predecessor && id !== exempt) ofProject++;
+    }
     const projectFull = ofProject >= perProject;
     if (!projectFull && warm.size < maxActive) return undefined;
     // Share a retirement already under way rather than retiring a second executor.
@@ -302,7 +324,11 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         continue;
       }
       // A new generation for this environment: drain the previous one.
-      if (current) retire(current);
+      if (current) {
+        const previous = warm.get(current.generationId);
+        if (previous && !hasPredecessor(current.scopeId)) previous.predecessor = true;
+        retire(current);
+      }
       const key = Object.freeze({
         scopeId: identity.scopeId,
         generationId: `${identity.generationId}:${++epoch}`,
@@ -314,6 +340,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         active: 0,
         usedAt: ++clock,
         retiring: false,
+        predecessor: false,
       });
       return key;
     }

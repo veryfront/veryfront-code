@@ -650,6 +650,72 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("admits a new release for an environment of a project at its bound while the old one drains", async () => {
+    const other = fixture(() => new Response("other"), undefined, "project-b");
+    const old = heldFixture();
+    old.input.session.request.requestedAt -= 1_000;
+    const sibling = fixture(() => new Response("sibling"));
+    sibling.input.installation.environmentId = "environment-b";
+    const next = fixture(() => new Response("next"));
+    next.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 4, maxWarmGenerationsPerProject: 2 });
+    try {
+      await (await broker.fetch(new Request("https://b.example"), other.input)).text();
+      await (await broker.fetch(new Request("https://a.example"), sibling.input)).text();
+      const inFlight = broker.fetch(new Request("https://a.example"), old.input);
+      await old.entered;
+      // The project holds two executors, and the old generation is still serving.
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), next.input)).text(),
+        "next",
+      );
+      old.respond(new Response("old"));
+      assertEquals(await (await inFlight).text(), "old");
+      await old.releaseEntered.promise;
+      assertEquals(count(old.calls, "release:completed"), 1);
+      assertEquals(count(sibling.calls, "release:completed"), 0);
+      assertEquals(count(other.calls, "release:completed"), 0);
+      assertEquals(next.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("refuses a second release change while the environment's previous generation still drains", async () => {
+    const first = heldFixture();
+    first.input.session.request.requestedAt -= 2_000;
+    const second = heldFixture();
+    second.input.installation.configurationId = "config-b";
+    second.input.session.request.requestedAt -= 1_000;
+    const third = fixture(() => new Response("third"));
+    third.input.installation.configurationId = "config-c";
+    const other = fixture(() => new Response("other"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 4, maxWarmGenerationsPerProject: 1 });
+    try {
+      await (await broker.fetch(new Request("https://b.example"), other.input)).text();
+      const firstInFlight = broker.fetch(new Request("https://a.example"), first.input);
+      await first.entered;
+      const secondInFlight = broker.fetch(new Request("https://a.example"), second.input);
+      await second.entered;
+      // Two generations of the environment are live; a third is not admitted.
+      await assertRejects(
+        () => broker.fetch(new Request("https://a.example"), third.input),
+        Error,
+        "capacity",
+      );
+      assertEquals(third.calls, []);
+      assertEquals(count(other.calls, "release:completed"), 0);
+      first.respond(new Response("first"));
+      second.respond(new Response("second"));
+      assertEquals(await (await firstInFlight).text(), "first");
+      assertEquals(await (await secondInFlight).text(), "second");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("keeps generation order for an environment whose executor was retired to make room", async () => {
     const current = fixture(() => new Response("current"));
     current.input.installation.configurationId = "config-b";
