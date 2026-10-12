@@ -71,6 +71,14 @@ export function prepareHostedHttpInput(input: HostedHttpInput) {
 
 export type PreparedHostedHttpInput = ReturnType<typeof prepareHostedHttpInput>;
 
+/**
+ * The current time on the clock an input's deadlines were stamped against: the session
+ * clock a caller configured, or wall time. Deadline checks outside the session use it too.
+ */
+export function hostedHttpInputNow(input: PreparedHostedHttpInput): number {
+  return input.session.clock?.now() ?? Date.now();
+}
+
 /** Per-request data the broker attaches to each request it admits to a generation. */
 export interface HostedHttpGenerationRequest {
   /** `hostedHttpInstallationKey` of the request's own prepared input. */
@@ -188,7 +196,8 @@ export function createHostedHttpGenerationExecutor(
 
   function start(): Promise<void> {
     const allocation = input.allocation;
-    const admissible = allocation.hardDeadlineAt - Date.now() - retireBeforeDeadlineMs;
+    const admissible = allocation.hardDeadlineAt - hostedHttpInputNow(input) -
+      retireBeforeDeadlineMs;
     if (admissible <= 0) {
       throw new Error("HTTP executor allocation is inside its retirement window");
     }
@@ -307,7 +316,7 @@ export function createHostedHttpGenerationExecutor(
         throw new TypeError("HTTP executor generation is bound to another installation");
       }
       // The deadline timer can run late under load; the boundary itself is absolute.
-      if (Date.now() >= input.allocation.hardDeadlineAt - retireBeforeDeadlineMs) {
+      if (hostedHttpInputNow(input) >= input.allocation.hardDeadlineAt - retireBeforeDeadlineMs) {
         retire();
         throw new Error("HTTP executor allocation is inside its retirement window");
       }

@@ -27,6 +27,7 @@ import type { ExecutorHttpApplicationConfiguration } from "./application-configu
 import {
   createHostedHttpGenerationExecutor,
   type HostedHttpGenerationRequest,
+  hostedHttpInputNow,
   hostedHttpInstallationKey,
   type PreparedHostedHttpInput,
   prepareHostedHttpInput,
@@ -112,7 +113,7 @@ interface WarmGeneration {
 
 /** Refuse a request whose own allocation deadline has passed. */
 function assertWithinDeadline(input: PreparedHostedHttpInput): void {
-  if (input.allocation.hardDeadlineAt <= Date.now()) {
+  if (input.allocation.hardDeadlineAt <= hostedHttpInputNow(input)) {
     throw SERVICE_OVERLOADED.create({ detail: "HTTP executor allocation deadline has passed" });
   }
 }
@@ -124,7 +125,7 @@ function assertWithinDeadline(input: PreparedHostedHttpInput): void {
  */
 function assertBoundedAllocation(input: PreparedHostedHttpInput): void {
   const { requestedAt, prepareDeadlineAt, hardDeadlineAt } = input.allocation;
-  const now = Date.now();
+  const now = hostedHttpInputNow(input);
   if (
     requestedAt > now || prepareDeadlineAt <= now ||
     hardDeadlineAt - requestedAt > EXECUTOR_MAX_TIMEOUT_MS
@@ -427,7 +428,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         expiry.abort(
           new DOMException("HTTP executor allocation deadline has passed", "TimeoutError"),
         ),
-      Math.min(input.allocation.hardDeadlineAt - Date.now(), MAX_TIMER_DELAY_MS),
+      Math.min(input.allocation.hardDeadlineAt - hostedHttpInputNow(input), MAX_TIMER_DELAY_MS),
     );
     // Each caller's owner signal bounds its own request, also on a warm executor.
     const owner = input.session.ownerSignal;

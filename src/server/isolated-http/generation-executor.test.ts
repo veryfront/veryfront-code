@@ -382,6 +382,43 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("checks deadlines against the session clock a caller configured", async () => {
+    // A host clock far from wall time; the allocation is stamped against it.
+    const startedAt = Date.now();
+    const clock = {
+      now: () => 1_000_000 + (Date.now() - startedAt),
+      schedule: (callback: () => void, delayMs: number) => setTimeout(callback, delayMs),
+      cancel: (timer: unknown) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    };
+    const f = fixture(() => new Response("served"));
+    f.input.session.clock = clock;
+    // The fixture's allocator stamps expiry in wall time; restate it on the host clock.
+    const allocator = f.input.session.allocator;
+    const restamp = <T>(view: T): T => ({ ...(view as object), expiresAt: 1_030_000 }) as T;
+    f.input.session.allocator = {
+      allocate: async (...args) => restamp(await allocator.allocate(...args)),
+      observe: async (...args) => restamp(await allocator.observe(...args)),
+      renew: async (...args) => restamp(await allocator.renew(...args)),
+      release: async (...args) => restamp(await allocator.release(...args)),
+    };
+    f.input.session.request.requestedAt = 1_000_000;
+    f.input.session.request.prepareDeadlineAt = 1_005_000;
+    f.input.session.request.hardDeadlineAt = 1_030_000;
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      for (let round = 0; round < 2; round++) {
+        assertEquals(
+          await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+          "served",
+        );
+      }
+      assertEquals(f.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("refuses a warm request stamped in the future without moving generation order", async () => {
     const f = fixture(() => new Response("served"));
     const next = fixture(() => new Response("next"));
