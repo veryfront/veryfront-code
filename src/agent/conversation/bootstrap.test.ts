@@ -87,8 +87,8 @@ describe("agent/conversation-bootstrap", () => {
     assertEquals(calls[1]?.method, "PATCH", "the link is written with PATCH");
     assertEquals(
       JSON.parse(String(calls[1]?.body)),
-      { project_id: PROJECT_ID },
-      "the PATCH body carries the project id",
+      { project_reference: PROJECT_ID },
+      "the PATCH body names the project as project_reference, not the project_id alias",
     );
   });
 

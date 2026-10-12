@@ -1,7 +1,7 @@
 ---
 title: "veryfront/middleware"
 description: "CORS, rate limiting, logging, and timeout middleware."
-order: 22
+order: 23
 ---
 
 ## Import

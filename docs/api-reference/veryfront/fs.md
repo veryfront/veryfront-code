@@ -1,7 +1,7 @@
 ---
 title: "veryfront/fs"
 description: "Runtime-native filesystem, path, and cwd utilities."
-order: 12
+order: 13
 ---
 
 ## Runtime boundary

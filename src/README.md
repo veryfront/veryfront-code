@@ -49,20 +49,21 @@
 
 ### Agent System
 
-| Module           | Export Alias           | Purpose                                               |
-| ---------------- | ---------------------- | ----------------------------------------------------- |
-| **`agent/`**     | `veryfront/agent`      | AI agent runtime, AG-UI streaming, hosted execution   |
-| **`tool/`**      | `veryfront/tool`       | Tool definitions and registry                         |
-| **`workflow/`**  | `veryfront/workflow`   | Durable DAG-based workflow engine with crash recovery |
-| **`skill/`**     | `#veryfront/skill`     | Agent skills (SKILL.md) and prompt augmentation       |
-| **`chat/`**      | `veryfront/chat`       | Chat UI components, AG-UI protocol, streaming hooks   |
-| **`prompt/`**    | `veryfront/prompt`     | Prompt templates and registry                         |
-| **`resource/`**  | `veryfront/resource`   | Resource definitions (MCP protocol)                   |
-| **`mcp/`**       | `veryfront/mcp`        | Model Context Protocol server (SSE, sessions)         |
-| **`provider/`**  | `veryfront/provider`   | AI model providers (OpenAI, Anthropic, Google)        |
-| **`embedding/`** | `veryfront/embedding`  | Vector embeddings for semantic search                 |
-| **`knowledge/`** | `veryfront/knowledge`  | Project knowledge retrieval helpers                   |
-| **`discovery/`** | `#veryfront/discovery` | Auto-discovery of tools, agents, workflows            |
+| Module               | Export Alias              | Purpose                                                     |
+| -------------------- | ------------------------- | ----------------------------------------------------------- |
+| **`agent/`**         | `veryfront/agent`         | AI agent runtime, AG-UI streaming, hosted execution         |
+| **`tool/`**          | `veryfront/tool`          | Tool definitions and registry                               |
+| **`workflow/`**      | `veryfront/workflow`      | Durable DAG-based workflow engine with crash recovery       |
+| **`skill/`**         | `#veryfront/skill`        | Agent skills (SKILL.md) and prompt augmentation             |
+| **`chat/`**          | `veryfront/chat`          | Chat UI components, AG-UI protocol, streaming hooks         |
+| **`prompt/`**        | `veryfront/prompt`        | Prompt templates and registry                               |
+| **`resource/`**      | `veryfront/resource`      | Resource definitions (MCP protocol)                         |
+| **`mcp/`**           | `veryfront/mcp`           | Model Context Protocol server (SSE, sessions)               |
+| **`provider/`**      | `veryfront/provider`      | AI model providers (OpenAI, Anthropic, Google)              |
+| **`embedding/`**     | `veryfront/embedding`     | Vector embeddings for semantic search                       |
+| **`knowledge/`**     | `veryfront/knowledge`     | Project knowledge retrieval helpers                         |
+| **`conversations/`** | `veryfront/conversations` | Conversations, messages, branches, participants, read state |
+| **`discovery/`**     | `#veryfront/discovery`    | Auto-discovery of tools, agents, workflows                  |
 
 ### Services & Infrastructure
 

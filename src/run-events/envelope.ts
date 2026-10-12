@@ -189,7 +189,7 @@ function pickConversationPayload(
 
 /**
  * The same row as the conversation-scoped surfaces serve it: GraphQL
- * `agentRunEvents`, the MCP `get_agent_run_events` tool, and
+ * `listRunEvents`, the MCP `list_run_events` tool, and
  * `GET /conversations/{conversation_id}/runs/{run_id}/events`. Since the
  * cutover every one of them keys the payload as `payload`, the same spelling
  * as the run-scoped route and the SSE frames, so this schema reads `payload`
