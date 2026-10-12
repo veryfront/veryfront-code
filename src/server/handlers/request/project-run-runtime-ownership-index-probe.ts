@@ -1,5 +1,6 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { isRuntimeOwnershipProbeApiAuthorityError } from "./project-run-runtime-ownership-probe.ts";
 import { inspectRuntimeOwnershipOkfDocument } from "./project-run-runtime-ownership-okf-inspector.ts";
 
 export interface OwnershipIndexClient {
@@ -20,11 +21,8 @@ export interface OwnershipIndexProof {
 const encode = encodeURIComponent;
 const match = RegExp.prototype.exec;
 const apply = Reflect.apply;
-const denied = /(?:^|\D)(401|403)(?:\D|$)/;
 const finite = Number.isFinite;
 const float32 = Math.fround;
-const errorPrototype = Error.prototype;
-const isPrototype = Object.prototype.isPrototypeOf;
 const arrayIsArray = Array.isArray;
 const ceil = Math.ceil;
 const max = Math.max;
@@ -95,11 +93,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
       try {
         await writer.postRaw(indexPath, retained.wire, { signal });
       } catch (error) {
-        const message = apply(isPrototype, errorPrototype, [error]) && record(error) &&
-            typeof error.message === "string"
-          ? error.message
-          : "";
-        if (!apply(match, denied, [message])) {
+        if (!isRuntimeOwnershipProbeApiAuthorityError(error, "canonical-index")) {
           throw new Error("Index request failed without authorization denial");
         }
         rejected = true;

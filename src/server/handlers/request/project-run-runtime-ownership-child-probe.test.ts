@@ -2,11 +2,19 @@ import {
   createRuntimeOwnershipChildProbe,
   type OwnershipChildClient,
 } from "./project-run-runtime-ownership-child-probe.ts";
+import { createRuntimeOwnershipProbeApiError } from "./project-run-runtime-ownership-probe.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 const NativeError = Error;
 function fixture() {
-  let reject = true,
+  let reject:
+      | false
+      | "child"
+      | "generic-401"
+      | "generic-403"
+      | "generic-409"
+      | "idempotency-409"
+      | "current-generation-409" = "child",
     changed = false,
     useLegacyLineage = false,
     omitDescendants = false,
@@ -45,9 +53,58 @@ function fixture() {
         return Promise.resolve({ appended_count: 1 } as T);
       }
       attempts.push({ path, wire, key: options?.idempotencyKey });
-      return reject
-        ? Promise.reject(new NativeError("Veryfront API request failed: 403 Forbidden"))
-        : Promise.resolve({ id: "unexpected-child" } as T);
+      if (reject === false) return Promise.resolve({ id: "unexpected-child" } as T);
+      if (reject === "child") {
+        return Promise.reject(
+          createRuntimeOwnershipProbeApiError(
+            409,
+            JSON.stringify({
+              status: 409,
+              slug: "state-conflict",
+              detail: "Parent run no longer accepts child runs",
+            }),
+            undefined,
+            "child-admission",
+          ),
+        );
+      }
+      if (reject === "idempotency-409") {
+        return Promise.reject(
+          createRuntimeOwnershipProbeApiError(
+            409,
+            JSON.stringify({
+              status: 409,
+              slug: "idempotency-conflict",
+              detail: "Parent run no longer accepts child runs",
+            }),
+            undefined,
+            "child-admission",
+          ),
+        );
+      }
+      if (reject === "current-generation-409") {
+        return Promise.reject(
+          createRuntimeOwnershipProbeApiError(
+            409,
+            JSON.stringify({
+              status: 409,
+              slug: "state-conflict",
+              detail: "This execution generation is no longer current; stop execution",
+            }),
+            undefined,
+            "current-generation",
+          ),
+        );
+      }
+      return Promise.reject(
+        new NativeError(
+          reject === "generic-401"
+            ? "Veryfront API request failed: 401 Unauthorized"
+            : reject === "generic-403"
+            ? "Veryfront API request failed: 403 Forbidden"
+            : "Veryfront API request failed: 409 Conflict",
+        ),
+      );
     },
   };
   const probe = createRuntimeOwnershipChildProbe({
@@ -67,6 +124,17 @@ function fixture() {
     client,
     accept: () => {
       reject = false;
+    },
+    rejectWith: (
+      reason:
+        | "child"
+        | "generic-401"
+        | "generic-403"
+        | "generic-409"
+        | "idempotency-409"
+        | "current-generation-409",
+    ) => {
+      reject = reason;
     },
     change: () => {
       changed = true;
@@ -154,16 +222,26 @@ describe("host-owned child admission after cancellation", () => {
     assertEquals(denied.authorizationDenied, true);
     assertEquals(denied.runBeforeHash, denied.runAfterHash);
   });
-  it("does not substitute bad request or transport failure for authority denial", async () => {
-    const f = fixture();
-    await f.probe({ ...f.request, staleAfterCancel: false });
-    f.client.postRaw = () => Promise.reject(new NativeError("400 Bad Request"));
-    await assertRejects(
-      () => f.probe({ ...f.request, staleAfterCancel: true }),
-      NativeError,
-      "without authorization denial",
-    );
-  });
+  for (
+    const denial of [
+      "generic-401",
+      "generic-403",
+      "generic-409",
+      "idempotency-409",
+      "current-generation-409",
+    ] as const
+  ) {
+    it(`does not substitute ${denial} for cancelled-child authority denial`, async () => {
+      const f = fixture();
+      await f.probe({ ...f.request, staleAfterCancel: false });
+      f.rejectWith(denial);
+      await assertRejects(
+        () => f.probe({ ...f.request, staleAfterCancel: true }),
+        NativeError,
+        "without authorization denial",
+      );
+    });
+  }
   it("fails if a denied request changes parent lineage", async () => {
     const f = fixture();
     await f.probe({ ...f.request, staleAfterCancel: false });

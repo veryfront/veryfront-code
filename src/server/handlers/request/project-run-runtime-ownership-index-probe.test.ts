@@ -2,6 +2,7 @@ import {
   createRuntimeOwnershipIndexProbe,
   type OwnershipIndexClient,
 } from "./project-run-runtime-ownership-index-probe.ts";
+import { createRuntimeOwnershipProbeApiError } from "./project-run-runtime-ownership-probe.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -13,7 +14,16 @@ const content = "---\ntype: concept\ntitle: Runtime proof\n---\nComplete current
 const NativeError = Error;
 
 async function fixture() {
-  let denied = false, changed = false, sourceVersion = versionId, embedCalls = 0;
+  let denied:
+      | false
+      | "canonical-index"
+      | "generic-401"
+      | "generic-403"
+      | "generic-409"
+      | "canonical-source" = false,
+    changed = false,
+    sourceVersion = versionId,
+    embedCalls = 0;
   const wires: string[] = [];
   const checksum = await computeHash(content);
   const client: OwnershipIndexClient = {
@@ -41,7 +51,44 @@ async function fixture() {
     postRaw: <T>(_path: string, wire: string) => {
       wires.push(wire);
       if (denied) {
-        return Promise.reject(new NativeError("Veryfront API request failed: 403 Forbidden"));
+        if (denied === "canonical-index") {
+          return Promise.reject(
+            createRuntimeOwnershipProbeApiError(
+              403,
+              JSON.stringify({
+                status: 403,
+                slug: "authorization-denied",
+                detail: "Run no longer permits canonical indexing",
+              }),
+              undefined,
+              "canonical-index",
+            ),
+          );
+        }
+        if (denied === "canonical-source") {
+          return Promise.reject(
+            createRuntimeOwnershipProbeApiError(
+              403,
+              JSON.stringify({
+                status: 403,
+                slug: "authorization-denied",
+                detail: "Run no longer permits canonical source writes",
+              }),
+              undefined,
+              "canonical-source",
+            ),
+          );
+        }
+        if (denied === "generic-409") {
+          return Promise.reject(new NativeError("Veryfront API request failed: 409 Conflict"));
+        }
+        return Promise.reject(
+          new NativeError(
+            denied === "generic-401"
+              ? "Veryfront API request failed: 401 Unauthorized"
+              : "Veryfront API request failed: 403 Forbidden",
+          ),
+        );
       }
       return Promise.resolve(
         {
@@ -72,8 +119,15 @@ async function fixture() {
     request,
     client,
     wires,
-    deny: () => {
-      denied = true;
+    deny: (
+      reason:
+        | "canonical-index"
+        | "generic-401"
+        | "generic-403"
+        | "generic-409"
+        | "canonical-source" = "canonical-index",
+    ) => {
+      denied = reason;
     },
     change: () => {
       changed = true;
@@ -134,11 +188,24 @@ describe("host-owned canonical index authority proof", () => {
     );
     assertEquals(f.wires.length, 1);
   });
-  it("does not substitute a conflict for authority denial", async () => {
+  for (
+    const denial of ["generic-401", "generic-403", "generic-409", "canonical-source"] as const
+  ) {
+    it(`does not substitute ${denial} for canonical index authority denial`, async () => {
+      const f = await fixture();
+      await f.probe({ ...f.request, stale: false });
+      f.deny(denial);
+      await assertRejects(
+        () => f.probe({ ...f.request, stale: true }),
+        NativeError,
+        "without authorization denial",
+      );
+    });
+  }
+  it("does not substitute a generic authorization failure for authority denial", async () => {
     const f = await fixture();
     await f.probe({ ...f.request, stale: false });
-    f.client.postRaw = () =>
-      Promise.reject(new NativeError("Veryfront API request failed: 409 Conflict"));
+    f.deny("generic-403");
     await assertRejects(
       () => f.probe({ ...f.request, stale: true }),
       NativeError,

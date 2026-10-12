@@ -1,5 +1,6 @@
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { isRuntimeOwnershipProbeApiAuthorityError } from "./project-run-runtime-ownership-probe.ts";
 export interface OwnershipChildClient {
   get<T>(
     path: string,
@@ -20,11 +21,6 @@ export interface OwnershipChildProof {
   authorizationDenied: boolean;
 }
 const encode = encodeURIComponent;
-const errorProto = Error.prototype,
-  isProto = Object.prototype.isPrototypeOf,
-  exec = RegExp.prototype.exec,
-  apply = Reflect.apply;
-const denial = /(?:^|\D)(401|403)(?:\D|$)/;
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
@@ -126,11 +122,7 @@ export function createRuntimeOwnershipChildProbe(
     try {
       await writer.postRaw("/runs", retained.wire, { signal, idempotencyKey: retained.key });
     } catch (error) {
-      const message =
-        apply(isProto, errorProto, [error]) && record(error) && typeof error.message === "string"
-          ? error.message
-          : "";
-      if (!apply(exec, denial, [message])) {
+      if (!isRuntimeOwnershipProbeApiAuthorityError(error, "child-admission")) {
         throw new Error("Child admission failed without authorization denial");
       }
       rejected = true;

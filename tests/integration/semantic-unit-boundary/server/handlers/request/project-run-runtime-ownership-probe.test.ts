@@ -28,6 +28,43 @@ const activation = {
   operationTimeoutMs: 1_000,
 };
 
+function canonicalSourceAuthorityError(): Error {
+  return createRuntimeOwnershipProbeApiError(
+    403,
+    JSON.stringify({
+      status: 403,
+      slug: "authorization-denied",
+      detail: "Run no longer permits canonical source writes",
+    }),
+    undefined,
+    "canonical-source",
+  );
+}
+
+function runEventsAuthorityError(
+  detail = "Streamed run appends require the current signed executor generation",
+): Error {
+  return createRuntimeOwnershipProbeApiError(
+    409,
+    JSON.stringify({ status: 409, slug: "state-conflict", detail }),
+    undefined,
+    "run-events",
+  );
+}
+
+function runHeartbeatAuthorityError(): Error {
+  return createRuntimeOwnershipProbeApiError(
+    409,
+    JSON.stringify({
+      status: 409,
+      slug: "state-conflict",
+      detail: "This execution generation is no longer current; stop execution",
+    }),
+    undefined,
+    "run-heartbeat",
+  );
+}
+
 interface RunPathParts {
   id: string;
   child?: "events" | "heartbeats";
@@ -257,11 +294,15 @@ describe("project-run runtime ownership probe", () => {
     let replaced = false;
     const old = boundaryClient(base, {
       put: async (path, body, options) => {
-        if (replaced) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (replaced) throw canonicalSourceAuthorityError();
         return await base.put(path, body, options);
       },
       post: async (path, body, options) => {
-        if (replaced) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (replaced) {
+          throw isRunHeartbeatsPath(path)
+            ? runHeartbeatAuthorityError()
+            : runEventsAuthorityError();
+        }
         return await base.post(path, body, options);
       },
     });
@@ -464,7 +505,18 @@ describe("project-run runtime ownership probe", () => {
         client.get<T>(path, params, options),
       post: (path, body, options) => client.post(path, body, options),
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) {
+          throw createRuntimeOwnershipProbeApiError(
+            403,
+            JSON.stringify({
+              status: 403,
+              slug: "authorization-denied",
+              detail: "Run no longer permits canonical source writes",
+            }),
+            undefined,
+            "canonical-source",
+          );
+        }
         return await client.put<T>(path, body, options);
       },
     };
@@ -477,7 +529,7 @@ describe("project-run runtime ownership probe", () => {
         createEventAppendClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+            if (denyWrites) throw runEventsAuthorityError();
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -486,14 +538,7 @@ describe("project-run runtime ownership probe", () => {
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
             if (denyWrites) {
-              throw createRuntimeOwnershipProbeApiError(
-                409,
-                JSON.stringify({
-                  status: 409,
-                  slug: "state-conflict",
-                  detail: "This execution generation is no longer current; stop execution",
-                }),
-              );
+              throw runHeartbeatAuthorityError();
             }
             return await client.post(path, body, options);
           },
@@ -521,11 +566,11 @@ describe("project-run runtime ownership probe", () => {
     const receipts: RuntimeOwnershipProbeReceipt[] = [];
     const retained = boundaryClient(base, {
       put: async (path, body, options) => {
-        if (committed) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (committed) throw canonicalSourceAuthorityError();
         return await base.put(path, body, options);
       },
       post: async (path, body, options) => {
-        if (committed) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (committed) throw runEventsAuthorityError();
         return await base.post(path, body, options);
       },
     });
@@ -552,6 +597,13 @@ describe("project-run runtime ownership probe", () => {
             return await base.get<T>(path, params, options);
           },
         }),
+      createHeartbeatClient: () =>
+        boundaryClient(base, {
+          post: async (path, body, options) => {
+            if (committed) throw runHeartbeatAuthorityError();
+            return await base.post(path, body, options);
+          },
+        }),
     });
     assertExists(session);
     await session.beforeExecute();
@@ -575,7 +627,7 @@ describe("project-run runtime ownership probe", () => {
         client.get<T>(path, params, options),
       post: (path, body, options) => client.post(path, body, options),
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) throw canonicalSourceAuthorityError();
         return await client.put<T>(path, body, options);
       },
     };
@@ -609,7 +661,7 @@ describe("project-run runtime ownership probe", () => {
         createEventAppendClient: () => ({
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
-            if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+            if (denyWrites) throw runEventsAuthorityError();
             return await client.post(path, body, options);
           },
           put: (path, body, options) => client.put(path, body, options),
@@ -618,14 +670,7 @@ describe("project-run runtime ownership probe", () => {
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
             if (denyWrites) {
-              throw createRuntimeOwnershipProbeApiError(
-                409,
-                JSON.stringify({
-                  status: 409,
-                  slug: "state-conflict",
-                  detail: "This execution generation is no longer current; stop execution",
-                }),
-              );
+              throw runHeartbeatAuthorityError();
             }
             return await client.post(path, body, options);
           },
@@ -658,11 +703,11 @@ describe("project-run runtime ownership probe", () => {
     const controlledClient: RuntimeOwnershipProbeApiClient = {
       get: (path, params, options) => client.get(path, params, options),
       post: async (path, body, options) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) throw runEventsAuthorityError();
         return await client.post(path, body, options);
       },
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (denyWrites) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (denyWrites) throw canonicalSourceAuthorityError();
         return await client.put<T>(path, body, options);
       },
     };
@@ -677,14 +722,7 @@ describe("project-run runtime ownership probe", () => {
           get: (path, params, options) => client.get(path, params, options),
           post: async (path, body, options) => {
             if (denyWrites) {
-              throw createRuntimeOwnershipProbeApiError(
-                409,
-                JSON.stringify({
-                  status: 409,
-                  slug: "state-conflict",
-                  detail: "This execution generation is no longer current; stop execution",
-                }),
-              );
+              throw runHeartbeatAuthorityError();
             }
             return await client.post(path, body, options);
           },
@@ -735,19 +773,14 @@ describe("project-run runtime ownership probe", () => {
       get: (path, params, options) => client.get(path, params, options),
       post: async (path, body, options) => {
         if (stale) {
-          throw createRuntimeOwnershipProbeApiError(
-            409,
-            JSON.stringify({
-              status: 409,
-              slug: "state-conflict",
-              detail: "This execution generation is no longer current; stop execution",
-            }),
-          );
+          throw isRunHeartbeatsPath(path)
+            ? runHeartbeatAuthorityError()
+            : runEventsAuthorityError();
         }
         return await client.post(path, body, options);
       },
       put: async <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => {
-        if (stale) throw new NativeError("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put<T>(path, body, options);
       },
     };
@@ -785,7 +818,7 @@ describe("project-run runtime ownership probe", () => {
       get: (path, params, options) => currentClient.get(path, params, options),
       post: (path, body, options) => currentClient.post(path, body, options),
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     };
     const staleReadbackClient: RuntimeOwnershipProbeApiClient = {
@@ -892,6 +925,36 @@ describe("project-run runtime ownership probe", () => {
     assertEquals(receipts[1]!.reason, "stale-write-failed-without-authorization-rejection");
   });
 
+  it("does not treat generic authorization stale write failures as denial proof", async () => {
+    const receipts: RuntimeOwnershipProbeReceipt[] = [];
+    const currentClient = new RecordingClient();
+    const staleClient: RuntimeOwnershipProbeApiClient = {
+      get: (path, params, options) => currentClient.get(path, params, options),
+      post: (path, body, options) => currentClient.post(path, body, options),
+      put: async () => {
+        throw new NativeError("Veryfront API request failed: 403 Forbidden");
+      },
+    };
+    let stale = false;
+    const session = createProjectRunRuntimeOwnershipProbe(
+      activation,
+      (receipt) => receipts.push(receipt),
+    )
+      .createSession({
+        ...baseSessionInput(currentClient),
+        createCanonicalClient: () => stale ? staleClient : currentClient,
+        createReadbackClient: () => currentClient,
+      });
+    assertExists(session);
+
+    await session.beforeExecute();
+    stale = true;
+    await session.afterStopAcknowledged();
+
+    assertEquals(receipts[1]!.status, "error");
+    assertEquals(receipts[1]!.reason, "stale-write-failed-without-authorization-rejection");
+  });
+
   it("does not report stale denial proof when readback is unavailable", async () => {
     const receipts: RuntimeOwnershipProbeReceipt[] = [];
     const currentClient = new RecordingClient();
@@ -900,7 +963,7 @@ describe("project-run runtime ownership probe", () => {
         throw new Error("Veryfront API request failed: 500 Internal Server Error");
       },
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     };
     let stale = false;
@@ -1423,7 +1486,7 @@ describe("project-run runtime ownership probe", () => {
     const client = boundaryRecordingClient();
     const rejectingCanonicalClient = createReadbackClient(client, {
       put: async () => {
-        throw new Error("Veryfront API request failed: 403 Forbidden");
+        throw canonicalSourceAuthorityError();
       },
     });
     const session = createProjectRunRuntimeOwnershipProbe(
@@ -1452,7 +1515,7 @@ describe("project-run runtime ownership probe", () => {
     let stale = false;
     const canonicalClient = createReadbackClient(client, {
       put: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put(path, body, options);
       },
     });
@@ -1483,21 +1546,14 @@ describe("project-run runtime ownership probe", () => {
     let stale = false;
     const canonicalClient = createReadbackClient(client, {
       put: async (path, body, options) => {
-        if (stale) throw new Error("Veryfront API request failed: 403 Forbidden");
+        if (stale) throw canonicalSourceAuthorityError();
         return await client.put(path, body, options);
       },
     });
     const eventClient = createEventAppendClient(client, {
       post: async (path, body, options) => {
         if (stale) {
-          throw createRuntimeOwnershipProbeApiError(
-            409,
-            JSON.stringify({
-              status: 409,
-              slug: "state-conflict",
-              detail: "This execution generation is no longer current; stop execution",
-            }),
-          );
+          throw runEventsAuthorityError();
         }
         return await client.post(path, body, options);
       },
@@ -1645,7 +1701,7 @@ describe("stale API problem classification through bounded response bodies", () 
           get: (path, params, options) => client.get(path, params, options),
           put: (path, body, options) =>
             stale
-              ? Promise.reject(new NativeError("Veryfront API request failed: 403 Forbidden"))
+              ? Promise.reject(canonicalSourceAuthorityError())
               : client.put(path, body, options),
           post: (path, body, options) => client.post(path, body, options),
         };
@@ -1654,7 +1710,7 @@ describe("stale API problem classification through bounded response bodies", () 
           post: async (path, body, options) => {
             if (!stale) return await client.post(path, body, options);
             if (kind !== surface) {
-              throw new NativeError("Veryfront API request failed: 403 Forbidden");
+              throw kind === "events" ? runEventsAuthorityError() : runHeartbeatAuthorityError();
             }
             const error = new NativeError("Veryfront API request failed: 409 Conflict");
             if (scenario === "mutated-species") {
@@ -1674,7 +1730,11 @@ describe("stale API problem classification through bounded response bodies", () 
                 },
               });
               try {
-                throw await classifyRuntimeOwnershipProbeApiResponse(actualResponse, error);
+                throw await classifyRuntimeOwnershipProbeApiResponse(
+                  actualResponse,
+                  error,
+                  surface === "events" ? "run-events" : "run-heartbeat",
+                );
               } finally {
                 if (originalSpecies) {
                   Object.defineProperty(Uint8Array, Symbol.species, originalSpecies);
@@ -1692,15 +1752,21 @@ describe("stale API problem classification through bounded response bodies", () 
                   detail: "This execution generation is no longer current; stop execution",
                 });
                 WeakSet.prototype.has = () => true;
-                throw await classifyRuntimeOwnershipProbeApiResponse(actualResponse, error);
+                throw await classifyRuntimeOwnershipProbeApiResponse(
+                  actualResponse,
+                  error,
+                  surface === "events" ? "run-events" : "run-heartbeat",
+                );
               } finally {
                 JSON.parse = originalParse;
                 WeakSet.prototype.has = originalHas;
               }
             }
-            throw scenario === "generic"
-              ? error
-              : await classifyRuntimeOwnershipProbeApiResponse(response(), error);
+            throw scenario === "generic" ? error : await classifyRuntimeOwnershipProbeApiResponse(
+              response(),
+              error,
+              surface === "events" ? "run-events" : "run-heartbeat",
+            );
           },
         });
         const session = createProjectRunRuntimeOwnershipProbe(

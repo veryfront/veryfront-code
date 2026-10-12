@@ -188,6 +188,7 @@ import {
   classifyRuntimeOwnershipProbeApiResponse,
   createProjectRunRuntimeOwnershipProbeFromHostEnv,
   type RuntimeOwnershipProbe,
+  type RuntimeOwnershipProbeAuthoritySurface,
 } from "./project-run-runtime-ownership-probe.ts";
 
 const TaskDate = Date;
@@ -3725,6 +3726,7 @@ function createRuntimeApiClient(
   retainedWriterToken?: string,
   retainedBearerToken?: string,
   retainedChildWriterAuthority = false,
+  authoritySurface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): RuntimeApiClient {
   // A client that may carry the current-attempt writer credential uses the
   // host-owned HTTPS origin; project env files cannot select it, and a
@@ -3786,7 +3788,7 @@ function createRuntimeApiClient(
       const error = API_CLIENT_ERROR.create({
         detail: `Veryfront API request failed: ${status} ${response.statusText}`,
       });
-      throw await classifyRuntimeOwnershipProbeApiResponse(response, error);
+      throw await classifyRuntimeOwnershipProbeApiResponse(response, error, authoritySurface);
     }
 
     if (response.status === 204) return undefined as T;
@@ -3870,7 +3872,13 @@ function createRuntimeApiClient(
 export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
-  const client = createRuntimeApiClient(input.req, input.ctx, input.signal, true, input.eventToken);
+  const client = createRuntimeApiClient(
+    input.req,
+    input.ctx,
+    input.signal,
+    input.eventToken !== undefined,
+    input.eventToken,
+  );
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
   const response = await client.put<{ path?: string }>(
@@ -5596,17 +5604,44 @@ export class ProjectRunExecuteHandler extends BaseHandler {
               : readProjectExecutionParent(eventToken, request.runId, request.projectId).attemptId,
             canonicalBranchId: runtimeOwnershipCanonicalBranchId,
             createCanonicalClient: (signal) =>
-              createRuntimeApiClient(req, ctx, signal, true, eventToken),
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                eventToken,
+                undefined,
+                false,
+                "canonical-source",
+              ),
             ...(request.kind !== "task" || request.canonicalRunId === undefined ? {} : {
               childProbe: createRuntimeOwnershipChildProbe({
                 projectId: request.projectId,
                 canonicalRunId: request.canonicalRunId,
                 targetTaskId: "ce-runtime-proof-task",
                 createWriter: (signal) =>
-                  createRuntimeApiClient(req, ctx, signal, true, eventToken, undefined, true),
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    true,
+                    "child-admission",
+                  ),
                 createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
                 createEvents: (signal) =>
-                  createRuntimeApiClient(req, ctx, signal, true, undefined, eventToken),
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    undefined,
+                    eventToken,
+                    false,
+                    "run-events",
+                  ),
               }),
             }),
             ...(inferenceToken === undefined ? {} : {
@@ -5614,7 +5649,16 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                 projectId: request.projectId,
                 branchId: runtimeOwnershipCanonicalBranchId,
                 createWriter: (signal) =>
-                  createRuntimeApiClient(req, ctx, signal, true, eventToken),
+                  createRuntimeApiClient(
+                    req,
+                    ctx,
+                    signal,
+                    true,
+                    eventToken,
+                    undefined,
+                    false,
+                    "canonical-index",
+                  ),
                 createReader: (signal) => createRuntimeApiClient(req, ctx, signal, true, undefined),
                 embed: async (text, signal) => {
                   const { createEmbeddingFacade } = await import(
@@ -5639,9 +5683,27 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             createEventAppendClient: (signal) =>
               eventToken === undefined
                 ? createRuntimeApiClient(req, ctx, signal, true, undefined)
-                : createRuntimeApiClient(req, ctx, signal, true, undefined, eventToken),
+                : createRuntimeApiClient(
+                  req,
+                  ctx,
+                  signal,
+                  true,
+                  undefined,
+                  eventToken,
+                  false,
+                  "run-events",
+                ),
             createHeartbeatClient: (signal) =>
-              createRuntimeApiClient(req, ctx, signal, true, undefined),
+              createRuntimeApiClient(
+                req,
+                ctx,
+                signal,
+                true,
+                undefined,
+                undefined,
+                false,
+                "run-heartbeat",
+              ),
           });
         const callback = createRunStopAcknowledger(
           req,

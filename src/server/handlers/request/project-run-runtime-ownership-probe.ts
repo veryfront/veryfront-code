@@ -328,25 +328,67 @@ function httpStatusFromError(error: unknown): number | undefined {
   return Number.isInteger(status) ? status : undefined;
 }
 
-function isAuthorizationRejection(error: unknown): boolean {
-  const status = httpStatusFromError(error);
-  return status === 401 || status === 403;
-}
-
-const ownershipAuthorityErrors = new WeakSet<Error>();
-const OwnershipWeakSetAdd = WeakSet.prototype.add;
-const OwnershipWeakSetHas = WeakSet.prototype.has;
+const ownershipAuthorityErrors = new WeakMap<Error, RuntimeOwnershipProbeAuthoritySurface>();
+const OwnershipWeakMapSet = WeakMap.prototype.set;
+const OwnershipWeakMapGet = WeakMap.prototype.get;
 const OwnershipJSONParse = JSON.parse;
 const OwnershipError = Error;
 const OwnershipGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+export type RuntimeOwnershipProbeAuthoritySurface =
+  | "canonical-source"
+  | "canonical-index"
+  | "run-events"
+  | "run-heartbeat"
+  | "child-admission"
+  | "current-generation";
+
+function isRuntimeOwnershipAuthorityProblem(
+  status: number,
+  slug: unknown,
+  detail: unknown,
+  surface: RuntimeOwnershipProbeAuthoritySurface,
+): boolean {
+  if (typeof detail !== "string") return false;
+  if (surface === "canonical-source") {
+    return status === 403 && slug === "authorization-denied" &&
+      detail === "Run no longer permits canonical source writes";
+  }
+  if (surface === "canonical-index") {
+    return status === 403 && slug === "authorization-denied" &&
+      detail === "Run no longer permits canonical indexing";
+  }
+  if (surface === "child-admission") {
+    return status === 409 && slug === "state-conflict" &&
+      (detail === "Parent run no longer accepts child runs" ||
+        detail === "This execution generation is no longer current; stop execution");
+  }
+  if (status !== 409 || slug !== "state-conflict") return false;
+  if (surface === "run-events") {
+    return detail === "Streamed run appends require the current signed executor generation" ||
+      detail === "Delegated run appends require the current root execution generation" ||
+      detail === "Detached run appends require the current signed lease generation" ||
+      detail === "This execution generation is no longer current; stop execution";
+  }
+  if (surface === "run-heartbeat") {
+    return detail === "The run is cancelled; stop execution" ||
+      detail === "This execution generation is no longer current; stop execution";
+  }
+  return detail === "The run is cancelled; stop execution" ||
+    detail === "This execution generation is no longer current; stop execution" ||
+    detail === "Streamed run appends require the current signed executor generation" ||
+    detail === "Delegated run appends require the current root execution generation" ||
+    detail === "Detached run appends require the current signed lease generation";
+}
 
 /** @internal Retain only a bounded, verified API authority classification, never the problem body. */
 export function createRuntimeOwnershipProbeApiError(
   status: number,
   problemText: string,
   error: Error = new OwnershipError(`Veryfront API request failed: ${status}`),
+  surface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): Error {
-  if (status !== 409 || problemText.length > 16_384) return error;
+  if ((status !== 409 && status !== 403) || problemText.length > 16_384) return error;
   let problem: unknown;
   try {
     problem = OwnershipJSONParse(problemText);
@@ -357,20 +399,20 @@ export function createRuntimeOwnershipProbeApiError(
   const statusField = OwnershipGetOwnPropertyDescriptor(problem, "status");
   const slugField = OwnershipGetOwnPropertyDescriptor(problem, "slug");
   const detailField = OwnershipGetOwnPropertyDescriptor(problem, "detail");
-  if (statusField?.value !== 409 || slugField?.value !== "state-conflict" || !detailField) {
-    return error;
-  }
-  const detail: unknown = detailField.value;
   if (
-    detail === "The run is cancelled; stop execution" ||
-    detail === "This execution generation is no longer current; stop execution" ||
-    detail === "Streamed run appends require the current signed executor generation" ||
-    detail === "Delegated run appends require the current root execution generation" ||
-    detail === "Detached run appends require the current signed lease generation"
+    statusField?.value === status && detailField &&
+    isRuntimeOwnershipAuthorityProblem(status, slugField?.value, detailField.value, surface)
   ) {
-    RuntimeReflectApply(OwnershipWeakSetAdd, ownershipAuthorityErrors, [error]);
+    RuntimeReflectApply(OwnershipWeakMapSet, ownershipAuthorityErrors, [error, surface]);
   }
   return error;
+}
+
+export function isRuntimeOwnershipProbeApiAuthorityError(
+  error: unknown,
+  surface: RuntimeOwnershipProbeAuthoritySurface,
+): boolean {
+  return RuntimeReflectApply(OwnershipWeakMapGet, ownershipAuthorityErrors, [error]) === surface;
 }
 
 const OwnershipResponseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
@@ -391,9 +433,10 @@ const OwnershipByteLength = Object.getOwnPropertyDescriptor(
 export async function classifyRuntimeOwnershipProbeApiResponse(
   response: Response,
   error: Error,
+  surface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): Promise<Error> {
   const status = RuntimeReflectApply(OwnershipResponseStatus, response, []) as number;
-  if (status !== 409) return error;
+  if (status !== 403 && status !== 409) return error;
   const body = RuntimeReflectApply(OwnershipResponseBody, response, []) as
     | ReadableStream<Uint8Array>
     | null;
@@ -423,7 +466,7 @@ export async function classifyRuntimeOwnershipProbeApiResponse(
     const exactBytes = new OwnershipUint8Array(total);
     for (let index = 0; index < total; index += 1) exactBytes[index] = bytes[index]!;
     const text = RuntimeReflectApply(OwnershipDecode, OwnershipTextDecoder, [exactBytes]) as string;
-    return createRuntimeOwnershipProbeApiError(status, text, error);
+    return createRuntimeOwnershipProbeApiError(status, text, error, surface);
   } catch {
     return error;
   } finally {
@@ -431,9 +474,11 @@ export async function classifyRuntimeOwnershipProbeApiResponse(
   }
 }
 
-function isAuthorizationOrConflictRejection(error: unknown): boolean {
-  return isAuthorizationRejection(error) ||
-    RuntimeReflectApply(OwnershipWeakSetHas, ownershipAuthorityErrors, [error]) === true;
+function isAuthorizationOrConflictRejection(
+  error: unknown,
+  surface: RuntimeOwnershipProbeAuthoritySurface,
+): boolean {
+  return isRuntimeOwnershipProbeApiAuthorityError(error, surface);
 }
 
 function readCanonicalContent(value: unknown): string | undefined {
@@ -784,7 +829,7 @@ export function createProjectRunRuntimeOwnershipProbe(
             });
           } catch (error) {
             if (!stale) throw error;
-            if (!isAuthorizationRejection(error)) {
+            if (!isAuthorizationOrConflictRejection(error, "canonical-source")) {
               sink({
                 ...baseReceipt,
                 status: "error",
@@ -981,7 +1026,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               { signal },
             );
           } catch (error) {
-            if (!stale || !isAuthorizationOrConflictRejection(error)) {
+            if (!stale || !isAuthorizationOrConflictRejection(error, "run-events")) {
               sink({
                 ...baseReceipt,
                 status: "error",
@@ -1079,7 +1124,7 @@ export function createProjectRunRuntimeOwnershipProbe(
               { signal },
             );
           } catch (error) {
-            if (!stale || !isAuthorizationOrConflictRejection(error)) {
+            if (!stale || !isAuthorizationOrConflictRejection(error, "run-heartbeat")) {
               sink({
                 ...baseReceipt,
                 status: "error",

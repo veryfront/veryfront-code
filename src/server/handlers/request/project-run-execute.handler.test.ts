@@ -71,6 +71,10 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "#veryfront/config/environment-config.ts";
 
 // Provider HTTP fixtures exercise real gateway/model execution, not real model quality.
 const canonicalKnowledgeFixtureReceipt = {
@@ -158,6 +162,7 @@ import {
   createKnowledgeRuntimeProgressBridge,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  type ProjectRunExecuteRequest,
   projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
   uploadEvalReportToProjectFiles,
@@ -199,6 +204,65 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 
 const encoder = new TextEncoder();
+
+Deno.test("uploadEvalReportToProjectFiles uses ordinary runtime API client without retained writer token", async () => {
+  const report: EvalReport = {
+    kind: "eval-report",
+    runId: "run_eval_report_http_without_writer",
+    definitionId: "eval:deep-research",
+    targetKind: "agent",
+    target: "agent:researcher",
+    startedAt: "2026-09-30T10:00:00.000Z",
+    endedAt: "2026-09-30T10:00:01.000Z",
+    summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+    records: [],
+  };
+  const req = new Request(
+    "https://runtime.example.test/api/control-plane/runs/run_eval_report_http_without_writer/execute",
+    {
+      headers: { "x-token": "runtime-token" },
+    },
+  );
+  const request: ProjectRunExecuteRequest = {
+    runId: "run_eval_report_http_without_writer",
+    kind: "task",
+    target: "task:eval",
+    projectId: "proj-1",
+    config: { eval_id: "eval:deep-research" },
+  };
+  let uploads = 0;
+  _setEnvironmentConfigForTesting({ apiBaseUrl: "http://self-hosted-api.example.test:8787" });
+  const path = await withMockFetch((url, init) => {
+    const options = observeFetchRequestInit(init);
+    assertStringIncludes(String(url), "http://self-hosted-api.example.test:8787/");
+    assertEquals(options.method, "PUT");
+    assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), null);
+    uploads++;
+    return Promise.resolve(
+      Response.json({
+        path: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+      }),
+    );
+  }, async () => {
+    try {
+      return await uploadEvalReportToProjectFiles({
+        request,
+        ctx: createCtx("unused-public-key"),
+        req,
+        report,
+        projectReference: "proj-1",
+        reportPath: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+      });
+    } finally {
+      _resetEnvironmentConfig();
+    }
+  });
+  assertEquals(uploads, 1);
+  assertEquals(
+    path,
+    "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+  );
+});
 
 class SynchronousInMemorySpanExporter implements SpanExporter {
   private finishedSpans: ReadableSpan[] = [];
@@ -18362,23 +18426,41 @@ describe("runtime ownership actual client problem transport", () => {
           }
           if (observed.method === "PUT") {
             if (stale) {
-              return Response.json({ status: 403, slug: "authorization-denied" }, { status: 403 });
+              return Response.json({
+                status: 403,
+                slug: "authorization-denied",
+                detail: "Run no longer permits canonical source writes",
+              }, { status: 403 });
             }
             assertEquals(typeof observed.body, "string");
             const body = JSON.parse(String(observed.body));
             content = body.content;
             return Response.json({ version_id: "current-owned-version" });
           }
+          if (stale && path.endsWith("/events")) {
+            return Response.json({
+              status: 409,
+              slug: "state-conflict",
+              detail: surface === "events" && !authority
+                ? "The event idempotency key conflicts with existing data"
+                : "Streamed run appends require the current signed executor generation",
+            }, { status: 409 });
+          }
+          if (stale && path.endsWith("/heartbeats")) {
+            return Response.json({
+              status: 409,
+              slug: "state-conflict",
+              detail: surface === "heartbeats" && !authority
+                ? "The event idempotency key conflicts with existing data"
+                : "This execution generation is no longer current; stop execution",
+            }, { status: 409 });
+          }
           if (stale) {
             return Response.json({
-              status: path.endsWith(`/${surface}`) ? 409 : 403,
-              slug: path.endsWith(`/${surface}`) ? "state-conflict" : "authorization-denied",
-              detail: authority
-                ? surface === "events"
-                  ? "Streamed run appends require the current signed executor generation"
-                  : "This execution generation is no longer current; stop execution"
-                : "The event idempotency key conflicts with existing data",
-            }, { status: path.endsWith(`/${surface}`) ? 409 : 403 });
+              status: 409,
+              slug: "state-conflict",
+              detail: "Parent run no longer accepts child runs",
+            }, { status: 409 });
           }
           if (path.endsWith("/events")) {
             const body = JSON.parse(String(observed.body));
