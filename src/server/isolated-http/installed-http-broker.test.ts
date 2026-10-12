@@ -124,6 +124,23 @@ describe("installed HTTP broker", () => {
       await b.shutdown();
     }
   });
+  it("orders a request by when its authorization began, not when it finished", async () => {
+    let began = 0;
+    const b = fixture(async () => {
+      began = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    try {
+      const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
+      const request = input.session.request;
+      assertEquals(request.requestedAt <= began, true);
+      // Deadlines still run from the end of authorization.
+      assertEquals(request.prepareDeadlineAt >= began + 40, true);
+    } finally {
+      await b.shutdown();
+    }
+  });
+
   it("captures configuration and authority before awaiting authorization", async () => {
     const wait = Promise.withResolvers<void>();
     const seen: unknown[] = [];

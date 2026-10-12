@@ -140,6 +140,9 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
       throw new TypeError("Invalid installed HTTP source authority");
     }
     const lifetime = AbortSignal.any([signal, owner.signal]);
+    // Authorization starts now. The broker orders generation changes by this time, so an
+    // authorization that finishes late cannot pass for a newer one.
+    const requestedAt = Date.now();
     await authorize(Object.freeze({ ...binding, sourceToken }), lifetime);
     lifetime.throwIfAborted();
     const now = Date.now();
@@ -154,7 +157,7 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
           owner: projectOwner,
           source,
           executionProfile: "http",
-          requestedAt: now,
+          requestedAt,
           prepareDeadlineAt: now + Math.min(30_000, requestLifetimeMs),
           hardDeadlineAt: now + requestLifetimeMs,
         },
