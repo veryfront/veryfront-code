@@ -573,6 +573,30 @@ describe("src/task/runner", () => {
       assertEquals(removeCalls, 0);
     });
 
+    it("never adopts or removes a path that is not a task data directory", async () => {
+      let seen: unknown = "unset";
+      const removed: string[] = [];
+      const task = makeTask({
+        run: (ctx: TaskContext) => {
+          seen = ctx.dataDir;
+          return "ok";
+        },
+      });
+      const scratchFs: TaskScratchFs = {
+        makeTempDir: () => Promise.resolve("/home/dev/project"),
+        remove: (path) => {
+          removed.push(path);
+          return Promise.resolve();
+        },
+      };
+
+      const result = await runTask({ task }, createInMemoryHostRuntime(), scratchFs);
+
+      assertEquals(result.success, true);
+      assertEquals(seen, undefined);
+      assertEquals(removed, []);
+    });
+
     it("keeps a successful result when the data directory cannot be removed", async () => {
       const removed: string[] = [];
       const task = makeTask({ run: () => "done" });

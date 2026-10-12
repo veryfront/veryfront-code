@@ -45,6 +45,8 @@ const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const regExpExec = RegExp.prototype.exec;
 const stringIndexOf = String.prototype.indexOf;
 const stringSlice = String.prototype.slice;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const TASK_DATA_DIR_PREFIX = "veryfront-task-";
 const READ_ONLY_FS_PATTERN = /\(os error 30\)|\bEROFS\b|read-only file system/i;
 
 /** An own data property of a thrown value; an accessor or a hostile object yields nothing. */
@@ -58,6 +60,17 @@ function ownErrorField(error: unknown, key: "code" | "message"): unknown {
   } catch {
     return undefined;
   }
+}
+
+function isTaskDataDirPath(path: unknown): path is string {
+  if (typeof path !== "string") return false;
+  const slash = reflectApply(stringLastIndexOf, path, ["/"]) as number;
+  const backslash = reflectApply(stringLastIndexOf, path, ["\\"]) as number;
+  const name = reflectApply(stringSlice, path, [
+    (slash > backslash ? slash : backslash) + 1,
+  ]) as string;
+  return reflectApply(stringIndexOf, name, [TASK_DATA_DIR_PREFIX]) === 0 &&
+    name.length > TASK_DATA_DIR_PREFIX.length;
 }
 
 function isReadOnlyFilesystemError(error: unknown): boolean {
@@ -103,14 +116,22 @@ const liveScratchFs: TaskScratchFs = { makeTempDir, remove };
  * messages name the host temp root.
  */
 async function createTaskDataDir(scratchFs: TaskScratchFs): Promise<string | undefined> {
+  let created: unknown;
   try {
-    return await scratchFs.makeTempDir({ prefix: "veryfront-task-" });
+    created = await scratchFs.makeTempDir({ prefix: TASK_DATA_DIR_PREFIX });
   } catch (error) {
     logger.warn("Task data directory could not be created; ctx.dataDir is unset", {
       code: ownErrorField(error, "code"),
     });
     return undefined;
   }
+  // Task modules load before this runs and can replace the platform's mkdtemp. The directory is
+  // removed recursively afterwards, so accept only a path whose last segment carries our prefix.
+  if (!isTaskDataDirPath(created)) {
+    logger.warn("Task data directory creation returned an unexpected path; ctx.dataDir is unset");
+    return undefined;
+  }
+  return created;
 }
 
 export interface RunnableTask {
