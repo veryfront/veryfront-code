@@ -195,20 +195,51 @@ describe("explicit integration client", () => {
   });
 
   it("does not infer readiness or TTL from raw connected status", async () => {
+    const generation = "22222222-2222-4222-8222-222222222222";
     const status = {
-      connected: true,
       integration: "github",
+      scope: "user",
+      connected: true,
       connection_id: project.id,
-      connection_generation_id: "22222222-2222-4222-8222-222222222222",
+      connection_generation_id: generation,
     };
+    let statusReads = 0;
     await withClientFetch(async (url) => {
-      if (String(url).includes("/oauth/status/")) {
+      if (String(url).includes("/connection-status")) {
+        statusReads++;
         assertEquals(new URL(String(url)).searchParams.get("scope"), "user");
       }
       return projectOr(url, status);
     }, async () => {
       const client = await createIntegrationClient(context);
-      assertEquals(await client.status("github", "user"), { ...status, scope: "user" });
+      assertEquals(await client.status("github", "user"), {
+        connected: true,
+        connectionId: project.id,
+        connectionGenerationId: generation,
+        connection_id: project.id,
+        connection_generation_id: generation,
+        integration: "github",
+        scope: "user",
+      });
+    });
+    assertEquals(statusReads, 1);
+  });
+
+  it("keeps the legacy disconnected status shape without connection IDs", async () => {
+    await withClientFetch(async (url) =>
+      projectOr(url, {
+        integration: "github",
+        scope: "project",
+        connected: false,
+        connection_id: null,
+        connection_generation_id: null,
+      }), async () => {
+      const client = await createIntegrationClient(context);
+      assertEquals(await client.status("github", "project"), {
+        connected: false,
+        integration: "github",
+        scope: "project",
+      });
     });
   });
 
@@ -677,11 +708,10 @@ describe("explicit integration client", () => {
           credential_requirement: { mode: "oauth_connection" },
         });
       }
-      if (path.endsWith("/oauth/connect/session")) {
+      if (path.endsWith(`/projects/${project.id}/integrations/github/connect-sessions`)) {
         sessions++;
+        assertEquals(init?.method, "POST");
         assertEquals(JSON.parse(String(init?.body)), {
-          integration: "github",
-          project_reference: project.id,
           scope: "user",
           redirect_uri: "http://localhost:9876/callback?state=synthetic",
         });
@@ -769,7 +799,7 @@ describe("explicit integration client", () => {
             credential_requirement: { mode: "oauth_connection" },
           });
         }
-        return String(input).includes("/oauth/connect/session")
+        return String(input).includes("/integrations/github/connect-sessions")
           ? Response.json(payload)
           : Response.json(project);
       }, async () => {
@@ -887,10 +917,11 @@ describe("audited REST wire contract", () => {
       },
       {
         method: "GET",
-        path: "/oauth/status/github",
-        query: { project_reference: project.id, scope: "user" },
+        path: `/projects/${project.id}/integrations/github/connection-status`,
+        query: { scope: "user" },
         response: {
           integration: "github",
+          scope: "user",
           connected: true,
           connection_id: connectionId,
           connection_generation_id: generationId,
@@ -909,10 +940,8 @@ describe("audited REST wire contract", () => {
       { method: "GET", path: "/integrations/github", response: details },
       {
         method: "POST",
-        path: "/oauth/connect/session",
+        path: `/projects/${project.id}/integrations/github/connect-sessions`,
         body: {
-          integration: "github",
-          project_reference: project.id,
           scope: "user",
           redirect_uri: "http://localhost:9876/callback",
         },
