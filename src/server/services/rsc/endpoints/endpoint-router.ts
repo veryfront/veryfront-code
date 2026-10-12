@@ -605,11 +605,11 @@ async function handleModuleEndpoint({
     }
 
     // Warn with the message: a bare error name at debug level left hosted
-    // 500s undiagnosable (#5109). Bundler messages use project-relative paths.
-    rscEndpointRouterLog.warn("module build failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-      errorMessage: error instanceof Error ? error.message.slice(0, 500) : undefined,
-    });
+    // 500s undiagnosable (#5109).
+    rscEndpointRouterLog.warn(
+      "module build failed",
+      describeModuleBuildFailure(error, projectDir),
+    );
     return new Response("Internal Error", {
       status: HTTP_SERVER_ERROR,
       headers: { "cache-control": "no-store" },
@@ -627,6 +627,19 @@ interface BrowserModuleCacheKeyOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   modulePath: string;
+}
+
+/**
+ * Log-safe summary of a module build failure. Native filesystem errors can
+ * carry the absolute tenant path, so the project directory is redacted.
+ */
+export function describeModuleBuildFailure(
+  error: unknown,
+  projectDir: string,
+): { errorName: string; errorMessage?: string } {
+  if (!(error instanceof Error)) return { errorName: "UnknownError" };
+  const message = projectDir ? error.message.replaceAll(projectDir, "<project>") : error.message;
+  return { errorName: error.name, errorMessage: message.slice(0, 500) };
 }
 
 export function buildBrowserModuleCacheKey(

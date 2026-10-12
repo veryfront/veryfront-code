@@ -33,6 +33,7 @@ import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   buildBrowserModuleCacheKey,
+  describeModuleBuildFailure,
   getBrowserModuleEndpointStatsForTesting,
   handleRSCEndpoint,
   resetBrowserModuleEndpointStateForTesting,
@@ -628,6 +629,39 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         setEnv(DEPENDENCY_PINNING_PROJECTS_ENV, originalProjects ?? "");
         clearReactVersionCache();
       }
+    });
+
+    it("returns 500 when the browser module build throws an unexpected error", async () => {
+      setBrowserModuleBuilderForTesting(() =>
+        Promise.reject(new TypeError("read failed at /tmp/test-project/app/Counter.client.ts"))
+      );
+
+      const response = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          req: new Request("http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts"),
+        }),
+      );
+
+      assertEquals(response?.status, 500);
+      assertEquals(await response?.text(), "Internal Error");
+    });
+
+    it("redacts the project directory from logged module build failures", () => {
+      assertEquals(
+        describeModuleBuildFailure(
+          new TypeError("read failed at /srv/tenant-a/project/app/page.tsx"),
+          "/srv/tenant-a/project",
+        ),
+        { errorName: "TypeError", errorMessage: "read failed at <project>/app/page.tsx" },
+      );
+      assertEquals(describeModuleBuildFailure("boom", "/srv/tenant-a/project"), {
+        errorName: "UnknownError",
+      });
+      assertEquals(
+        describeModuleBuildFailure(new Error("x".repeat(600)), "").errorMessage?.length,
+        500,
+      );
     });
 
     it("hands a valid requested snapshot to the admitted browser builder without pre-reading it", async () => {
