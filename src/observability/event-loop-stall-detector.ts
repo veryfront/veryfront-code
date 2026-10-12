@@ -95,13 +95,17 @@ export function createEventLoopStallDetector(
     if (lagMs < thresholdMs) return;
 
     // The block ended at `current` and lasted at least `lagMs`, so it began no
-    // later than `current - lagMs`. A request that arrived after the last
-    // on-time tick but before that point is the likeliest culprit; newest
-    // first so long-lived streams cannot push it past the report cap.
+    // later than `current - lagMs`; a request that finished before then cannot
+    // be the culprit. The overdue timer is not guaranteed to run before ready
+    // I/O, so the culprit may have started just after the missed deadline:
+    // accept any request that had at least a threshold's worth of time to hold
+    // the thread. Newest first so long-lived streams cannot push it past the
+    // report cap.
     const blockStartedByMs = current - lagMs;
+    const startedByMs = current - thresholdMs;
     const inFlight = getInFlight(stalledFromMs)
       .filter((r) =>
-        r.startTime <= blockStartedByMs &&
+        r.startTime <= startedByMs &&
         (r.endTime === undefined || r.endTime >= blockStartedByMs)
       )
       .sort((a, b) => b.startTime - a.startTime)

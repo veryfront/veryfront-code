@@ -96,6 +96,17 @@ describe("observability/event-loop-stall-detector", () => {
     assertEquals(h.stalls[0]!.inFlight.map((r) => r.requestId), ["sync"]);
   });
 
+  it("names a request dispatched just after the missed deadline", () => {
+    const h = harness([
+      { requestId: "late-dispatch", path: "/api/block", method: "GET", startTime: 2_001 },
+      { requestId: "after-block", path: "/next", method: "GET", startTime: 58_500 },
+    ]);
+    h.detector.start();
+    h.advance(1_000);
+    h.advance(58_000); // tick due at 2_000, block ended at 59_000
+    assertEquals(h.stalls[0]!.inFlight.map((r) => r.requestId), ["late-dispatch"]);
+  });
+
   it("stops sampling after stop()", () => {
     const h = harness();
     h.detector.start();
