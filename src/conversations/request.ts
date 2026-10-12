@@ -23,6 +23,12 @@ export interface ConversationsWireInput {
 
 const PATH_PARAMETER = /\{(\w+)\}/g;
 
+/**
+ * Problem body of each error the SDK threw. It is kept off the error object, so serializing
+ * or logging the error does not write the response body.
+ */
+const PROBLEMS = new WeakMap<VeryfrontError, ConversationsProblem>();
+
 /** Most bytes read from an error response body. */
 const MAX_PROBLEM_BODY_BYTES = 8 * 1024;
 
@@ -72,14 +78,15 @@ function problemError(
   text: string,
 ): VeryfrontError {
   const problem = readProblem(response, text);
-  // The message holds only the operation and status: a problem body can echo caller data,
-  // so it stays in the context for conversationsProblemOf.
-  return API_CLIENT_ERROR.create({
+  // The error holds only the operation and status: a problem body can echo caller data,
+  // so it is reachable through conversationsProblemOf alone.
+  const error = API_CLIENT_ERROR.create({
     detail: `${operationId} failed with status ${response.status}`,
     status: response.status,
-    instance: problem.instance,
-    context: { operationId, problem },
+    context: { operationId },
   });
+  PROBLEMS.set(error, problem);
+  return error;
 }
 
 /** Send one operation and resolve with its parsed JSON body, or `undefined` for 204. */
@@ -126,9 +133,7 @@ export function requireConversationsTransport(
 
 /** The problem body of an error thrown by the conversations SDK, or `undefined` for any other error. */
 export function conversationsProblemOf(error: unknown): ConversationsProblem | undefined {
-  if (!(error instanceof VeryfrontError)) return undefined;
-  const context = error.context as { problem?: ConversationsProblem } | undefined;
-  return context?.problem;
+  return error instanceof VeryfrontError ? PROBLEMS.get(error) : undefined;
 }
 
 /** Reject a success body that is not a JSON object. */

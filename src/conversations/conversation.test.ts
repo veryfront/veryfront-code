@@ -661,6 +661,10 @@ describe("conversations SDK request handling", () => {
 
     assert(!logged.join("\n").includes(callerData), "the log contains the problem body");
     assertEquals(error.message, "createConversationMessage failed with status 409");
+    assertEquals(error.context, { operationId: "createConversationMessage" });
+    assertEquals(error.instance, undefined);
+    assert(!JSON.stringify(error).includes(callerData), "the serialized error contains the body");
+    assert(!Deno.inspect(error, { depth: 10 }).includes(callerData));
     assertEquals(conversationsProblemOf(error), problem);
   });
 
@@ -748,6 +752,20 @@ describe("conversations SDK request handling", () => {
       ["unread_count", (c) => c.getReadState(), { last_read_message_id: null }],
       ["last_read_message_id", (c) => c.getReadState(), { unread_count: 0 }],
       ["message_id", (c) => c.updateBranchSelection(MESSAGE_ID), {}],
+      ["status", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, status: "secret-status" }],
+      ["role", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, role: "system" }],
+      ["sender_type", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, sender_type: "bot" }],
+      ["type", (c) => c.update({ title: "x" }), { ...WIRE_CONVERSATION, type: "secret-type" }],
+      ["status", (c) => c.update({ title: "x" }), { ...WIRE_CONVERSATION, status: "paused" }],
+      ["role", (c) => c.createParticipant({ userId: USER_ID }), {
+        ...WIRE_PARTICIPANT,
+        role: "admin",
+      }],
+      ["participant_type", (c) => c.createParticipant({ userId: USER_ID }), {
+        ...WIRE_PARTICIPANT,
+        participant_type: "group",
+      }],
+      ["status", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, status: "constructor" }],
     ];
     for (const [field, call, body] of cases) {
       const { conversation } = attached([Response.json(body)]);

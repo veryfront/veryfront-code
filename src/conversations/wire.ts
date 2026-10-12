@@ -8,11 +8,18 @@ import type {
   ConversationBranchSelection,
   ConversationDetails,
   ConversationMessage,
+  ConversationMessageRole,
+  ConversationMessageSenderType,
+  ConversationMessageStatus,
   ConversationPageInfo,
   ConversationPageOf,
   ConversationParticipant,
+  ConversationParticipantRole,
   ConversationParticipantSummary,
+  ConversationParticipantType,
   ConversationReadState,
+  ConversationStatus,
+  ConversationType,
   CreateConversationInitialMessageInput,
   CreateConversationInput,
   CreateConversationMessageBranchInput,
@@ -24,6 +31,52 @@ import type {
 } from "./types.ts";
 
 type Wire = Record<string, unknown>;
+
+/** The documented values of each closed union. A missing value is a type error. */
+const CONVERSATION_TYPES: Record<ConversationType, true> = {
+  chat: true,
+  default_chat: true,
+  plan: true,
+  research: true,
+  agent_task: true,
+  support: true,
+  channel: true,
+  project_agent: true,
+};
+const CONVERSATION_STATUSES: Record<ConversationStatus, true> = {
+  active: true,
+  archived: true,
+  deleted: true,
+};
+const MESSAGE_ROLES: Record<ConversationMessageRole, true> = {
+  user: true,
+  assistant: true,
+  tool: true,
+};
+const MESSAGE_STATUSES: Record<ConversationMessageStatus, true> = {
+  pending: true,
+  streaming: true,
+  completed: true,
+  failed: true,
+  cancelled: true,
+};
+const MESSAGE_SENDER_TYPES: Record<ConversationMessageSenderType, true> = {
+  user: true,
+  webhook: true,
+  service_account: true,
+  integration: true,
+  agent: true,
+  system: true,
+};
+const PARTICIPANT_TYPES: Record<ConversationParticipantType, true> = {
+  user: true,
+  agent: true,
+};
+const PARTICIPANT_ROLES: Record<ConversationParticipantRole, true> = {
+  owner: true,
+  member: true,
+  viewer: true,
+};
 
 /** Copy the defined fields of an input into a wire body under their REST names. */
 function defined(fields: Record<string, unknown>): Wire {
@@ -47,10 +100,29 @@ function isObject(value: unknown): value is Wire {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function str<T extends string = string>(wire: Wire, field: string): T {
+function str(wire: Wire, field: string): string {
   const value = wire[field];
   if (typeof value !== "string") invalid(field, "a string");
+  return value;
+}
+
+/** A field that holds one of the documented values of a closed union. */
+function oneOf<T extends string>(wire: Wire, field: string, values: Record<T, true>): T {
+  const value = wire[field];
+  if (typeof value !== "string" || !Object.hasOwn(values, value)) {
+    invalid(field, "a documented value");
+  }
   return value as T;
+}
+
+/** A closed-union field that the API may omit; `fallback` is its documented default. */
+function oneOfOr<T extends string>(
+  wire: Wire,
+  field: string,
+  values: Record<T, true>,
+  fallback: T,
+): T {
+  return wire[field] === undefined ? fallback : oneOf(wire, field, values);
 }
 
 function num(wire: Wire, field: string): number {
@@ -60,11 +132,11 @@ function num(wire: Wire, field: string): number {
 }
 
 /** A string field that the API may omit or send as `null`. */
-function optStr<T extends string = string>(wire: Wire, field: string): T | null {
+function optStr(wire: Wire, field: string): string | null {
   const value = wire[field];
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") invalid(field, "a string or null");
-  return value as T;
+  return value;
 }
 
 /** A string field that the API always sends, as a string or `null`. */
@@ -162,15 +234,12 @@ function fromParticipantSummary(wire: Wire): ConversationParticipantSummary {
   return {
     id: str(wire, "id"),
     participantId: optStr(wire, "participant_id"),
-    participantType: optStr<ConversationParticipantSummary["participantType"]>(
-      wire,
-      "participant_type",
-    ) ?? "user",
+    participantType: oneOfOr(wire, "participant_type", PARTICIPANT_TYPES, "user"),
     userId: optStr(wire, "user_id"),
     agentId: optStr(wire, "agent_id"),
     displayName: optStr(wire, "display_name"),
     avatarUrl: optStr(wire, "avatar_url"),
-    role: str<ConversationParticipantSummary["role"]>(wire, "role"),
+    role: oneOf(wire, "role", PARTICIPANT_ROLES),
   };
 }
 
@@ -183,10 +252,10 @@ export function fromConversation(wire: Wire): ConversationDetails {
     id: str(wire, "id"),
     projectId: optStr(wire, "project_id"),
     respondingAgentId: optStr(wire, "responding_agent_id"),
-    type: str<ConversationDetails["type"]>(wire, "type"),
+    type: oneOf(wire, "type", CONVERSATION_TYPES),
     title: optStr(wire, "title"),
     summary: optStr(wire, "summary"),
-    status: str<ConversationDetails["status"]>(wire, "status"),
+    status: oneOf(wire, "status", CONVERSATION_STATUSES),
     currentNode: optStr(wire, "current_node"),
     messageCount: num(wire, "message_count"),
     lastMessageAt: optStr(wire, "last_message_at"),
@@ -209,9 +278,9 @@ export function fromMessage(wire: Wire): ConversationMessage {
     conversationId: str(wire, "conversation_id"),
     parentId: optStr(wire, "parent_id"),
     seq: num(wire, "seq"),
-    role: str<ConversationMessage["role"]>(wire, "role"),
+    role: oneOf(wire, "role", MESSAGE_ROLES),
     createdBy: optStr(wire, "created_by"),
-    senderType: optStr<ConversationMessage["senderType"]>(wire, "sender_type") ?? "user",
+    senderType: oneOfOr(wire, "sender_type", MESSAGE_SENDER_TYPES, "user"),
     senderId: optStr(wire, "sender_id"),
     senderDisplayName: optStr(wire, "sender_display_name"),
     parts: objects(wire.parts, "parts") as ConversationMessage["parts"],
@@ -220,7 +289,7 @@ export function fromMessage(wire: Wire): ConversationMessage {
     tokenUsage: optObj(wire, "token_usage"),
     finishReason: optStr(wire, "finish_reason"),
     costCredits: optStr(wire, "cost_credits"),
-    status: str<ConversationMessage["status"]>(wire, "status"),
+    status: oneOf(wire, "status", MESSAGE_STATUSES),
     editedAt: optStr(wire, "edited_at"),
     idempotencyKey: optStr(wire, "idempotency_key"),
     metadata: optObj(wire, "metadata"),
