@@ -120,10 +120,11 @@ type DeleteAcknowledgement<K extends RunsOperationId> =
 /**
  * Success body of one operation: the JSON body of each success response, `undefined` for a
  * 204 response. A DELETE may answer 200 with {@link RunsDeleteAcknowledgement} or an empty 204.
+ * Distributes over a union of operations, so each member keeps its own success body.
  */
-export type RunsOutput<K extends RunsOperationId> =
-  | SuccessBody<SuccessResponse<K>>
-  | DeleteAcknowledgement<K>;
+export type RunsOutput<K extends RunsOperationId> = K extends RunsOperationId
+  ? SuccessBody<SuccessResponse<K>> | DeleteAcknowledgement<K>
+  : never;
 
 /** What an SDK method returns: the parsed body, or the frames of an event stream. */
 export type RunsResult<K extends RunsOperationId> = SuccessResponse<K> extends

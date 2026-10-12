@@ -46,6 +46,12 @@ export type RunsSdkTypeChecks = [
   Expect<Equal<RunsOutput<"getRun">, Schemas["Run"]>>,
   Expect<Equal<RunsOutput<"createRun">, Schemas["CreateRunResult"]>>,
   Expect<Equal<RunsOutput<"deleteRun">, RunsDeleteAcknowledgement | undefined>>,
+  Expect<
+    Equal<
+      RunsOutput<"getRun" | "deleteRun">,
+      Schemas["Run"] | RunsDeleteAcknowledgement | undefined
+    >
+  >,
   Expect<Equal<RunsResult<"streamRunEvents">, AsyncIterable<RunStreamFrame>>>,
   Expect<Equal<RunStreamFrame["event"], CanonicalRunStreamFrame>>,
   Expect<Equal<RunStreamFrame["event"]["event_id"], number | null>>,
