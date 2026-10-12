@@ -13,6 +13,21 @@ import {
 const count = (calls: string[], name: string) => calls.filter((call) => call === name).length;
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/** A fixture whose handler signals when a request arrives and answers when told to. */
+function heldFixture(projectId?: string) {
+  const entered = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<Response>();
+  const f = fixture(
+    () => {
+      entered.resolve();
+      return held.promise;
+    },
+    undefined,
+    projectId,
+  );
+  return { ...f, entered: entered.promise, respond: held.resolve };
+}
+
 function configuration(variables: Record<string, string>) {
   return {
     projectId: "project-a",
@@ -458,13 +473,12 @@ describe("hosted HTTP generation broker", () => {
   });
 
   it("forgets an environment whose generation was not admitted", async () => {
-    const a = fixture(() => new Response("a"));
+    // A request in flight keeps its executor, so nothing can be retired to make room.
+    const busy = heldFixture();
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
-      assertEquals(
-        await (await broker.fetch(new Request("https://a.example"), a.input)).text(),
-        "a",
-      );
+      const inFlight = broker.fetch(new Request("https://a.example"), busy.input);
+      await busy.entered;
       for (let index = 0; index < 5; index++) {
         const other = fixture(() => new Response("other"), undefined, `project-${index}`);
         await assertRejects(
@@ -472,8 +486,223 @@ describe("hosted HTTP generation broker", () => {
           Error,
           "capacity",
         );
+        assertEquals(other.calls, []);
       }
       assertEquals(broker.generations, 1);
+      assertEquals(
+        count(busy.calls, "release:completed") + count(busy.calls, "release:canceled"),
+        0,
+      );
+      busy.respond(new Response("a"));
+      assertEquals(await (await inFlight).text(), "a");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("retires the least recently used idle executor to admit a cold project at capacity", async () => {
+    const first = fixture(() => new Response("first"));
+    const second = fixture(() => new Response("second"));
+    second.input.installation.environmentId = "environment-b";
+    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 2 });
+    try {
+      for (const warm of [first, second]) {
+        await (await broker.fetch(new Request("https://a.example"), warm.input)).text();
+      }
+      // Using `first` again makes `second` the least recently used.
+      await (await broker.fetch(new Request("https://a.example"), first.input)).text();
+      assertEquals(
+        await (await broker.fetch(new Request("https://b.example"), cold.input)).text(),
+        "cold",
+      );
+      assertEquals(count(second.calls, "release:completed"), 1);
+      assertEquals(count(first.calls, "release:completed"), 0);
+      assertEquals(cold.calls, ["allocate", "install"]);
+      assertEquals(broker.generations, 2);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("allocates for a cold request only after the retired executor's release is confirmed", async () => {
+    const idle = fixture(() => new Response("idle"));
+    idle.holdRelease();
+    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const waiting = fixture(() => new Response("waiting"), undefined, "project-c");
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
+      const admitted = broker.fetch(new Request("https://b.example"), cold.input);
+      // A second cold request shares the retirement already under way.
+      const shared = broker.fetch(new Request("https://c.example"), waiting.input);
+      shared.catch(() => {});
+      await idle.releaseEntered.promise;
+      await tick();
+      assertEquals(cold.calls, []);
+      assertEquals(waiting.calls, []);
+      idle.releaseAllowed.resolve();
+      assertEquals(await (await admitted).text(), "cold");
+      assertEquals(count(idle.calls, "release:completed"), 1);
+      // One slot was freed; the other cold request finds its executor serving or idle.
+      await shared.then((response) => response.text(), () => undefined);
+      assertEquals(broker.active <= 1, true);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("refuses a cold request and keeps the slot when the retired executor's release is unconfirmed", async () => {
+    const idle = fixture(() => new Response("idle"));
+    const release = idle.input.session.allocator.release;
+    idle.input.session.allocator.release = () =>
+      Promise.reject(new Error("synthetic allocator outage"));
+    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await assertRejects(
+          () => broker.fetch(new Request("https://b.example"), cold.input),
+          Error,
+          "capacity",
+        );
+      }
+      // No second allocation while the first is not known to be released.
+      assertEquals(cold.calls, []);
+      idle.input.session.allocator.observe = (binding, signal) =>
+        release(binding, "completed", signal);
+      let served: string | undefined;
+      for (let attempt = 0; attempt < 60 && served === undefined; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        served = await broker.fetch(new Request("https://b.example"), cold.input).then(
+          (response) => response.text(),
+          () => undefined,
+        );
+      }
+      assertEquals(served, "cold");
+      assertEquals(cold.calls, ["allocate", "install"]);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("bounds one project's warm executors and retires its own before another project's", async () => {
+    const other = fixture(() => new Response("other"), undefined, "project-b");
+    const environments = ["environment-a", "environment-b", "environment-c"].map((id) => {
+      const f = fixture(() => new Response(id));
+      f.input.installation.environmentId = id;
+      return f;
+    });
+    const broker = createHostedHttpBroker({ maxActive: 4, maxWarmGenerationsPerProject: 2 });
+    try {
+      // The other project's executor is the least recently used of all.
+      await (await broker.fetch(new Request("https://b.example"), other.input)).text();
+      for (const f of environments.slice(0, 2)) {
+        await (await broker.fetch(new Request("https://a.example"), f.input)).text();
+      }
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), environments[2]!.input)).text(),
+        "environment-c",
+      );
+      assertEquals(count(environments[0]!.calls, "release:completed"), 1);
+      assertEquals(count(environments[1]!.calls, "release:completed"), 0);
+      assertEquals(count(other.calls, "release:completed"), 0);
+      assertEquals(broker.generations, 3);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("refuses a project at its bound whose executors are all serving, without taking another project's", async () => {
+    const other = fixture(() => new Response("other"), undefined, "project-b");
+    const busy = [heldFixture(), heldFixture()];
+    busy[1]!.input.installation.environmentId = "environment-b";
+    const third = fixture(() => new Response("third"));
+    third.input.installation.environmentId = "environment-c";
+    const broker = createHostedHttpBroker({ maxActive: 4, maxWarmGenerationsPerProject: 2 });
+    try {
+      await (await broker.fetch(new Request("https://b.example"), other.input)).text();
+      const inFlight = busy.map((f) => broker.fetch(new Request("https://a.example"), f.input));
+      await Promise.all(busy.map((f) => f.entered));
+      await assertRejects(
+        () => broker.fetch(new Request("https://a.example"), third.input),
+        Error,
+        "capacity",
+      );
+      assertEquals(third.calls, []);
+      assertEquals(count(other.calls, "release:completed"), 0);
+      // The other project is unaffected by this project's bound.
+      assertEquals(
+        await (await broker.fetch(new Request("https://b.example"), other.input)).text(),
+        "other",
+      );
+      for (const f of busy) f.respond(new Response("done"));
+      for (const response of await Promise.all(inFlight)) await response.text();
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("keeps generation order for an environment whose executor was retired to make room", async () => {
+    const current = fixture(() => new Response("current"));
+    current.input.installation.configurationId = "config-b";
+    const stale = fixture(() => new Response("stale"));
+    stale.input.session.request.requestedAt = current.input.session.request.requestedAt - 1_000;
+    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), current.input)).text();
+      await (await broker.fetch(new Request("https://b.example"), cold.input)).text();
+      assertEquals(count(current.calls, "release:completed"), 1);
+      await assertRejects(
+        () => broker.fetch(new Request("https://a.example"), stale.input),
+        Error,
+        "newer generation",
+      );
+      assertEquals(stale.calls, []);
+      // The same generation is admitted again, retiring the idle cold executor.
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), current.input)).text(),
+        "current",
+      );
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("keeps generation order for an environment that is no longer tracked", async () => {
+    const current = fixture(() => new Response("current"));
+    current.input.installation.configurationId = "config-b";
+    const at = current.input.session.request.requestedAt -= 1_000;
+    const stale = fixture(() => new Response("stale"));
+    stale.input.session.request.requestedAt = at - 1_000;
+    // Authorized after `current`, at this fixture's own creation time.
+    const later = fixture(() => new Response("later"));
+    const other = fixture(() => new Response("other"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 2, maxTrackedEnvironments: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), current.input)).text();
+      // Tracking the other environment drops the first one's order record.
+      await (await broker.fetch(new Request("https://b.example"), other.input)).text();
+      await assertRejects(
+        () => broker.fetch(new Request("https://a.example"), stale.input),
+        Error,
+        "newer generation",
+      );
+      assertEquals(stale.calls, []);
+      // An authorization that began after the dropped record is still admitted.
+      assertEquals(
+        await (await broker.fetch(new Request("https://a.example"), later.input)).text(),
+        "later",
+      );
     } finally {
       await broker.shutdown();
       await broker.settled;
@@ -536,6 +765,9 @@ describe("hosted HTTP generation broker", () => {
         { maxConcurrentRequestsPerExecutor: 0 },
         { maxConcurrentRequestsPerExecutor: 17 },
         { executionPolicyId: "" },
+        { maxWarmGenerationsPerProject: 0 },
+        { maxWarmGenerationsPerProject: 2 },
+        { maxTrackedEnvironments: 0 },
       ]
     ) {
       assertThrows(() => createHostedHttpBroker({ maxActive: 1, ...options }), TypeError);
@@ -581,6 +813,24 @@ describe("hosted HTTP generation executor", () => {
       await assertRejects(() => executor.render(new Request("https://app.example")));
     } finally {
       f.releaseAllowed.resolve();
+      await sessions.shutdown();
+      await sessions.settled;
+    }
+  });
+
+  it("leaves no deadline timer behind when its session starts already stopped", async () => {
+    const f = fixture(() => new Response("served"));
+    const owner = new AbortController();
+    owner.abort(new Error("owner stopped"));
+    f.input.session.ownerSignal = owner.signal;
+    const { executor, sessions } = executorFor(f);
+    try {
+      await assertRejects(() => executor.render(new Request("https://app.example")));
+      await executor.ended;
+      await executor.stop();
+      assertEquals(f.calls, []);
+      // The test runner fails this case if a timer armed by the executor is still pending.
+    } finally {
       await sessions.shutdown();
       await sessions.settled;
     }

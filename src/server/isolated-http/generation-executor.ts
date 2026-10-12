@@ -213,13 +213,14 @@ export function createHostedHttpGenerationExecutor(
       },
     });
     session = started;
-    // A stopped session never serves again, whatever stopped it.
-    if (started.signal.aborted) retire();
-    else started.signal.addEventListener("abort", retire, { once: true });
-    deadlineTimer = setTimeout(
-      retire,
-      timerDelay(admissible),
-    );
+    // A stopped session never serves again, whatever stopped it. Arm the deadline only
+    // for a session that can still serve, so a retired executor leaves no timer behind.
+    if (started.signal.aborted) {
+      retire();
+    } else {
+      started.signal.addEventListener("abort", retire, { once: true });
+      deadlineTimer = setTimeout(retire, timerDelay(admissible));
+    }
     return (async () => {
       channel = await started.ready;
       const binding = started.binding;
