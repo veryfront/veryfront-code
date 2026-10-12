@@ -49,7 +49,7 @@ export type IntegrationClientConnection = IntegrationJsonObject & {
   status: "connected" | "expired" | "disconnected";
 };
 
-/** The OAuth status response, with the requested scope recorded by the client. */
+/** The legacy OAuth status shape, with the requested scope recorded by the client. */
 export type IntegrationConnectionStatus = IntegrationJsonObject & {
   connected: boolean;
   integration: string;
@@ -239,7 +239,8 @@ export interface IntegrationClient {
   /**
    * Read OAuth connectivity for an explicit scope, not executable readiness.
    *
-   * @deprecated Use `getConnectionStatus`. `status()` still calls the legacy status route.
+   * @deprecated Use `getConnectionStatus`. `status()` reads the same route and returns the
+   * legacy response shape.
    */
   status(
     integration: string,
