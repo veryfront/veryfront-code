@@ -565,6 +565,27 @@ describe("conversations SDK request handling", () => {
     assertEquals(requests.length, 0);
   });
 
+  it("rejects a dot-segment path parameter before sending", async () => {
+    for (const segment of [".", ".."]) {
+      const { conversation, requests } = attached([]);
+
+      await assertRejects(() => conversation.deleteMessage(segment), TypeError, "message_id");
+      await assertRejects(() => conversation.getMessage(segment), TypeError, "message_id");
+      await assertRejects(() => conversation.deleteParticipant(segment), TypeError, "user_id");
+      assertEquals(requests.length, 0);
+
+      const recording = createRecordingTransport([]);
+      const dotConversation = Conversation.attach(segment, { transport: recording.transport });
+      await assertRejects(() => dotConversation.delete(), TypeError, "conversation_id");
+      await assertRejects(
+        () => Conversation.get(segment, { transport: recording.transport }),
+        TypeError,
+        "conversation_id",
+      );
+      assertEquals(recording.requests.length, 0);
+    }
+  });
+
   it("passes the caller's signal to the transport", async () => {
     const { conversation, requests } = attached([Response.json(WIRE_MESSAGE)]);
     const controller = new AbortController();
@@ -592,10 +613,54 @@ describe("conversations SDK request handling", () => {
     const error = await assertRejects(
       () => Conversation.get(CONVERSATION_ID, { transport }),
       VeryfrontError,
-      "Conversation not found",
+      "getConversation failed with status 404",
     ) as VeryfrontError;
 
     assertEquals(error.status, 404);
+    assertEquals(conversationsProblemOf(error), problem);
+  });
+
+  it("keeps the problem body out of the error message and the log", async () => {
+    const callerData = "caller-idempotency-key-5f1c";
+    const problem = {
+      type: "https://veryfront.com/problems/conflict",
+      title: `Conflict for ${callerData}`,
+      status: 409,
+      detail: `The idempotency key ${callerData} was already used`,
+    };
+    const { conversation } = attached([
+      new Response(JSON.stringify(problem), {
+        status: 409,
+        headers: { "Content-Type": "application/problem+json" },
+      }),
+    ]);
+    const levels = ["debug", "info", "log", "warn", "error"] as const;
+    const originals = levels.map((level) => console[level]);
+    const logged: string[] = [];
+    for (const level of levels) {
+      console[level] = (...values: unknown[]) => {
+        logged.push(JSON.stringify(values));
+      };
+    }
+
+    let error: VeryfrontError;
+    try {
+      error = await assertRejects(
+        () =>
+          conversation.createMessage({
+            parts: [{ type: "text", text: "hi" }],
+            idempotencyKey: callerData,
+          }),
+        VeryfrontError,
+      ) as VeryfrontError;
+    } finally {
+      levels.forEach((level, index) => {
+        console[level] = originals[index]!;
+      });
+    }
+
+    assert(!logged.join("\n").includes(callerData), "the log contains the problem body");
+    assertEquals(error.message, "createConversationMessage failed with status 409");
     assertEquals(conversationsProblemOf(error), problem);
   });
 

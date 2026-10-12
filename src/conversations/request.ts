@@ -8,6 +8,7 @@ import {
   readVeryfrontApiResponse,
   type VeryfrontApiTransport,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { CONVERSATIONS_OPERATIONS, type ConversationsOperationId } from "./operations.ts";
 import type { ConversationClientOptions, ConversationsProblem } from "./types.ts";
 
@@ -22,12 +23,16 @@ export interface ConversationsWireInput {
 
 const PATH_PARAMETER = /\{(\w+)\}/g;
 
+/** Most bytes read from an error response body. */
+const MAX_PROBLEM_BODY_BYTES = 8 * 1024;
+
 function buildPath(operationId: ConversationsOperationId, input: ConversationsWireInput): string {
   const path = CONVERSATIONS_OPERATIONS[operationId].path.replace(
     PATH_PARAMETER,
     (_match: string, name: string) => {
       const value = input.path?.[name];
-      if (typeof value !== "string" || value.length === 0) {
+      // URL resolution collapses "." and "..", which would address the parent resource.
+      if (typeof value !== "string" || value.length === 0 || value === "." || value === "..") {
         throw new TypeError(`${operationId} requires the path parameter ${name}`);
       }
       return encodeURIComponent(value);
@@ -67,8 +72,10 @@ function problemError(
   text: string,
 ): VeryfrontError {
   const problem = readProblem(response, text);
+  // The message holds only the operation and status: a problem body can echo caller data,
+  // so it stays in the context for conversationsProblemOf.
   return API_CLIENT_ERROR.create({
-    detail: problem.detail ?? problem.title,
+    detail: `${operationId} failed with status ${response.status}`,
     status: response.status,
     instance: problem.instance,
     context: { operationId, problem },
@@ -90,15 +97,16 @@ export function sendConversationsOperation(
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
     signal,
     onResponse: async (response, responseInit, url, responseSignal) => {
-      try {
+      if (response.ok) {
         return await readVeryfrontApiResponse(response, responseInit, url, responseSignal);
-      } catch (error) {
-        if (!response.ok && error instanceof VeryfrontError) {
-          const context = error.context as { details?: { responseText?: string } } | undefined;
-          throw problemError(operationId, response, context?.details?.responseText ?? "");
-        }
-        throw error;
       }
+      // Read the error body here: the shared reader would log it.
+      const { text } = await readResponseTextPrefix(
+        response,
+        MAX_PROBLEM_BODY_BYTES,
+        responseSignal,
+      );
+      throw problemError(operationId, response, text);
     },
   });
 }
