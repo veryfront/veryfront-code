@@ -201,11 +201,21 @@ export type IntegrationConnectionWaitOutcome =
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
-  /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
+  /** Read fresh selected-tool metadata. This neither runs a tool nor verifies provider access. */
+  checkReadiness(
+    toolName: string,
+    options?: IntegrationSelectionOptions,
+  ): Promise<IntegrationSelectedReadiness>;
+  /** @deprecated Use `checkReadiness`. */
   readiness(
     toolName: string,
     options?: IntegrationSelectionOptions,
   ): Promise<IntegrationSelectedReadiness>;
+  /** Traverse the integration catalog. */
+  listIntegrations(
+    options?: { search?: string; sortOrder?: "asc" | "desc" },
+  ): AsyncIterable<IntegrationCatalogEntry>;
+  /** @deprecated Use `listIntegrations`. */
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },
   ): AsyncIterable<IntegrationCatalogEntry>;
@@ -259,6 +269,13 @@ export interface IntegrationClient {
     integration: string,
     options: IntegrationConnectionWaitOptions,
   ): Promise<IntegrationConnectionWaitOutcome>;
+  /** Run one integration tool by its `integration__tool_id` name. Runs are never replayed. */
+  runTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    options?: IntegrationCallOptions,
+  ): Promise<IntegrationCallOutcome>;
+  /** @deprecated Use `runTool`. */
   call(
     toolName: string,
     args: Record<string, unknown>,

@@ -186,7 +186,7 @@ describe("bounded connection wait", () => {
       const url = new URL(String(input));
       const headers = { "x-veryfront-project-id": project.id };
       if (url.pathname === `/projects/${project.id}`) return Response.json(project);
-      if (url.pathname === "/integrations/tools/list") {
+      if (url.pathname === "/integration-tools") {
         return Response.json({ tools: [] }, { headers });
       }
       const generation = generations[Math.min(statusReads, 1)];

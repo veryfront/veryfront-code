@@ -706,6 +706,31 @@ it("reserved platform inventory requires provenance under every source policy", 
   }
 });
 
+for (const name of ["check_integration_readiness", "veryfront__check_integration_readiness"]) {
+  it(`fills the active project for ${name}`, () => {
+    const definition = toolDefinition({ name });
+    definition.parameters = {
+      type: "object",
+      properties: {
+        project_reference: { type: "string" },
+        name: { type: "string" },
+        tool_name: { type: "string" },
+      },
+      required: ["project_reference", "name", "tool_name"],
+    };
+    for (const toolInput of [{}, { project_reference: "foreign" }]) {
+      assertEquals(
+        hydrateProjectScopedRemoteToolInput({
+          toolDefinition: definition,
+          activeProjectId: "project-1",
+          toolInput: { name: "gmail", tool_name: "gmail__list_emails", ...toolInput },
+        }),
+        { name: "gmail", tool_name: "gmail__list_emails", project_reference: "project-1" },
+      );
+    }
+  });
+}
+
 for (const name of ["get_integration", "veryfront__get_integration"]) {
   it(`keeps ${name} catalog discovery separate from private selected readiness`, () => {
     const definition = toolDefinition({ name });

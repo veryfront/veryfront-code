@@ -2042,7 +2042,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
     await withMockFetch(
       async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        if (new URL(request.url).pathname === "/integrations/tools/list") {
+        if (new URL(request.url).pathname === "/integration-tools") {
           authorizationHeader = request.headers.get("Authorization");
           projectSlugHeader = request.headers.get("x-veryfront-project-slug");
           return Response.json({
