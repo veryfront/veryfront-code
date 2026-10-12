@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { wrapFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -126,6 +128,38 @@ describe(
         bundle.dependencies.some((dependency) => dependency.path.endsWith("/config/chart.json")),
         true,
       );
+    });
+
+    it("bundles from a wrapped virtual filesystem without a snapshot reader", async () => {
+      // Hosted proxy mode: FSAdapterWrapper over a link-free API filesystem
+      // publishes the absent snapshot reader as an own `undefined` (#5109).
+      const projectDir = "/app";
+      const entryPath = `${projectDir}/app/page.tsx`;
+      const base = createMockAdapter();
+      base.fs.files.set(
+        entryPath,
+        [
+          '"use client";',
+          'import { label } from "../components/Dashboard.tsx";',
+          "export default function Page() { return label; }",
+        ].join("\n"),
+      );
+      base.fs.files.set(
+        `${projectDir}/components/Dashboard.tsx`,
+        'export const label = "WRAPPED_FS_MARKER";',
+      );
+      const { readFileSnapshotWithinLimit: _snapshot, ...virtualFs } = base.fs;
+      const wrapped = wrapFSAdapter(virtualFs as unknown as FSAdapter);
+      assertEquals(Object.hasOwn(wrapped, "readFileSnapshotWithinLimit"), true);
+      const adapter = { ...base, fs: wrapped } as unknown as typeof base;
+
+      const bundle = await bundleBrowserModuleWithMetadata(entryPath, {
+        adapter,
+        projectDir,
+        requireClientBoundary: true,
+      });
+
+      assertStringIncludes(bundle.source, "WRAPPED_FS_MARKER");
     });
 
     it("rejects a browser entry reached through a symbolic link", async () => {
