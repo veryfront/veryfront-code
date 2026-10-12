@@ -786,6 +786,27 @@ describe("hosted HTTP host composition", () => {
     );
   });
 
+  it("accepts a configuration key of exactly 16 KiB and refuses a larger one", async () => {
+    const start = (key: Uint8Array) => {
+      const host = defaultFiles();
+      host.files.set("/host/configuration-key", key);
+      return createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile: host.readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+      });
+    };
+    const composition = await start(new Uint8Array(16 * 1024).fill(0x41));
+    assertEquals(typeof composition.ingress.resolve, "function");
+    await assertRejects(
+      () => start(new Uint8Array(16 * 1024 + 1).fill(0x41)),
+      Error,
+      "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE is too large",
+    );
+  });
+
   it("reads the configuration key as raw bytes, without decoding or trimming", async () => {
     const host = defaultFiles();
     // Not valid UTF-8, and starts and ends with whitespace bytes.

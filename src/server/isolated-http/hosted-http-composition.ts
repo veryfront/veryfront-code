@@ -20,6 +20,8 @@ import { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled } from "./hoste
 export { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled };
 
 const MAX_TOKEN_BYTES = 16 * 1024;
+/** Upper bound for the configuration key file; part of the documented key contract. */
+const MAX_CONFIGURATION_KEY_BYTES = 16 * 1024;
 const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
@@ -58,8 +60,9 @@ export interface HostedHttpCompositionConfig {
   /** `VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID`: service account named by edge source credentials. */
   serviceAccountId: string;
   /**
-   * `VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE`: deployment-wide secret, at least 32 bytes,
-   * so every replica derives the same configuration identity.
+   * `VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE`: deployment-wide secret of 32 bytes to
+   * 16 KiB, so every replica derives the same configuration identity. A shorter or larger
+   * file fails startup.
    */
   configurationKeyFile: string;
   /** `VERYFRONT_API_BASE_URL`: API that authorizes each request's source token. */
@@ -547,7 +550,7 @@ export async function createHostedHttpComposition(
         read,
         "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
         config.configurationKeyFile,
-        MAX_TOKEN_BYTES,
+        MAX_CONFIGURATION_KEY_BYTES,
         signal,
       );
       // A read that outlives the startup deadline still returns the key to nobody;
