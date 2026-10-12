@@ -13,6 +13,7 @@ import {
   type HostedExecutorSessionPoolOptions,
 } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
+import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
 import { SERVICE_OVERLOADED } from "#veryfront/errors";
 import { serverLogger as logger } from "#veryfront/utils";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
@@ -113,6 +114,37 @@ interface WarmGeneration {
 function assertWithinDeadline(input: PreparedHostedHttpInput): void {
   if (input.allocation.hardDeadlineAt <= Date.now()) {
     throw SERVICE_OVERLOADED.create({ detail: "HTTP executor allocation deadline has passed" });
+  }
+}
+
+/**
+ * Apply the deadline rules a new executor session enforces to every request, since a
+ * request served by a warm executor opens no session of its own. A request stamped in the
+ * future would otherwise also move its environment's generation order ahead of the clock.
+ */
+function assertBoundedAllocation(input: PreparedHostedHttpInput): void {
+  const { requestedAt, prepareDeadlineAt, hardDeadlineAt } = input.allocation;
+  const now = Date.now();
+  if (
+    requestedAt > now || prepareDeadlineAt <= now ||
+    hardDeadlineAt - requestedAt > EXECUTOR_MAX_TIMEOUT_MS
+  ) {
+    throw new TypeError("HTTP executor allocation deadline is expired or unbounded");
+  }
+}
+
+/** Settle with `operation`, or reject with the abort reason as soon as `signal` aborts. */
+async function untilAborted<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -324,6 +356,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     identity: Readonly<WorkerGenerationIdentity>,
     requestedAt: number,
     projectId: string,
+    signal: AbortSignal,
   ) {
     for (let attempt = 0;; attempt++) {
       order(identity, requestedAt);
@@ -339,9 +372,12 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       const room = makeRoom(projectId, current);
       if (room) {
         if (attempt >= MAX_ROOM_ATTEMPTS) throw exhausted();
+        // Other waiters share this retirement; it continues if this request gives up.
+        room.catch(() => {});
         try {
-          await room;
-        } catch {
+          await untilAborted(room, signal);
+        } catch (error) {
+          if (signal.aborted) throw error;
           // The release was not confirmed in time. Its slot stays reserved.
           throw exhausted();
         }
@@ -382,6 +418,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
     // A warm executor runs under the allocation that created it, so each request's own
     // execution authority is checked here, before and after any wait for a slot, and its
     // own hard deadline ends the request through its response body.
+    assertBoundedAllocation(input);
     assertWithinDeadline(input);
     const expiry = new AbortController();
     // Cleared when the request settles, so a finished request leaves no timer behind.
@@ -402,7 +439,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
       signal.throwIfAborted();
       // Admission counts this request on its slot; a request in flight keeps its executor
       // from being retired to make room.
-      key = await currentKey(identity, input.allocation.requestedAt, projectId);
+      key = await currentKey(identity, input.allocation.requestedAt, projectId, signal);
     } catch (error) {
       clearTimeout(expiryTimer);
       throw error;

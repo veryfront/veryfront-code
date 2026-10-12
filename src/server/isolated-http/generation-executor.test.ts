@@ -382,6 +382,73 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("refuses a warm request stamped in the future without moving generation order", async () => {
+    const f = fixture(() => new Response("served"));
+    const next = fixture(() => new Response("next"));
+    next.input.installation.configurationId = "config-b";
+    const broker = createHostedHttpBroker({ maxActive: 2 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "served",
+      );
+      const now = Date.now();
+      await assertRejects(
+        () =>
+          broker.fetch(new Request("https://app.example"), {
+            ...f.input,
+            session: {
+              ...f.input.session,
+              request: {
+                ...f.input.session.request,
+                requestedAt: now + 60_000,
+                prepareDeadlineAt: now + 61_000,
+                hardDeadlineAt: now + 62_000,
+              },
+            },
+          }),
+        TypeError,
+        "expired or unbounded",
+      );
+      // A release change authorized now is still ordered after the warm generation.
+      next.input.session.request.requestedAt = Date.now() + 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), next.input)).text(),
+        "next",
+      );
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("ends a cold request that is cancelled while it waits for a slot", async () => {
+    const idle = fixture(() => new Response("idle"));
+    idle.holdRelease();
+    const cold = fixture(() => new Response("cold"), undefined, "project-b");
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await (await broker.fetch(new Request("https://a.example"), idle.input)).text();
+      const caller = new AbortController();
+      const waiting = broker.fetch(
+        new Request("https://b.example", { signal: caller.signal }),
+        cold.input,
+      );
+      waiting.catch(() => {});
+      await idle.releaseEntered.promise;
+      caller.abort(new Error("caller left"));
+      // The request ends now, although the retirement it waited for is still held.
+      await assertRejects(() => waiting, Error, "caller left");
+      assertEquals(cold.calls, []);
+      idle.releaseAllowed.resolve();
+    } finally {
+      idle.releaseAllowed.resolve();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("refuses a request whose own allocation deadline has passed, also on a warm executor", async () => {
     const f = fixture(() => new Response("served"));
     const broker = createHostedHttpBroker({ maxActive: 1 });
