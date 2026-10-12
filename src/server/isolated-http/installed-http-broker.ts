@@ -1,3 +1,4 @@
+import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
 import { getHostedExecutorImageSchema } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import {
@@ -33,7 +34,11 @@ export interface InstalledHttpBrokerOptions {
     readonly settled?: Promise<void>;
   };
   maxActive: number;
-  /** Executor lifetime after authorization, including preparation and streamed response; 1ms through 24h, default 75s. Align with the host request timeout and allocator policy. */
+  /**
+   * Executor lifetime after authorization, including preparation and streamed response; 1ms
+   * through 24h, default 75s. Authorization time and this lifetime together never exceed
+   * 24h. Align with the host request timeout and allocator policy.
+   */
   requestLifetimeMs?: number;
 }
 
@@ -145,6 +150,10 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     const requestedAt = Date.now();
     await authorize(Object.freeze({ ...binding, sourceToken }), lifetime);
     lifetime.throwIfAborted();
+    // The configured lifetime runs from the end of authorization. The allocation as a
+    // whole, authorization included, stays within the executor session bound.
+    const now = Date.now();
+    const hardDeadlineAt = Math.min(now + requestLifetimeMs, requestedAt + EXECUTOR_MAX_TIMEOUT_MS);
     const configuration = selected.configuration;
     const source = { type: "release" as const, releaseId: binding.releaseId };
     const projectOwner = { scopeKind: "project" as const, projectId: binding.projectId };
@@ -157,10 +166,8 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
           source,
           executionProfile: "http",
           requestedAt,
-          // Deadlines run from the same instant, so the configured lifetime is the whole
-          // allocation lifetime, including the time authorization took.
-          prepareDeadlineAt: requestedAt + Math.min(30_000, requestLifetimeMs),
-          hardDeadlineAt: requestedAt + requestLifetimeMs,
+          prepareDeadlineAt: Math.min(now + Math.min(30_000, requestLifetimeMs), hardDeadlineAt),
+          hardDeadlineAt,
         },
         expectedBrokerInstanceId,
         expectedImage: selected.image,
