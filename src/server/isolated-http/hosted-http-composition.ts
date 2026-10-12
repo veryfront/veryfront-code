@@ -292,6 +292,9 @@ export async function readHostFilePrefix(
     // Wipe before closing, so a close that never settles cannot retain the bytes.
     buffer.fill(0);
   }
+  // Only a close still pending at the bound is tracked below. A close that has
+  // settled, fulfilled or rejected, has released the descriptor on the supported
+  // runtime, so a rejected close fails this read but leaves no handle to count.
   let closeSettled = false;
   const closing = handle.close();
   closing.then(() => closeSettled = true, () => closeSettled = true);
