@@ -29,7 +29,7 @@ export interface InFlightRequestSample {
 
 export interface EventLoopStall {
   lagMs: number;
-  /** Monotonic time of the last on-time tick, i.e. when the block began at the latest. */
+  /** Monotonic time of the last on-time tick, i.e. the earliest the block can have begun. */
   stalledFromMs: number;
   inFlight: Array<InFlightRequestSample & { ageMs: number }>;
 }
@@ -87,9 +87,14 @@ export function createEventLoopStallDetector(
     if (lagMs > maxLagMs) maxLagMs = lagMs;
     if (lagMs < thresholdMs) return;
 
+    // The block ended at `current` and lasted at least `lagMs`, so it began no
+    // later than `current - lagMs`. A request that arrived after the last
+    // on-time tick but before that point is the likeliest culprit; newest
+    // first so long-lived streams cannot push it past the report cap.
+    const blockStartedByMs = current - lagMs;
     const inFlight = getInFlight()
-      .filter((r) => r.startTime <= stalledFromMs)
-      .sort((a, b) => a.startTime - b.startTime)
+      .filter((r) => r.startTime <= blockStartedByMs)
+      .sort((a, b) => b.startTime - a.startTime)
       .slice(0, MAX_REPORTED_REQUESTS)
       .map((r) => ({
         requestId: r.requestId,

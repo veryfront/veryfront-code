@@ -61,6 +61,17 @@ describe("server/event-loop-stall-detector", () => {
     assertEquals(h.detector.takeMaxLagMs(), 57_000);
   });
 
+  it("names a request that started after the last on-time tick but before the block", () => {
+    const h = harness([
+      { requestId: "stream", path: "/sse", method: "GET", startTime: 100 },
+      { requestId: "culprit", path: "/api/articles-2", method: "GET", startTime: 1_500 },
+    ]);
+    h.detector.start();
+    h.advance(1_000);
+    h.advance(58_000); // tick due at 2_000, block ended at 59_000
+    assertEquals(h.stalls[0]!.inFlight.map((r) => r.requestId), ["culprit", "stream"]);
+  });
+
   it("stops sampling after stop()", () => {
     const h = harness();
     h.detector.start();
