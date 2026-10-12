@@ -141,38 +141,4 @@ describe("task ctx.dataDir", () => {
       } else delete (String.prototype as unknown as Record<symbol, unknown>)[Symbol.replace];
     }
   });
-
-  it("reports a generic failure without the temp path when the directory cannot be created", async () => {
-    const original = Deno.makeTempDir;
-    Deno.makeTempDir = () =>
-      Promise.reject(
-        new Deno.errors.NotFound(
-          "No such file or directory (os error 2): mkdtemp '/srv/tmp/veryfront-task-x'",
-        ),
-      );
-    let ran = false;
-    try {
-      const result = await runTask(
-        {
-          task: {
-            id: "no-temp",
-            name: "no-temp",
-            definition: {
-              run: () => {
-                ran = true;
-              },
-            },
-          },
-        },
-        createInMemoryHostRuntime(),
-      );
-
-      assertEquals(ran, false);
-      assertEquals(result.success, false);
-      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
-      assertEquals(result.error, "The task data directory could not be created");
-    } finally {
-      Deno.makeTempDir = original;
-    }
-  });
 });

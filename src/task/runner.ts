@@ -61,14 +61,10 @@ function ownErrorField(error: unknown, key: "code" | "message"): unknown {
 }
 
 function isReadOnlyFilesystemError(error: unknown): boolean {
-  try {
-    if (ownErrorField(error, "code") === "EROFS") return true;
-    const message = ownErrorField(error, "message");
-    if (typeof message !== "string") return false;
-    return reflectApply(regExpExec, READ_ONLY_FS_PATTERN, [message]) !== null;
-  } catch {
-    return false;
-  }
+  if (ownErrorField(error, "code") === "EROFS") return true;
+  const message = ownErrorField(error, "message");
+  return typeof message === "string" &&
+    reflectApply(regExpExec, READ_ONLY_FS_PATTERN, [message]) !== null;
 }
 
 function replaceAllLiteral(text: string, search: string, replacement: string): string {
@@ -85,12 +81,7 @@ function replaceAllLiteral(text: string, search: string, replacement: string): s
 
 /** The failure text for a result or a log line, without the run's scratch directory path. */
 function describeTaskFailure(error: unknown, dataDir: string | undefined): string {
-  let message: string;
-  try {
-    message = getErrorMessage(error);
-  } catch {
-    message = "Task failed";
-  }
+  let message = getErrorMessage(error);
   if (dataDir === undefined || dataDir === "") return message;
   // The temp root can be reached through a symlinked prefix, as on macOS.
   for (const path of [`/private${dataDir}`, dataDir]) {
@@ -99,10 +90,18 @@ function describeTaskFailure(error: unknown, dataDir: string | undefined): strin
   return message;
 }
 
+/** Creates and removes the per-run `ctx.dataDir`. */
+export interface TaskScratchFs {
+  makeTempDir(options: { prefix: string }): Promise<string>;
+  remove(path: string, options: { recursive: boolean }): Promise<void>;
+}
+
+const liveScratchFs: TaskScratchFs = { makeTempDir, remove };
+
 /** Native mkdtemp errors name the host temp root, so the failure text stays generic. */
-async function createTaskDataDir(): Promise<string> {
+async function createTaskDataDir(scratchFs: TaskScratchFs): Promise<string> {
   try {
-    return await makeTempDir({ prefix: "veryfront-task-" });
+    return await scratchFs.makeTempDir({ prefix: "veryfront-task-" });
   } catch (error) {
     logger.warn("Task data directory could not be created", {
       code: ownErrorField(error, "code"),
@@ -259,6 +258,7 @@ async function resolveTaskInput(
 export async function runTask(
   options: RunTaskOptions,
   host: HostRuntime = liveHostRuntime(),
+  scratchFs: TaskScratchFs = liveScratchFs,
 ): Promise<TaskRunResult> {
   const {
     task,
@@ -340,7 +340,7 @@ export async function runTask(
       environmentId,
       ...(signal === undefined ? {} : { signal }),
       attempt,
-      dataDir: await createTaskDataDir(),
+      dataDir: await createTaskDataDir(scratchFs),
     };
     dataDir = ctx.dataDir;
 
@@ -393,7 +393,7 @@ export async function runTask(
       // Awaited in a try block rather than through the promise's own methods, which task
       // code may have replaced.
       try {
-        await remove(dataDir, { recursive: true });
+        await scratchFs.remove(dataDir, { recursive: true });
       } catch (error) {
         logger.warn("Task data directory cleanup failed", {
           target: `task:${task.id}`,
