@@ -101,4 +101,78 @@ describe("task ctx.dataDir", () => {
     assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
     assertEquals(await pathExists(seen!), false);
   });
+
+  it("classifies and redacts a failure after task code replaces regex and string hooks", async () => {
+    const originalExec = RegExp.prototype.exec;
+    const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, Symbol.replace);
+    let seen: string | undefined;
+    const task = {
+      id: "hooks",
+      name: "hooks",
+      definition: {
+        run: (ctx: TaskContext) => {
+          seen = ctx.dataDir;
+          RegExp.prototype.exec = () => {
+            throw new Error("hostile exec");
+          };
+          Object.defineProperty(String.prototype, Symbol.replace, {
+            configurable: true,
+            writable: true,
+            value: () => {
+              throw new Error("hostile replace");
+            },
+          });
+          throw new Error(`Read-only file system (os error 30): open '${ctx.dataDir}/x'`);
+        },
+      },
+    };
+
+    try {
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(result.success, false);
+      assertEquals(result.errorCode, "TASK_FILESYSTEM_READ_ONLY");
+      assertEquals(result.error?.includes(seen!), false);
+      assertEquals(result.error?.includes("'<task data dir>/x'"), true);
+    } finally {
+      RegExp.prototype.exec = originalExec;
+      if (originalReplace) {
+        Object.defineProperty(String.prototype, Symbol.replace, originalReplace);
+      } else delete (String.prototype as unknown as Record<symbol, unknown>)[Symbol.replace];
+    }
+  });
+
+  it("reports a generic failure without the temp path when the directory cannot be created", async () => {
+    const original = Deno.makeTempDir;
+    Deno.makeTempDir = () =>
+      Promise.reject(
+        new Deno.errors.NotFound(
+          "No such file or directory (os error 2): mkdtemp '/srv/tmp/veryfront-task-x'",
+        ),
+      );
+    let ran = false;
+    try {
+      const result = await runTask(
+        {
+          task: {
+            id: "no-temp",
+            name: "no-temp",
+            definition: {
+              run: () => {
+                ran = true;
+              },
+            },
+          },
+        },
+        createInMemoryHostRuntime(),
+      );
+
+      assertEquals(ran, false);
+      assertEquals(result.success, false);
+      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
+      assertEquals(result.error, "The task data directory could not be created");
+    } finally {
+      Deno.makeTempDir = original;
+    }
+  });
 });

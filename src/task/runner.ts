@@ -99,6 +99,18 @@ function describeTaskFailure(error: unknown, dataDir: string | undefined): strin
   return message;
 }
 
+/** Native mkdtemp errors name the host temp root, so the failure text stays generic. */
+async function createTaskDataDir(): Promise<string> {
+  try {
+    return await makeTempDir({ prefix: "veryfront-task-" });
+  } catch (error) {
+    logger.warn("Task data directory could not be created", {
+      code: ownErrorField(error, "code"),
+    });
+    throw new Error("The task data directory could not be created");
+  }
+}
+
 export interface RunnableTask {
   /** Stable task id used by CLI, triggers, and cloud runs. */
   id: string;
@@ -328,7 +340,7 @@ export async function runTask(
       environmentId,
       ...(signal === undefined ? {} : { signal }),
       attempt,
-      dataDir: await makeTempDir({ prefix: "veryfront-task-" }),
+      dataDir: await createTaskDataDir(),
     };
     dataDir = ctx.dataDir;
 
