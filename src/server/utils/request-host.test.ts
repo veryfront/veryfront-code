@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getClassificationRequestHost,
   getEffectiveRequestHost,
   getEffectiveRequestOrigin,
   parseForwardedHost,
@@ -31,6 +32,36 @@ describe("server/utils/request-host", () => {
   });
 
   describe("getEffectiveRequestHost", () => {
+    it("keeps the browser-visible authority, including a trailing root dot", () => {
+      const request = new Request("https://127.0.0.1/", { headers: { host: "Example.COM." } });
+      assertEquals(getEffectiveRequestHost(request), "Example.COM.");
+      assertEquals(
+        getEffectiveRequestOrigin(new Request("https://example.com./")),
+        "https://example.com.",
+      );
+    });
+
+    it("normalizes letter case and a trailing root dot for classification only", () => {
+      const request = (host: string, forwarded?: string) =>
+        new Request("https://127.0.0.1/", {
+          headers: forwarded ? { host, "x-forwarded-host": forwarded } : { host },
+        });
+      assertEquals(
+        getClassificationRequestHost(request("PROJECT.PREVIEW.VERYFRONT.COM.")),
+        "project.preview.veryfront.com",
+      );
+      assertEquals(getClassificationRequestHost(request("Example.COM.:8443")), "example.com:8443");
+      assertEquals(
+        getClassificationRequestHost(
+          request("internal", "App.Preview.Example.com."),
+          undefined,
+          true,
+        ),
+        "app.preview.example.com",
+      );
+      assertEquals(getClassificationRequestHost(request("[::1]:3000")), "[::1]:3000");
+    });
+
     it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = new Request("http://127.0.0.1:3000/test", {
         headers: {
