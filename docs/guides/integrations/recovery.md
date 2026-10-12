@@ -213,7 +213,7 @@ with `outcomeUnknown === true`, or the CLI envelope reports
 The TypeScript client and the CLI never replay the call. A read-only tool that
 fails at the provider returns a tool result instead of throwing. The result has
 `isError: true` and `structuredContent.error` set to `execution_failed`;
-`client.call` returns it with `status: "tool_error"`.
+`client.runTool` returns it with `status: "tool_error"`.
 Because a read changes nothing, you can call it once more after the provider
 recovers.
 
