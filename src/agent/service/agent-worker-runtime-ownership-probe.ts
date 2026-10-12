@@ -29,7 +29,8 @@ const RuntimeJSONstringify = JSON.stringify;
 const RuntimeObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const RuntimeObjectKeys = Object.keys;
 const RuntimeMathFround = Math.fround;
-const RuntimeStringPrototypeReplace = String.prototype.replace;
+const RuntimeStringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const RuntimeStringPrototypeSlice = String.prototype.slice;
 const RuntimeStringPrototypeReplaceAll = String.prototype.replaceAll;
 const RuntimeStringPrototypeIncludes = String.prototype.includes;
 const RuntimeStringPrototypeSplit = String.prototype.split;
@@ -42,6 +43,10 @@ const RuntimeEncodeURIComponent = encodeURIComponent;
 const RuntimeURL = URL;
 const RuntimeURLPrototypeOriginGet = Object.getOwnPropertyDescriptor(URL.prototype, "origin")!.get!;
 const RuntimeURLPrototypeHrefGet = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
+const RuntimeResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")!
+  .get!;
+const RuntimeResponseOkGet = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const RuntimeResponseText = Response.prototype.text;
 const CANONICAL_KNOWLEDGE_BRANCH = "main";
 const CANONICAL_KNOWLEDGE_MODEL = {
   name: "text-embedding-3-small",
@@ -247,10 +252,15 @@ function classifyError(error: unknown): string {
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
-  const text = await response.text().catch(() => "");
+  let text = "";
+  try {
+    text = await RuntimeReflectApply(RuntimeResponseText, response, []) as string;
+  } catch {
+    return null;
+  }
   if (text === "") return null;
   try {
-    return JSON.parse(text) as unknown;
+    return RuntimeJSONParse(text) as unknown;
   } catch {
     return { text };
   }
@@ -364,8 +374,16 @@ function runEventAuthorityHeaders(
   return { "X-Veryfront-Run-Event-Token": credentials.runEventToken };
 }
 
+function trimTrailingSlash(value: string): string {
+  const lastIndex = value.length - 1;
+  return lastIndex >= 0 &&
+      RuntimeReflectApply(RuntimeStringPrototypeCharCodeAt, value, [lastIndex]) === 47
+    ? RuntimeReflectApply(RuntimeStringPrototypeSlice, value, [0, lastIndex]) as string
+    : value;
+}
+
 function buildProbeRequestUrl(apiUrl: string, path: string): string {
-  const base = RuntimeReflectApply(RuntimeStringPrototypeReplace, apiUrl, [/\/$/, ""]) as string;
+  const base = trimTrailingSlash(apiUrl);
   const baseUrl = new RuntimeURL(base);
   const url = new RuntimeURL(`${base}${path}`);
   const baseOrigin = RuntimeReflectApply(RuntimeURLPrototypeOriginGet, baseUrl, []) as string;
@@ -398,7 +416,9 @@ async function requestJsonWire(
     },
     body: bodyWire,
   });
-  return { status: response.status, ok: response.ok, body: await readResponseBody(response) };
+  const status = RuntimeReflectApply(RuntimeResponseStatusGet, response, []) as number;
+  const ok = RuntimeReflectApply(RuntimeResponseOkGet, response, []) as boolean;
+  return { status, ok, body: await readResponseBody(response) };
 }
 
 async function requestJson(

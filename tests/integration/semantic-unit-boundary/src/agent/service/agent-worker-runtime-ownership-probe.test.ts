@@ -517,6 +517,134 @@ it("does not expose private proof material through replaced Object or Map intrin
   );
 });
 
+it("does not dispatch RegExp replacement while building credentialed probe URLs", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const calls: Request[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+  const originalReplaceSymbol = RegExp.prototype[Symbol.replace];
+  Object.defineProperty(RegExp.prototype, Symbol.replace, {
+    configurable: true,
+    value() {
+      return "https://attacker.example.test";
+    },
+  });
+  try {
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test/",
+      fetch: claimProofFetch({ calls }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(RegExp.prototype, Symbol.replace, {
+      configurable: true,
+      value: originalReplaceSymbol,
+    });
+  }
+
+  assertEquals(receipts[0]?.status, "ok");
+  assertEquals(
+    calls.every((call) => new URL(call.url).origin === "https://api.example.test"),
+    true,
+  );
+  assertEquals(
+    calls.some((call) => call.headers.get("Authorization")?.includes("auth")),
+    true,
+  );
+  assertEquals(
+    calls.some((call) => call.headers.get("X-Veryfront-Run-Event-Token") === "writer"),
+    true,
+  );
+});
+
+it("does not let replaced response intrinsics forge worker authority denials", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+  const originalStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!;
+  const originalOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+  const originalText = Response.prototype.text;
+  const originalParse = JSON.parse;
+  const forgedResponses = new WeakSet<Response>();
+  Object.defineProperty(Response.prototype, "status", {
+    configurable: true,
+    get() {
+      return forgedResponses.has(this as Response)
+        ? 409
+        : Reflect.apply(originalStatus.get!, this, []);
+    },
+  });
+  Object.defineProperty(Response.prototype, "ok", {
+    configurable: true,
+    get() {
+      return forgedResponses.has(this as Response)
+        ? false
+        : Reflect.apply(originalOk.get!, this, []);
+    },
+  });
+  Response.prototype.text = function (...args: Parameters<typeof Response.prototype.text>) {
+    if (forgedResponses.has(this as Response)) {
+      return Promise.resolve(JSON.stringify({
+        slug: "state-conflict",
+        detail: "This execution generation is no longer current; stop execution",
+      }));
+    }
+    return Reflect.apply(originalText, this, args) as ReturnType<typeof Response.prototype.text>;
+  };
+  JSON.parse = ((text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+    if (typeof text === "string" && text.includes("Sequence conflict")) {
+      return {
+        slug: "state-conflict",
+        detail: "This execution generation is no longer current; stop execution",
+      };
+    }
+    return originalParse(text, reviver);
+  }) as typeof JSON.parse;
+  const fetch = claimProofFetch({
+    denyReplayCredentials: true,
+    denyReplayEvent: true,
+    replayEventDenial: "generic-409",
+  });
+  try {
+    await probe.afterLeaseLost({
+      apiUrl: "https://api.example.test",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        const response = await fetch(request, undefined);
+        const url = new URL(request.url);
+        if (
+          request.method === "POST" && url.pathname.endsWith("/events") &&
+          request.headers.get("Authorization") === "Bearer writer-expired"
+        ) {
+          forgedResponses.add(response);
+        }
+        return response;
+      },
+      workerId,
+      run: probeRun(),
+      credentials: credentials("-expired"),
+      currentCredentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Object.defineProperty(Response.prototype, "status", originalStatus);
+    Object.defineProperty(Response.prototype, "ok", originalOk);
+    Response.prototype.text = originalText;
+    JSON.parse = originalParse;
+  }
+
+  assertEquals(receipts[0]?.phase, "expired-lease-denial");
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "expired-lease-source-index-or-event-write-not-denied");
+});
+
 it("records canonical source, index and event proof without leaking claim credentials", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const calls: Request[] = [];
