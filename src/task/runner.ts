@@ -41,8 +41,10 @@ const TASK_DATA_DIR_PLACEHOLDER = "<task data dir>";
 // Task code shares this process and may replace built-ins before it fails.
 const reflectApply = Reflect.apply;
 const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const regExpTest = RegExp.prototype.test;
-const stringReplaceAll = String.prototype.replaceAll;
+// `test` and `replaceAll` dispatch through `exec` and `Symbol.replace`; these do not.
+const regExpExec = RegExp.prototype.exec;
+const stringIndexOf = String.prototype.indexOf;
+const stringSlice = String.prototype.slice;
 const READ_ONLY_FS_PATTERN = /\(os error 30\)|\bEROFS\b|read-only file system/i;
 
 /** An own data property of a thrown value; an accessor or a hostile object yields nothing. */
@@ -59,10 +61,26 @@ function ownErrorField(error: unknown, key: "code" | "message"): unknown {
 }
 
 function isReadOnlyFilesystemError(error: unknown): boolean {
-  if (ownErrorField(error, "code") === "EROFS") return true;
-  const message = ownErrorField(error, "message");
-  return typeof message === "string" &&
-    reflectApply(regExpTest, READ_ONLY_FS_PATTERN, [message]) as boolean;
+  try {
+    if (ownErrorField(error, "code") === "EROFS") return true;
+    const message = ownErrorField(error, "message");
+    if (typeof message !== "string") return false;
+    return reflectApply(regExpExec, READ_ONLY_FS_PATTERN, [message]) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function replaceAllLiteral(text: string, search: string, replacement: string): string {
+  let result = "";
+  let from = 0;
+  for (;;) {
+    const at = reflectApply(stringIndexOf, text, [search, from]) as number;
+    if (at === -1) break;
+    result += (reflectApply(stringSlice, text, [from, at]) as string) + replacement;
+    from = at + search.length;
+  }
+  return result + (reflectApply(stringSlice, text, [from]) as string);
 }
 
 /** The failure text for a result or a log line, without the run's scratch directory path. */
@@ -76,7 +94,7 @@ function describeTaskFailure(error: unknown, dataDir: string | undefined): strin
   if (dataDir === undefined || dataDir === "") return message;
   // The temp root can be reached through a symlinked prefix, as on macOS.
   for (const path of [`/private${dataDir}`, dataDir]) {
-    message = reflectApply(stringReplaceAll, message, [path, TASK_DATA_DIR_PLACEHOLDER]) as string;
+    message = replaceAllLiteral(message, path, TASK_DATA_DIR_PLACEHOLDER);
   }
   return message;
 }

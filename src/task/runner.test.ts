@@ -528,6 +528,42 @@ describe("src/task/runner", () => {
       assertEquals(result.error, "ENOENT: no such file, open '<task data dir>/missing.json'");
     });
 
+    it("classifies and redacts a failure after task code replaces regex and string hooks", async () => {
+      const originalExec = RegExp.prototype.exec;
+      const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, Symbol.replace);
+      let seen: string | undefined;
+      const task = makeTask({
+        run: (ctx: TaskContext) => {
+          seen = ctx.dataDir;
+          RegExp.prototype.exec = () => {
+            throw new Error("hostile exec");
+          };
+          Object.defineProperty(String.prototype, Symbol.replace, {
+            configurable: true,
+            writable: true,
+            value: () => {
+              throw new Error("hostile replace");
+            },
+          });
+          throw new Error(`Read-only file system (os error 30): open '${ctx.dataDir}/x'`);
+        },
+      });
+
+      try {
+        const result = await runTask({ task }, createInMemoryHostRuntime());
+
+        assertEquals(result.success, false);
+        assertEquals(result.errorCode, "TASK_FILESYSTEM_READ_ONLY");
+        assertEquals(result.error?.includes(seen!), false);
+        assertEquals(result.error?.includes("'<task data dir>/x'"), true);
+      } finally {
+        RegExp.prototype.exec = originalExec;
+        if (originalReplace) {
+          Object.defineProperty(String.prototype, Symbol.replace, originalReplace);
+        } else delete (String.prototype as unknown as Record<symbol, unknown>)[Symbol.replace];
+      }
+    });
+
     it("gives any other thrown error the stable TASK_EXECUTION_FAILED code", async () => {
       const task = makeTask({
         run: () => {
