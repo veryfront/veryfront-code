@@ -1733,6 +1733,195 @@ describe("pullCommand", () => {
     }
   });
 
+  it("writes referenced OKF companions without pruning unmanaged local Python files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.mkdir(join(tempDir, "scripts"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "remove.ts"), "remove\n");
+      await Deno.writeTextFile(join(tempDir, "scripts", "local_helper.py"), "print('local')\n");
+      await Deno.writeTextFile(join(tempDir, ".vfignore"), "knowledge/ignored.md\n");
+      await initializeCleanTestGit(tempDir);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      const mockFetch: typeof globalThis.fetch = (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (
+          url.pathname === "/projects/alpha/files" &&
+          url.searchParams.get("branch") === "studio-change"
+        ) {
+          return Promise.resolve(
+            Response.json({
+              data: [
+                {
+                  path: "knowledge/computations/revenue-ytd.md",
+                  content:
+                    "---\ntype: Attested Computation\nresource: references/source.data\ncomputation: references/computations/lib/revenue.sql\nexecutor: ../../scripts/run.py\nattester:\n  resource: attesters/sql_equality.py\n---\nRevenue\n",
+                  size: 177,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/references/computations/lib/revenue.sql",
+                  content: "select sum(revenue) from orders;\n",
+                  size: 32,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/references/source.data",
+                  content: "opaque source bytes as UTF-8\n",
+                  size: 28,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/attesters/sql_equality.py",
+                  content: "def attest():\n    return True\n",
+                  size: 29,
+                  type: "file",
+                },
+                { path: "index.md", content: "# Project\n", size: 10, type: "file" },
+                { path: "scripts/run.py", content: "print('escape')\n", size: 16, type: "file" },
+                {
+                  path: "computations/root-result.md",
+                  content:
+                    "---\ntype: Attested Computation\nattester:\n  resource: /attesters/root_check.py\n---\nRoot result\n",
+                  size: 93,
+                  type: "file",
+                },
+                {
+                  path: "attesters/root_check.py",
+                  content: "def root_check():\n    return True\n",
+                  size: 34,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/computations/index.md",
+                  content: "# Computations\n",
+                  size: 15,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/team/computations/result.md",
+                  content:
+                    "---\ntype: Attested Computation\nattester:\n  resource: /attesters/check.py\n---\nResult\n",
+                  size: 82,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/team/index.md",
+                  content: "# Team bundle\n",
+                  size: 14,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/team/computations/index.md",
+                  content: "# Team computations\n",
+                  size: 20,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/team/attesters/check.py",
+                  content: "def check():\n    return True\n",
+                  size: 29,
+                  type: "file",
+                },
+                {
+                  path: "docs/note.md",
+                  content: "---\nresource: assets/image.bin\n---\nNote\n",
+                  size: 39,
+                  type: "file",
+                },
+                {
+                  path: "docs/assets/image.bin",
+                  content: "not an OKF companion\n",
+                  size: 21,
+                  type: "file",
+                },
+                { path: "knowledge/viz.bin", content: "viewer", size: 6, type: "file" },
+                {
+                  path: "knowledge/ignored.md",
+                  content:
+                    "---\ntype: Attested Computation\nattester:\n  resource: ignored.py\n---\nIgnored\n",
+                  size: 76,
+                  type: "file",
+                },
+                {
+                  path: "knowledge/ignored.py",
+                  content: "def ignored():\n    return True\n",
+                  size: 31,
+                  type: "file",
+                },
+              ],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`OKF companion pull fetched unexpected content: ${url}`);
+      };
+
+      await withMockFetch(
+        mockFetch,
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            branch: "studio-change",
+            prune: true,
+            force: true,
+            quiet: true,
+          }),
+      );
+
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "knowledge", "computations", "revenue-ytd.md")),
+        "---\ntype: Attested Computation\nresource: references/source.data\ncomputation: references/computations/lib/revenue.sql\nexecutor: ../../scripts/run.py\nattester:\n  resource: attesters/sql_equality.py\n---\nRevenue\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(
+          join(tempDir, "knowledge", "references", "computations", "lib", "revenue.sql"),
+        ),
+        "select sum(revenue) from orders;\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "knowledge", "references", "source.data")),
+        "opaque source bytes as UTF-8\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "knowledge", "attesters", "sql_equality.py")),
+        "def attest():\n    return True\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(
+          join(tempDir, "knowledge", "team", "attesters", "check.py"),
+        ),
+        "def check():\n    return True\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "attesters", "root_check.py")),
+        "def root_check():\n    return True\n",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "scripts", "local_helper.py")),
+        "print('local')\n",
+      );
+      assertEquals(await exists(join(tempDir, "docs", "assets", "image.bin")), false);
+      assertEquals(await exists(join(tempDir, "knowledge", "ignored.md")), false);
+      assertEquals(await exists(join(tempDir, "knowledge", "ignored.py")), false);
+      assertEquals(await exists(join(tempDir, "knowledge", "viz.bin")), false);
+      assertEquals(await exists(join(tempDir, "scripts", "run.py")), false);
+      assertEquals(await exists(join(tempDir, "app", "remove.ts")), false);
+    } finally {
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("rejects supported local symlinks before pruning", async () => {
     if (Deno.build.os === "windows") return;
 

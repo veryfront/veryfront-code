@@ -1927,6 +1927,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
     }],
     model: "openai/gpt-5.4",
     temperature: 0.35,
+    parallelToolCalls: false,
   };
   const steeringLookups: Array<{
     projectId: string;
@@ -1962,6 +1963,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
 
   assertEquals(config?.model, "openai/gpt-5.4");
   assertEquals(config?.temperature, 0.35);
+  assertEquals(config?.parallelToolCalls, false);
   assert(Array.isArray(config?.system));
   assertEquals(config.system[0]?.providerOptions, {
     anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },

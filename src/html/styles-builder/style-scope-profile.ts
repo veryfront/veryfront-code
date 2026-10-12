@@ -1,6 +1,47 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHash } from "node:crypto";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import {
+  primordialArrayFilter,
+  primordialArrayPush,
+  primordialArraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
+
+const Apply = Reflect.apply;
+const SetConstructor = Set;
+const SetAdd = Set.prototype.add;
+const SetDelete = Set.prototype.delete;
+const SetForEach = Set.prototype.forEach;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
+const StringLastIndexOf = String.prototype.lastIndexOf;
+const JSONStringify = JSON.stringify;
+const CreateHash = createHash;
+const hashMethods = CreateHash("sha256");
+const HashUpdate = hashMethods.update;
+const HashDigest = hashMethods.digest;
+
+function sortedSetValues(values: Set<string>): string[] {
+  const result: string[] = [];
+  Apply(SetForEach, values, [(value: string) => primordialArrayPush(result, value)]);
+  return primordialArraySort(result, compareStrings);
+}
+
+function somePath(values: readonly string[], predicate: (value: string) => boolean): boolean {
+  for (let index = 0; index < values.length; index++) {
+    if (predicate(values[index]!)) return true;
+  }
+  return false;
+}
+
+function stringifyPaths(values: readonly string[]): string {
+  let result = "[";
+  for (let index = 0; index < values.length; index++) {
+    if (index > 0) result += ",";
+    result += JSONStringify(values[index]);
+  }
+  return result + "]";
+}
 
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
@@ -30,58 +71,93 @@ export interface StyleScopeProfile {
 }
 
 function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  let normalized = "";
+  let previousSlash = false;
+  for (let index = 0; index < path.length; index++) {
+    const character = path[index] === "\\" ? "/" : path[index]!;
+    if (character === "/" && previousSlash) continue;
+    normalized += character;
+    previousSlash = character === "/";
+  }
+  return normalized;
+}
+
+function trimTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  return Apply(StringSlice, path, [0, end]) as string;
+}
+
+function trimSlashes(path: string, trailing = true): string {
+  let start = 0;
+  let end = path.length;
+  while (path[start] === "/") start++;
+  if (trailing) { while (end > start && path[end - 1] === "/") end--; }
+  return Apply(StringSlice, path, [start, end]) as string;
 }
 
 function normalizeRelativePath(path: string): string {
-  return normalizePath(path).replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimSlashes(normalizePath(path));
 }
 
 function toRelativeProjectPath(path: string, projectDir?: string): string {
   const normalized = normalizePath(path);
   const normalizedProjectDir = projectDir
-    ? normalizePath(projectDir).replace(/\/+$/, "")
+    ? trimTrailingSlashes(normalizePath(projectDir))
     : undefined;
 
-  if (normalizedProjectDir && normalized.startsWith(normalizedProjectDir)) {
-    return normalized.slice(normalizedProjectDir.length).replace(/^\/+/, "");
+  if (normalizedProjectDir && Apply(StringStartsWith, normalized, [normalizedProjectDir])) {
+    return trimSlashes(
+      Apply(StringSlice, normalized, [normalizedProjectDir.length]) as string,
+      false,
+    );
   }
 
-  return normalized.replace(/^\/+/, "");
+  return trimSlashes(normalized, false);
 }
 
 function isWithinPath(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
+  return path === root || Apply(StringStartsWith, path, [`${root}/`]);
 }
 
 function getParentDirectory(path: string): string | null {
   const normalized = normalizeRelativePath(path);
-  const slashIndex = normalized.lastIndexOf("/");
+  const slashIndex = Apply(StringLastIndexOf, normalized, ["/"]) as number;
   if (slashIndex <= 0) return null;
-  return normalized.slice(0, slashIndex);
+  return Apply(StringSlice, normalized, [0, slashIndex]) as string;
 }
 
 function stableHash(input: string): string {
-  return createHash("sha256").update(input, "utf8").digest("hex");
+  const hash = CreateHash("sha256");
+  Apply(HashUpdate, hash, [input, "utf8"]);
+  return Apply(HashDigest, hash, ["hex"]) as string;
 }
 
 function addNormalizedPath(target: Set<string>, value: string | null | undefined): void {
   if (!value) return;
   const normalized = normalizeRelativePath(value);
   if (!normalized) return;
-  target.add(normalized);
+  Apply(SetAdd, target, [normalized]);
 }
 
 export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopeProfile {
-  const ignoredRoots = new Set<string>(DEFAULT_IGNORED_ROOTS);
-  const protectedRoots = new Set<string>(DEFAULT_PROTECTED_ROOTS);
-  const protectedPaths = new Set<string>();
+  const ignoredRoots = new SetConstructor<string>();
+  const protectedRoots = new SetConstructor<string>();
+  const protectedPaths = new SetConstructor<string>();
+
+  for (let index = 0; index < DEFAULT_IGNORED_ROOTS.length; index++) {
+    Apply(SetAdd, ignoredRoots, [DEFAULT_IGNORED_ROOTS[index]]);
+  }
+  for (let index = 0; index < DEFAULT_PROTECTED_ROOTS.length; index++) {
+    Apply(SetAdd, protectedRoots, [DEFAULT_PROTECTED_ROOTS[index]]);
+  }
 
   addNormalizedPath(protectedRoots, config?.directories?.app);
   addNormalizedPath(protectedRoots, config?.directories?.pages);
 
-  for (const path of config?.directories?.components ?? []) {
-    addNormalizedPath(protectedRoots, path);
+  const components = config?.directories?.components ?? [];
+  for (let index = 0; index < components.length; index++) {
+    addNormalizedPath(protectedRoots, components[index]);
   }
 
   const explicitPaths = [
@@ -90,29 +166,26 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     config?.tailwind?.stylesheet,
   ];
 
-  for (const path of explicitPaths) {
+  for (let index = 0; index < explicitPaths.length; index++) {
+    const path = explicitPaths[index];
     addNormalizedPath(protectedPaths, path);
     addNormalizedPath(protectedRoots, getParentDirectory(path ?? ""));
   }
 
-  for (const root of protectedRoots) {
-    ignoredRoots.delete(root);
-  }
+  Apply(SetForEach, protectedRoots, [(root: string) => Apply(SetDelete, ignoredRoots, [root])]);
 
-  const sortedIgnoredRoots = [...ignoredRoots].sort(compareStrings);
-  const sortedProtectedRoots = [...protectedRoots].sort(compareStrings);
-  const sortedProtectedPaths = [...protectedPaths].sort(compareStrings);
+  const sortedIgnoredRoots = sortedSetValues(ignoredRoots);
+  const sortedProtectedRoots = sortedSetValues(protectedRoots);
+  const sortedProtectedPaths = sortedSetValues(protectedPaths);
 
   return {
     ignoredRoots: sortedIgnoredRoots,
     protectedRoots: sortedProtectedRoots,
     protectedPaths: sortedProtectedPaths,
     hash: stableHash(
-      JSON.stringify({
-        ignoredRoots: sortedIgnoredRoots,
-        protectedRoots: sortedProtectedRoots,
-        protectedPaths: sortedProtectedPaths,
-      }),
+      `{"ignoredRoots":${stringifyPaths(sortedIgnoredRoots)},"protectedRoots":${
+        stringifyPaths(sortedProtectedRoots)
+      },"protectedPaths":${stringifyPaths(sortedProtectedPaths)}}`,
     ),
   };
 }
@@ -121,8 +194,8 @@ function isProtectedPath(
   profile: StyleScopeProfile,
   relativePath: string,
 ): boolean {
-  return profile.protectedPaths.some((path) => isWithinPath(relativePath, path)) ||
-    profile.protectedRoots.some((path) => isWithinPath(relativePath, path));
+  return somePath(profile.protectedPaths, (path) => isWithinPath(relativePath, path)) ||
+    somePath(profile.protectedRoots, (path) => isWithinPath(relativePath, path));
 }
 
 export function shouldIncludeStylePath(
@@ -134,7 +207,7 @@ export function shouldIncludeStylePath(
   if (!relativePath) return true;
   if (isProtectedPath(profile, relativePath)) return true;
 
-  return !profile.ignoredRoots.some((root) => isWithinPath(relativePath, root));
+  return !somePath(profile.ignoredRoots, (root) => isWithinPath(relativePath, root));
 }
 
 export function shouldTraverseStyleDirectory(
@@ -146,11 +219,10 @@ export function shouldTraverseStyleDirectory(
   if (!relativePath) return true;
   if (isProtectedPath(profile, relativePath)) return true;
 
-  const ignoredRoot = profile.ignoredRoots.find((root) => isWithinPath(relativePath, root));
-  if (!ignoredRoot) return true;
+  if (!somePath(profile.ignoredRoots, (root) => isWithinPath(relativePath, root))) return true;
 
-  return profile.protectedRoots.some((root) => isWithinPath(root, relativePath)) ||
-    profile.protectedPaths.some((path) => isWithinPath(path, relativePath));
+  return somePath(profile.protectedRoots, (root) => isWithinPath(root, relativePath)) ||
+    somePath(profile.protectedPaths, (path) => isWithinPath(path, relativePath));
 }
 
 export function filterFilesForStyleScope<T extends { path: string }>(
@@ -158,5 +230,8 @@ export function filterFilesForStyleScope<T extends { path: string }>(
   profile: StyleScopeProfile,
   projectDir?: string,
 ): T[] {
-  return files.filter((file) => shouldIncludeStylePath(profile, file.path, projectDir));
+  return primordialArrayFilter(
+    files,
+    (file) => shouldIncludeStylePath(profile, file.path, projectDir),
+  );
 }

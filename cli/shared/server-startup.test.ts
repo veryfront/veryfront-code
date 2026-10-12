@@ -304,6 +304,30 @@ describe("startCliProductionServer hosted HTTP composition", () => {
     await assertRejects(() => starting, Error, "content processor failed");
   });
 
+  it("stops the listener and the broker when shutdown arrives while content is still loading", async () => {
+    const events: string[] = [];
+    const controller = new AbortController();
+    const loading = Promise.withResolvers<void>();
+    const starting = startCliProductionServer({ ...baseOptions, signal: controller.signal }, {
+      ...hostedOn(fakeComposition(events)),
+      ensureContentProcessor: () => loading.promise,
+      startServer: () =>
+        server(() => {
+          events.push("server.stop");
+          return Promise.resolve();
+        }),
+    });
+    starting.catch(() => {});
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+    assertEquals(events, [], "nothing stops while startup is still healthy");
+
+    // The process owner has no server handle yet, so only startup can release the broker.
+    controller.abort(new Error("shutdown requested"));
+    await assertRejects(() => starting, Error, "shutdown requested");
+    assertEquals([...new Set(events)].toSorted(), ["broker.shutdown", "server.stop"]);
+    loading.resolve();
+  });
+
   it("stops the listener and the broker when startup fails after listening", async () => {
     const events: string[] = [];
     await assertRejects(

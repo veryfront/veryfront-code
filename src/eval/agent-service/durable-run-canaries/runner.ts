@@ -66,6 +66,8 @@ export type DurableRunCanaryMessage = InferSchema<
 /** Public API contract for durable run canary run summary. */
 export interface DurableRunCanaryRunSummary {
   runId: string;
+  /** Verified canonical API run identity, distinct from the client admission key. */
+  canonicalRunId?: string;
   conversationId: string;
   messageId: string;
   agentId: string;
@@ -83,6 +85,7 @@ export interface DurableRunCanaryRunSummary {
 const getSnakeRunSummarySchema = defineSchema((v) =>
   v.object({
     run_id: v.string(),
+    canonical_run_id: v.string().uuid().optional(),
     conversation_id: v.string().uuid(),
     message_id: v.string().uuid(),
     agent_id: v.string(),
@@ -101,6 +104,7 @@ const getSnakeRunSummarySchema = defineSchema((v) =>
 const getCamelRunSummarySchema = defineSchema((v) =>
   v.object({
     runId: v.string(),
+    canonicalRunId: v.string().uuid().optional(),
     conversationId: v.string().uuid(),
     messageId: v.string().uuid(),
     agentId: v.string(),
@@ -128,6 +132,9 @@ export function parseDurableRunCanaryRunSummary(value: unknown): DurableRunCanar
   if (snake.success) {
     return {
       runId: snake.data.run_id,
+      ...(snake.data.canonical_run_id === undefined
+        ? {}
+        : { canonicalRunId: snake.data.canonical_run_id }),
       conversationId: snake.data.conversation_id,
       messageId: snake.data.message_id,
       agentId: snake.data.agent_id,
@@ -146,6 +153,7 @@ export function parseDurableRunCanaryRunSummary(value: unknown): DurableRunCanar
   const camel = getCamelRunSummarySchema().parse(value);
   return {
     runId: camel.runId,
+    ...(camel.canonicalRunId === undefined ? {} : { canonicalRunId: camel.canonicalRunId }),
     conversationId: camel.conversationId,
     messageId: camel.messageId,
     agentId: camel.agentId,
@@ -390,6 +398,7 @@ export function createDurableRunCanaryApiClient(
     );
     return {
       runId: input.runId,
+      canonicalRunId: run.id,
       conversationId: run.conversation_id,
       messageId: run.output_message_id,
       agentId: config.agentId,

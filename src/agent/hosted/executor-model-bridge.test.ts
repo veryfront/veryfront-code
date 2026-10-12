@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
@@ -1168,4 +1169,53 @@ describe("executor managed model bridge", () => {
       await channels.close();
     }
   });
+});
+
+it("managed model bridge preserves parallel tool control and rejects malformed controls", async () => {
+  const seen: ModelRuntimeCallOptions[] = [];
+  const model = stubModel({
+    doGenerate(options) {
+      seen.push(options);
+      return Promise.resolve({
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+    },
+  });
+  const channels = pair(
+    createExecutorModelBroker({
+      allowedModelIds,
+      resolveModelRuntime: () => model,
+      beforeModelDispatch: assertPersistedModelOptions,
+    }),
+  );
+  const resolver = await createExecutorModelRuntimeResolver({
+    channel: channels.caller,
+    allowedModelIds,
+  });
+  const client = { ...channels, proxy: resolver(modelId)! };
+  try {
+    for (const value of [false, true, undefined]) {
+      await client.proxy.doGenerate({
+        prompt,
+        ...(value === undefined ? {} : { parallelToolCalls: value }),
+      });
+      assertEquals(seen.at(-1)?.parallelToolCalls, value);
+      assertEquals(Object.hasOwn(seen.at(-1)!, "parallelToolCalls"), value !== undefined);
+    }
+    await assertRejects(async () =>
+      client.proxy.doGenerate(JSON.parse('{"prompt":[],"parallelToolCalls":"false"}'))
+    );
+    await assertRejects(async () =>
+      client.proxy.doGenerate({
+        prompt,
+        parallelToolCalls: false,
+        providerOptions: { openai: { parallel_tool_calls: true } },
+      })
+    );
+    assertEquals(seen.length, 3);
+  } finally {
+    await client.close();
+  }
 });

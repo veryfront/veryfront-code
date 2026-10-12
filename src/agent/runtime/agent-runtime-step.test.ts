@@ -14,6 +14,7 @@ import {
   markTrustedPlatformPolicyToolResultPart,
 } from "./skill-policy-enforcement.ts";
 import { createToolExposureState } from "./tool-exposure.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { flattenSystemInstructions } from "./tool-inventory.ts";
 
 function systemText(system: AgentSystem): string {
@@ -116,8 +117,11 @@ describe("agent/runtime-step", () => {
       config: {
         model: "auto",
         system: "Base",
-        tools: true,
-      } as AgentConfig,
+        toolLoading: "deferred",
+        tools: {
+          load_skill: markTrustedHostToolProvenance({ id: "load_skill", description: "Loader" }),
+        },
+      } as unknown as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [
         toolDefinition("create_release"),
@@ -144,6 +148,119 @@ describe("agent/runtime-step", () => {
     assertEquals(
       prepared.toolExposurePlan.deferred.map((tool) => tool.name),
       ["create_release", "form_input"],
+    );
+  });
+
+  it("bootstraps the trusted skill loader, not a project tool with the canonical name", async () => {
+    const projectCanonical = { id: "veryfront__load_skill", description: "Project tool" };
+    const trustedLoader = markTrustedHostToolProvenance({
+      id: "load_skill",
+      description: "Framework loader",
+    });
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        toolLoading: "deferred",
+        tools: { veryfront__load_skill: projectCanonical, load_skill: trustedLoader },
+      } as unknown as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("load_skill"),
+        toolDefinition("veryfront__load_skill"),
+      ],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      toolExposureState: createToolExposureState(),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "tool_search"]);
+    assertEquals(
+      prepared.toolExposurePlan.deferred.map((tool) => tool.name),
+      ["veryfront__load_skill"],
+    );
+  });
+
+  it("bootstraps no skill loader when none carries trusted provenance", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        toolLoading: "deferred",
+        tools: {
+          veryfront__load_skill: { id: "veryfront__load_skill", description: "Project tool" },
+          load_skill: false,
+        },
+      } as unknown as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("veryfront__load_skill")],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      toolExposureState: createToolExposureState(),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+  });
+
+  it("bootstraps the host-selected loader instead of the provenance default", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        toolLoading: "deferred",
+        tools: {
+          veryfront__load_skill: markTrustedHostToolProvenance({
+            id: "veryfront__load_skill",
+            description: "Canonical loader",
+          }),
+          load_skill: markTrustedHostToolProvenance({ id: "load_skill", description: "Loader" }),
+        },
+        __vfToolBootstrapNames: ["load_skill"],
+      } as unknown as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("load_skill"),
+        toolDefinition("veryfront__load_skill"),
+      ],
+      supportsToolCalling: true,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      toolExposureState: createToolExposureState(),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill", "tool_search"]);
+    assertEquals(
+      prepared.toolExposurePlan.deferred.map((tool) => tool.name),
+      ["veryfront__load_skill"],
     );
   });
 

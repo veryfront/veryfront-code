@@ -42,6 +42,733 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps every generated tool summary between two and six words", () => {
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        assert(
+          tool.description.trim().split(/\s+/).length >= 2 &&
+            tool.description.trim().split(/\s+/).length <= 6,
+          `${connector.name}:${tool.id} must use an action/resource summary of two to six words`,
+        );
+      }
+    }
+  });
+  it("keeps asynchronous and conversation-window semantics in short summaries", () => {
+    const expected: [string, string, string][] = [
+      ["adyen", "create_refund", "Start payment refund"],
+      ["new-relic", "list_issues", "List issues (24 hours, maximum 100)"],
+      ["e2b", "list_sandboxes", "List running sandboxes"],
+      ["persona", "approve_inquiry", "Approve inquiry after compliance review"],
+      ["persona", "decline_inquiry", "Decline inquiry after compliance review"],
+      ["onedrive", "delete_file", "Move file to recycle bin"],
+      ["redis-cloud", "list_subscriptions", "List Pro subscriptions"],
+      ["redis-cloud", "list_databases", "List Pro databases"],
+      ["redis-cloud", "get_database", "Get Pro database"],
+      ["replicate", "list_models", "List public models"],
+      ["rippling", "list_employees", "List active employees"],
+      ["sap", "release_supplier_invoice", "Release blocked supplier invoice"],
+      ["sheets", "clear_range", "Clear range values"],
+      ["browserbase", "create_session", "Create session (uses browser hours)"],
+      ["deel", "review_timesheet", "Review timesheet (approval schedules payment)"],
+      ["typeform", "get_me", "Get Typeform account profile"],
+      ["figma", "get_me", "Get Figma user profile"],
+      ["webex", "list_people", "Find people by email or name"],
+      ["greenhouse", "move_application", "Move active application to stage"],
+      ["teams", "list_teams", "List joined teams"],
+      ["todoist", "list_tasks", "List active tasks"],
+      ["wix", "create_fulfillment", "Mark order items as fulfilled"],
+      ["daytona", "delete_sandbox", "Delete sandbox and its filesystem"],
+      ["e2b", "kill_sandbox", "Destroy sandbox and discard state"],
+      ["klarna", "capture_order", "Capture fulfilled order"],
+      ["klarna", "cancel_order", "Cancel uncaptured order"],
+      ["klarna", "refund_order", "Refund captured order amount"],
+      ["wix", "query_contacts", "Query contacts (1000 maximum per request)"],
+      ["gocardless", "retry_payment", "Retry failed payment"],
+      ["unzer", "cancel_authorization", "Cancel uncaptured authorization"],
+      ["trusted-shops", "reply_to_review", "Save public review reply"],
+      ["guru", "verify_card", "Mark card as verified"],
+      ["google-analytics", "run_realtime_report", "Run realtime report (last 30 minutes)"],
+      ["google-contacts", "create_contact", "Create contact (requires full Contacts scope)"],
+      ["google-contacts", "update_contact", "Update contact (requires full Contacts scope)"],
+      ["stackit", "list_projects", "List projects (requires parent or member)"],
+      ["box", "upload_file", "Upload file (50 MB maximum)"],
+      ["box", "upload_file_version", "Upload file version (50 MB maximum)"],
+      ["pandadoc", "send_document", "Send draft document"],
+      ["zoho-crm", "create_records", "Create up to 100 CRM records"],
+      ["sheets", "find_replace", "Find and replace spreadsheet text"],
+      ["lexoffice", "get_invoice_document", "Render non-draft invoice PDF"],
+      ["xero", "create_invoice_attachment", "Create invoice attachment (25 MB maximum)"],
+      ["rippling", "process_leave_request", "Process pending leave request"],
+      ["pandadoc", "create_document_from_template", "Create draft document from template"],
+      ["openai", "delete_file", "Delete file and all vector-store references"],
+      ["north-data", "search_companies", "Search companies and people"],
+      ["north-data", "power_search", "Search narrowly; billed per unique company"],
+      ["openai", "get_usage_completions", "Get completions usage (requires admin key)"],
+      ["openai", "get_costs", "Get costs (requires organization admin key)"],
+      ["openai", "get_usage_embeddings", "Get embeddings usage (requires admin key)"],
+      ["openrouter", "get_credits", "Get credits (requires management key)"],
+      ["apify", "run_actor_sync", "Run actor synchronously (consumes credits)"],
+      ["daytona", "create_sandbox", "Create billable sandbox"],
+      ["daytona", "stop_sandbox", "Stop sandbox; clear memory"],
+      ["digitalocean", "create_droplet", "Create billable droplet"],
+      ["e2b", "create_sandbox", "Create billable sandbox"],
+      ["hetzner", "create_server", "Create billable server"],
+      ["fal", "run_model", "Run model (billed per run)"],
+      ["fal", "queue_submit", "Submit queue request (billed per run)"],
+      ["stability-ai", "text_to_image", "Generate image (consumes credits)"],
+      ["north-data", "get_person", "Get person (billed lookup)"],
+      ["north-data", "suggest", "Suggest companies and people (unbilled)"],
+      ["google-bigquery", "preview_table_data", "Preview table data without query charges"],
+      ["harvest", "delete_time_entry", "Delete unlocked, unbilled time entry"],
+      ["azure-blob-storage", "list_containers", "List containers as XML"],
+      ["azure-blob-storage", "list_blobs", "List blobs as XML"],
+      ["elevenlabs", "text_to_speech", "Generate binary speech audio"],
+      ["drive", "download_file", "Download file (excludes Docs/Sheets/Slides)"],
+      ["fal", "queue_cancel", "Cancel pending queue request"],
+      ["browserbase", "release_session", "Request session release to stop billing"],
+      ["bamboohr", "create_time_off_request", "Request time off approval"],
+      ["mindee", "parse_invoice", "Parse invoice (consumes page quota)"],
+      ["mindee", "parse_receipt", "Parse receipt (consumes page quota)"],
+      ["mindee", "parse_financial_document", "Parse financial document (consumes page quota)"],
+      ["sendcloud", "cancel_shipment", "Cancel shipment before carrier collection"],
+      ["unzer", "authorize_payment", "Authorize payment (approximately seven-day hold)"],
+      ["power-bi", "execute_dax_query", "Run read-only DAX query"],
+      ["salesforce", "run_soql_query", "Run read-only SOQL query"],
+      ["google-bigquery", "run_query", "Run SQL query (SELECT by default)"],
+      ["gmail", "delete_email", "Permanently delete email"],
+      ["gmail", "batch_delete_emails", "Permanently delete multiple emails"],
+      ["gmail", "delete_thread", "Permanently delete thread"],
+      ["gmail", "delete_draft", "Permanently delete draft"],
+      ["drive", "delete_file", "Permanently delete file"],
+      ["gcp", "start_compute_instance", "Request compute instance start"],
+      ["gcp", "stop_compute_instance", "Request compute instance stop"],
+      ["stackit", "start_server", "Request server start"],
+      ["stackit", "stop_server", "Request server stop without reducing charges"],
+      ["stackit", "reboot_server", "Request server reboot"],
+      ["whatsapp", "get_media_url", "Get temporary media download URL"],
+      ["hubspot", "remove_association", "Remove all associations between records"],
+      ["databricks", "cancel_job_run", "Request job run cancellation"],
+      ["assemblyai", "delete_transcript", "Permanently delete transcript and data"],
+      ["digitalocean", "delete_droplet", "Permanently destroy droplet"],
+      ["google-cloud-storage", "delete_object", "Delete object (may be permanent)"],
+      ["sprites", "delete_sprite", "Permanently destroy sprite and filesystem"],
+      ["sprites", "restore_checkpoint", "Replace sprite state with checkpoint"],
+      ["gmail", "update_draft", "Replace draft"],
+      ["e2b", "set_sandbox_timeout", "Reset sandbox timeout"],
+      ["databricks", "get_sql_statement", "Poll SQL statement status and result"],
+      ["azure-document-intelligence", "get_analyze_result", "Poll document analysis result"],
+      ["ionos", "get_request_status", "Poll asynchronous request status"],
+      ["ionos", "start_server", "Start Enterprise server"],
+      ["ionos", "stop_server", "Request Enterprise poweroff; release unreserved IPs"],
+      ["apollo", "search_organizations", "Search organizations (consumes credits)"],
+      ["apollo", "enrich_person", "Enrich person (consumes credits)"],
+      ["apollo", "enrich_organization", "Enrich organization (consumes credits)"],
+      ["onedrive", "upload_file", "Create or overwrite file"],
+      ["gemini", "upload_file", "Upload temporary file (48-hour retention)"],
+      ["qonto", "upload_transaction_attachment", "Start transaction attachment upload"],
+      ["qonto", "get_attachment", "Get attachment with expiring download URL"],
+      ["azure", "start_virtual_machine", "Request virtual machine start"],
+      ["azure", "deallocate_virtual_machine", "Request virtual machine deallocation"],
+      ["azure", "restart_virtual_machine", "Request virtual machine restart"],
+      ["assemblyai", "submit_transcript", "Start audio transcription"],
+      ["help-scout", "add_note", "Add internal conversation note"],
+      ["amplitude", "list_events", "List event types with weekly totals"],
+      ["azure-blob-storage", "copy_blob", "Start blob copy"],
+      ["power-bi", "refresh_dataset", "Start dataset refresh"],
+      ["power-bi", "refresh_workspace_dataset", "Start workspace dataset refresh"],
+      ["whatsapp", "send_text_message", "Send text within 24-hour window"],
+      ["whatsapp", "send_media_message", "Send media within 24-hour window"],
+      ["whatsapp", "send_template_message", "Send template to start conversation"],
+    ];
+    for (const [connectorName, toolName, summary] of expected) {
+      assertEquals(getTool(connectorName, toolName).description, summary);
+    }
+  });
+  it("keeps acronyms and camel-case terms from tool names canonical in summaries", () => {
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        for (const term of tool.name.match(/[A-Za-z][A-Za-z0-9]*/g) ?? []) {
+          const isAcronym = /^[A-Z][A-Z0-9]+$/.test(term);
+          const isCamelCase = /[a-z][A-Z]/.test(term);
+          if (!isAcronym && !isCamelCase) continue;
+          const split = term.replace(/(?<=[a-z])(?=[A-Z])/g, " ");
+          const mentioned = new RegExp(`\\b(?:${term}|${split})\\b`, "i").test(tool.description);
+          if (!mentioned) continue;
+          assert(
+            new RegExp(`\\b${term}\\b`).test(tool.description),
+            `${connector.name}:${tool.id ?? tool.name} summary must spell ${term} canonically`,
+          );
+        }
+      }
+    }
+  });
+  it("keeps provider and product names canonical in summaries", () => {
+    const expected: [string, string, string][] = [
+      ["aws", "list-s3-buckets", "List S3 buckets"],
+      ["aws", "list-s3-objects", "List S3 objects"],
+      ["aws", "get-s3-object", "Get S3 object"],
+      ["aws", "list-ec2-instances", "List EC2 instances"],
+      ["aws", "list-lambda-functions", "List Lambda functions"],
+      ["confluence", "list_sites", "List Atlassian sites"],
+      ["confluence", "search_content", "Search Confluence"],
+      ["jira", "list_sites", "List Atlassian sites"],
+      ["notion", "search_notion", "Search Notion"],
+      ["gemini", "imagen_generate", "Generate image (Imagen)"],
+      ["gcp", "list_cloud_run_services", "List Cloud Run services"],
+      ["gcp", "get_cloud_run_service", "Get Cloud Run service"],
+      ["gcp", "list_cloud_functions", "List Cloud Functions"],
+      ["redis-cloud", "list_fixed_subscriptions", "List Essentials subscriptions"],
+      ["redis-cloud", "list_fixed_databases", "List Essentials databases"],
+      ["power-bi", "list_datasets", "List My workspace datasets"],
+      ["power-bi", "list_reports", "List My workspace reports"],
+    ];
+    for (const [connectorName, toolName, summary] of expected) {
+      const tool = getConnector(connectorName).tools.find((item) =>
+        item.id === getNamespacedToolId(connectorName, toolName) || item.name === toolName
+      );
+      assertExists(tool, `Expected ${connectorName}:${toolName} to exist`);
+      assertEquals(tool.description, summary);
+    }
+  });
+  it("keeps sentence boundaries and ASCII punctuation in migrated input qualifiers", () => {
+    const concatenatedQualifier =
+      /[A-Za-z0-9)\]}'] (?:Requires|At least|At most|The|Only accepted|Draft|Remote|Larger) /;
+    let checked = 0;
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const inputs = { ...tool.endpoint?.params, ...tool.endpoint?.body };
+        for (const [field, input] of Object.entries(inputs)) {
+          const description = input?.description;
+          if (!description) continue;
+          checked += 1;
+          assert(
+            !concatenatedQualifier.test(description),
+            `${connector.name}:${tool.id}:${field} must end a sentence before the next qualifier`,
+          );
+        }
+      }
+    }
+    assert(checked > 0, "expected input descriptions to be checked");
+    const objectName = String(
+      getTool("google-cloud-storage", "delete_object").endpoint?.params?.objectName?.description,
+    );
+    assert(!/[–—]/.test(objectName), "objectName description must not use dashes");
+    assertStringIncludes(objectName, "encoded as %2F. Requires the");
+  });
+  it("keeps operation limits, cross-field requirements and OAuth scopes visible in inputs", () => {
+    const expected: [string, string, "params" | "body", string, string][] = [
+      [
+        "outlook",
+        "add_attachment_to_message",
+        "body",
+        "contentBytes",
+        "The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
+      ],
+      [
+        "outlook",
+        "add_event_attachment",
+        "body",
+        "contentBytes",
+        "The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
+      ],
+      [
+        "new-relic",
+        "list_issues",
+        "params",
+        "accountId",
+        "This operation queries NrAiIssue with fixed SINCE 1 day ago and LIMIT 100 clauses. No time-window or pagination controls are exposed; older issues and results beyond the limit are not included.",
+      ],
+      [
+        "e2b",
+        "list_sandboxes",
+        "params",
+        "metadata",
+        "This operation lists running sandboxes only. Paused sandboxes are excluded; the provider state filter is not exposed by this tool.",
+      ],
+      [
+        "persona",
+        "approve_inquiry",
+        "params",
+        "inquiryId",
+        "Complete compliance review before approval. Approving prevents further inquiry progress and triggers associated workflows and webhooks.",
+      ],
+      [
+        "persona",
+        "decline_inquiry",
+        "params",
+        "inquiryId",
+        "Complete compliance review before declining. Declining prevents further inquiry progress and triggers associated workflows and webhooks.",
+      ],
+      [
+        "google-bigquery",
+        "run_query",
+        "body",
+        "query",
+        "The default read-only scope supports SELECT queries only. DML statements (INSERT, UPDATE, DELETE) require the optional https://www.googleapis.com/auth/bigquery OAuth scope.",
+      ],
+      [
+        "hetzner",
+        "power_off_server",
+        "params",
+        "serverId",
+        "Hard power-off is like pulling the power plug; unsaved data can be lost if the operating system is running.",
+      ],
+      [
+        "ionos",
+        "stop_server",
+        "params",
+        "serverId",
+        "This forcefully powers off an Enterprise server and stops compute billing. Unreserved public IPv4 addresses are released; reserved IPs are kept. CUBE servers cannot use this endpoint and use suspend/resume instead.",
+      ],
+      [
+        "billbee",
+        "list_invoices",
+        "params",
+        "page",
+        "Calls with the same page and minInvoiceDate are throttled to one request per minute.",
+      ],
+      [
+        "azure-blob-storage",
+        "copy_blob",
+        "params",
+        "blobName",
+        "Accepted copies return HTTP 202 with x-ms-copy-status success or pending. When pending, poll the destination blob until completion before using the copy.",
+      ],
+      [
+        "azure-document-intelligence",
+        "analyze_invoice",
+        "body",
+        "urlSource",
+        "Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
+      ],
+      [
+        "azure-document-intelligence",
+        "analyze_receipt",
+        "body",
+        "urlSource",
+        "Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
+      ],
+      [
+        "azure-document-intelligence",
+        "analyze_layout",
+        "body",
+        "urlSource",
+        "Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
+      ],
+      [
+        "azure-document-intelligence",
+        "analyze_read",
+        "body",
+        "urlSource",
+        "Analysis is asynchronous: HTTP 202 returns an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID and the same model.",
+      ],
+      [
+        "azure-document-intelligence",
+        "get_analyze_result",
+        "params",
+        "resultId",
+        "Use the same model ID that started the analysis. While status is running, wait and poll again; extracted fields are available in analyzeResult when status is succeeded.",
+      ],
+      [
+        "adyen",
+        "capture_payment",
+        "params",
+        "paymentPspReference",
+        "Capture is asynchronous; its outcome arrives through a CAPTURE webhook. The immediate response is not final capture outcome evidence.",
+      ],
+      [
+        "onedrive",
+        "delete_file",
+        "params",
+        "itemId",
+        "Deletion moves this file or folder to the recycle bin instead of permanently deleting it.",
+      ],
+      [
+        "pandadoc",
+        "create_document_link",
+        "body",
+        "recipient",
+        "Creates a session link for this recipient to view and sign an already-sent document. This operation does not email the link to the recipient.",
+      ],
+      [
+        "redis-cloud",
+        "list_databases",
+        "params",
+        "subscriptionId",
+        "This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
+      ],
+      [
+        "redis-cloud",
+        "get_database",
+        "params",
+        "subscriptionId",
+        "This is a Redis Cloud Pro subscription ID; Essentials subscriptions use the separate fixed-subscription tools.",
+      ],
+      [
+        "salesforce",
+        "search_knowledge_articles",
+        "params",
+        "q",
+        "The default query selects published articles with PublishStatus = Online; other authorized publication states require an explicit query.",
+      ],
+      [
+        "sap",
+        "release_supplier_invoice",
+        "params",
+        "SupplierInvoice",
+        "This operation releases an invoice that is blocked.",
+      ],
+      [
+        "servicenow",
+        "create_request_item",
+        "body",
+        "request",
+        "This inserts a sc_req_item record directly. Use it only when direct table writes are allowed; use Order Catalog Item for the normal catalog-order workflow.",
+      ],
+      [
+        "slack",
+        "update_message",
+        "body",
+        "ts",
+        "Only messages previously sent by this integration can be updated.",
+      ],
+      [
+        "slack",
+        "delete_message",
+        "body",
+        "ts",
+        "Only messages previously sent by this integration can be deleted.",
+      ],
+      [
+        "sheets",
+        "clear_range",
+        "params",
+        "range",
+        "This clears cell values only; it does not delete cells or remove their formatting.",
+      ],
+      [
+        "sprites",
+        "exec_command",
+        "params",
+        "cmd",
+        "This HTTP operation is non-interactive and does not provide a TTY; use commands that do not require an interactive terminal.",
+      ],
+      [
+        "sprites",
+        "create_checkpoint",
+        "params",
+        "name",
+        "Creates a point-in-time checkpoint of sprite state and returns streaming NDJSON progress. Services may be interrupted during checkpoint creation; wait for the completion event before using the checkpoint.",
+      ],
+      [
+        "sprites",
+        "restore_checkpoint",
+        "params",
+        "checkpointId",
+        "Restoring replaces the current filesystem with the checkpoint; changes made after that checkpoint are lost. The response contains streaming NDJSON progress; wait for completion.",
+      ],
+      [
+        "sprites",
+        "delete_sprite",
+        "params",
+        "name",
+        "Destruction permanently deletes the sprite filesystem, packages and checkpoints; there is no undo.",
+      ],
+      [
+        "whatsapp",
+        "mark_message_read",
+        "body",
+        "message_id",
+        "This marks an inbound message as read and sends a read receipt visible to the customer.",
+      ],
+      [
+        "wix",
+        "create_fulfillment",
+        "body",
+        "fulfillment",
+        "Creating this fulfillment marks the included order line items as fulfilled.",
+      ],
+      [
+        "daytona",
+        "stop_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "Stopping clears memory and running processes. Regular container and VM files are retained for restart, but GPU and ephemeral sandboxes lose their local filesystem on stop. Compute charges continue during stopping and end once stopped or deleted; reserved disk remains billed while stopped. Pause is a separate operation that preserves VM memory; containers do not support pause.",
+      ],
+      [
+        "daytona",
+        "delete_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "Deleting removes this sandbox and its local filesystem; unsnapshotted local state is lost. Save needed files or create a snapshot first. Independent snapshots are preserved and remain billed for storage.",
+      ],
+      [
+        "e2b",
+        "kill_sandbox",
+        "params",
+        "sandboxID",
+        "Killing immediately terminates this sandbox and discards its active state. Use Pause Sandbox instead when you need to resume it.",
+      ],
+      [
+        "adyen",
+        "create_refund",
+        "params",
+        "paymentPspReference",
+        "Refund all or part of a captured payment; the outcome arrives asynchronously through a REFUND webhook.",
+      ],
+      [
+        "fal",
+        "queue_cancel",
+        "params",
+        "request_id",
+        "Only queued requests that have not started running can be canceled; this does not stop an already running request.",
+      ],
+      [
+        "qonto",
+        "get_attachment",
+        "params",
+        "attachmentId",
+        "Returns a fresh download URL that expires after 30 minutes; fetch it again before any delayed download.",
+      ],
+      [
+        "klarna",
+        "release_remaining_authorization",
+        "params",
+        "orderId",
+        "Use after the final partial capture to free the remaining uncaptured authorization; this does not refund captured funds.",
+      ],
+      [
+        "apify",
+        "run_actor_sync",
+        "params",
+        "timeout",
+        "This parameter limits actor execution separately from the HTTP wait. The endpoint waits at most 300 seconds. An HTTP timeout does not prove the actor stopped; it may keep running and consuming credits. Check the existing run before retrying to avoid creating a duplicate run.",
+      ],
+      [
+        "klarna",
+        "cancel_order",
+        "params",
+        "orderId",
+        "Only uncaptured orders that are not closed can be canceled. Any previous captures prevent cancellation. After capture, use a refund or release the remaining authorization as appropriate.",
+      ],
+      [
+        "google-contacts",
+        "search_contacts",
+        "params",
+        "query",
+        "First send a warmup request with an empty query to update the cache, then send the actual search query.",
+      ],
+      [
+        "daytona",
+        "start_sandbox",
+        "params",
+        "sandboxIdOrName",
+        "the usual auto-stop default is 15 minutes of inactivity, and 0 disables it; pause-capable classes may default to auto-pause instead.",
+      ],
+      [
+        "klarna",
+        "capture_order",
+        "params",
+        "orderId",
+        "Capture only after the corresponding goods or services have been fulfilled; capture triggers the customer charge and merchant payout.",
+      ],
+      [
+        "klarna",
+        "refund_order",
+        "params",
+        "orderId",
+        "Refunds return a full or partial captured amount; they do not release an uncaptured authorization.",
+      ],
+      [
+        "wix",
+        "query_contacts",
+        "body",
+        "query",
+        "query.paging.limit must not exceed 1000 contacts per request.",
+      ],
+      [
+        "gocardless",
+        "create_payment",
+        "body",
+        "payments",
+        "Wait for the mandates_active webhook before collecting against this mandate.",
+      ],
+      [
+        "gocardless",
+        "create_subscription",
+        "body",
+        "subscriptions",
+        "Wait for the mandates_active webhook before creating a subscription against this mandate.",
+      ],
+      [
+        "gocardless",
+        "retry_payment",
+        "params",
+        "paymentId",
+        "Retry only if the mandate remains active. A failed payment can be manually retried at most three times.",
+      ],
+      [
+        "box",
+        "download_file",
+        "params",
+        "fileId",
+        "A 202 response with Retry-After means the file is not ready; wait for the indicated delay before retrying.",
+      ],
+      [
+        "unzer",
+        "cancel_authorization",
+        "params",
+        "paymentId",
+        "This reverses an uncaptured authorization fully or partially, releasing reserved funds; it does not refund captured charges.",
+      ],
+      [
+        "unstructured",
+        "partition_document",
+        "body",
+        "files",
+        "Remote URLs are not accepted; fetch the file first and provide its content.",
+      ],
+      [
+        "stackit",
+        "list_projects",
+        "params",
+        "containerParentId",
+        "At least one of containerParentId or member is required.",
+      ],
+      [
+        "stackit",
+        "list_projects",
+        "params",
+        "member",
+        "At least one of containerParentId or member is required.",
+      ],
+      [
+        "box",
+        "upload_file",
+        "body",
+        "file",
+        "The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+      ],
+      [
+        "box",
+        "upload_file_version",
+        "body",
+        "file",
+        "The decoded file must not exceed 50 MB. Larger files require the chunked upload API, which this connector does not expose.",
+      ],
+      [
+        "zoho-crm",
+        "create_records",
+        "body",
+        "data",
+        "At most 100 records per request. Requires the ZohoCRM.modules.CREATE OAuth scope.",
+      ],
+      [
+        "zoho-crm",
+        "update_record",
+        "body",
+        "data",
+        "Requires the ZohoCRM.modules.UPDATE OAuth scope.",
+      ],
+      [
+        "gcp",
+        "start_compute_instance",
+        "params",
+        "instance",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+      ],
+      [
+        "gcp",
+        "stop_compute_instance",
+        "params",
+        "instance",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes do not authorize this operation.",
+      ],
+      [
+        "gcp",
+        "list_cloud_functions",
+        "params",
+        "projectId",
+        "Requires the https://www.googleapis.com/auth/cloud-platform OAuth scope; the default read-only scopes are insufficient.",
+      ],
+      [
+        "google-cloud-storage",
+        "upload_object",
+        "body",
+        "content",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-cloud-storage",
+        "copy_object",
+        "params",
+        "sourceBucket",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-cloud-storage",
+        "delete_object",
+        "params",
+        "objectName",
+        "Requires the https://www.googleapis.com/auth/devstorage.read_write OAuth scope; the default read-only scope does not authorize writes.",
+      ],
+      [
+        "google-forms",
+        "set_publish_settings",
+        "params",
+        "formId",
+        "Requires the https://www.googleapis.com/auth/forms.body OAuth scope; the default read-only scopes do not authorize writes.",
+      ],
+      [
+        "bamboohr",
+        "update_time_off_request_status",
+        "body",
+        "status",
+        "The API user must have approval permissions.",
+      ],
+      [
+        "cal-com",
+        "reschedule_booking",
+        "params",
+        "bookingUid",
+        "Only accepted or pending bookings can be rescheduled.",
+      ],
+      [
+        "shopware",
+        "create_product",
+        "body",
+        "product",
+        "Requires name, productNumber, stock, taxId, and a price array.",
+      ],
+      [
+        "lexoffice",
+        "get_invoice_document",
+        "params",
+        "id",
+        "Draft invoices have no document file and are rejected; use a non-draft invoice.",
+      ],
+      [
+        "xero",
+        "create_invoice_attachment",
+        "body",
+        "content",
+        "The decoded file must not exceed 25 MB. At most 10 attachments are allowed per invoice.",
+      ],
+      [
+        "rippling",
+        "process_leave_request",
+        "params",
+        "leaveRequestId",
+        "The leave request must be pending.",
+      ],
+    ];
+    for (const [connector, tool, location, field, requirement] of expected) {
+      assertStringIncludes(
+        String(getTool(connector, tool).endpoint?.[location]?.[field]?.description),
+        requirement,
+      );
+    }
+  });
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",
@@ -746,7 +1473,7 @@ describe("integration endpoint specs", () => {
     );
 
     const getFile = getTool("figma", "get_file");
-    assertStringIncludes(getFile.description, "pages");
+    assertEquals(getFile.description, "Get file");
   });
 
   it("adds static endpoint specs for the next configured integration providers", () => {
@@ -2166,7 +2893,8 @@ describe("integration endpoint specs", () => {
       },
       contentBytes: {
         type: "string",
-        description: "Base64-encoded attachment content",
+        description:
+          "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
         required: true,
       },
       contentType: {

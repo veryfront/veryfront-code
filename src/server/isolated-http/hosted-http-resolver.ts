@@ -2,18 +2,21 @@ import { PERMISSION_DENIED, PROJECT_EXECUTION_UNAVAILABLE } from "#veryfront/err
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createVeryfrontApiTransport } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
-import { getHostedExecutorImageSchema } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import {
+  getHostedExecutorIdentifierSchema,
+  getHostedExecutorImageSchema,
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import type { RenderGenerationBinding } from "#veryfront/rendering/render-generation-binding.ts";
-import { fetchProjectEnvVars } from "../project-env/fetcher.ts";
-import { ProjectEnvironmentIdentityResolver } from "../project-env/production-environment-resolver.ts";
-import { filterSharedRuntimeProjectEnv } from "../project-env/reserved-env.ts";
-import { resolveProjectTraceConfig } from "../project-env/telemetry-config.ts";
-import type { HostedHttpInput } from "./hosted-http-broker.ts";
+import { fetchProjectEnvVars } from "#veryfront/server/project-env/fetcher.ts";
+import { ProjectEnvironmentIdentityResolver } from "#veryfront/server/project-env/production-environment-resolver.ts";
+import { filterSharedRuntimeProjectEnv } from "#veryfront/server/project-env/reserved-env.ts";
+import { resolveProjectTraceConfig } from "#veryfront/server/project-env/telemetry-config.ts";
+import type { HostedHttpInput } from "#veryfront/server/isolated-http/hosted-http-broker.ts";
 import type {
   HostedHttpIngressOptions,
   HostedHttpRequestAuthority,
-} from "./hosted-http-ingress.ts";
+} from "#veryfront/server/isolated-http/hosted-http-ingress.ts";
 
 const PROJECT_LOOKUP_TIMEOUT_MS = 5_000;
 const PROJECT_RESPONSE_MAX_BYTES = 64 * 1024;
@@ -22,6 +25,7 @@ const MAX_SOURCE_RECORDS = 4096;
 const MAX_SOURCE_RECORD_BYTES = 16 * 1024;
 const DEFAULT_PREPARE_TIMEOUT_MS = 60_000;
 const DEFAULT_RESOLUTION_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_PENDING_RESOLUTIONS = 256;
 const DEFAULT_HARD_TIMEOUT_MS = 5 * 60_000;
 // The isolated application has no host config evaluator, so the authorized
 // project environment alone decides whether its own trace exporter is enabled.
@@ -85,6 +89,13 @@ export interface HostedHttpResolverOptions {
    * API read cannot hold an ingress preparation permit. Default 10 seconds, maximum 60.
    */
   resolutionTimeoutMs?: number;
+  /**
+   * Bound on resolutions that have not settled, including one still running after its
+   * deadline because an operation ignored its abort signal. At the bound, further
+   * resolutions are refused before any read starts, so a stalled dependency cannot
+   * accumulate detached work. Default 256, maximum 4096.
+   */
+  maxPendingResolutions?: number;
   /** Default 60 seconds, maximum 10 minutes. */
   prepareTimeoutMs?: number;
   /** Default 5 minutes, maximum 1 hour, and not shorter than preparation. */
@@ -147,10 +158,11 @@ function createVeryfrontApi(apiBaseUrl: string): HostedHttpResolverApi {
       }, signal);
     },
     readEnvironment(authority, signal) {
-      // The exact project ID addresses every read, so all of them target one project.
+      // The slug was bound to the exact project ID by the project check, and the
+      // management read authorizes the environment ID for the source credential.
       return fetchProjectEnvVars(
         apiBaseUrl,
-        authority.projectId,
+        authority.projectSlug,
         authority.environmentId,
         authority.sourceToken,
         signal,
@@ -174,16 +186,76 @@ function httpsOrigin(value: unknown, name: string, allowPath: boolean): string {
   }
   if (
     typeof value !== "string" || url.protocol !== "https:" || url.username || url.password ||
-    url.search || url.hash || (!allowPath && url.pathname !== "/")
+    url.search || url.hash || value.includes("?") || value.includes("#") || url.port === "0" ||
+    (!allowPath && url.pathname !== "/")
   ) throw new TypeError(`Hosted HTTP resolver requires an HTTPS ${name}`);
-  return allowPath ? trimTrailingSlashes(value) : url.origin;
+  // Always return the canonical form of the parsed URL, never the raw input.
+  return allowPath ? url.origin + trimTrailingSlashes(url.pathname) : url.origin;
+}
+
+/** A publication record's origin in the same canonical form as the configured one. */
+function canonicalSourceOrigin(value: string): string | undefined {
+  try {
+    return httpsOrigin(value, "source API origin", false);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Claims of the edge proxy's project source credential (client credentials, no options). */
+const SOURCE_CREDENTIAL_CLAIMS = new Set(["userId", "scope", "projectId", "iat", "exp"]);
+/** The API's default scopes for the veryfront-server client; nothing else is accepted. */
+const SOURCE_CREDENTIAL_SCOPES = new Set([
+  "projects:read",
+  "components:read",
+  "files:read",
+  "pages:read",
+  "users:read",
+  "conversations:read",
+  "cache:read",
+  "cache:write",
+  "cache:delete",
+]);
+
+const REPOSITORY_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
+const isRegistryLabel = (label: string) =>
+  label.length <= 63 && /^[a-z0-9-]+$/.test(label) && !label.startsWith("-") &&
+  !label.endsWith("-");
+
+/**
+ * A container image repository without tag or digest, following the distribution
+ * reference grammar: an optional registry host (DNS labels of at most 63 characters, at
+ * most 253 in total, optional TCP port 1-65535),
+ * then path components of lowercase alphanumerics joined by `.`, `_`, `__` or dashes.
+ */
+function isImageRepository(repository: string): boolean {
+  if (repository.length === 0 || repository.length > 255) return false;
+  const parts = repository.split("/");
+  const first = parts[0]!;
+  if (parts.length > 1 && (first.includes(".") || first.includes(":") || first === "localhost")) {
+    const [host, port, ...extra] = first.split(":");
+    if (
+      extra.length > 0 || host === undefined || host.length > 253 ||
+      !host.split(".").every(isRegistryLabel)
+    ) {
+      return false;
+    }
+    if (port !== undefined) {
+      if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) return false;
+    }
+    parts.shift();
+  }
+  return parts.every((part) => REPOSITORY_COMPONENT.test(part));
 }
 
 /**
- * Accept only a project-bound service credential for exactly `projectId`. This reads
- * the JWT payload without verifying the signature; the API verifies every credential.
- * Opaque credentials, user sessions and credentials without a project are refused
- * here, before any API call.
+ * Accept only the edge proxy's project source credential for exactly `projectId`: a JWT
+ * whose claims are exactly `userId` (the configured service account), `scope` (a subset of
+ * the client's default scopes that includes `projects:read`), `projectId`, and integer
+ * `iat` and `exp` with `exp` after `iat`. A missing or additional claim is refused.
+ * Credentials with any other claim, such as `tokenUse`, `actorType` or `serviceAccountId`,
+ * or any other scope, such as `runs:write` or a user-scoped grant, are refused. This reads
+ * the payload without verifying the signature; the API verifies every credential.
  */
 function isProjectBoundServiceCredential(
   token: string,
@@ -198,19 +270,27 @@ function isProjectBoundServiceCredential(
     const binary = atob(base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "="));
     claims = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(
-        Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+        Uint8Array.from(binary, (character) => character.codePointAt(0)!),
       ),
     );
   } catch {
     return false;
   }
   if (claims === null || typeof claims !== "object" || Array.isArray(claims)) return false;
-  const { projectId: claimedProject, userId, scope } = claims as Record<string, unknown>;
-  const scopes = typeof scope === "string" ? scope.split(" ") : scope;
-  return typeof claimedProject === "string" && claimedProject === projectId &&
+  const record = claims as Record<string, unknown>;
+  // Exactly the expected claim set: no missing and no additional claims.
+  const keys = Object.keys(record);
+  if (
+    keys.length !== SOURCE_CREDENTIAL_CLAIMS.size ||
+    !keys.every((key) => SOURCE_CREDENTIAL_CLAIMS.has(key))
+  ) return false;
+  const { projectId: claimedProject, userId, scope, iat, exp } = record;
+  return typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 &&
+    typeof exp === "number" && Number.isSafeInteger(exp) && exp > iat &&
+    typeof claimedProject === "string" && claimedProject === projectId &&
     typeof userId === "string" && userId === serviceAccountId &&
-    Array.isArray(scopes) &&
-    scopes.every((entry) => typeof entry === "string" && !entry.startsWith("user_read_id_"));
+    Array.isArray(scope) && scope.includes("projects:read") &&
+    scope.every((entry) => typeof entry === "string" && SOURCE_CREDENTIAL_SCOPES.has(entry));
 }
 
 function limit(value: number | undefined, fallback: number, maximum: number, name: string) {
@@ -337,7 +417,7 @@ export function createHostedHttpResolver(
   const apiBaseUrl = httpsOrigin(options.apiBaseUrl, "API base URL", true);
   const sourceApiOrigin = httpsOrigin(options.sourceApiOrigin, "source API origin", false);
   const repository = options.sourceImageRepository;
-  if (typeof repository !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,255}$/.test(repository)) {
+  if (typeof repository !== "string" || !isImageRepository(repository)) {
     throw new TypeError("Hosted HTTP resolver requires a source image repository");
   }
   const serviceAccountId = options.serviceAccountId;
@@ -347,11 +427,37 @@ export function createHostedHttpResolver(
   if (typeof options.lookupSourceImage !== "function") {
     throw new TypeError("Hosted HTTP resolver requires a source image lookup");
   }
-  const session = { ...options.session };
+  // Copy only the documented session fields; each one is validated below, so nothing
+  // unvalidated reaches the executor session.
+  const given = options.session ?? ({} as HostedHttpResolverOptions["session"]);
+  const session: HostedHttpResolverOptions["session"] = {
+    expectedBrokerInstanceId: given.expectedBrokerInstanceId,
+    allocator: given.allocator,
+    connectTransport: given.connectTransport,
+    ...(given.ownerSignal === undefined ? {} : { ownerSignal: given.ownerSignal }),
+    ...(given.pollIntervalMs === undefined ? {} : { pollIntervalMs: given.pollIntervalMs }),
+    ...(given.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: given.requestTimeoutMs }),
+    ...(given.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: given.cleanupTimeoutMs }),
+  };
   if (
-    typeof session.expectedBrokerInstanceId !== "string" || !session.expectedBrokerInstanceId ||
-    typeof session.connectTransport !== "function" || typeof session.allocator !== "object"
+    // The same identifier rule the executor session applies to its binding.
+    !getHostedExecutorIdentifierSchema().safeParse(session.expectedBrokerInstanceId).success ||
+    typeof session.connectTransport !== "function" || session.allocator === null ||
+    typeof session.allocator !== "object" ||
+    (["allocate", "observe", "renew", "release"] as const).some((operation) =>
+      typeof session.allocator[operation] !== "function"
+    )
   ) throw new TypeError("Hosted HTTP resolver requires a host executor session");
+  if (session.ownerSignal !== undefined && !(session.ownerSignal instanceof AbortSignal)) {
+    throw new TypeError("Hosted HTTP resolver requires an AbortSignal owner signal");
+  }
+  // The executor session rejects these limits at dispatch; refuse them at setup instead.
+  for (const name of ["pollIntervalMs", "requestTimeoutMs", "cleanupTimeoutMs"] as const) {
+    const value = session[name];
+    if (
+      value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 30_000)
+    ) throw new TypeError("Hosted HTTP resolver requires bounded executor session limits");
+  }
   const prepareMs = limit(
     options.prepareTimeoutMs,
     DEFAULT_PREPARE_TIMEOUT_MS,
@@ -370,6 +476,21 @@ export function createHostedHttpResolver(
   ) throw new TypeError("Hosted HTTP resolver requires a configuration key of at least 32 bytes");
   const keyBytes = suppliedKey === undefined ? undefined : new Uint8Array(suppliedKey);
   let configurationKey: Promise<CryptoKey> | undefined;
+  // The resolver's raw copy is wiped once the non-extractable key is imported, or the
+  // import fails, so the secret is held only inside the CryptoKey afterwards.
+  const importConfigurationKey = async (bytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> => {
+    try {
+      return await crypto.subtle.importKey(
+        "raw",
+        bytes,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+    } finally {
+      bytes.fill(0);
+    }
+  };
 
   async function authorizeProject(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     const body = await api.readProject(authority, signal);
@@ -397,7 +518,7 @@ export function createHostedHttpResolver(
     if (
       !parsed.success || parsed.data.project_id !== authority.projectId ||
       parsed.data.release_id !== authority.releaseId ||
-      trimTrailingSlashes(parsed.data.api_origin) !== sourceApiOrigin ||
+      canonicalSourceOrigin(parsed.data.api_origin) !== sourceApiOrigin ||
       !parsed.data.image.startsWith(`${repository}@sha256:`)
     ) throw refuse("Published source does not match the authorized project release");
     return parsed.data.image;
@@ -407,6 +528,13 @@ export function createHostedHttpResolver(
   if (!Number.isSafeInteger(resolutionMs) || resolutionMs < 1 || resolutionMs > 60_000) {
     throw new TypeError("Hosted HTTP resolver requires a bounded resolution timeout");
   }
+
+  const maxPending = options.maxPendingResolutions ?? DEFAULT_MAX_PENDING_RESOLUTIONS;
+  if (!Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 4096) {
+    throw new TypeError("Hosted HTTP resolver requires a bounded number of pending resolutions");
+  }
+  // Every resolution that has not settled, whether or not its caller is still waiting.
+  const pendingResolutions = new Set<Promise<unknown>>();
 
   async function resolveWithin(authority: HostedHttpRequestAuthority, signal: AbortSignal) {
     signal.throwIfAborted();
@@ -441,9 +569,14 @@ export function createHostedHttpResolver(
       [, , image] = await Promise.all(pending);
     } catch (error) {
       // Abort and detach the other checks; an operation that ignores its signal
-      // must not keep this resolution, or its ingress permit, pending.
+      // must not keep this resolution, or its ingress permit, pending. It stays in
+      // admission until it settles, so detached checks remain bounded as well.
       checks.abort();
-      for (const check of pending) check.catch(() => {});
+      for (const check of pending) {
+        pendingResolutions.add(check);
+        const settled = () => pendingResolutions.delete(check);
+        check.then(settled, settled);
+      }
       throw error;
     }
     signal.throwIfAborted();
@@ -461,9 +594,7 @@ export function createHostedHttpResolver(
         false,
         ["sign"],
       ) as Promise<CryptoKey>
-      : crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, [
-        "sign",
-      ]);
+      : importConfigurationKey(keyBytes);
     const configurationId = await deriveConfigurationId(configurationKey, identity, variables);
     signal.throwIfAborted();
 
@@ -501,6 +632,13 @@ export function createHostedHttpResolver(
 
   return async (authority, requestSignal) => {
     requestSignal.throwIfAborted();
+    // Returning at the deadline releases the caller's ingress permit while the work may
+    // still be running. Admission here keeps that detached work bounded.
+    if (pendingResolutions.size >= maxPending) {
+      throw PROJECT_EXECUTION_UNAVAILABLE.create({
+        detail: "Hosted HTTP resolution capacity is exhausted",
+      });
+    }
     // Race the resolution against its deadline and the request, so the resolver
     // returns on time even when an operation ignores its abort signal.
     const deadline = new AbortController();
@@ -519,7 +657,9 @@ export function createHostedHttpResolver(
       requestSignal.addEventListener("abort", onRequestAbort, { once: true });
     });
     const work = resolveWithin(authority, deadline.signal);
-    work.catch(() => {});
+    pendingResolutions.add(work);
+    const settled = () => pendingResolutions.delete(work);
+    work.then(settled, settled);
     try {
       return await Promise.race([work, stopped]);
     } finally {

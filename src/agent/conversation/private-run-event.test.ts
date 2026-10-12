@@ -84,7 +84,16 @@ describe("agent/conversation/private-run-event", () => {
       isPrivateConversationRunEvent({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "veryfront-cloud/anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
-        request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
+        request: {
+          maxOutputTokens: 4096,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+          responseFormat: {
+            type: "json_schema",
+            name: "result",
+            schema: { type: "object", properties: { answer: { type: "string" } } },
+            strict: true,
+          },
+        },
         messages: [],
         tools: [],
         elapsedMs: 42,
@@ -132,6 +141,11 @@ describe("agent/conversation/private-run-event", () => {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           request: { reasoning: { arbitrary: true } },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          messages: [],
+          request: { responseFormat: { type: "json_schema", name: "result" } },
         },
         {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
@@ -245,4 +259,27 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(error.category, "AGENT");
     assertEquals(error.detail, "mirror unavailable");
   });
+});
+
+it("private model request validates parallel tool control strictly", () => {
+  const event = { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] };
+  for (const value of [false, true]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      true,
+    );
+  }
+  for (const value of ["false", 0, null, {}, []]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      false,
+    );
+  }
+  assertEquals(
+    isPrivateConversationRunEvent({
+      ...event,
+      request: { parallelToolCalls: false, unknown: true },
+    }),
+    false,
+  );
 });

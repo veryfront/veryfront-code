@@ -264,8 +264,8 @@ export function isValidCachePattern(pattern: string): boolean {
  * `/execute` path, loops until the request is flagged stuck; see veryfront
  * issues #162 / #175).
  *
- * Ordinary valid keys are returned unchanged. Malformed, empty, overlong, and
- * reserved-namespace keys become a deterministic SHA-256 fallback. No part of
+ * Ordinary valid keys are returned unchanged. Complete dot segments, malformed,
+ * empty, overlong, and reserved-namespace keys become a deterministic SHA-256 fallback. No part of
  * the unsafe key is retained because it may contain a credential or other
  * sensitive path data. A separately supplied trusted backend prefix can be
  * retained so prefix-based invalidation still reaches the fallback entry.
@@ -276,7 +276,11 @@ export function isValidCachePattern(pattern: string): boolean {
  * separately because rewriting a glob could broaden its deletion scope.
  */
 export async function sanitizeCacheKey(key: string, trustedPrefix = ""): Promise<string> {
-  if (isValidCacheKey(key) && !key.includes(SANITIZED_CACHE_KEY_MARKER)) return key;
+  // URL parsing normalizes complete dot segments even when percent-encoded.
+  if (
+    key !== "." && key !== ".." && isValidCacheKey(key) &&
+    !key.includes(SANITIZED_CACHE_KEY_MARKER)
+  ) return key;
 
   const safePrefix = CACHE_KEY_ALLOWED_PATTERN.test(trustedPrefix) &&
       !trustedPrefix.includes(SANITIZED_CACHE_KEY_MARKER)

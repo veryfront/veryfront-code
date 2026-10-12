@@ -18,7 +18,7 @@ import {
   restoreTrustedPlatformPolicyResultsFromPersistedHistory,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
-import type { ToolDefinition } from "#veryfront/tool";
+import { tool, type ToolDefinition } from "#veryfront/tool";
 import type { ToolResultPart } from "../types.ts";
 import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
@@ -31,6 +31,11 @@ import {
   markProviderReplayDelivered,
   readAttachedProviderMetadata,
 } from "./provider-metadata.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  isRuntimeProviderSchemaHiddenTool,
+  markRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 
 function policyToolDefinition(name: string): ToolDefinition {
   return {
@@ -228,6 +233,40 @@ describe("src/agent/runtime skill policy helpers", () => {
         }).allowed,
         false,
       );
+      const nestedReferenceOptions = {
+        activeSkillId: "plan",
+        hasSubmittedFormInput: true,
+        skillToolAvailability: {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+        toolDefinition: platformPolicyToolDefinition("veryfront__load_skill"),
+      };
+      assertEquals(
+        enforceSkillPolicy("veryfront__load_skill", {
+          ...nestedReferenceOptions,
+          toolInput: { load: { skillId: "plan", file: "references/guide.md" } },
+        }),
+        { allowed: true },
+      );
+      for (
+        const toolInput of [
+          { load: { skillId: "plan" } },
+          { load: { skillId: "research", file: "references/guide.md" } },
+          { load: { skillId: "plan", file: "resources/secret.md" } },
+          { load: "plan", skillId: "plan", file: "references/guide.md" },
+          Object.create({ load: { skillId: "plan", file: "references/guide.md" } }),
+        ]
+      ) {
+        assertEquals(
+          enforceSkillPolicy("veryfront__load_skill", {
+            ...nestedReferenceOptions,
+            toolInput,
+          }).allowed,
+          false,
+        );
+      }
       assertEquals(
         enforceSkillPolicy("invoke_agent", {
           hasSubmittedFormInput: true,
@@ -243,8 +282,17 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("preserves platform provenance on narrowed active-skill reference schemas", () => {
+      const hiddenLoadSkill = inheritRuntimeProviderSchemaHiddenTool(
+        markRuntimeProviderSchemaHiddenTool(tool({
+          id: "load_skill",
+          description: "Hidden load skill source",
+          inputSchema: { type: "object", properties: {} },
+          execute: () => ({}),
+        })),
+        platformPolicyToolDefinition("load_skill"),
+      );
       const [narrowed] = filterToolsAfterSubmittedFormInput(
-        [platformPolicyToolDefinition("load_skill")],
+        [hiddenLoadSkill],
         [],
         { hasSubmittedFormInputResult: true },
         {
@@ -258,6 +306,7 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
 
       assertEquals(hasTrustedPlatformPolicyToolDefinition(narrowed), true);
+      assertEquals(isRuntimeProviderSchemaHiddenTool(narrowed), true);
       assertEquals(
         enforceSkillPolicy("load_skill", {
           activeSkillId: "plan",
@@ -395,6 +444,16 @@ describe("src/agent/runtime skill policy helpers", () => {
         false,
       );
       assertEquals(isSkillBodyLoadRequest("load_skill", {}), false);
+      assertEquals(
+        isSkillBodyLoadRequest("veryfront__load_skill", { load: { skillId: "research" } }),
+        true,
+      );
+      assertEquals(
+        isSkillBodyLoadRequest("veryfront__load_skill", {
+          load: { skillId: "research", file: "references/guide.md" },
+        }),
+        false,
+      );
       assertEquals(
         isSkillBodyLoadRequest("other_tool", { skillId: "research" }),
         false,

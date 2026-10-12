@@ -15,7 +15,8 @@
  */
 
 export { embedding } from "./embedding.ts";
-export { chunk } from "./chunk.ts";
+export { chunk, chunkWithOffsets } from "./chunk.ts";
+export type { PositionedTextChunk } from "./chunk.ts";
 export { cosineSimilarity as similarity } from "#veryfront/runtime/runtime-bridge.ts";
 export { vectorStore } from "./vector-store.ts";
 export { ragStore } from "./rag-store.ts";
@@ -29,9 +30,11 @@ export {
 export type {
   ChunkOptions,
   Embedding,
+  EmbeddingCallOptions,
   EmbeddingConfig,
   RagChunk,
   RagDocumentMeta,
+  RagDocumentScope,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,

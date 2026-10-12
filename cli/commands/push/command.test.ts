@@ -7838,6 +7838,23 @@ describe("push dependency pin reconciliation", () => {
     );
   });
 
+  it("warns without --verbose when the dependency history cannot be read", async () => {
+    await runPinPush(
+      {
+        history: { version: 1, project_id: OTHER_PROJECT_ID, branch: null, entries: [] },
+      },
+      async ({ error, output, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 1);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Dependency pin history unavailable",
+        );
+      },
+    );
+  });
+
   it("does not adopt a duplicated remote package manifest", async () => {
     await runPinPush(
       {

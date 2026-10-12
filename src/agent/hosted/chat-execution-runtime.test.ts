@@ -2162,6 +2162,52 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{ status: "completed" }]);
   });
 
+  it("keeps a watchdog-first response failure authoritative over the callback abort flag", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const caller = new AbortController();
+    const watchdog = new AbortController();
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent: {
+        stream: async () =>
+          createStreamResult({
+            finalStep: {},
+            captureOptions: (options) => streamOptions = options,
+          }),
+      },
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+      durableRunEventMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: caller.signal,
+      createRootStreamWatchdog: () => createRootStreamWatchdog({ signal: watchdog.signal }),
+    });
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (operation) => operation() },
+      abortSignal: caller.signal,
+      bootstrap,
+    });
+    if (!streamOptions) throw new Error("Stream options were not captured");
+    const reason = new DOMException("Stream timeout", "AbortError");
+    watchdog.abort(reason);
+    caller.abort(reason);
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({ parts: [] }),
+      isAborted: true,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+    assertEquals(terminalStates.map((state) => [state.status, state.terminalErrorCode]), [
+      ["failed", "STREAM_TIMEOUT"],
+    ]);
+  });
+
   it("marks the root run failed when response finalization itself rejects", async () => {
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
     const terminalStates: HostedLifecycleTerminalState[] = [];

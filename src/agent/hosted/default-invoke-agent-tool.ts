@@ -122,6 +122,7 @@ export type DefaultHostedChildAgentExecutionConfig = {
   system: AgentSystem;
   model?: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps?: number;
   thinking?: HostedChildForkToolInput["thinking"];
   toolNames?: string[];
@@ -618,6 +619,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         : {}),
       projectId: scopedOptions.context.projectId || null,
       forkInput,
+      ...(runtimeOptions.childConfig?.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: runtimeOptions.childConfig.parallelToolCalls }),
       toolCallId: execution.toolCallId,
       contextModel: scopedOptions.context.model,
       defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,

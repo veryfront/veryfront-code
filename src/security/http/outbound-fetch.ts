@@ -8,6 +8,7 @@ import { allPrivatePromises, chainPrivatePromise } from "#veryfront/security/pri
  * and connection establishment cannot be separated by a DNS-rebinding window.
  */
 
+import { isHostHttpApiOrigin } from "#veryfront/config/host-api-base.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -609,7 +610,8 @@ function createOriginBoundFetchWithTransport(
   }
   const baseOrigin = readNativeURLString(base, URLOriginGet);
   const allowInternalEgress = allowHostInternalEgress ||
-    (allowOperatorVeryfrontApiOrigin && isOperatorVeryfrontApiOrigin(baseOrigin)) ||
+    (allowOperatorVeryfrontApiOrigin &&
+      (isOperatorVeryfrontApiOrigin(baseOrigin) || isHostHttpApiOrigin(baseUrl))) ||
     isHostAllowedInternalProviderOrigin(base);
   // A primitive, not the URL object: passing `base` itself as the second URL()
   // argument would coerce it through a possibly-replaced URL.prototype.toString.

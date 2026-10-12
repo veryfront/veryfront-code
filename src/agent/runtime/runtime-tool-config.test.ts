@@ -10,6 +10,7 @@ import {
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
+  getRuntimeToolBootstrapNames,
   getRuntimeToolExposureCheckpoint,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
@@ -207,6 +208,39 @@ describe("agent/runtime-tool-config", () => {
         getRuntimeAllowedRemoteTools(runtimeConfig({
           __vfAllowedRemoteTools: ["search_docs", 42],
         })),
+        [],
+      );
+    });
+  });
+
+  describe("getRuntimeToolBootstrapNames", () => {
+    it("distinguishes absent bootstrap names from malformed configured bootstrap names", () => {
+      assertEquals(getRuntimeToolBootstrapNames(runtimeConfig()), undefined);
+      assertEquals(
+        Array.from(
+          getRuntimeToolBootstrapNames(runtimeConfig({
+            __vfToolBootstrapNames: "load_skill",
+          })) ?? [],
+        ),
+        [],
+      );
+    });
+
+    it("preserves valid bootstrap names and fails closed for mixed arrays", () => {
+      assertEquals(
+        Array.from(
+          getRuntimeToolBootstrapNames(runtimeConfig({
+            __vfToolBootstrapNames: ["tool_search", "veryfront__load_skill"],
+          })) ?? [],
+        ),
+        ["tool_search", "veryfront__load_skill"],
+      );
+      assertEquals(
+        Array.from(
+          getRuntimeToolBootstrapNames(runtimeConfig({
+            __vfToolBootstrapNames: ["veryfront__load_skill", 42],
+          })) ?? [],
+        ),
         [],
       );
     });

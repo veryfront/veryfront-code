@@ -1,3 +1,4 @@
+import { vendorComponentsByWorkspaceManifest } from "../build/vendor-source-components.ts";
 import {
   type DependencyIndex,
   dependencyIndexForAllManifests,
@@ -129,6 +130,9 @@ async function dependencyIndexFromWorkspace(): Promise<DependencyIndex> {
   return dependencyIndexForAllManifests(await Deno.readTextFile("deno.lock"), {
     workspaceMembers,
     manifestImportsByPath: await importsByWorkspaceManifest(workspaceMembers),
+    vendorComponentsByManifest: await vendorComponentsByWorkspaceManifest(
+      workspaceMembers,
+    ),
   });
 }
 

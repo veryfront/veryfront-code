@@ -52,6 +52,41 @@ describe("native brand checks", () => {
     }
   });
 
+  it("checks non-plain builtins when Array iteration is patched", async () => {
+    const isolated = await import("./native-brand-checks.ts?patched-array-iterator");
+    const previousIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    let iteratorCalls = 0;
+    let plainResult: boolean | undefined;
+    let nativeResult: boolean | undefined;
+    const disguisedUrl = new URL("https://example.com");
+    Object.setPrototypeOf(disguisedUrl, Object.prototype);
+
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        iteratorCalls++;
+        return {
+          next: () => ({ done: true, value: undefined }),
+        };
+      },
+      writable: true,
+    });
+    try {
+      plainResult = isolated.nativeBrandChecks?.isNonPlainBuiltin({});
+      nativeResult = isolated.nativeBrandChecks?.isNonPlainBuiltin(disguisedUrl);
+    } finally {
+      if (previousIterator) {
+        Object.defineProperty(Array.prototype, Symbol.iterator, previousIterator);
+      } else {
+        Reflect.deleteProperty(Array.prototype, Symbol.iterator);
+      }
+    }
+
+    assertEquals(plainResult, false);
+    assertEquals(nativeResult, true);
+    assertEquals(iteratorCalls, 0);
+  });
+
   it("does not invoke proxy traps while checking non-plain builtins", async () => {
     const isolated = await import("./native-brand-checks.ts?non-plain-proxy");
     let trapCalls = 0;

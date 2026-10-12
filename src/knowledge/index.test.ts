@@ -132,6 +132,27 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("rejects caller-supplied semantic document scopes", async () => {
+    const knowledge = projectKnowledge({ model: "test/demo" });
+
+    await assertRejects(
+      () =>
+        knowledge.retrieve("policy", {
+          documentScope: {
+            version: 1,
+            path_flavor: "posix",
+            include_all: false,
+            includes: ["knowledge/public/**"],
+            excludes: [],
+            content_dir: "knowledge",
+            resolved_content_dir: "/repo/knowledge",
+          },
+        } as never),
+      Error,
+      "per-call documentScope is not supported",
+    );
+  });
+
   it("applies retrieve maxQueryChars overrides to the RAG query once", async () => {
     const embeddedValues: string[] = [];
     registerEmbeddingProvider("capture", () =>
@@ -579,9 +600,12 @@ describe("projectKnowledge", () => {
       const knowledge = projectKnowledge({ projectDir });
       const capped = await knowledge.lookup({ query: "zxqv yjkp", limit: 100 });
       const floored = await knowledge.lookup({ query: "zxqv yjkp", limit: 0 });
+      const defaulted = await knowledge.lookup({ query: "zxqv yjkp" });
 
       assertEquals(capped.returned, 12, "lookup limits are capped at MAX_LOOKUP_LIMIT");
       assertEquals(floored.returned, 1, "a non-positive limit clamps up to one entry");
+      // Hosted search_knowledge defaults to 6; the local helper keeps 8 until that gap is decided.
+      assertEquals(defaulted.returned, 8, "an omitted limit returns the local default of 8");
       assertEquals(
         typeof floored.page_info.next,
         "string",

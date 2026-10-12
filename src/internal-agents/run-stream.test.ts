@@ -1,6 +1,10 @@
+import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -17,6 +21,7 @@ import { buildAgentDelegateTools } from "#veryfront/agent/runtime/agent-delegati
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -33,9 +38,10 @@ import type {
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { ProviderOutputTruncatedError, ProviderRequestError } from "veryfront/provider/shared";
 import {
   createToolsFromHostDefinitions,
+  type HostToolSet,
   type RemoteToolSource,
   type Tool,
   tool,
@@ -54,6 +60,7 @@ import {
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
   PROVIDER_REPLAY_PROTOCOL_HEADER,
   PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+  registerRuntimeManualPause,
 } from "./run-stream.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
@@ -1085,6 +1092,138 @@ describe("internal-agents/run-stream", () => {
     assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
+  it("requires the provider to observe a skill body before reading its reference", async () => {
+    const hostTools = markTrustedHostToolSet(
+      {
+        load_skill: createRuntimeLoadSkillTool({
+          context: {
+            projectId: "project-1",
+            authToken: "test-token",
+            branchId: "branch-1",
+          },
+          skillsDir: "/skills",
+          projectSkillLoader: {
+            listProjectSkillReferences: (_context, skillId) =>
+              Promise.resolve(skillId === "review" ? ["references/checklist.md"] : []),
+            loadProjectSkill: (_context, skillId) =>
+              Promise.resolve(
+                skillId === "review"
+                  ? {
+                    instructions: "# Review\nUse the checklist.",
+                    references: ["references/checklist.md"],
+                  }
+                  : null,
+              ),
+            loadProjectSkillReference: (_context, skillId, normalizedFile) =>
+              Promise.resolve(
+                skillId === "review" && normalizedFile === "references/checklist.md"
+                  ? "Detailed checklist content"
+                  : null,
+              ),
+          },
+          builtinStore: {
+            readSkill: () => Promise.resolve(null),
+            readReferenceFile: () => Promise.resolve(null),
+            listReferences: () => Promise.resolve([]),
+          },
+        }),
+      } satisfies HostToolSet,
+    );
+    const runtimeTools = createToolsFromHostDefinitions(hostTools);
+    assertEquals(typeof runtimeTools.load_skill?.execute, "function");
+
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { id: "load-body", name: "load_skill", input: { load: { skillId: "review" } } },
+          {
+            id: "same-batch-reference",
+            name: "load_skill",
+            input: { reference: { skillId: "review", file: "references/checklist.md" } },
+          },
+        ],
+      },
+      {
+        toolCalls: [{
+          id: "observed-reference",
+          name: "load_skill",
+          input: { reference: { skillId: "review", file: "references/checklist.md" } },
+        }],
+      },
+      { text: "done" },
+    ], {
+      modelId: "anthropic/observed-skill-reference",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const agent = createAgent({
+      id: "observed-skill-reference-agent",
+      model: "anthropic/observed-skill-reference",
+      system: "Load the review skill and read the checklist.",
+      skills: false,
+      tools: {},
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
+    agent.config.tools = runtimeTools;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_observed_skill_reference",
+        messages: [{ id: "user-1", role: "user", content: "Read the checklist." }],
+        tools: [],
+        context: [],
+      },
+      agent,
+      { sessionManager: new AgentRunSessionManager() },
+    );
+    const frames = parseSseFrames(await response.text());
+    const isToolResultFor = (
+      frame: { event: string; data: unknown },
+      toolCallId: string,
+    ): frame is {
+      event: "ToolCallResult";
+      data: { toolCallId: string; isError: boolean; content?: unknown };
+    } =>
+      frame.event === "ToolCallResult" &&
+      typeof frame.data === "object" &&
+      frame.data !== null &&
+      "toolCallId" in frame.data &&
+      frame.data.toolCallId === toolCallId &&
+      "isError" in frame.data &&
+      typeof frame.data.isError === "boolean";
+    const toolResultFor = (toolCallId: string) =>
+      frames.find((frame) => isToolResultFor(frame, toolCallId))?.data;
+    const errorTextFrom = (content: unknown): string => {
+      if (
+        typeof content === "object" && content !== null && "error" in content &&
+        typeof content.error === "string"
+      ) {
+        return content.error;
+      }
+      return "";
+    };
+
+    const bodyResult = toolResultFor("load-body");
+    const sameBatchReferenceResult = toolResultFor("same-batch-reference");
+    const observedReferenceResult = toolResultFor("observed-reference");
+
+    assertEquals(bodyResult?.isError, false);
+    assertStringIncludes(JSON.stringify(bodyResult), '"skillId":"review"');
+    assertEquals(sameBatchReferenceResult?.isError, true);
+    assertStringIncludes(
+      errorTextFrom(sameBatchReferenceResult?.content),
+      'Read the load_skill result for "review" before requesting reference files.',
+    );
+    assertEquals(
+      JSON.stringify(sameBatchReferenceResult).includes("Detailed checklist content"),
+      false,
+    );
+    assertEquals(observedReferenceResult?.isError, false);
+    assertStringIncludes(JSON.stringify(observedReferenceResult), "Detailed checklist content");
+  });
+
   it("does not expose a hidden authorized invoke_agent call as dispatchable", async () => {
     const model = scriptedModel([{
       toolCalls: [
@@ -1243,6 +1382,73 @@ describe("internal-agents/run-stream", () => {
 
     assertStringIncludes(body, "event: RunError");
     assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("binds a deferred pause lifetime before reporting a provider rejection", async () => {
+    const unregister = registerModelProvider("provider-rejection-repro", () => ({
+      provider: "anthropic",
+      modelId: "provider-rejection-repro/test",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () =>
+        Promise.reject(
+          new ProviderRequestError({
+            provider: "anthropic",
+            status: 401,
+            message: "Anthropic request failed with status 401",
+            retryable: false,
+          }),
+        ),
+    }));
+    try {
+      const input = {
+        threadId: crypto.randomUUID(),
+        runId: "run_provider_rejection_repro",
+        messageId: crypto.randomUUID(),
+        messages: [{ id: "message-1", role: "user" as const, content: "Hello" }],
+        tools: [],
+        context: [],
+      };
+      registerRuntimeManualPause(
+        input,
+        createRunBoundAgentManualPause({
+          apiUrl: "https://api.example.com",
+          runId: input.runId,
+          token: "synthetic-pause-token",
+          signal: undefined,
+          fetch: () =>
+            Promise.resolve(
+              Response.json({ stop: false, pauseRequested: false, checkpoint: null }),
+            ),
+        }),
+      );
+      const response = await createRuntimeAgentStreamResponse(
+        input,
+        createAgent({
+          id: "provider-rejection-repro",
+          model: "provider-rejection-repro/test",
+          system: "Reply to the user.",
+          skills: false,
+          maxSteps: 1,
+        }),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          providerReplayCheckpointEmissionEnabled: true,
+          persistProviderReplayCheckpoint: () => Promise.resolve(),
+        },
+      );
+      const frames = parseSseFrames(await response.text());
+      const terminal = frames.filter((frame) =>
+        frame.event === "RunError" || frame.event === "RunFinished"
+      );
+      assertEquals(terminal.length, 1);
+      assertEquals(terminal[0]?.event, "RunError");
+      assertEquals(
+        (terminal[0]?.data as Record<string, unknown>)?.code,
+        "agent-provider-auth-error",
+      );
+    } finally {
+      unregister();
+    }
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {

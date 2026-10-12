@@ -41,8 +41,9 @@ arrives, it stops at `--timeout` seconds (default 300, maximum 3600) with
 
 **Effect:** No provider consent started, and inventory is unchanged.
 
-**Why:** `POST /oauth/connect/session` returns a one-time `connect_url` and an
-`expires_at` deadline 120 seconds away. The URL works once. The deadline covers
+**Why:** A connect session
+(`POST /projects/{project_reference}/integrations/{name}/connect-sessions`)
+returns a one-time `connect_url` and an `expires_at` deadline 120 seconds away. The URL works once. The deadline covers
 opening the URL, not the time the person spends on the provider's consent
 screen.
 
@@ -60,9 +61,9 @@ link to the signed-in person:
 
 ```ts
 import {
+  type ConnectionStatus,
   createIntegrationClient,
   type IntegrationClientConnection,
-  type IntegrationConnectionStatus,
 } from "veryfront/integrations";
 
 /**
@@ -84,16 +85,17 @@ function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal): Promise<T> {
   });
 }
 
-function identity(status: IntegrationConnectionStatus): string | undefined {
-  const id = status.connection_id ?? status.connectionId;
-  const generation = status.connection_generation_id ?? status.connectionGenerationId;
-  return status.connected && id && generation ? `${id}:${generation}` : undefined;
+function identity(status: ConnectionStatus): string | undefined {
+  const { connectionId, connectionGenerationId } = status;
+  return status.connected && connectionId && connectionGenerationId
+    ? `${connectionId}:${connectionGenerationId}`
+    : undefined;
 }
 
 export async function connectGmail(
   presentConnectUrl: PresentConnectUrl,
 ): Promise<IntegrationClientConnection> {
-  // One deadline bounds every request this client makes, including connect.
+  // One deadline bounds every request this client makes, including the connect session.
   const deadline = AbortSignal.timeout(5 * 60 * 1000);
   const client = await createIntegrationClient({
     apiBaseUrl: "<API_BASE_URL>",
@@ -102,19 +104,21 @@ export async function connectGmail(
     abortSignal: deadline,
   });
   const scope = "user";
-  const before = identity(await client.status("gmail", scope));
-  const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
-  if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
-  // The one-time URL is useless after expires_at, so showing it must finish first.
+  const before = identity(await client.getConnectionStatus("gmail", scope));
+  const session = await client.createConnectSession("gmail", {
+    scope,
+    redirectUri: "<REDIRECT_URI>",
+  });
+  // The one-time URL is useless after expiresAt, so showing it must finish first.
   const showBy = AbortSignal.any([
     deadline,
-    AbortSignal.timeout(Math.max(0, Date.parse(handoff.expires_at) - Date.now())),
+    AbortSignal.timeout(Math.max(0, Date.parse(session.expiresAt) - Date.now())),
   ]);
-  await untilDeadline(presentConnectUrl(handoff.connect_url, handoff.expires_at), showBy);
+  await untilDeadline(presentConnectUrl(session.connectUrl, session.expiresAt), showBy);
 
   while (true) {
     await untilDeadline(new Promise((resolve) => setTimeout(resolve, 3000)), deadline);
-    const current = identity(await client.status("gmail", scope));
+    const current = identity(await client.getConnectionStatus("gmail", scope));
     if (!current || current === before) continue;
     for await (const row of client.listConnections("gmail")) {
       const matches = `${row.id}:${row.connection_generation_id}` === current;
@@ -124,16 +128,16 @@ export async function connectGmail(
 }
 ```
 
-The example correlates the scope's OAuth status with an inventory row, so a
+The example correlates the scope's connection status with an inventory row, so a
 row from another scope is never accepted. The result is an observed connected
 identity in that scope, not proof that this particular handoff succeeded: a
 concurrent connect in the same scope can produce it too. Confirm the account
 with the person before relying on it.
 
 The client-level abort signal ends every
-request, including `connect`, at the deadline, and `untilDeadline` stops waiting
+request, including `createConnectSession`, at the deadline, and `untilDeadline` stops waiting
 for the polling delay at the same deadline. Showing the URL must also finish
-before its `expires_at`, because an expired URL cannot start consent. A new `connection_generation_id`
+before its `expiresAt`, because an expired URL cannot start consent. A new `connection_generation_id`
 on an existing `id` means the same account was reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row.
 

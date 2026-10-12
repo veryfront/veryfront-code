@@ -1,4 +1,9 @@
 import {
+  PROJECT_METADATA_ENVIRONMENTS as MAX_ENVIRONMENTS,
+  PROJECT_METADATA_RESPONSE_BYTES as MAX_METADATA_RESPONSE_BYTES,
+  PROJECT_METADATA_TOKEN_CODE_UNITS as MAX_TOKEN_CODE_UNITS,
+} from "#veryfront/utils/project-metadata-limits.ts";
+import {
   isCanonicalOpaqueProjectIdentifier,
   isCanonicalProjectSlug,
 } from "#veryfront/utils/project-identity.ts";
@@ -11,15 +16,12 @@ const DEFAULT_LOOKUP_TIMEOUT_MS = 10_000;
 const MAX_LOOKUP_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_INFLIGHT_LOOKUPS = 200;
 const MAX_CONFIGURED_INFLIGHT_LOOKUPS = 10_000;
-const MAX_METADATA_RESPONSE_BYTES = 512 * 1024;
 const MAX_API_BASE_URL_CODE_UNITS = 2_048;
 const MAX_LOOKUP_KEY_CODE_UNITS = 256;
-const MAX_ENVIRONMENTS = 1_000;
 const MAX_DOMAINS_PER_ENVIRONMENT = 100;
 const MAX_USERS = 10_000;
 const MAX_ENVIRONMENT_NAME_CODE_UNITS = 256;
 const MAX_DOMAIN_CODE_UNITS = 253;
-const MAX_TOKEN_CODE_UNITS = 64 * 1024;
 
 export type ProxyLookupType = "domain" | "routing" | "access";
 

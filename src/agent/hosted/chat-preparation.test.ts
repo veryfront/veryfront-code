@@ -669,6 +669,80 @@ it("prepareHostedChatRuntimeCreationOptions exposes canonical loader when the ho
   assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
 });
 
+it("prepareHostedChatRuntimeCreationOptions exposes one skill loader when both spellings are host-allowed", async () => {
+  let visibleToolNames: readonly string[] | undefined;
+  await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      name: "Agent",
+      description: "Hosted agent",
+      instructions: "Base instructions",
+      tools: true,
+      skills: true,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "tool_search"] },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "deploy",
+          name: "Deploy",
+          description: "Deploy the project",
+          instructions: "Use bash to deploy.",
+          allowedTools: ["bash"],
+        }],
+      }),
+    buildInstructions: (input) => {
+      visibleToolNames = input.availableToolNames;
+      return buildVeryfrontCloudRuntimeInstructions(input);
+    },
+  });
+
+  assertEquals(visibleToolNames, ["tool_search", "veryfront__load_skill"]);
+});
+
+it("prepareHostedChatRuntimeCreationOptions normalizes requested loader aliases to one visible spelling", async () => {
+  let visibleToolNames: readonly string[] | undefined;
+  await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({
+      runtimeOverrides: { allowedTools: ["load_skill", "veryfront__load_skill"] },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      name: "Agent",
+      description: "Hosted agent",
+      instructions: "Base instructions",
+      tools: true,
+      skills: true,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    hostToolPolicy: { allow: ["load_skill", "veryfront__load_skill", "tool_search"] },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "deploy",
+          name: "Deploy",
+          description: "Deploy the project",
+          instructions: "Use bash to deploy.",
+          allowedTools: ["bash"],
+        }],
+      }),
+    buildInstructions: (input) => {
+      visibleToolNames = input.availableToolNames;
+      return buildVeryfrontCloudRuntimeInstructions(input);
+    },
+  });
+
+  assertEquals(visibleToolNames, ["veryfront__load_skill"]);
+});
+
 it("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is denied", async () => {
   let visibleToolNames: readonly string[] | undefined;
   const result = await prepareHostedChatRuntimeCreationOptions({

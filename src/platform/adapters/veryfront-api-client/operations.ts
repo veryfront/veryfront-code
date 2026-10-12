@@ -1,4 +1,8 @@
 import {
+  primordialArrayMap,
+  primordialArrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
   currentRequestContext,
   currentRuntimeRequestContext,
 } from "#veryfront/platform/request-context-access.ts";
@@ -157,38 +161,56 @@ function parseMetadataHistoryResponse(
 }
 
 function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, string>> {
+  return parseRawKeyDependencyMap(
+    raw,
+    "dependency metadata history",
+    "version",
+    (value): value is string => typeof value === "string",
+  );
+}
+
+/**
+ * Copy a package-keyed map without rebuilding it through a record schema, so
+ * every own key, including `__proto__`, survives exactly as the API sent it.
+ */
+function parseRawKeyDependencyMap<Value extends string>(
+  raw: unknown,
+  subject: string,
+  valueLabel: string,
+  isValue: (value: unknown) => value is Value,
+): Readonly<Record<string, Value>> {
   if (typeof raw !== "object" || raw === null || IntrinsicArrayIsArray(raw)) {
     throw API_CLIENT_ERROR.create({
-      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      detail: `Veryfront API ${subject} contains an invalid dependency map`,
       status: 502,
     });
   }
   const prototype = IntrinsicObjectGetPrototypeOf(raw);
   if (prototype !== IntrinsicObjectPrototype && prototype !== null) {
     throw API_CLIENT_ERROR.create({
-      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      detail: `Veryfront API ${subject} contains an invalid dependency map`,
       status: 502,
     });
   }
 
-  const result = IntrinsicObjectCreate(null) as Record<string, string>;
+  const result = IntrinsicObjectCreate(null) as Record<string, Value>;
   const keys = IntrinsicReflectOwnKeys(raw);
   let index = 0;
   while (index < keys.length) {
     const key = keys[index++];
     if (typeof key !== "string") {
       throw API_CLIENT_ERROR.create({
-        detail: "Veryfront API dependency metadata history contains an invalid dependency name",
+        detail: `Veryfront API ${subject} contains an invalid dependency name`,
         status: 502,
       });
     }
     const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(raw, key);
     if (
       descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-      typeof descriptor.value !== "string"
+      !isValue(descriptor.value)
     ) {
       throw API_CLIENT_ERROR.create({
-        detail: "Veryfront API dependency metadata history contains an invalid dependency version",
+        detail: `Veryfront API ${subject} contains an invalid dependency ${valueLabel}`,
         status: 502,
       });
     }
@@ -200,6 +222,76 @@ function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, strin
     });
   }
   return IntrinsicObjectFreeze(result);
+}
+
+function invalidDependencyResolutionResponse(): Error {
+  return API_CLIENT_ERROR.create({
+    detail: "Veryfront API dependency resolution contains an invalid response",
+    status: 502,
+  });
+}
+
+function resolutionField(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) throw invalidDependencyResolutionResponse();
+  return descriptor.value;
+}
+
+function parseDependencyResolutionResponse(value: unknown): DependencyResolution {
+  if (value === null || typeof value !== "object" || IntrinsicArrayIsArray(value)) {
+    throw invalidDependencyResolutionResponse();
+  }
+  const response = value as Record<string, unknown>;
+  const persisted = resolutionField(response, "persisted");
+  if (typeof persisted !== "boolean") throw invalidDependencyResolutionResponse();
+  return IntrinsicObjectFreeze({
+    pins: parseRawKeyDependencyMap(
+      resolutionField(response, "pins"),
+      "dependency resolution",
+      "version",
+      (pin): pin is string => typeof pin === "string",
+    ),
+    persisted,
+    skipped: parseRawKeyDependencyMap(
+      resolutionField(response, "skipped"),
+      "dependency resolution",
+      "skip reason",
+      (reason): reason is DependencySkipReason => reason === "declaration_changed",
+    ),
+  });
+}
+
+/** Why a requested package was not written to package.json. */
+export type DependencySkipReason = "declaration_changed";
+
+/** Input for `client.dependencies.resolve()`. */
+export interface ResolveDependenciesInput {
+  /** npm specifiers: a bare name, `name@exact` or `name@range`. 1-100 entries. */
+  specifiers: readonly string[];
+  /** Branch name or ID. Omit, or pass `null` or `"main"`, for the main branch. */
+  branch?: string | null;
+  /**
+   * The declaration the caller observed for each requested package, `null` when
+   * the package was absent. When set, the keys must equal the requested package
+   * names, and a package whose declaration changed is skipped instead of written.
+   */
+  expectedDeclarations?: Readonly<Record<string, string | null>>;
+  /** Caller-owned cancellation signal for the API request. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result of `client.dependencies.resolve()`. A requested package that is in
+ * neither `pins` nor `skipped` did not resolve (unknown package or registry
+ * failure) and was not written.
+ */
+export interface DependencyResolution {
+  /** Exact version for every requested package that resolved, keyed by package name. */
+  readonly pins: Readonly<Record<string, string>>;
+  /** `false` when writing package.json failed. The caller can retry. */
+  readonly persisted: boolean;
+  /** Requested packages left unchanged because their declaration changed. */
+  readonly skipped: Readonly<Record<string, DependencySkipReason>>;
 }
 
 function requireBoundedFileContentLimit(maximumBytes: number): number {
@@ -368,7 +460,9 @@ async function listAllFiles(
 
   do {
     const result = await list(cursor);
-    allFiles.push(...result.files);
+    for (let index = 0; index < result.files.length; index++) {
+      primordialArrayPush(allFiles, result.files[index]!);
+    }
     cursor = result.page_info.next ?? undefined;
   } while (cursor);
 
@@ -507,6 +601,32 @@ export class VeryfrontAPIOperations {
     }
     // Host data bypasses generic validator plugins and array-copy hooks.
     return parseMetadataHistoryResponse(decoded, expectedProjectId, branch);
+  }
+
+  async resolveDependencies(
+    projectRef: string,
+    input: ResolveDependenciesInput,
+  ): Promise<DependencyResolution> {
+    const branch = input.branch === "main" ? null : input.branch ?? null;
+    const endpoint = `/projects/${encodeURIComponent(projectRef)}/dependencies/resolve`;
+    logger.debug("resolveDependencies", {
+      projectRef,
+      branch,
+      specifierCount: input.specifiers.length,
+    });
+    const raw = await this.request(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        specifiers: input.specifiers,
+        ...(branch === null ? {} : { branch }),
+        ...(input.expectedDeclarations === undefined
+          ? {}
+          : { expected_declarations: input.expectedDeclarations }),
+      }),
+      signal: input.signal,
+    });
+    return parseDependencyResolutionResponse(raw);
   }
 
   async listBranchFiles(
@@ -773,7 +893,7 @@ export class VeryfrontAPIOperations {
     const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {
-      files: response.data.map(mapProjectFile),
+      files: primordialArrayMap(response.data, mapProjectFile),
       page_info: response.page_info,
       release_id: response.release_id,
       release_version: response.release_version,
@@ -1005,7 +1125,7 @@ export class VeryfrontAPIOperations {
   // Dependency artifact build operations
   // ===========================================================================
 
-  async uploadDependencyArtifactAsset(
+  async writeDependencyArtifactAsset(
     artifactId: string,
     attemptCount: number,
     contentHash: string,
@@ -1022,7 +1142,7 @@ export class VeryfrontAPIOperations {
     const url = `/dependency-artifacts/${
       encodeURIComponent(artifactId)
     }/attempts/${attemptCount}/assets/${contentHash}`;
-    logger.debug("uploadDependencyArtifactAsset", {
+    logger.debug("writeDependencyArtifactAsset", {
       attemptCount,
       contentHash,
       contentType,
@@ -1037,7 +1157,7 @@ export class VeryfrontAPIOperations {
     return getDependencyArtifactAssetUploadResponseSchema().parse(raw);
   }
 
-  async reportDependencyArtifactBuildResult(
+  async createDependencyArtifactBuildResult(
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
@@ -1046,7 +1166,7 @@ export class VeryfrontAPIOperations {
     const url = `/dependency-artifacts/${
       encodeURIComponent(artifactId)
     }/attempts/${attemptCount}/result`;
-    logger.debug("reportDependencyArtifactBuildResult", {
+    logger.debug("createDependencyArtifactBuildResult", {
       attemptCount,
       outcome: result.outcome,
     });

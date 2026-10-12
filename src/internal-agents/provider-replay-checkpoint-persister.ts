@@ -17,7 +17,7 @@ import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
-import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 const DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS = 15_000;
 
@@ -238,7 +238,9 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   // over HTTP during a streamed run, so they must carry the execution trace to
   // veryfront-api. The wrapper is a no-op until a tracer provider is installed.
   const fetchImpl = instrumentConversationRunFetch(
-    input.fetch ? snapshotFetch(input.fetch) : createOriginBoundOutboundFetch(input.apiUrl),
+    input.fetch
+      ? snapshotFetch(input.fetch)
+      : createVeryfrontApiOriginBoundOutboundFetch(input.apiUrl),
   );
   const resolveApiUrl: VeryfrontApiRequestUrlResolver = createVeryfrontApiRequestUrlResolver(
     input.apiUrl,

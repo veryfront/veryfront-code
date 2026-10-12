@@ -1,14 +1,62 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../factory.ts";
+import {
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "../ag-ui/encoder.ts";
+import type { AgentConfig } from "../types.ts";
+import { createInvokeAgentTool } from "./agent-delegation.ts";
+import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
 
 const getReportSchema = defineSchema((v) => v.object({ city: v.string(), tempC: v.number() }));
 const discardReportSchema = defineSchema((v) =>
   v.object({ city: v.string() }).transform(() => undefined)
+);
+const dateReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => new Date("2026-01-01T00:00:00.000Z"))
+);
+const bigintReportSchema = defineSchema((v) => v.object({ city: v.string() }).transform(() => 12n));
+const nonFiniteReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => Number.POSITIVE_INFINITY)
+);
+const deepReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => {
+    let output: Record<string, unknown> = { city: "Berlin" };
+    for (let index = 0; index < 64; index++) {
+      output = { child: output };
+    }
+    return output;
+  })
+);
+const sparseArrayReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => new Array(128))
+);
+const sharedReferenceReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => {
+    const shared = { city: "Berlin" };
+    return { left: shared, right: shared };
+  })
+);
+const wideReportSchema = defineSchema((v) =>
+  v.object({ city: v.string() }).transform(() => {
+    const output: Record<string, unknown> = {};
+    for (let index = 0; index < 128; index++) {
+      output[`item${index}`] = index;
+    }
+    return output;
+  })
 );
 
 const noopTool = tool({
@@ -18,11 +66,29 @@ const noopTool = tool({
   execute: () => ({ ok: true }),
 });
 
+function eventTypes(events: ReadonlyArray<Record<string, unknown>>): string[] {
+  return events.map((event) => String(event.type));
+}
+
+function countEvents(events: ReadonlyArray<Record<string, unknown>>, type: string): number {
+  return events.filter((event) => event.type === type).length;
+}
+
+function eventIndex(events: ReadonlyArray<Record<string, unknown>>, type: string): number {
+  return eventTypes(events).indexOf(type);
+}
+
 /**
  * A model that always answers with text plus a tool call, so the agent loop
  * never finishes on its own and exits through the max-steps path.
  */
-function createMaxStepsModel(text: string): ModelRuntime<ModelRuntimeCallOptions> {
+function createMaxStepsModel(
+  text: string,
+  toolName = "max_steps_noop_tool",
+  generateToolInput: unknown = "{}",
+  streamToolInput: unknown = {},
+  providerMetadata?: Record<string, unknown>,
+): ModelRuntime<ModelRuntimeCallOptions> {
   let call = 0;
   return {
     provider: "test",
@@ -37,12 +103,13 @@ function createMaxStepsModel(text: string): ModelRuntime<ModelRuntimeCallOptions
           {
             type: "tool-call",
             toolCallId: `call-${call}`,
-            toolName: "max_steps_noop_tool",
-            input: "{}",
+            toolName,
+            input: generateToolInput,
           },
         ],
         finishReason: "tool-calls" as const,
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        ...(providerMetadata === undefined ? {} : { providerMetadata }),
       });
     },
     doStream() {
@@ -52,13 +119,14 @@ function createMaxStepsModel(text: string): ModelRuntime<ModelRuntimeCallOptions
         {
           type: "tool-call",
           toolCallId: `call-${call}`,
-          toolName: "max_steps_noop_tool",
-          input: {},
+          toolName,
+          input: streamToolInput,
         },
         {
           type: "finish",
           finishReason: "tool-calls",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          ...(providerMetadata === undefined ? {} : { providerMetadata }),
         },
       ];
       return Promise.resolve({
@@ -155,6 +223,640 @@ describe("agent max steps output schema", () => {
     assertEquals(response.metadata?.warning, "Max steps (1) reached");
     assertEquals(response.metadata?.outputSchemaError, undefined);
     assertEquals(response.object, { city: "Berlin", tempC: 12 });
+  });
+
+  it("parses the final max-step object after the final tool completes", async () => {
+    let toolCompleted = false;
+    let transformCalls = 0;
+    const statefulReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return { ...report, toolCompleted };
+      })
+    );
+    const statefulToolName = "max_steps_stateful_tool";
+    const statefulTool = tool({
+      id: statefulToolName,
+      description: "Marks the final tool complete",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        toolCompleted = true;
+        return { ok: true };
+      },
+    });
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}', statefulToolName);
+    const assistant = agent({
+      id: "max-steps-final-tool-stateful-transform",
+      system: "You report weather.",
+      tools: { [statefulToolName]: statefulTool },
+      maxSteps: 1,
+      outputSchema: statefulReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, { city: "Berlin", tempC: 12, toolCompleted: true });
+    assertEquals(transformCalls, 1);
+    assertEquals(eventTypes(observed), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "tool-input-start",
+      "tool-input-available",
+      "tool-output-available",
+      "message-finish",
+    ]);
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        object: { city: "Berlin", tempC: 12, toolCompleted: true },
+      }],
+    );
+  });
+
+  it("admits final max-step child delegation before parsing after the child completes", async () => {
+    let childDelegations = 0;
+    let childCompleted = false;
+    let transformCalls = 0;
+    const delegatedReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return { ...report, childCompleted };
+      })
+    );
+    const childModel: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "test",
+      modelId: "test/max-steps-child",
+      executionMode: "remote",
+      doGenerate() {
+        childCompleted = true;
+        return Promise.resolve({
+          content: [{ type: "text", text: "child complete" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        });
+      },
+      doStream() {
+        const parts: unknown[] = [
+          { type: "text-delta", text: "child complete" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ];
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              for (const part of parts) controller.enqueue(part);
+              childCompleted = true;
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+    const child = agent({
+      id: "max-steps-child",
+      system: "Complete delegated child work.",
+      resolveModelTransport: () => Promise.resolve({ model: childModel }),
+    });
+    const invokeInput = {
+      agent_id: "max-steps-child",
+      description: "Complete child",
+      prompt: "Run child work",
+      context: {},
+    };
+    const model = createMaxStepsModel(
+      '{"city":"Berlin","tempC":12}',
+      "invoke_agent",
+      invokeInput,
+      invokeInput,
+    );
+    const assistant = agent({
+      id: "max-steps-final-child-delegation",
+      system: "Delegate then report weather.",
+      tools: {
+        invoke_agent: createInvokeAgentTool({
+          resolveAgent: (agentId) => agentId === child.id ? child : undefined,
+        }),
+      },
+      maxSteps: 1,
+      outputSchema: delegatedReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      async (input) => {
+        childDelegations += 1;
+        assertEquals(input.agentId, "max-steps-child");
+        assertEquals(input.toolName, "invoke_agent");
+        assertEquals(input.toolInput, invokeInput);
+        const result = await input.execute();
+        childCompleted = true;
+        return result;
+      },
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(childDelegations, 1);
+    assertEquals(response.object, { city: "Berlin", tempC: 12, childCompleted: true });
+    assertEquals(transformCalls, 1);
+    assertEquals(eventTypes(observed), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "tool-input-start",
+      "tool-input-available",
+      "tool-output-available",
+      "message-finish",
+    ]);
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        object: { city: "Berlin", tempC: 12, childCompleted: true },
+      }],
+    );
+  });
+
+  it("emits one raw finish when final max-step tool admission aborts", async () => {
+    const abortController = new AbortController();
+    const abortReason = new DOMException("admission aborted", "AbortError");
+    let transformCalls = 0;
+    const statefulReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return report;
+      })
+    );
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
+    const assistant = agent({
+      id: "max-steps-admission-abort-finish",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: statefulReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    await assertRejects(() =>
+      withLocalChildExecution(
+        (input) => input.execute(),
+        () => assistant.generate({ input: "Berlin?", abortSignal: abortController.signal }),
+        (event) => {
+          observed.push(event as Record<string, unknown>);
+          if (event.type === "tool-input-available") abortController.abort(abortReason);
+          return Promise.resolve();
+        },
+      )
+    );
+
+    assertEquals(transformCalls, 0);
+    assertEquals(eventTypes(observed), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "tool-input-start",
+      "tool-input-available",
+      "message-finish",
+    ]);
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }],
+    );
+  });
+
+  it("does not replay final max-step admission when the observer rejects", async () => {
+    const observerFailure = new Error("observer rejected admission");
+    let rejected = false;
+    let transformCalls = 0;
+    const statefulReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return report;
+      })
+    );
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
+    const assistant = agent({
+      id: "max-steps-admission-observer-reject",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: statefulReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const error = await withLocalChildExecution(
+      (input) => input.execute(),
+      async () => {
+        try {
+          await assistant.generate({ input: "Berlin?" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected observer failure");
+      },
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        if (event.type === "tool-input-available" && !rejected) {
+          rejected = true;
+          return Promise.reject(observerFailure);
+        }
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, observerFailure);
+    assertEquals(transformCalls, 0);
+    assertEquals(eventTypes(observed), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "tool-input-start",
+      "tool-input-available",
+    ]);
+  });
+
+  it("emits one raw finish when final max-step replay checkpoint persistence fails", async () => {
+    const checkpointFailure = new Error("checkpoint persistence rejected");
+    let transformCalls = 0;
+    const statefulReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return report;
+      })
+    );
+    const model = createMaxStepsModel(
+      '{"city":"Berlin","tempC":12}',
+      "max_steps_noop_tool",
+      "{}",
+      {},
+      {
+        anthropic: {
+          rawAssistantMessages: [[{ type: "thinking", thinking: "", signature: "sig" }]],
+        },
+      },
+    );
+    const config = {
+      id: "max-steps-checkpoint-failure-finish",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: statefulReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+      __vfProviderReplayCheckpointMessageId: "max-steps-checkpoint-message",
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw checkpointFailure;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+    const assistant = agent(config);
+    const observed: Array<Record<string, unknown>> = [];
+
+    const error = await withLocalChildExecution(
+      (input) => input.execute(),
+      async () => {
+        try {
+          await assistant.generate({ input: "Berlin?" });
+        } catch (caught) {
+          return caught;
+        }
+        throw new Error("expected checkpoint persistence failure");
+      },
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertStrictEquals(error, checkpointFailure);
+    assertEquals(transformCalls, 0);
+    assertEquals(eventTypes(observed), [
+      "message-start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "tool-input-start",
+      "tool-input-available",
+      "message-finish",
+    ]);
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }],
+    );
+  });
+
+  it("does not transform the final max-step output when the final tool aborts", async () => {
+    let transformCalls = 0;
+    const abortController = new AbortController();
+    const abortReason = new DOMException("final tool aborted", "AbortError");
+    const statefulReportSchema = defineSchema((v) =>
+      v.object({ city: v.string(), tempC: v.number() }).transform((report) => {
+        transformCalls += 1;
+        return report;
+      })
+    );
+    const abortingToolName = "max_steps_aborting_tool";
+    const abortingTool = tool({
+      id: abortingToolName,
+      description: "Aborts during the final max-step tool turn",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        abortController.abort(abortReason);
+        throw abortReason;
+      },
+    });
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}', abortingToolName);
+    const assistant = agent({
+      id: "max-steps-final-tool-abort-transform",
+      system: "You report weather.",
+      tools: { [abortingToolName]: abortingTool },
+      maxSteps: 1,
+      outputSchema: statefulReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    await assertRejects(() =>
+      withLocalChildExecution(
+        (input) => input.execute(),
+        () => assistant.generate({ input: "Berlin?", abortSignal: abortController.signal }),
+        (event) => {
+          observed.push(event as Record<string, unknown>);
+          return Promise.resolve();
+        },
+      )
+    );
+
+    assertEquals(transformCalls, 0);
+    assertEquals(countEvents(observed, "message-start"), 1);
+    assertEquals(countEvents(observed, "text-start"), 1);
+    assertEquals(countEvents(observed, "text-delta"), 1);
+    assertEquals(countEvents(observed, "text-end"), 1);
+    assertEquals(countEvents(observed, "message-finish"), 1);
+    const toolInputAvailableIndex = eventIndex(observed, "tool-input-available");
+    const toolOutputAvailableIndex = eventIndex(observed, "tool-output-available");
+    const messageFinishIndex = eventIndex(observed, "message-finish");
+    assertEquals(toolInputAvailableIndex >= 0, true);
+    assertEquals(messageFinishIndex > toolInputAvailableIndex, true);
+    if (toolOutputAvailableIndex >= 0) {
+      assertEquals(toolInputAvailableIndex < toolOutputAvailableIndex, true);
+      assertEquals(toolOutputAvailableIndex < messageFinishIndex, true);
+    }
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }],
+    );
+  });
+
+  it("observes the parsed object on the final generated tool turn before max-steps exit", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin","tempC":12}');
+    const assistant = agent({
+      id: "max-steps-observed-parsed-object",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: getReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, { city: "Berlin", tempC: 12 });
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        object: { city: "Berlin", tempC: 12 },
+      }],
+    );
+  });
+
+  it("marks non-plain parsed objects unsupported in max-steps observations", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-observed-unsupported-object",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: dateReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(response.object, new Date("2026-01-01T00:00:00.000Z"));
+    assertEquals(
+      observed.filter((event) => event.type === "message-finish"),
+      [{
+        type: "message-finish",
+        finishReason: "tool-calls",
+        totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        objectEncoding: "snapshot",
+        object: {
+          captureStatus: "unsupported",
+          reasons: ["unsupported_object"],
+          value: "[unsupported object]",
+        },
+      }],
+    );
+  });
+
+  it("keeps an exact key-budget object complete when only a hidden property remains", async () => {
+    const expected: Record<string, unknown> = {};
+    for (let index = 0; index < 100; index++) expected[`item${index}`] = index;
+    Object.defineProperty(expected, "hidden", { value: "private", enumerable: false });
+    const schema = defineSchema((v) => v.object({ city: v.string() }).transform(() => expected));
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "exact-key-budget-observation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: schema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+    assertStrictEquals(response.object, expected);
+    const finishes = observed.filter((event) => event.type === "message-finish");
+    assertEquals(finishes.length, 1);
+    const object = finishes[0]?.object as Record<string, unknown>;
+    assertEquals(object.captureStatus, undefined);
+    assertEquals(Object.keys(object).length, 100);
+    for (let index = 0; index < 100; index++) assertEquals(object[`item${index}`], index);
+    assertEquals(Object.hasOwn(object, "hidden"), false);
+  });
+
+  it("marks deeply nested parsed objects partial in max-steps observations", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-observed-deep-object",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: deepReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    const response = await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    assertEquals(typeof response.object, "object");
+    const [finish] = observed.filter((event) => event.type === "message-finish");
+    assertEquals((finish?.object as Record<string, unknown> | undefined)?.captureStatus, "partial");
+    assertEquals((finish?.object as Record<string, unknown> | undefined)?.reasons, ["max_depth"]);
+  });
+
+  it("marks sparse array parsed objects partial in max-steps observations", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-observed-sparse-array",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: sparseArrayReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    const [finish] = observed.filter((event) => event.type === "message-finish");
+    const object = finish?.object as Record<string, unknown> | undefined;
+    assertEquals(object?.captureStatus, "partial");
+    assertEquals(object?.reasons, ["array_truncated"]);
+  });
+
+  it("marks repeated parsed object references partial without expanding them", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-observed-shared-reference",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: sharedReferenceReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    const [finish] = observed.filter((event) => event.type === "message-finish");
+    const object = finish?.object as Record<string, unknown> | undefined;
+    assertEquals(object?.captureStatus, "partial");
+    assertEquals(object?.reasons, ["circular"]);
+  });
+
+  it("marks wide parsed objects partial in max-steps observations", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "max-steps-observed-wide-object",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: wideReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const observed: Array<Record<string, unknown>> = [];
+
+    await withLocalChildExecution(
+      (input) => input.execute(),
+      () => assistant.generate({ input: "Berlin?" }),
+      (event) => {
+        observed.push(event as Record<string, unknown>);
+        return Promise.resolve();
+      },
+    );
+
+    const [finish] = observed.filter((event) => event.type === "message-finish");
+    const object = finish?.object as Record<string, unknown> | undefined;
+    assertEquals(object?.captureStatus, "partial");
+    assertEquals(object?.reasons, ["object_keys_truncated"]);
   });
 
   it("preserves object presence when a successful schema transform returns undefined", async () => {
@@ -313,6 +1015,220 @@ describe("agent max steps output schema", () => {
     assertEquals(metadata?.outputSchemaError, undefined);
     assertEquals(finished?.object, { city: "Berlin", tempC: 12 });
   });
+
+  for (
+    const fixture of [
+      { name: "scalar", value: 42, expectedValue: 42, reasons: [] as string[] },
+      {
+        name: "bigint",
+        value: 12n,
+        expectedValue: "[unsupported bigint]",
+        reasons: ["unsupported_bigint", "unsupported_property"],
+      },
+      {
+        name: "array",
+        value: Array.from({ length: 150 }, (_, index) => index),
+        expectedValue: [
+          ...Array.from({ length: 100 }, (_, index) => index),
+          "[truncated 50 items]",
+        ],
+        reasons: ["array_truncated"],
+      },
+    ]
+  ) {
+    it(`keeps authored envelope-shaped ${fixture.name} output intact across both runtime paths`, async () => {
+      const authored = {
+        captureStatus: "unsupported",
+        reasons: ["retry", "retry"],
+        value: fixture.value,
+      };
+      const schema = defineSchema((v) => v.object({ city: v.string() }).transform(() => authored));
+      for (const streaming of [false, true]) {
+        const model = createMaxStepsModel('{"city":"Berlin"}');
+        const assistant = agent({
+          id: `authored-envelope-${fixture.name}-${streaming}`,
+          system: "You report weather.",
+          tools: { max_steps_noop_tool: noopTool },
+          maxSteps: 1,
+          outputSchema: schema(),
+          resolveModelTransport: () => Promise.resolve({ model }),
+        });
+        const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+        let callerObject: unknown;
+        let finishEncoding: unknown;
+        await withLocalChildExecution(
+          (input) => input.execute(),
+          async () => {
+            if (streaming) {
+              const result = await assistant.stream({
+                input: "Berlin?",
+                onFinish: (response) => {
+                  callerObject = response.object;
+                },
+              });
+              await result.toDataStreamResponse().text();
+            } else callerObject = (await assistant.generate({ input: "Berlin?" })).object;
+          },
+          (event) => {
+            mapRuntimeStreamEventToAgUiEvents(state, event);
+            if (event.type === "message-finish") finishEncoding = event.objectEncoding;
+            return Promise.resolve();
+          },
+        );
+        assertStrictEquals(callerObject, authored);
+        const value = {
+          captureStatus: "unsupported",
+          reasons: ["retry", "retry"],
+          value: fixture.expectedValue,
+        };
+        const expected = fixture.reasons.length
+          ? { captureStatus: "partial", reasons: fixture.reasons, value }
+          : value;
+        assertEquals(finishEncoding, fixture.reasons.length ? "snapshot" : undefined);
+        assertEquals(
+          finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished")?.payload
+            .result,
+          expected,
+        );
+        assertEquals(authored.reasons, ["retry", "retry"]);
+      }
+    });
+  }
+
+  it("preserves a depth-limited capture envelope through streaming finalization", async () => {
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "stream-depth-truncation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: deepReportSchema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const result = await assistant.stream({ input: "Berlin?" });
+    const body = await result.toDataStreamResponse().text();
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = body.split("\n").filter((line) => line.startsWith("data: {")).map((line) =>
+      JSON.parse(line.slice(6))
+    );
+    for (const event of events) mapRuntimeStreamEventToAgUiEvents(state, event);
+    const original = events.find((event) => event.type === "message-finish")?.object;
+    assertEquals(original.captureStatus, "partial");
+    assertEquals(original.reasons, ["max_depth"]);
+    const finish = finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished");
+    assertEquals(finish?.payload.result, original);
+  });
+
+  it("preserves the original array truncation marker through streaming finalization", async () => {
+    const schema = defineSchema((v) =>
+      v.object({ city: v.string() }).transform(() =>
+        Array.from({ length: 150 }, (_, index) => index)
+      )
+    );
+    const model = createMaxStepsModel('{"city":"Berlin"}');
+    const assistant = agent({
+      id: "stream-array-truncation",
+      system: "You report weather.",
+      tools: { max_steps_noop_tool: noopTool },
+      maxSteps: 1,
+      outputSchema: schema(),
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const result = await assistant.stream({ input: "Berlin?" });
+    const body = await result.toDataStreamResponse().text();
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const events = body.split("\n").filter((line) => line.startsWith("data: {")).map((line) =>
+      JSON.parse(line.slice(6))
+    );
+    for (const event of events) mapRuntimeStreamEventToAgUiEvents(state, event);
+    const finish = finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished");
+    assertEquals(finish?.payload.result, {
+      captureStatus: "partial",
+      reasons: ["array_truncated"],
+      value: [...Array.from({ length: 100 }, (_, index) => index), "[truncated 50 items]"],
+    });
+    JSON.stringify(finish?.payload);
+  });
+
+  for (
+    const fixture of [
+      {
+        name: "Date",
+        schema: dateReportSchema(),
+        expected: new Date("2026-01-01T00:00:00.000Z"),
+        reason: "unsupported_object",
+        value: "[unsupported object]",
+      },
+      {
+        name: "bigint",
+        schema: bigintReportSchema(),
+        expected: 12n,
+        reason: "unsupported_bigint",
+        value: "[unsupported bigint]",
+      },
+      {
+        name: "undefined",
+        schema: discardReportSchema(),
+        expected: undefined,
+        reason: "unsupported_undefined",
+        value: "[unsupported undefined]",
+      },
+      {
+        name: "non-finite number",
+        schema: nonFiniteReportSchema(),
+        expected: Number.POSITIVE_INFINITY,
+        reason: "unsupported_number",
+        value: "[unsupported number]",
+      },
+    ]
+  ) {
+    it(`snapshots ${fixture.name} structured output before streaming serialization`, async () => {
+      const model = createMaxStepsModel('{"city":"Berlin"}');
+      const assistant = agent({
+        id: `stream-output-snapshot-${fixture.name}`,
+        system: "You report weather.",
+        tools: { max_steps_noop_tool: noopTool },
+        maxSteps: 1,
+        outputSchema: fixture.schema,
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+      let finished: Record<string, unknown> | undefined;
+      const observed: Array<Record<string, unknown>> = [];
+      const body = await withLocalChildExecution(
+        (input) => input.execute(),
+        async () => {
+          const result = await assistant.stream({
+            input: "Berlin?",
+            onFinish: (response) => {
+              finished = response as unknown as Record<string, unknown>;
+            },
+          });
+          return await result.toDataStreamResponse().text();
+        },
+        (event) => {
+          observed.push(event as Record<string, unknown>);
+          return Promise.resolve();
+        },
+      );
+      const events = body.split("\n")
+        .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+      const finishEvents = events.filter((event) => event.type === "message-finish");
+      const snapshot = {
+        captureStatus: "unsupported",
+        reasons: [fixture.reason],
+        value: fixture.value,
+      };
+      assertEquals(finished !== undefined && "object" in finished, true);
+      assertEquals(finished?.object, fixture.expected);
+      assertEquals(events.some((event) => event.type === "error"), false);
+      assertEquals(finishEvents.length, 1);
+      assertEquals(finishEvents[0].object, snapshot);
+      assertEquals(
+        observed.filter((event) => event.type === "message-finish").map((event) => event.object),
+        [snapshot],
+      );
+    });
+  }
 
   it("streams object presence when a successful schema transform returns undefined", async () => {
     const model = createMaxStepsModel('{"city":"Berlin"}');

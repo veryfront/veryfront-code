@@ -45,6 +45,7 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)           | Current Code and API compaction review         |
 | [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                 | Agent prompt, stream, tool, and replay flow    |
 | [29-environment-access-gate.md](./29-environment-access-gate.md)                             | Protected environment gate and access tokens   |
+| [30-run-event-authority.md](./30-run-event-authority.md) | Model capture, tool admission, and runtime provenance |
 
 ## Runtime boundaries
 

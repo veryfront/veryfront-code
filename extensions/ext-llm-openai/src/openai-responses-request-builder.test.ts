@@ -30,6 +30,34 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  it("rejects accessor provider buckets before reading OpenAI Responses options", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return { max_output_tokens: 777 };
+      },
+    });
+
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions,
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("keeps agent object output schemas explicitly non-strict on the OpenAI Responses route", () => {
     const outputSchema = defineSchema((v) => v.object({ ingested: v.number() }))();
     const resolved = resolveAgentOutputSchema(outputSchema, "outcome-schema");

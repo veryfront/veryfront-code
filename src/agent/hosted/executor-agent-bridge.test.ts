@@ -170,6 +170,37 @@ describe("executor hosted agent bridge", () => {
     }
   });
 
+  it("completes snapshot-marked output through the executor bridge", async () => {
+    const channels = pair(createExecutorAgentOperations({
+      preparedRuntimeHandle: handle,
+      startStream: () =>
+        Promise.resolve(sse([
+          { type: "text-delta", id: "text-1", delta: "{}" },
+          {
+            type: "message-finish",
+            objectEncoding: "snapshot",
+            object: {
+              captureStatus: "unsupported",
+              reasons: ["unsupported_bigint"],
+              value: "[unsupported bigint]",
+            },
+          },
+        ])),
+    }));
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      const chunks = await collect(runtime.toUIMessageStream());
+      assertEquals(chunks.at(-1)?.type, "finish");
+      assertEquals(chunks.some((chunk) => chunk.type === "error"), false);
+      assertEquals(channels.broker.signal.aborted, false);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("does not yield finish before the broker persistence callback settles", async () => {
     const persisted = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();

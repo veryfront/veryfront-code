@@ -22,6 +22,7 @@ import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 const ArraySort = Array.prototype.sort;
@@ -39,10 +40,15 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
   return ReflectApply(SetHas, set, [value]);
 }
 
+function isProviderSchemaVisibleToolDefinition(tool: ToolDefinition): boolean {
+  return !isRuntimeProviderSchemaHiddenTool(tool);
+}
+
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill", "veryfront__load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["veryfront__load_skill"]);
+const LEGACY_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** The platform's own namespace, which models also use as an alias for local platform tools. */
 const PLATFORM_TOOL_NAMESPACE = "veryfront";
@@ -198,7 +204,9 @@ function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
 }
 
 function compareToolSearchMatches(left: ToolSearchMatch, right: ToolSearchMatch): number {
-  return (left.status === right.status ? 0 : left.status === "available" ? -1 : 1) ||
+  // Equally relevant visible tools must not hide deferred capabilities. Stronger
+  // matches still win before this tie-break, including an exact visible name.
+  return (left.status === right.status ? 0 : left.status === "loaded" ? -1 : 1) ||
     compareAscii(left.name, right.name);
 }
 
@@ -324,6 +332,7 @@ function snapshotSearchableTool(
   tool: ToolDefinition,
   status: ToolSearchMatch["status"],
   budget: SchemaSearchBudget,
+  includeParameterDescriptions = true,
 ): SearchableTool | null {
   try {
     if (!tool || typeof tool !== "object" || ArrayIsArray(tool)) return null;
@@ -353,7 +362,7 @@ function snapshotSearchableTool(
       status,
       normalizedName: normalizeSearchText(name.value),
       normalizedDescription: normalizeSearchText(description.value),
-      parameterDescriptions: parameters
+      parameterDescriptions: includeParameterDescriptions && parameters
         ? snapshotSchemaDescriptions(parameters.value, budget) ?? []
         : [],
     };
@@ -380,6 +389,7 @@ function getMatchedField(
 function collectSearchCandidates(input: {
   available: readonly ToolDefinition[];
   authorized: readonly ToolDefinition[];
+  includeParameterDescriptions?: boolean;
 }): SearchableTool[] {
   const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
   const candidates: SearchableTool[] = [];
@@ -388,15 +398,78 @@ function collectSearchCandidates(input: {
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
       if (!hasOwn(tools, toolIndex)) continue;
       const tool = tools[toolIndex]!;
+      if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
-      const snapshot = snapshotSearchableTool(tool, status, budget);
+      const snapshot = snapshotSearchableTool(
+        tool,
+        status,
+        budget,
+        input.includeParameterDescriptions,
+      );
       if (snapshot) pushPrivateArray(candidates, snapshot);
     }
   };
   append(input.available, "available");
   append(input.authorized, "loaded");
   return candidates;
+}
+
+/** Bounded executable metadata, without inspecting or loading tool schemas. */
+export type ToolInventoryPage = {
+  matches: Array<{ name: string; description: string; status: "available" | "deferred" }>;
+  resultCount: number;
+  loadedCount: 0;
+  miss: boolean;
+  nextCursor: string | null;
+};
+
+export function listToolExposure(input: {
+  authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
+  cursor?: string;
+  limit?: number;
+}): ToolInventoryPage {
+  const limit = input.limit ?? 10;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    throw new Error("Tool inventory limit must be an integer from 1 to 20");
+  }
+  const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+  if (
+    input.cursor !== undefined &&
+    (!testPrivateRegExp(/^(0|[1-9][0-9]{0,9})$/, input.cursor) || !Number.isSafeInteger(offset))
+  ) {
+    throw new Error("Invalid tool inventory cursor");
+  }
+  const candidates = collectSearchCandidates({
+    authorized: input.authorized,
+    available: input.available ?? [],
+    includeParameterDescriptions: false,
+  });
+  const seen = createPrivateSet<string>([]);
+  const entries: ToolInventoryPage["matches"] = [];
+  for (let index = 0; index < candidates.length; index++) {
+    const entry = candidates[index]!;
+    if (setHas(seen, entry.name)) continue;
+    ReflectApply(SetAdd, seen, [entry.name]);
+    pushPrivateArray(entries, {
+      name: entry.name,
+      description: entry.description.length > 240
+        ? `${privateTextSlice(entry.description, 0, previewEnd(entry.description, 240))}...`
+        : entry.description,
+      status: entry.status === "available" ? "available" : "deferred",
+    });
+  }
+  sortSearchItems(entries, (left, right) => compareAscii(left.name, right.name));
+  if (offset > entries.length) throw new Error("Tool inventory changed; restart without a cursor");
+  const matches = slicePrivateArray(entries, offset, offset + limit);
+  return {
+    matches,
+    resultCount: matches.length,
+    loadedCount: 0,
+    miss: matches.length === 0,
+    nextCursor: offset + matches.length < entries.length ? String(offset + matches.length) : null,
+  };
 }
 
 /** Rank candidates against the query taken as one phrase, strongest field first. */
@@ -470,11 +543,13 @@ function scoreToolExposureTerms(
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
+    let matchedCapabilityField = false;
     for (let index = 0; index < weightedTerms.length; index++) {
       const { term, documentFrequency, inverseDocumentFrequency } = weightedTerms[index]!;
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
       matchedTermCount += 1;
+      if (field !== "parameterDescription") matchedCapabilityField = true;
       score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
       if (documentFrequency <= averageDocumentFrequency) matchedSelectiveTerm = true;
     }
@@ -482,6 +557,11 @@ function scoreToolExposureTerms(
     // something better to prefer. A candidate matching *every* term is not filler
     // however common those terms are: in a one-tool catalog every term matches
     // everything, so the floor alone would report a certain match as a miss.
+    // A rare generic parameter field does not establish a multiword capability.
+    // Name and description evidence can still route to catalog navigation,
+    // such as an integration reader mentioning the requested provider.
+    const minimumMatchedTerms = terms.length >= 3 ? Math.ceil(terms.length / 2) : 1;
+    if (!matchedCapabilityField && matchedTermCount < minimumMatchedTerms) continue;
     if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
     pushPrivateArray(scored, { score, match: toSearchMatch(candidate) });
   }
@@ -510,7 +590,7 @@ function rankToolExposureMatches(input: {
   // Normalization maps `jira__list_projects` and the *local* id `jira_list_projects`
   // onto the same text, so a phrase pass here would hand back a same-named local
   // tool instead of the namespace the caller actually asked for. Only the real
-  // canonical name satisfies a canonical query; anything else is namespace discovery.
+  // canonical name satisfies a canonical query; catalog readers can provide guidance.
   const canonical = parseCanonicalIntegrationQuery(input.query);
   if (canonical !== null) {
     const canonicalName = canonical.canonicalName;
@@ -526,19 +606,18 @@ function rankToolExposureMatches(input: {
     );
     if (exact.length > 0) return exact;
 
-    // Namespace discovery accepts two kinds of evidence, and a coincidental name
-    // match is neither: a sibling tool in the same namespace, or a tool that
-    // *documents* the namespace (the catalog readers do). A local
-    // `jira_list_projects` merely contains the word and is not the Jira integration.
-    //
-    // Sibling identity compares raw ids; text evidence must compare normalized,
-    // because a namespace may itself contain `_` (`foo_bar__list_items`) and every
-    // candidate's text has already had underscores rewritten to spaces.
+    // A missing exact action can discover catalog guidance, never another action.
+    // Loading a sibling would report success for a capability the caller lacks.
+    // Text evidence compares normalized namespaces, including names with underscores.
     const namespaceTerm = normalizeSearchText(canonical.namespace);
     const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
     const namespaceCandidates = filterPrivateArray(candidates, (candidate) => {
       const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
-      if (identity !== null) return identity.integration === canonical.namespace;
+      const isPlatformCatalogReader = identity?.integration === PLATFORM_TOOL_NAMESPACE &&
+        (identity.toolId === "get_integration" || identity.toolId === "list_integrations");
+      const isLocalCatalogReader = candidate.name === "get_integration" ||
+        candidate.name === "list_integrations";
+      if (!isPlatformCatalogReader && !isLocalCatalogReader) return false;
       // A non-canonical tool carrying the namespace in its *name* is a
       // normalization coincidence, not the integration, whatever its description
       // happens to mention: `jira_list_projects` is a local tool, not Jira.
@@ -551,7 +630,13 @@ function rankToolExposureMatches(input: {
     });
     const namespaceMatches = rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
     if (
-      namespaceMatches.length > 0 || canonicalName === null ||
+      namespaceMatches.length > 0 ||
+      somePrivateArray(
+        candidates,
+        (candidate) =>
+          parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name))?.integration ===
+            canonical.namespace,
+      ) || canonicalName === null ||
       canonical.namespace !== PLATFORM_TOOL_NAMESPACE
     ) {
       return namespaceMatches;
@@ -575,6 +660,21 @@ function rankToolExposureMatches(input: {
     );
   }
 
+  // A literal local id identifies one capability, not every tool whose schema
+  // mentions it. Keep phrase searches broad while exact calls load only that schema.
+  const literalName = privateTextToLowerCase(privateTextTrim(input.query));
+  const exactLocalMatches = sortSearchItems(
+    mapPrivateArray(
+      filterPrivateArray(
+        candidates,
+        (candidate) => privateTextToLowerCase(candidate.name) === literalName,
+      ),
+      toSearchMatch,
+    ),
+    compareToolSearchMatches,
+  );
+  if (exactLocalMatches.length > 0) return exactLocalMatches;
+
   // The query taken whole is the strongest signal for every non-canonical query.
   const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
   if (wholeQueryMatches.length > 0) return wholeQueryMatches;
@@ -588,6 +688,12 @@ function rankToolExposureMatches(input: {
   }
   const terms = [...uniqueTerms];
   return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
+}
+
+/** Keep a preview cut from splitting a UTF-16 surrogate pair. */
+function previewEnd(text: string, limit: number): number {
+  const last = privateTextCharCodeAt(text, limit - 1);
+  return last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit;
 }
 
 /** Create fresh run-local tool exposure state. */
@@ -620,16 +726,31 @@ export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      "Search authorized tools by exact name or capability before declaring a requested tool unavailable. Matching authorized tools become available on the next model step.",
+      "Discover this run's executable tools, not project tool definitions. Use inventory to browse bounded metadata pages without loading schemas. Use query with an exact returned name to load that tool's input schema for the next step, or a short capability phrase to search before declaring a requested tool unavailable. Choose query or inventory, not both.",
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["query"],
       properties: {
         query: {
           type: "string",
           description:
             `One exact tool name when known, or one short capability phrase. UTF-8 input must be at most ${TOOL_SEARCH_QUERY_MAX_BYTES} bytes. Do not combine alternatives.`,
+        },
+        inventory: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            cursor: {
+              type: "string",
+              description: "Use nextCursor from the preceding page. Omit for the first page.",
+            },
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              description: "Metadata entries per page, default 10.",
+            },
+          },
         },
       },
     },
@@ -652,7 +773,7 @@ export function createToolExposurePlan(input: {
   if (input.mode === "eager") {
     return {
       authorized,
-      visible: authorized,
+      visible: filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
       deferred: [],
       loadedToolNames: input.state.loadedToolNames,
     };
@@ -663,12 +784,20 @@ export function createToolExposurePlan(input: {
     }
   }
 
-  const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
+  const hasCanonicalSkillLoader = somePrivateArray(
+    authorized,
+    (tool) => tool.name === "veryfront__load_skill" && isProviderSchemaVisibleToolDefinition(tool),
+  );
+  // Match hosted inventory instructions and preserve the framework loader when
+  // a project owns the local name. Defer the local alias when both are authorized.
+  const bootstrap = input.bootstrapToolNames ??
+    (hasCanonicalSkillLoader ? DEFAULT_BOOTSTRAP_TOOL_NAMES : LEGACY_BOOTSTRAP_TOOL_NAMES);
   let bootstrapCount = 0;
   const loadable: ToolDefinition[] = [];
   const loadableNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
     else {
       loadable[loadable.length] = tool;
@@ -687,6 +816,7 @@ export function createToolExposurePlan(input: {
   const visibleNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
+    if (!isProviderSchemaVisibleToolDefinition(tool)) continue;
     if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
       visible[visible.length] = tool;
       ReflectApply(SetAdd, visibleNames, [tool.name]);
@@ -776,7 +906,12 @@ export function createToolExposureCheckpoint(
   authorized: readonly ToolDefinition[],
   state: ToolExposureState,
 ): ToolExposureCheckpoint {
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   return {
     version: 2,
     loadedToolNames: filterPrivateArray(
@@ -815,7 +950,12 @@ export function restoreToolExposureState(
     return createToolExposureState();
   }
 
-  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const authorizedNames = createPrivateSet(
+    mapPrivateArray(
+      filterPrivateArray(authorized, isProviderSchemaVisibleToolDefinition),
+      (tool) => tool.name,
+    ),
+  );
   const loadedToolNames = filterPrivateArray(
     checkpoint.loadedToolNames,
     (name) => authorizedNames.has(name),

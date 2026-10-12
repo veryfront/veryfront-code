@@ -1,6 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
+import { agent } from "#veryfront/agent/index.ts";
+import type { AgentMiddleware } from "#veryfront/agent/types.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 import type { ChatSystemMessage } from "../../chat/types.ts";
 import {
   flattenSystemInstructions,
@@ -36,6 +45,62 @@ If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.`,
       },
     ]);
+  });
+
+  it("sends empty inventory authority to the provider boundary without dispatching", async () => {
+    const sentinel = "provider-bound-empty-inventory-sentinel";
+    let providerCalls = 0;
+    let capturedSystem = "";
+    const rejectAtProviderBoundary: AgentMiddleware = async (context, next) => {
+      registerTurnProviderRequestValidator(context, (providerSystem) => {
+        capturedSystem = flattenSystemInstructions(
+          typeof providerSystem === "string"
+            ? [{ role: "system", content: providerSystem }]
+            : providerSystem,
+        );
+        throw new Error(sentinel);
+      });
+      return await next();
+    };
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/empty-tool-inventory-authority",
+      async doGenerate() {
+        providerCalls++;
+        throw new Error("empty inventory test reached provider");
+      },
+      async doStream() {
+        providerCalls++;
+        throw new Error("empty inventory test reached provider");
+      },
+    };
+    const assistant = agent({
+      id: "empty-tool-inventory-authority",
+      model: model.modelId,
+      system: withRuntimeToolInventory("Base system", []),
+      skills: false,
+      security: false,
+      tools: {},
+      providerTools: [],
+      maxSteps: 1,
+      middleware: [rejectAtProviderBoundary],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assertRejects(
+      () => assistant.generate({ input: "List files in the project" }),
+      Error,
+      sentinel,
+    );
+
+    assertEquals(providerCalls, 0);
+    assertStringIncludes(capturedSystem, "Current run tool inventory:");
+    assertStringIncludes(capturedSystem, "- none");
+    assertStringIncludes(capturedSystem, "Tool discovery and tool execution are unavailable.");
+    assertStringIncludes(
+      capturedSystem,
+      "Do not fabricate tool calls, tool results, or tool_search calls.",
+    );
   });
 
   it("names deferred tools without listing them as callable", () => {
@@ -129,7 +194,8 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
 
 Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.
-Do NOT infer tool availability from examples, skills, or the base prompt.`,
+Do NOT infer tool availability from examples, skills, or the base prompt.
+No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.`,
       },
     ]);
   });
@@ -206,6 +272,23 @@ If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.`,
       },
     ]);
+  });
+
+  it("replaces flattened empty inventory without preserving no-tools authority", () => {
+    const flattenedInstructions = flattenSystemInstructions(
+      withRuntimeToolInventory("Base system", []),
+    );
+    const [base, inventory] = withRuntimeToolInventory(flattenedInstructions, ["read_file"]);
+
+    assertEquals(base, { role: "system", content: "Base system" });
+    assertExists(inventory);
+    assertEquals(inventory.content.split("Current run tool inventory:").length - 1, 1);
+    assertEquals(inventory.content.includes("- read_file"), true);
+    assertEquals(inventory.content.includes("No tools are available in this run."), false);
+    assertEquals(
+      inventory.content.includes("Tool discovery and tool execution are unavailable."),
+      false,
+    );
   });
 
   it("explains how deferred tools become available when tool_search is visible", () => {

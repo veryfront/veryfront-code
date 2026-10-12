@@ -28,7 +28,7 @@
     {
       "id": "unstructured__partition_document",
       "name": "Partition Document",
-      "description": "Parse one local document into structured JSON elements (titles, narrative text, tables, lists) with optional chunking for RAG. The file content is uploaded as the multipart/form-data 'files' field together with the other fields; remote URLs are not accepted — fetch the file first and pass its content",
+      "description": "Extract document elements",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -38,7 +38,7 @@
         "body": {
           "files": {
             "type": "string",
-            "description": "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request",
+            "description": "Base64-encoded document content, sent decoded as the binary 'files' part of the multipart request. Remote URLs are not accepted; fetch the file first and provide its content.",
             "required": true,
             "encoding": "base64",
             "partFilenameField": "file_name"

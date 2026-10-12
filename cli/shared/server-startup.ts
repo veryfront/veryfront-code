@@ -188,6 +188,24 @@ export async function startCliProductionServer(
   }
 }
 
+/** Settle with `operation`, or reject with the abort reason as soon as `signal` aborts. */
+async function untilAborted<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return await operation;
+  // An operation abandoned on abort still settles; its outcome is no longer reported.
+  operation.catch(() => {});
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 async function startCliProductionServerWithHostedHttp(
   options: StartCliProductionServerOptions,
   hostedHttp: HostedHttpComposition | undefined,
@@ -244,7 +262,9 @@ async function startCliProductionServerWithHostedHttp(
   prefetchBuiltinContentProcessor();
   const result = await startServer(serverOptions);
   try {
-    await ensureContentProcessor();
+    // The caller holds no server handle until this function returns, so a shutdown
+    // signal during content loading must end startup here to release the broker.
+    await untilAborted(ensureContentProcessor(), options.signal);
   } catch (error) {
     // Do not leave a listener running after a failed startup. Start broker
     // shutdown at the same time, so a hung listener stop cannot hold allocations.

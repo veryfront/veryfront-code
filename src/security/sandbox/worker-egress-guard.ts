@@ -22,6 +22,12 @@
 
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
   chainPrivatePromise,
   createPrivateDeferred,
   resolvePrivatePromise,
@@ -603,18 +609,19 @@ function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promi
 
   const completion = createPrivateDeferred<T>();
   const { resolve, reject } = completion;
-  const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  if (signal.aborted) {
+  const onAbort = () =>
+    reject(getAbortSignalReason(signal) ?? new DOMException("Aborted", "AbortError"));
+  if (isAbortSignalAborted(signal)) {
     onAbort();
   } else {
-    signal.addEventListener("abort", onAbort, { once: true });
+    addAbortSignalListenerOnce(signal, onAbort);
   }
 
   void chainPrivatePromise(operation, (value) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     resolve(value);
   }, (error) => {
-    signal.removeEventListener("abort", onAbort);
+    removeAbortSignalListener(signal, onAbort);
     reject(error);
   });
   return completion.promise;

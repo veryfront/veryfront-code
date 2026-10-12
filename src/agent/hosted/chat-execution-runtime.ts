@@ -972,13 +972,15 @@ export function createHostedChatExecutionRuntime(
       return input.runContext.withContext(() => getHostedStreamErrorText(lastStreamError));
     },
     onFinish: ({ responseMessage, isAborted }) => {
+      const firstAbort = input.bootstrap.streamAbortTracker?.first();
+      const callerAborted = isCallerAbortForDetachedFinalization();
       finishHandlerStarted = true;
       finishPromise = input.runContext.withContext(() =>
         finalizeResponseFinish({
           responseMessage,
-          isAborted,
+          isAborted: firstAbort ? callerAborted : isAborted || callerAborted,
           streamResult: input.bootstrap.streamResult,
-          lastStreamError,
+          lastStreamError: resolveDetachedStreamError(),
           lifecycleAdapter: input.bootstrap.lifecycleAdapter,
           mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
           capturedMessageId: input.bootstrap.capturedMessageId,

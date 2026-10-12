@@ -108,7 +108,12 @@ it("retains terminal authority privately across the trusted root descriptor only
     fetch: (_input, init) => {
       assert(init && "headers" in init, "fetch must receive request options");
       calls++;
-      assertEquals(new Headers(init?.headers).get("X-Veryfront-Run-Terminal-Token"), token);
+      assertEquals(
+        new Headers(init && "headers" in init ? init.headers : undefined).get(
+          "X-Veryfront-Run-Terminal-Token",
+        ),
+        token,
+      );
       return Promise.resolve(Response.json({ id: canonical, status: "completed" }));
     },
   });

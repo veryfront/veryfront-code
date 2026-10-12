@@ -284,7 +284,9 @@ control over indexing.
 
 The manual flow is:
 
-1. Create or list RAG document records.
+1. Create or list retrieval document records with
+   `/projects/<PROJECT_ID>/knowledge/retrieval-documents`. The list returns
+   `data` and `page_info`; follow `page_info.next` until it is `null`.
 2. Split source content into chunks.
 3. Store each file's complete chunk set with the chunks endpoint. Each POST
    replaces that file's existing chunks. Use a distinct file for each batch of
@@ -304,10 +306,12 @@ attempts deletion of listed document parts whose inspection failed, then reports
 the inspection error. Refresh collects pre-existing parts in the current branch and retires them
 only after its conditional metadata update succeeds.
 
-For raw metadata updates, read the document's `revision` and send it as
-`expected_revision` in the upsert body or delete query. Use `null` when creating
-a document that must not already exist. A stale update returns HTTP 412; read
-the current document before deciding whether to retry. Deploy the Cloud API
+Create a retrieval document with `POST .../knowledge/retrieval-documents`. An ID
+that already exists returns HTTP 409. To change or delete a record, read its
+`revision` and send it as `expected_revision` in the
+`PUT .../knowledge/retrieval-documents/<DOCUMENT_ID>` body or the `DELETE` query.
+A stale revision returns HTTP 409 and a missing record HTTP 404; read the current
+document before deciding whether to retry. Deploy the Cloud API
 revision support before using SDK refresh and removal, which require a revision
 to prevent delayed writes from replacing newer content.
 
@@ -339,3 +343,9 @@ text and that the embedding provider is configured.
 - [veryfront/embedding](../api-reference/veryfront/embedding.md): RAG store and upload helpers
 - [veryfront/agent](../api-reference/veryfront/agent.md): AG-UI route helpers
 - [veryfront/chat](../api-reference/veryfront/chat.md): Chat components and hooks
+
+## Cancel embedding calls
+
+Pass `{ signal }` as the second argument to `embed()` or `embedMany()` to cancel
+provider work and stop later batches. Local inference settles before cancellation
+returns; no later batch starts after cancellation.

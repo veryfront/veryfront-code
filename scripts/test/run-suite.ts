@@ -91,8 +91,13 @@ const E2E_RSC_BROWSER_FILES = [
   "tests/e2e/regressions/dev-ui-browser-bundle.test.ts",
   "tests/e2e/regressions/rsc-proxy-hydration.test.ts",
 ];
+// The shard files split compiled-binary-e2e.suite.ts round-robin and run in
+// parallel against one compiled binary.
 const E2E_BINARY_FILES = [
-  "tests/integration/compiled-binary-e2e.test.ts",
+  "tests/integration/compiled-binary-e2e.memory-recycle.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-1.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-2.test.ts",
+  "tests/integration/compiled-binary-e2e.shard-3.test.ts",
 ];
 const UNIT_PARALLEL_EXCLUSIONS = new Set([
   ...UNIT_SERIAL_FILES,
@@ -101,6 +106,8 @@ const UNIT_PARALLEL_EXCLUSIONS = new Set([
 ]);
 const SSR_PIPELINE_RUNTIME_FIXTURE =
   "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
+const HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS =
+  "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
 const RUNTIME_PATTERNS = {
   node: [
     "src/**/*.test.ts",
@@ -114,6 +121,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    "tests/integration/security/host-api-http.test.ts",
     "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
     "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
     "tests/integration/server/dependency-snapshot-stream.test.ts",
@@ -128,6 +136,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
+    HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
@@ -143,6 +152,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    "tests/integration/security/host-api-http.test.ts",
     "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
     "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
     "tests/integration/server/dependency-snapshot-stream.test.ts",
@@ -157,6 +167,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
+    HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;
@@ -384,7 +395,7 @@ async function selectProfileFiles(
         path.startsWith("tests/") && isDenoDiscoveredTest(path) &&
         !path.startsWith("tests/bun/") &&
         !path.startsWith("tests/e2e/") &&
-        path !== "tests/integration/compiled-binary-e2e.test.ts"
+        !E2E_BINARY_FILES.includes(path)
       );
     case "e2e:rsc-browser":
       return candidates.filter((path) => E2E_RSC_BROWSER_FILES.includes(path));

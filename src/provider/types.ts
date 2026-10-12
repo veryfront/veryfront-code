@@ -4,6 +4,8 @@ export interface RuntimeMetadata {
   readonly modelId?: string;
   /** Canonical underlying model provider when a gateway runtime masks it. */
   readonly modelProvider?: string;
+  /** OpenAI wire transport selected by an OpenAI-compatible runtime, if known. */
+  readonly openAITransport?: "auto" | "chat-completions" | "responses";
   readonly [key: string]: unknown;
 }
 
@@ -184,6 +186,8 @@ export interface ModelRuntimeCallOptions {
   stopSequences?: readonly string[];
   tools?: readonly ModelRuntimeToolDefinition[];
   toolChoice?: unknown;
+  /** Allow parallel provider tool calls. Omission retains the provider default. */
+  parallelToolCalls?: boolean;
   seed?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;

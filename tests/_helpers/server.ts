@@ -66,7 +66,7 @@ export async function fetchWithTimeout(
  * fetch returns a Response that the caller can cancel. Cancel late responses
  * instead, and await settle() after stopping the server that owns the requests.
  */
-export function createTrackedRequests(): {
+export function createTrackedRequests(transport?: typeof fetch): {
   fetch: typeof fetchWithTimeout;
   settle: () => Promise<void>;
 } {
@@ -77,17 +77,28 @@ export function createTrackedRequests(): {
       let timedOut = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeoutError = new DOMException("The request timed out", "AbortError");
-      const request = fetch(url).then(async (response) => {
-        if (timedOut) {
-          try {
-            await response.body?.cancel();
-          } catch (error) {
-            cleanupErrors.push(error);
+      const controller = new AbortController();
+      const request = (transport ?? fetch)(url, { signal: controller.signal }).then(
+        async (response) => {
+          if (timedOut) {
+            try {
+              let cancelled: Promise<void> | undefined;
+              try {
+                cancelled = response.body?.cancel();
+              } finally {
+                // Headers are now owned. Stop the transport before awaiting
+                // cancellation, which can itself wait for the connection to close.
+                controller.abort(timeoutError);
+              }
+              await cancelled;
+            } catch (error) {
+              cleanupErrors.push(error);
+            }
+            throw timeoutError;
           }
-          throw timeoutError;
-        }
-        return response;
-      });
+          return response;
+        },
+      );
       pending.add(request);
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {

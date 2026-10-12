@@ -792,6 +792,93 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(observedSignals.every((signal) => signal?.aborted === true), true);
     });
 
+    for (const method of ["map", "push"]) {
+      it(`keeps paginated release source bytes outside tenant ${method} replacements`, async () => {
+        const map = Array.prototype.map;
+        const push = Array.prototype.push;
+        const apply = Reflect.apply;
+        let intercepted = 0;
+        let pages = 0;
+        stubJsonFetch((url) => {
+          pages++;
+          const cursor = new URL(url).searchParams.get("cursor");
+          return {
+            data: [{
+              id: cursor === null ? "config" : "style",
+              version_id: cursor === null ? "config-version" : "style-version",
+              path: cursor === null ? "veryfront.config.ts" : "app/globals.css",
+              content: cursor === null ? "export default {}" : "body { color: blue; }",
+              size: 20,
+              type: "file",
+              updated_at: "2026-10-10T00:00:00.000Z",
+            }],
+            page_info: {
+              self: null,
+              first: null,
+              next: cursor === null ? "page-2" : null,
+              prev: null,
+            },
+            release_id: "release-id",
+            release_version: "v1",
+          };
+        });
+        let files;
+        try {
+          if (method === "map") {
+            Array.prototype.map = function <T, U>(
+              this: T[],
+              callback: (value: T, index: number, array: T[]) => U,
+              thisArg?: unknown,
+            ): U[] {
+              const file: unknown = this[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through map");
+              }
+              return apply(map, this, [callback, thisArg]) as U[];
+            };
+          } else {
+            Array.prototype.push = function <T>(this: T[], ...items: T[]): number {
+              const file: unknown = items[0];
+              if (
+                typeof file === "object" && file !== null && "path" in file &&
+                file.path === "veryfront.config.ts"
+              ) {
+                intercepted++;
+                throw new Error("Tenant accessed release source through push");
+              }
+              return apply(push, this, items);
+            };
+          }
+          files = await createOps().listAllReleaseFiles("project-slug", "release-id");
+        } finally {
+          Array.prototype.map = map;
+          Array.prototype.push = push;
+        }
+        assertEquals(intercepted, 0);
+        assertEquals(pages, 2);
+        assertEquals(
+          files.map((file) => ({
+            path: file.path,
+            content: file.content,
+          })),
+          [
+            {
+              path: "veryfront.config.ts",
+              content: "export default {}",
+            },
+            {
+              path: "app/globals.css",
+              content: "body { color: blue; }",
+            },
+          ],
+        );
+      });
+    }
+
     it("requests release file lists with server functions for runtime route discovery", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
@@ -1512,7 +1599,7 @@ describe("VeryfrontAPIOperations", () => {
         [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
       );
 
-      const result = await createOps().uploadDependencyArtifactAsset(
+      const result = await createOps().writeDependencyArtifactAsset(
         "11111111-1111-4111-8111-111111111111",
         2,
         contentHash,
@@ -1541,7 +1628,7 @@ describe("VeryfrontAPIOperations", () => {
 
       await assertRejects(
         () =>
-          createOps().uploadDependencyArtifactAsset(
+          createOps().writeDependencyArtifactAsset(
             "11111111-1111-4111-8111-111111111111",
             2,
             "a".repeat(64),
@@ -1566,7 +1653,7 @@ describe("VeryfrontAPIOperations", () => {
       });
       const hash = "b".repeat(64);
 
-      const result = await createOps().reportDependencyArtifactBuildResult(
+      const result = await createOps().createDependencyArtifactBuildResult(
         "11111111-1111-4111-8111-111111111111",
         2,
         {
@@ -1591,5 +1678,81 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals((body as { outcome: string }).outcome, "ready");
       assertEquals(result, { accepted: true, state: "ready" });
     });
+  });
+
+  describe("resolveDependencies", () => {
+    it("posts specifiers, branch and expected declarations and keeps raw pin keys", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let body: unknown;
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          requestedUrl = String(input);
+          method = init?.method ?? "GET";
+          body = JSON.parse(String(init?.body));
+          return Promise.resolve(
+            new Response(
+              '{"pins":{"__proto__":"1.0.0","zod":"3.25.76"},"persisted":true,"skipped":{"clsx":"declaration_changed"}}',
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch,
+      );
+
+      const result = await createOps().resolveDependencies("project/slug", {
+        specifiers: ["zod@^3", "clsx"],
+        branch: "feature-a",
+        expectedDeclarations: { zod: "^3", clsx: null },
+      });
+
+      assertEquals(method, "POST");
+      assertStringIncludes(requestedUrl, "/projects/project%2Fslug/dependencies/resolve");
+      assertEquals(body, {
+        specifiers: ["zod@^3", "clsx"],
+        branch: "feature-a",
+        expected_declarations: { zod: "^3", clsx: null },
+      });
+      assert(Object.hasOwn(result.pins, "__proto__"));
+      assertEquals(result.pins.zod, "3.25.76");
+      assertEquals(result.persisted, true);
+      assertEquals(result.skipped.clsx, "declaration_changed");
+    });
+
+    it("sends no branch or expected declarations for main", async () => {
+      let body: unknown;
+      stubJsonFetch((_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return { pins: {}, persisted: false, skipped: {} };
+      });
+
+      const result = await createOps().resolveDependencies("project-slug", {
+        specifiers: ["react"],
+        branch: "main",
+      });
+
+      assertEquals(body, { specifiers: ["react"] });
+      assertEquals(result.persisted, false);
+    });
+
+    for (
+      const [label, response] of [
+        ["a non-object body", [1]],
+        ["a missing persisted flag", { pins: {}, skipped: {} }],
+        ["a non-boolean persisted flag", { pins: {}, persisted: "yes", skipped: {} }],
+        ["an array of pins", { pins: [], persisted: true, skipped: {} }],
+        ["a non-string pin", { pins: { zod: 3 }, persisted: true, skipped: {} }],
+        ["an unknown skip reason", { pins: {}, persisted: true, skipped: { zod: "gone" } }],
+      ] as const
+    ) {
+      it(`rejects a response with ${label}`, async () => {
+        stubJsonFetch(() => response);
+
+        await assertRejects(
+          () => createOps().resolveDependencies("project-slug", { specifiers: ["zod"] }),
+          Error,
+          "dependency",
+        );
+      });
+    }
   });
 });

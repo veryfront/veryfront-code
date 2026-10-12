@@ -20,12 +20,19 @@ import { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled } from "./hoste
 export { HOSTED_HTTP_ISOLATION_ENV, isHostedHttpIsolationEnabled };
 
 const MAX_TOKEN_BYTES = 16 * 1024;
+/** Upper bound for the configuration key file; part of the documented key contract. */
+const MAX_CONFIGURATION_KEY_BYTES = 16 * 1024;
 const MAX_CA_BYTES = 256 * 1024;
 const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
 /** How long one read of the source records file is used before it is read again. */
 const SOURCE_RECORDS_REFRESH_MS = 60_000;
 /** Bound on the startup read of the allocator trust root. */
 const HOST_FILE_READ_TIMEOUT_MS = 5_000;
+/** Bound for closing a host file handle after its bytes were read. */
+const HOST_FILE_CLOSE_TIMEOUT_MS = 2_000;
+/** Host file reads are refused while this many handle closes have not settled. */
+const MAX_STALLED_HOST_FILE_CLOSES = 4;
+let stalledHostFileCloses = 0;
 /** Bound on one broker token read, below the allocator client's 5 s request deadline. */
 const TOKEN_READ_TIMEOUT_MS = 2_000;
 /** Bound on one read of the source records file, below the resolver's 10 s deadline. */
@@ -53,8 +60,9 @@ export interface HostedHttpCompositionConfig {
   /** `VERYFRONT_HOSTED_HTTP_SERVICE_ACCOUNT_ID`: service account named by edge source credentials. */
   serviceAccountId: string;
   /**
-   * `VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE`: deployment-wide secret, at least 32 bytes,
-   * so every replica derives the same configuration identity.
+   * `VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE`: deployment-wide secret of 32 bytes to
+   * 16 KiB, so every replica derives the same configuration identity. A shorter or larger
+   * file fails startup.
    */
   configurationKeyFile: string;
   /** `VERYFRONT_API_BASE_URL`: API that authorizes each request's source token. */
@@ -85,6 +93,8 @@ interface HostedHttpCompositionDependencies {
   isOverrideEnabled?: () => boolean;
   /** @internal Startup host file read bound; replaced in hermetic tests. */
   hostFileReadTimeoutMs?: number;
+  /** @internal Broker token read bound; replaced in hermetic tests. */
+  tokenReadTimeoutMs?: number;
   /** @internal Runtime support check; replaced in hermetic tests. */
   runtime?: () => HostedHttpRuntimeSupport;
   /** @internal Monotonic clock for the source records refresh; replaced in hermetic tests. */
@@ -211,33 +221,105 @@ export async function settleWithin<T>(
   }
 }
 
+/** The part of a file handle a bounded host file read uses. */
+interface HostFileHandle {
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: null,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
 /**
  * Read at most `maxBytes + 1` bytes of a host file, so an oversized file is detected
- * without loading it whole.
+ * without loading it whole. The read buffer is wiped before the handle closes, and a
+ * failed or stalled close wipes the returned copy too, so no exit leaves the bytes behind.
  * @internal
  */
 export async function readHostFilePrefix(
   path: string,
-  options: { signal?: AbortSignal; maxBytes: number },
+  options: {
+    signal?: AbortSignal;
+    maxBytes: number;
+    /** @internal Opens the file; replaced in hermetic tests. */
+    open?: (path: string, flags: "r") => Promise<HostFileHandle>;
+    /** @internal Bound for closing the handle; shortened in hermetic tests. */
+    closeTimeoutMs?: number;
+    /** @internal Bound for one read of the handle; shortened in hermetic tests. */
+    readTimeoutMs?: number;
+  },
 ): Promise<Uint8Array> {
   options.signal?.throwIfAborted();
+  if (stalledHostFileCloses >= MAX_STALLED_HOST_FILE_CLOSES) {
+    throw new Error("Host file handles are still closing");
+  }
   const limit = options.maxBytes + 1;
+  const handle = await (options.open ?? open)(path, "r");
   const buffer = new Uint8Array(limit);
-  const handle = await open(path, "r");
+  let result: Uint8Array | undefined;
+  let failed = false;
+  let failure: unknown;
   try {
     let length = 0;
     while (length < limit) {
       options.signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(buffer, length, limit - length, null);
+      const reading = handle.read(buffer, length, limit - length, null);
+      let bytesRead: number;
+      try {
+        ({ bytesRead } = await settleWithin(
+          reading,
+          options.signal ?? new AbortController().signal,
+          options.readTimeoutMs ?? HOST_FILE_READ_TIMEOUT_MS,
+        ));
+      } catch (error) {
+        // A read that is still pending can fill the buffer later; wipe it again then.
+        const wipe = () => {
+          buffer.fill(0);
+        };
+        reading.then(wipe, wipe);
+        throw error;
+      }
       if (bytesRead === 0) break;
       length += bytesRead;
     }
-    const result = buffer.slice(0, length);
-    buffer.fill(0);
-    return result;
+    result = buffer.slice(0, length);
+  } catch (error) {
+    failed = true;
+    failure = error;
   } finally {
-    await handle.close();
+    // Wipe before closing, so a close that never settles cannot retain the bytes.
+    buffer.fill(0);
   }
+  // Only a close still pending at the bound is tracked below. A close that has
+  // settled, fulfilled or rejected, has released the descriptor on the supported
+  // runtime, so a rejected close fails this read but leaves no handle to count.
+  let closeSettled = false;
+  const closing = handle.close();
+  closing.then(() => closeSettled = true, () => closeSettled = true);
+  try {
+    await settleWithin(
+      closing,
+      options.signal ?? new AbortController().signal,
+      options.closeTimeoutMs ?? HOST_FILE_CLOSE_TIMEOUT_MS,
+    );
+  } catch (closeError) {
+    // A failed or stalled close returns nothing, so the copy is wiped as well.
+    result?.fill(0);
+    if (!closeSettled) {
+      // The handle stays open until its close settles; count it so stalled closes
+      // cannot accumulate handles.
+      stalledHostFileCloses++;
+      const settled = () => {
+        stalledHostFileCloses--;
+      };
+      closing.then(settled, settled);
+    }
+    if (!failed) throw closeError;
+  }
+  if (failed) throw failure;
+  return result!;
 }
 
 /**
@@ -302,10 +384,13 @@ export async function createRefreshingSourceRecordLookup(options: {
   let lookup: Lookup | undefined;
   let loadedAt = 0;
   let loading: Promise<void> | undefined;
-  // One raw read at a time: a stalled read is shared until it settles, so a
-  // prolonged mount failure cannot accumulate open reads across refreshes.
-  let rawRead: Promise<string> | undefined;
+  // One raw read at a time. A read that outlives its timeout stays here until it
+  // settles only to block a second concurrent read, so a prolonged mount failure
+  // cannot accumulate open reads; its result is never used, because the file may
+  // have rotated while it stalled. The first refresh after it settles reads again.
+  let pendingRead: Promise<string> | undefined;
   const readWithin = async (): Promise<string> => {
+    if (pendingRead) throw new Error("A timed-out source records read is still pending");
     const deadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_resolve, reject) => {
@@ -314,10 +399,10 @@ export async function createRefreshingSourceRecordLookup(options: {
         reject(new Error("Source records read timed out"));
       }, options.readTimeoutMs);
     });
-    rawRead ??= options.readText(deadline.signal).finally(() => {
-      rawRead = undefined;
+    const reading: Promise<string> = options.readText(deadline.signal).finally(() => {
+      if (pendingRead === reading) pendingRead = undefined;
     });
-    const reading = rawRead;
+    pendingRead = reading;
     reading.catch(() => {});
     try {
       return await Promise.race([reading, timedOut]);
@@ -408,25 +493,6 @@ export async function createHostedHttpComposition(
         ),
     )
     : undefined;
-  // The key is raw bytes: it is neither decoded as text nor trimmed.
-  const configurationKey = await readStartupFile(
-    "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-    (signal) =>
-      readBoundedBytes(
-        read,
-        "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
-        config.configurationKeyFile,
-        MAX_TOKEN_BYTES,
-        signal,
-      ),
-  );
-  if (configurationKey.byteLength < 32) {
-    configurationKey.fill(0);
-    throw CONFIG_INVALID.create({
-      detail:
-        "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
-    });
-  }
   const lookupSourceImage = await createRefreshingSourceRecordLookup({
     readText: (signal) =>
       readBoundedText(
@@ -441,41 +507,91 @@ export async function createHostedHttpComposition(
     refreshMs: SOURCE_RECORDS_REFRESH_MS,
   });
   const tokenFile = config.brokerTokenFile;
-  let tokenRead: Promise<string> | undefined;
+  const tokenReadTimeoutMs = dependencies.tokenReadTimeoutMs ?? TOKEN_READ_TIMEOUT_MS;
+  let tokenRead: { promise: Promise<string>; retired: boolean } | undefined;
   const allocator = (dependencies.createAllocatorClient ?? createHostedExecutorAllocatorClient)({
     baseUrl: config.allocatorUrl,
     ...(ca === undefined ? {} : { ca }),
     async readBrokerToken(signal) {
       // A file read cannot be interrupted once in flight. At most one raw read runs
       // at a time and callers share it; each caller races it against its own signal
-      // and a fixed bound, so a stalled file system cannot accumulate reads.
-      tokenRead ??= readBoundedText(
-        read,
-        "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
-        tokenFile,
-        MAX_TOKEN_BYTES,
-      ).finally(() => {
-        tokenRead = undefined;
-      });
-      const token = (await settleWithin(tokenRead, signal, TOKEN_READ_TIMEOUT_MS)).trim();
-      if (!token) throw new Error("Executor broker token is unavailable");
+      // and a fixed bound, so a stalled file system cannot accumulate reads. Once any
+      // caller gives up on a read (its bound or its own abort), the read may return a
+      // token rotated away meanwhile: it is retired, stays only to block a second
+      // read, its result is never used, and callers are refused until it settles and
+      // the next caller reads again.
+      if (tokenRead?.retired) throw new Error("Executor broker token is unavailable");
+      if (!tokenRead) {
+        const entry = { retired: false } as { promise: Promise<string>; retired: boolean };
+        entry.promise = readBoundedText(
+          read,
+          "VERYFRONT_EXECUTOR_BROKER_TOKEN_FILE",
+          tokenFile,
+          MAX_TOKEN_BYTES,
+        ).finally(() => {
+          if (tokenRead === entry) tokenRead = undefined;
+        });
+        tokenRead = entry;
+      }
+      const current = tokenRead;
+      let token: string;
+      try {
+        token = (await settleWithin(current.promise, signal, tokenReadTimeoutMs)).trim();
+      } catch (error) {
+        current.retired = true;
+        throw error;
+      }
+      if (current.retired || !token) throw new Error("Executor broker token is unavailable");
       return token;
     },
   });
-  const resolve = createHostedHttpResolver({
-    apiBaseUrl: config.apiBaseUrl,
-    sourceApiOrigin: config.sourceApiOrigin,
-    sourceImageRepository: config.sourceImageRepository,
-    serviceAccountId: config.serviceAccountId,
-    configurationKey,
-    lookupSourceImage,
-    session: {
-      expectedBrokerInstanceId: config.brokerInstanceId,
-      allocator,
-      connectTransport: connectExecutorTransport,
-      cleanupTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+  // The key is raw bytes: it is neither decoded as text nor trimmed.
+  const configurationKey = await readStartupFile(
+    "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+    (signal) => {
+      const reading = readBoundedBytes(
+        read,
+        "VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE",
+        config.configurationKeyFile,
+        MAX_CONFIGURATION_KEY_BYTES,
+        signal,
+      );
+      // A read that outlives the startup deadline still returns the key to nobody;
+      // wipe it as soon as it arrives.
+      reading.then((bytes) => {
+        if (signal.aborted) bytes.fill(0);
+      }, () => {});
+      return reading;
     },
-  });
+  );
+  // The resolver snapshots the key; this buffer is wiped once that is done or startup
+  // fails, so no second copy of the secret outlives startup. The key is read last so
+  // no other startup step runs while it is held.
+  let resolve: ReturnType<typeof createHostedHttpResolver>;
+  try {
+    if (configurationKey.byteLength < 32) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE must hold at least 32 bytes",
+      });
+    }
+    resolve = createHostedHttpResolver({
+      apiBaseUrl: config.apiBaseUrl,
+      sourceApiOrigin: config.sourceApiOrigin,
+      sourceImageRepository: config.sourceImageRepository,
+      serviceAccountId: config.serviceAccountId,
+      configurationKey,
+      lookupSourceImage,
+      session: {
+        expectedBrokerInstanceId: config.brokerInstanceId,
+        allocator,
+        connectTransport: connectExecutorTransport,
+        cleanupTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+      },
+    });
+  } finally {
+    configurationKey.fill(0);
+  }
   const broker = (dependencies.createBroker ?? createHostedHttpBroker)({
     maxActive: config.maxActive,
     shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,

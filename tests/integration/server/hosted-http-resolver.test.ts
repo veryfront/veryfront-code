@@ -30,7 +30,13 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 function serviceToken(projectId: string): string {
-  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+  return jwt({
+    userId: SERVICE_ACCOUNT_ID,
+    scope: ["projects:read", "files:read"],
+    projectId,
+    iat: 1_700_000_000,
+    exp: 1_700_604_800,
+  });
 }
 
 const authority = Object.freeze({
@@ -89,7 +95,7 @@ function apiFetch(state: ApiState = {}) {
         }),
       );
     }
-    if (url.startsWith(`${API}/projects/${PROJECT_ID}/environment-variables?`)) {
+    if (url.startsWith(`${API}/projects/project-a/environment-variables?`)) {
       return Promise.resolve(
         state.variables ?? Response.json({
           data: [
@@ -131,6 +137,16 @@ function options(overrides: Partial<HostedHttpResolverOptions> = {}): HostedHttp
 const signal = () => new AbortController().signal;
 
 describe("hosted HTTP resolver", () => {
+  it("resolves against the canonical API base URL, not the configured spelling", async () => {
+    const api = apiFetch();
+    const resolve = createHostedHttpResolver(
+      options({ apiBaseUrl: "  https://API.veryfront.test:443/  " }),
+    );
+    await withMockFetch(api.fetch, () => resolve(authority, signal()));
+    assertEquals(api.calls.length, 3);
+    assert(api.calls.every((call) => call.url.startsWith(`${API}/projects/`)));
+  });
+
   it("authorizes identity with the source token before reading project configuration", async () => {
     const api = apiFetch();
     const resolve = createHostedHttpResolver(options());

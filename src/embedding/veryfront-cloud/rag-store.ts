@@ -23,6 +23,7 @@ import {
 } from "./document-parts.ts";
 import type {
   RagDocumentMeta,
+  RagDocumentScope,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
@@ -35,6 +36,7 @@ const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
 const MAX_PART_READ_CONCURRENCY = 8;
+const RETRIEVAL_DOCUMENT_PAGE_SIZE = 100;
 const SEARCH_OVERSCAN = 25;
 const DOCUMENTS_DIR = ".veryfront/rag/documents";
 
@@ -57,6 +59,7 @@ interface CloudUpsertChunksResponse {
 }
 
 interface CloudSearchResponse {
+  document_scope_version?: 1;
   data: Array<{
     chunk: {
       file_path: string;
@@ -67,7 +70,7 @@ interface CloudSearchResponse {
   }>;
 }
 
-interface CloudRagDocumentResponse {
+interface CloudRetrievalDocumentResponse {
   revision?: string;
   id: string;
   title: string;
@@ -78,12 +81,11 @@ interface CloudRagDocumentResponse {
   updated_at: string;
 }
 
-interface CloudListRagDocumentsResponse {
-  documents: CloudRagDocumentResponse[];
-}
-
-interface CloudUpsertRagDocumentResponse {
-  document: CloudRagDocumentResponse;
+interface CloudRetrievalDocumentListResponse {
+  data: CloudRetrievalDocumentResponse[];
+  page_info?: {
+    next?: string | null;
+  };
 }
 
 interface CloudStoreContext {
@@ -319,8 +321,12 @@ function getEmbeddingsPath(context: CloudStoreContext): string {
   return `/projects/${encodeURIComponent(context.projectSlug)}/embeddings`;
 }
 
-function getRagDocumentsPath(context: CloudStoreContext): string {
-  return `/projects/${encodeURIComponent(context.projectSlug)}/rag/documents`;
+function getRetrievalDocumentsPath(context: CloudStoreContext): string {
+  return `/projects/${encodeURIComponent(context.projectSlug)}/knowledge/retrieval-documents`;
+}
+
+function getRetrievalDocumentPath(context: CloudStoreContext, documentId: string): string {
+  return `${getRetrievalDocumentsPath(context)}/${encodeURIComponent(documentId)}`;
 }
 
 async function deleteFileChunks(context: CloudStoreContext, filePath: string): Promise<void> {
@@ -392,15 +398,28 @@ async function upsertEmbeddings(
 // Server-side RAG document management
 // ---------------------------------------------------------------------------
 
-async function listRagDocuments(
+async function listRetrievalDocuments(
   context: CloudStoreContext,
 ): Promise<CloudRagDocumentMeta[]> {
-  const response = await requestJson<CloudListRagDocumentsResponse>(
-    context,
-    getRagDocumentsPath(context),
-  );
+  const documents: CloudRetrievalDocumentResponse[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null | undefined;
+  do {
+    const query = new URLSearchParams({ limit: String(RETRIEVAL_DOCUMENT_PAGE_SIZE) });
+    if (cursor) query.set("cursor", cursor);
+    const response = await requestJson<CloudRetrievalDocumentListResponse>(
+      context,
+      `${getRetrievalDocumentsPath(context)}?${query}`,
+    );
+    documents.push(...(response?.data ?? []));
+    cursor = response?.page_info?.next;
+    if (cursor && cursors.has(cursor)) {
+      throw INVALID_ARGUMENT.create({ detail: "Retrieval document listing repeated a cursor." });
+    }
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
 
-  return (response?.documents ?? []).map((doc) => ({
+  return documents.map((doc) => ({
     id: doc.id,
     title: doc.title,
     source: doc.source,
@@ -414,7 +433,12 @@ async function listRagDocuments(
   }));
 }
 
-async function upsertRagDocument(
+/**
+ * Creates the record when no revision was observed (an existing ID is a 409
+ * conflict) and otherwise updates it guarded by that revision (a changed record
+ * is a 409 conflict, a missing one a 404).
+ */
+async function writeRetrievalDocument(
   context: CloudStoreContext,
   document: {
     id: string;
@@ -425,31 +449,38 @@ async function upsertRagDocument(
     expectedRevision: string | null;
   },
 ): Promise<void> {
-  await requestJson<CloudUpsertRagDocumentResponse>(
+  const fields = {
+    title: document.title,
+    source: document.source ?? "",
+    type: document.type ?? "",
+    metadata: document.metadata,
+  };
+  if (document.expectedRevision === null) {
+    await requestJson<CloudRetrievalDocumentResponse>(
+      context,
+      getRetrievalDocumentsPath(context),
+      { method: "POST", body: JSON.stringify({ id: document.id, ...fields }) },
+    );
+    return;
+  }
+  await requestJson<CloudRetrievalDocumentResponse>(
     context,
-    getRagDocumentsPath(context),
+    getRetrievalDocumentPath(context, document.id),
     {
-      method: "POST",
-      body: JSON.stringify({
-        id: document.id,
-        title: document.title,
-        source: document.source ?? "",
-        type: document.type ?? "",
-        metadata: document.metadata,
-        expected_revision: document.expectedRevision,
-      }),
+      method: "PUT",
+      body: JSON.stringify({ ...fields, expected_revision: document.expectedRevision }),
     },
   );
 }
 
-async function deleteRagDocument(
+async function deleteRetrievalDocument(
   context: CloudStoreContext,
   documentId: string,
   expectedRevision: string,
 ): Promise<void> {
   await requestJson(
     context,
-    `${getRagDocumentsPath(context)}/${encodeURIComponent(documentId)}?expected_revision=${
+    `${getRetrievalDocumentPath(context, documentId)}?expected_revision=${
       encodeURIComponent(expectedRevision)
     }`,
     { method: "DELETE" },
@@ -562,7 +593,7 @@ async function refreshCloudDocument(
   text: string,
   meta?: RagRefreshOptions,
 ): Promise<void> {
-  const documents = await listRagDocuments(context);
+  const documents = await listRetrievalDocuments(context);
   const existing = documents.find((doc) => doc.id === documentId);
   if (!existing) {
     throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
@@ -625,7 +656,9 @@ async function inspectMetadataWriteOutcome(
 ): Promise<ReturnType<typeof metadataWriteOutcome>> {
   let current: CloudRagDocumentMeta | undefined;
   try {
-    current = (await listRagDocuments(context)).find((document) => document.id === documentId);
+    current = (await listRetrievalDocuments(context)).find((document) =>
+      document.id === documentId
+    );
   } catch {
     return "unknown";
   }
@@ -702,7 +735,7 @@ async function writeDocumentContent(
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
     metadataWriteAttempted = true;
-    await upsertRagDocument(context, {
+    await writeRetrievalDocument(context, {
       id: documentId,
       title,
       source: meta?.source ?? "",
@@ -734,6 +767,33 @@ async function writeDocumentContent(
     throw error;
   }
   return pendingCleanupPaths;
+}
+
+function buildSearchRequestBody(
+  vector: number[],
+  dimension: SupportedDimension,
+  limit: number,
+  threshold: number,
+  documentScope?: RagDocumentScope,
+): Record<string, unknown> {
+  return {
+    vector,
+    dimension,
+    limit,
+    threshold,
+    ...(documentScope ? { document_scope: documentScope } : {}),
+  };
+}
+
+function assertScopedSearchApplied(
+  response: CloudSearchResponse | null,
+  documentScope: RagDocumentScope | undefined,
+): void {
+  if (documentScope && response?.document_scope_version !== 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Veryfront Cloud RAG search did not acknowledge document scope application.",
+    });
+  }
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
@@ -917,14 +977,17 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
         getSearchPath(context),
         {
           method: "POST",
-          body: JSON.stringify({
+          body: JSON.stringify(buildSearchRequestBody(
             vector,
             dimension,
             limit,
-            threshold: options?.threshold ?? 0,
-          }),
+            options?.threshold ?? 0,
+            options?.documentScope,
+          )),
         },
       );
+
+      assertScopedSearchApplied(response, options?.documentScope);
 
       const results = (response?.data ?? [])
         .filter((result) =>
@@ -949,7 +1012,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
     async listDocuments(): Promise<RagDocumentMeta[]> {
       const context = getCloudStoreContext(config);
-      const documents = await listRagDocuments(context);
+      const documents = await listRetrievalDocuments(context);
       return documents.map(toPublicRagDocumentMeta);
     },
 
@@ -957,12 +1020,12 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const context = getCloudStoreContext(config);
 
       // Fetch document metadata to find every file part for chunk cleanup.
-      const documents = await listRagDocuments(context);
+      const documents = await listRetrievalDocuments(context);
       const target = documents.find((doc) => doc.id === id);
 
       // Preserve record-first deletion so a refresh starting during cleanup
       // cannot publish a replacement through a still-visible document.
-      if (target) await deleteRagDocument(context, id, requireDocumentRevision(target));
+      if (target) await deleteRetrievalDocument(context, id, requireDocumentRevision(target));
       // The file namespace also owns parts whose metadata acknowledgement was
       // lost. Read it after deletion, so a retry can collect them even when the
       // document record is already absent.
@@ -990,7 +1053,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       if (!contentDir) return;
 
       const context = getCloudStoreContext(config);
-      const existingDocuments = await listRagDocuments(context);
+      const existingDocuments = await listRetrievalDocuments(context);
       const indexedSources = new Set(existingDocuments.map((doc) => doc.source));
       const files = context.hasRequestContext
         ? await listPublishedContentFiles(context, contentDir, contentExtensions)

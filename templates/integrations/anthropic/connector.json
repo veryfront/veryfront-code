@@ -28,7 +28,7 @@
     {
       "id": "anthropic__list_workspaces",
       "name": "list-workspaces",
-      "description": "List all workspaces in the organization",
+      "description": "List workspaces",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -77,7 +77,7 @@
     {
       "id": "anthropic__get_usage",
       "name": "get-usage",
-      "description": "Get API usage statistics for a date range",
+      "description": "Get usage",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -123,7 +123,7 @@
     {
       "id": "anthropic__list_api_keys",
       "name": "list-api-keys",
-      "description": "List API keys for a workspace or organization",
+      "description": "List API keys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -179,7 +179,7 @@
     {
       "id": "anthropic__list_members",
       "name": "list-members",
-      "description": "List all members in the organization",
+      "description": "List members",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -229,7 +229,7 @@
     {
       "id": "anthropic__get_organization",
       "name": "get-organization",
-      "description": "Get organization details and settings",
+      "description": "Get organization",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

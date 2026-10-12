@@ -5,6 +5,10 @@ import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
+import {
+  inheritRuntimeProviderSchemaHiddenTool,
+  isRuntimeProviderSchemaHiddenTool,
+} from "./local-tool.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -527,6 +531,7 @@ function addToolDefinition(
   if (hasTrustedHostToolProvenance(tool)) {
     markTrustedPlatformPolicyToolDefinition(def);
   }
+  inheritRuntimeProviderSchemaHiddenTool(tool, def);
   logToolDefinition(name, def);
   intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
 }
@@ -595,6 +600,7 @@ export async function getAvailableTools(
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
     strictConfiguredToolsOnly?: boolean;
     frameworkLocalTools?: Record<string, Tool>;
+    includeProviderSchemaHiddenTools?: boolean;
     /** Calling agent id for owner-aware tool visibility. */
     callerAgentId?: string;
   },
@@ -724,6 +730,10 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
+      const providerSchemaHidden = isRuntimeProviderSchemaHiddenTool(entry);
+      if (providerSchemaHidden && !hasTrustedHostToolProvenance(entry)) {
+        continue;
+      }
       if (
         configuredRemoteToolName !== undefined &&
         !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
@@ -738,6 +748,9 @@ export async function getAvailableTools(
         assertLocalToolId(entry.id);
       }
       configuredAuthorizationToolNames.set(name, authorizationToolName);
+      if (providerSchemaHidden && options?.includeProviderSchemaHiddenTools !== true) {
+        continue;
+      }
       addToolDefinition(tools, name, entry);
     }
   }

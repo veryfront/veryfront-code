@@ -6,7 +6,22 @@ order: 37
 
 `veryfront knowledge ingest` is the primary CLI workflow for getting documents
 into a project's knowledge base. It finds a source file, parses it, and writes
-generated markdown back into the project.
+generated Markdown back into the project. Generated and imported concept documents
+are indexed automatically with searchable chunks and embeddings tied to the
+published canonical file version. Imported bytes, metadata, and authored links
+remain intact. Reserved index/log documents and referenced companion artifacts
+are preserved without becoming searchable concepts.
+
+Indexing uses the existing Cloud embedding default, including
+`VERYFRONT_DEFAULT_EMBEDDING_MODEL` overrides. A missing provider credential,
+provider failure, or stale-version conflict fails that source instead of reporting
+it ready. Failed-source results retain the canonical publication receipt so you
+can inspect the persisted document and retry. A source is successful only after
+its complete index commits on the destination branch.
+
+Atomic indexing accepts at most 500 chunks and a 10 MiB request. Larger indexes
+fail with a useful error; split the source into smaller documents and retry.
+Content is never truncated to fit the limit.
 
 Ingest one uploaded file:
 
@@ -71,12 +86,22 @@ veryfront knowledge ingest --path ./bundle --all --okf-bundle
 
 Bundle mode requires an explicit root and `--all`; it does not accept positional
 sources. Documents retain their metadata, Markdown, links and relative paths,
-including files in hidden directories. Document envelopes are validated before
-upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter. Referenced resource, source, computation, executor and attester companions are preserved
-with their relative paths, regardless of filename extension. Unreferenced viewer
-artifacts are excluded. Referenced Markdown companions preserve their bytes even when their contents resemble malformed
-YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log files
-retain document validation and classification. Unreferenced Markdown remains subject to document
+including files in hidden directories. Bundle walks skip `node_modules` and VCS
+metadata directories (`.git`, `.hg`, `.svn`, and `.bzr`). Document envelopes are validated before
+upload. A root index envelope declares only `okf_version`; nested indexes contain no frontmatter.
+Referenced resource, source, computation, executor and attester companions are preserved with
+their relative paths, regardless of filename extension. Unreferenced viewer artifacts are excluded.
+Companion references are resolved relative to the referencing document when that file exists.
+Leading-slash references resolve from the bundle root.
+
+For legacy bundles whose nested documents use root bundle paths without a leading slash, bundle
+mode preserves the existing root file when no document-relative file exists. This compatibility
+behavior preserves bytes during ingestion and does not rewrite OKF graph semantics.
+
+Project pull writes referenced UTF-8 companions returned for a branch proof without adding their extensions to ordinary push or prune source sync.
+Binary companions remain unsupported and fail with an explicit content error. Referenced Markdown companions preserve their bytes even when their contents resemble
+malformed YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log
+files retain document validation and classification. Unreferenced Markdown remains subject to document
 diagnostics.
 IDs, labels and descriptions in companion objects remain metadata;
 only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.

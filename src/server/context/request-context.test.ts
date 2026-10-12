@@ -49,6 +49,7 @@ describe("createRequestContext", () => {
           "PROJECT.PREVIEW.VERYFRONT.COM",
           "Something.Preview.Custom-Domain.com:8443",
           "my-app.preview.veryfront.com.",
+          "PROJECT.PREVIEW.VERYFRONT.COM.",
         ]
       ) {
         const req = makeRequest("https://127.0.0.1/page", {

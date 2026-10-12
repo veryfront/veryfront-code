@@ -1,3 +1,5 @@
+import type { CanonicalKnowledgeIndexReceipt } from "./indexing.ts";
+import type { PublishedFileReceipt } from "../files/command.ts";
 export type KnowledgeIngestSkipReason =
   | "hidden_path"
   | "ignored_directory"
@@ -5,9 +7,11 @@ export type KnowledgeIngestSkipReason =
 
 export type KnowledgeIngestFailureReason =
   | "parser_error"
-  | "upload_error";
+  | "upload_error"
+  | "index_error";
 
 export interface KnowledgeIngestFileResult {
+  canonicalIndex?: CanonicalKnowledgeIndexReceipt;
   source: string;
   localSourcePath: string;
   outputPath: string;
@@ -34,6 +38,7 @@ export interface KnowledgeIngestSkippedFileResult {
 }
 
 export interface KnowledgeIngestFailedFileResult {
+  published?: PublishedFileReceipt;
   source: string;
   localSourcePath: string;
   reason: KnowledgeIngestFailureReason;

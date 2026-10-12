@@ -18,6 +18,7 @@ import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-comp
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
+import { isRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import {
@@ -216,6 +217,15 @@ function resolveRefreshedSkillSnapshot(input: {
   });
 }
 
+function filterProviderVisibleLocalToolNames(input: {
+  toolNames: readonly string[];
+  runtimeTools: DefaultHostedChatRuntimeSystemRefreshInput["toolAssembly"]["runtimeTools"];
+}): string[] {
+  return input.toolNames.filter((toolName) =>
+    !isRuntimeProviderSchemaHiddenTool(input.runtimeTools[toolName])
+  );
+}
+
 /** Create default hosted project steering refresh. */
 export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
@@ -266,19 +276,29 @@ export function createDefaultHostedProjectSteeringRefresh(
       Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
         ? skillSelectorSnapshot.skillSourcePaths
         : undefined;
+    const providerVisibleLocalToolNames = filterProviderVisibleLocalToolNames({
+      toolNames: input.toolAssembly.localToolNames,
+      runtimeTools: input.toolAssembly.runtimeTools,
+    });
     const allToolNames = [
       ...new Set([
-        ...input.toolAssembly.localToolNames,
+        ...providerVisibleLocalToolNames,
         ...remoteToolNames,
         ...input.toolAssembly.providerToolNames,
       ]),
     ].sort(compareStrings);
     const toolNames = selectProviderCompatibleToolNames(allToolNames, {
       model: input.taskContext.model,
-      requiredToolNames: input.toolAssembly.localToolNames,
+      requiredToolNames: providerVisibleLocalToolNames,
     });
-    const bootstrapToolNames = toolNames.filter(isLoadSkillToolName);
-    const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
+    const bootstrapToolNames = (input.toolAssembly.modelVisibleToolNames ?? toolNames).filter(
+      isLoadSkillToolName,
+    );
+    const selectedBootstrapToolNames = new Set(bootstrapToolNames);
+    const hasDeferredTools = toolNames.some((toolName) => {
+      if (selectedBootstrapToolNames.has(toolName)) return false;
+      return !isRuntimeProviderSchemaHiddenTool(input.toolAssembly.runtimeTools[toolName]);
+    });
     const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
       ? [
         ...bootstrapToolNames,

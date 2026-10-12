@@ -37,7 +37,13 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 function serviceToken(projectId: string): string {
-  return jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["projects:read", "files:read"], projectId });
+  return jwt({
+    userId: SERVICE_ACCOUNT_ID,
+    scope: ["projects:read", "files:read"],
+    projectId,
+    iat: 1_700_000_000,
+    exp: 1_700_604_800,
+  });
 }
 
 const authority = Object.freeze({
@@ -205,6 +211,35 @@ describe("hosted HTTP resolver", () => {
     assertNotEquals(first.installation.configurationId, otherKey.installation.configurationId);
   });
 
+  it("wipes its raw copy of the configuration key once the key is imported", async () => {
+    const key = new Uint8Array(32).fill(7);
+    const subtle = crypto.subtle as SubtleCrypto & { importKey: SubtleCrypto["importKey"] };
+    const importKey = subtle.importKey;
+    const imported: Uint8Array[] = [];
+    subtle.importKey = ((format: "raw", data: Uint8Array, ...rest: unknown[]) => {
+      imported.push(data);
+      return (importKey as (...args: unknown[]) => Promise<CryptoKey>).call(
+        subtle,
+        format,
+        data,
+        ...rest,
+      );
+    }) as SubtleCrypto["importKey"];
+    try {
+      const resolve = createHostedHttpResolver(options({ configurationKey: key }));
+      const first = await resolve(authority, signal());
+      const second = await resolve(authority, signal());
+      assertEquals(first.installation.configurationId, second.installation.configurationId);
+      assertEquals(imported.length, 1);
+      assertNotEquals(imported[0], key);
+      assertEquals(imported[0]!.every((byte) => byte === 0), true);
+      // The caller's buffer is the caller's to wipe.
+      assertEquals(key.every((byte) => byte === 7), true);
+    } finally {
+      delete (subtle as { importKey?: unknown }).importKey;
+    }
+  });
+
   it("keeps configuration identities distinct for lone surrogates", async () => {
     const fake = fakeApi();
     const resolve = createHostedHttpResolver(options({ api: fake.api }));
@@ -287,6 +322,64 @@ describe("hosted HTTP resolver", () => {
     assertEquals(dispatches, 1);
   });
 
+  it("refuses new resolutions while work that ignored its deadline is still pending", async () => {
+    const stalled: Array<(value: unknown) => void> = [];
+    let lookups = 0;
+    const resolve = createHostedHttpResolver(options({
+      resolutionTimeoutMs: 20,
+      maxPendingResolutions: 2,
+      // Ignores its abort signal and settles only when released.
+      lookupSourceImage: () => {
+        lookups++;
+        return new Promise((settle) => stalled.push(settle));
+      },
+    }));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    assertEquals(lookups, 2);
+
+    // At the bound a resolution is refused before any read starts.
+    await assertRejects(() => resolve(authority, signal()), Error, "capacity is exhausted");
+    assertEquals(lookups, 2);
+
+    // Once the detached work settles, resolutions are admitted again.
+    for (const settle of stalled.splice(0)) settle(record());
+    await new Promise((done) => setTimeout(done, 0));
+    await assertRejects(() => resolve(authority, signal()), DOMException, "timed out");
+    assertEquals(lookups, 3);
+    for (const settle of stalled.splice(0)) settle(record());
+  });
+
+  it("keeps a check that ignored cancellation in admission after a sibling refuses", async () => {
+    const stalled: Array<(value: unknown) => void> = [];
+    let lookups = 0;
+    const resolve = createHostedHttpResolver(options({
+      maxPendingResolutions: 2,
+      api: fakeApi({
+        // Refuses at once, so the resolution settles while the lookup is still running.
+        authorizeEnvironment: () => Promise.reject(new Error("environment mismatch")),
+      }).api,
+      // Ignores its abort signal and settles only when released.
+      lookupSourceImage: () => {
+        lookups++;
+        return new Promise((settle) => stalled.push(settle));
+      },
+    }));
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    assertEquals(lookups, 2);
+
+    // Both lookups are still running, so a third resolution starts no read.
+    await assertRejects(() => resolve(authority, signal()), Error, "capacity is exhausted");
+    assertEquals(lookups, 2);
+
+    for (const settle of stalled.splice(0)) settle(record());
+    await new Promise((done) => setTimeout(done, 0));
+    await assertRejects(() => resolve(authority, signal()), Error, "environment mismatch");
+    assertEquals(lookups, 3);
+    for (const settle of stalled.splice(0)) settle(record());
+  });
+
   it("returns at the deadline even when an operation ignores its abort signal", async () => {
     let ignore = true;
     let lookups = 0;
@@ -354,7 +447,88 @@ describe("hosted HTTP resolver", () => {
         ],
         ["credential without scopes", jwt({ userId: SERVICE_ACCOUNT_ID, projectId: PROJECT_ID })],
         ["opaque API key", "vf_api_key_0123456789abcdef"],
+        [
+          "run-event writer credential",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            serviceAccountId: SERVICE_ACCOUNT_ID,
+            actorType: "service_account",
+            tokenUse: "run_event_writer",
+            scope: ["projects:read", "runs:write"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "run-write scope without purpose claims",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read", "runs:write"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "managed source read claims",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            tokenUse: "managed_source_read",
+            scope: ["projects:read", "files:read"],
+            projectId: PROJECT_ID,
+          }),
+        ],
+        [
+          "scopes without projects:read",
+          jwt({ userId: SERVICE_ACCOUNT_ID, scope: ["files:read"], projectId: PROJECT_ID }),
+        ],
         ["malformed payload", "header.not-base64!.signature"],
+        [
+          "credential without iat",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            exp: 1_700_604_800,
+          }),
+        ],
+        [
+          "credential without exp",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_000_000,
+          }),
+        ],
+        [
+          "credential with non-numeric iat and exp",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: "1700000000",
+            exp: "1700604800",
+          }),
+        ],
+        [
+          "credential expiring before issue",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_604_800,
+            exp: 1_700_000_000,
+          }),
+        ],
+        [
+          "credential with an additional claim",
+          jwt({
+            userId: SERVICE_ACCOUNT_ID,
+            scope: ["projects:read"],
+            projectId: PROJECT_ID,
+            iat: 1_700_000_000,
+            exp: 1_700_604_800,
+            aud: "veryfront",
+          }),
+        ],
       ] as const
     ) {
       const fake = fakeApi();
@@ -368,6 +542,75 @@ describe("hosted HTTP resolver", () => {
       }));
       await assertRejects(() => resolve({ ...authority, sourceToken }, signal()), Error, "", name);
       assertEquals([fake.calls, lookups], [[], []], name);
+    }
+  });
+
+  it("accepts the edge proxy credential with its standard claims and default scopes", async () => {
+    const token = jwt({
+      userId: SERVICE_ACCOUNT_ID,
+      scope: [
+        "projects:read",
+        "components:read",
+        "files:read",
+        "pages:read",
+        "users:read",
+        "conversations:read",
+        "cache:read",
+        "cache:write",
+        "cache:delete",
+      ],
+      projectId: PROJECT_ID,
+      iat: 1_700_000_000,
+      exp: 1_700_604_800,
+    });
+    const resolve = createHostedHttpResolver(options());
+    const resolved = await resolve({ ...authority, sourceToken: token }, signal());
+    assertEquals(resolved.session.expectedImage, IMAGE);
+  });
+
+  it("accepts only distribution repository names, without tag, digest or invalid port", () => {
+    createHostedHttpResolver(
+      options({ sourceImageRepository: "registry.example:5000/team/source" }),
+    );
+    createHostedHttpResolver(options({ sourceImageRepository: "localhost:5000/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "registry.example:65535/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "registry.example:1/source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "ghcr.io/team/source__x.y-z" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "source" }));
+    createHostedHttpResolver(options({ sourceImageRepository: "a".repeat(255) }));
+    createHostedHttpResolver(
+      options({ sourceImageRepository: `${"a".repeat(63)}.example/team/source` }),
+    );
+    for (
+      const repository of [
+        "registry.example:99999/team/source",
+        "registry.example:65536/team/source",
+        "registry.example:0/team/source",
+        "registry.example:00000/team/source",
+        "ghcr.io/team/source-",
+        "ghcr.io/team/-source",
+        "ghcr.io/team//source",
+        "ghcr.io/team/source.",
+        "ghcr.io/Team/source",
+        "-registry.example/source",
+        "registry.example:5000:1/source",
+        `${"a".repeat(64)}.example/team/source`,
+        `${Array.from({ length: 5 }, () => "a".repeat(63)).join(".")}/source`,
+        "a".repeat(256),
+        "",
+        "ghcr.io/veryfront/tenant-source:latest",
+        "registry.example:5000/team/source:v1",
+        `ghcr.io/veryfront/tenant-source@sha256:${"a".repeat(64)}`,
+        "registry.example:5000",
+        "source:123",
+      ]
+    ) {
+      assertThrows(
+        () => createHostedHttpResolver(options({ sourceImageRepository: repository })),
+        TypeError,
+        undefined,
+        repository,
+      );
     }
   });
 
@@ -447,6 +690,37 @@ describe("hosted HTTP resolver", () => {
       lookupSourceImage: () => Promise.resolve(record({ api_origin: `${SOURCE_API}/` })),
     }));
     assertEquals((await trailing(authority, signal())).session.expectedImage, IMAGE);
+    // An explicit default port names the same origin on either side.
+    for (
+      const [configured, published] of [
+        [`${SOURCE_API}:443`, `${SOURCE_API}:443`],
+        [SOURCE_API, `${SOURCE_API}:443/`],
+        [`${SOURCE_API}:443`, SOURCE_API],
+      ]
+    ) {
+      const resolveDefaultPort = createHostedHttpResolver(options({
+        sourceApiOrigin: configured,
+        lookupSourceImage: () => Promise.resolve(record({ api_origin: published })),
+      }));
+      assertEquals(
+        (await resolveDefaultPort(authority, signal())).session.expectedImage,
+        IMAGE,
+        `${configured} / ${published}`,
+      );
+    }
+    // A different port or a path is a different origin.
+    for (
+      const published of [
+        `${SOURCE_API}:8443`,
+        `${SOURCE_API}/api`,
+        "http://source-api.veryfront.test",
+      ]
+    ) {
+      const resolveOther = createHostedHttpResolver(options({
+        lookupSourceImage: () => Promise.resolve(record({ api_origin: published })),
+      }));
+      await assertRejects(() => resolveOther(authority, signal()), Error, "", published);
+    }
   });
 
   it("refuses a release with no publication record and an aborted lookup", async () => {
@@ -469,15 +743,40 @@ describe("hosted HTTP resolver", () => {
       const invalid of [
         { apiBaseUrl: "http://api.veryfront.test" },
         { apiBaseUrl: "not a url" },
+        { apiBaseUrl: "https://api.veryfront.test/api?" },
+        { apiBaseUrl: "https://api.veryfront.test/api#" },
+        { apiBaseUrl: "https://api.veryfront.test:0/api" },
+        { sourceApiOrigin: "https://source.test:0" },
+        { sourceApiOrigin: "https://source.test?" },
         { sourceApiOrigin: "https://source.test/path" },
         { sourceImageRepository: "" },
         { lookupSourceImage: undefined as never },
         { session: { ...options().session, expectedBrokerInstanceId: "" } },
+        { session: { ...options().session, expectedBrokerInstanceId: "broker pod" } },
+        { session: { ...options().session, expectedBrokerInstanceId: "-broker" } },
+        { session: { ...options().session, expectedBrokerInstanceId: "b".repeat(129) } },
+        { session: { ...options().session, expectedBrokerInstanceId: 7 as never } },
+        { session: { ...options().session, ownerSignal: {} as never } },
+        { session: undefined as never },
+        { session: { ...options().session, pollIntervalMs: 0 } },
+        { session: { ...options().session, requestTimeoutMs: 30_001 } },
+        { session: { ...options().session, cleanupTimeoutMs: 1.5 } },
+        { session: { ...options().session, allocator: null as never } },
+        { session: { ...options().session, allocator: {} as never } },
+        { session: { ...options().session, allocator: [] as never } },
+        {
+          session: {
+            ...options().session,
+            allocator: { ...options().session.allocator, release: undefined as never },
+          },
+        },
         { serviceAccountId: "" },
         { serviceAccountId: undefined as never },
         { configurationKey: new Uint8Array(16) },
         { resolutionTimeoutMs: 0 },
         { resolutionTimeoutMs: 60_001 },
+        { maxPendingResolutions: 0 },
+        { maxPendingResolutions: 4097 },
         { prepareTimeoutMs: 0 },
         { hardTimeoutMs: 10 },
         { prepareTimeoutMs: 120_000, hardTimeoutMs: 60_000 },

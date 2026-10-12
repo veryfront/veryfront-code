@@ -8,6 +8,7 @@ import {
   createRefreshingSourceRecordLookup,
   isHostedHttpIsolationEnabled,
   readHostedHttpCompositionConfig,
+  readHostFilePrefix,
   settleWithin,
 } from "./hosted-http-composition.ts";
 
@@ -383,6 +384,40 @@ describe("hosted HTTP host composition", () => {
     assertEquals(reads, 3);
   });
 
+  it("never uses the result of a read that outlived its timeout", async () => {
+    let clock = 0;
+    let reads = 0;
+    const stalled = Promise.withResolvers<string>();
+    const stale = { ...record, image: `${record.image.split("@")[0]}@sha256:${"0".repeat(64)}` };
+    const lookup = await createRefreshingSourceRecordLookup({
+      readText: () => {
+        reads++;
+        return reads === 1
+          ? Promise.resolve(JSON.stringify([record]))
+          : reads === 2
+          ? stalled.promise
+          : Promise.resolve(JSON.stringify([record]));
+      },
+      now: () => clock,
+      refreshMs: 1_000,
+      readTimeoutMs: 10,
+    });
+    const signal = new AbortController().signal;
+    const request = { projectId: record.project_id, releaseId: record.release_id };
+    clock = 1_000;
+    await assertRejects(() => lookup(request, signal), Error, "Source records are unavailable");
+    // The stalled read settles with a pre-rotation snapshot while the next refresh runs.
+    clock = 2_000;
+    const refreshing = lookup(request, signal);
+    stalled.resolve(JSON.stringify([stale]));
+    await assertRejects(() => refreshing, Error, "Source records are unavailable");
+    assertEquals(reads, 2);
+    // The first refresh after it settled reads the file again.
+    clock = 3_000;
+    assertEquals(((await lookup(request, signal)) as { image: string }).image, record.image);
+    assertEquals(reads, 3);
+  });
+
   it("refuses releases while a source records read stalls, then retries", async () => {
     let clock = 0;
     let stall = false;
@@ -473,6 +508,223 @@ describe("hosted HTTP host composition", () => {
     assertEquals(tokenReads, 2);
   });
 
+  it("never uses a broker token read that outlived its bound", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let tokenReads = 0;
+    const stalled = Promise.withResolvers<Uint8Array>();
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      tokenReadTimeoutMs: 50,
+      readFile: (path) => {
+        if (path !== "/host/token") return host.readFile(path);
+        tokenReads++;
+        return tokenReads === 1
+          ? stalled.promise
+          : Promise.resolve(new TextEncoder().encode("broker-token-3"));
+      },
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    const readToken = () => allocatorOptions!.readBrokerToken(new AbortController().signal);
+    // A caller that joins before the first caller times out shares the same read, and its
+    // own bound runs later than the first caller's.
+    const first = readToken();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const joined = readToken();
+    await assertRejects(() => first, Error, "timed out");
+    // While the timed-out read is pending, new callers are refused without a second read.
+    await assertRejects(readToken, Error, "unavailable");
+    // The timed-out read settles with a pre-rotation token: nobody receives it.
+    stalled.resolve(new TextEncoder().encode("rotated-away"));
+    await assertRejects(() => joined, Error, "unavailable");
+    assertEquals(tokenReads, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(await readToken(), "broker-token-3");
+    assertEquals(tokenReads, 2);
+  });
+
+  it("retires a broker token read once a waiter aborts", async () => {
+    let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
+    const host = defaultFiles();
+    let tokenReads = 0;
+    const stalled = Promise.withResolvers<Uint8Array>();
+    await createHostedHttpComposition(config, {
+      runtime: nodeRuntime,
+      isOverrideEnabled: () => false,
+      readFile: (path) => {
+        if (path !== "/host/token") return host.readFile(path);
+        tokenReads++;
+        return tokenReads === 1
+          ? stalled.promise
+          : Promise.resolve(new TextEncoder().encode("broker-token-3"));
+      },
+      createAllocatorClient(options) {
+        allocatorOptions = options;
+        return allocator;
+      },
+      createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+    });
+    const controller = new AbortController();
+    const aborted = allocatorOptions!.readBrokerToken(controller.signal);
+    controller.abort(new Error("request canceled"));
+    await assertRejects(() => aborted, Error, "request canceled");
+    // The token file rotates while the abandoned read stalls: nobody may join it.
+    const later = () => allocatorOptions!.readBrokerToken(new AbortController().signal);
+    await assertRejects(later, Error, "unavailable");
+    assertEquals(tokenReads, 1);
+    stalled.resolve(new TextEncoder().encode("rotated-away"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(await later(), "broker-token-3");
+    assertEquals(tokenReads, 2);
+  });
+
+  it("wipes the host file read buffer when a read fails or is aborted midway", async () => {
+    for (const failure of ["throws", "aborts"] as const) {
+      const buffers: Uint8Array[] = [];
+      let closed = 0;
+      const controller = new AbortController();
+      const handle = {
+        read(buffer: Uint8Array, offset: number) {
+          buffers.push(buffer);
+          if (offset === 0) {
+            buffer.fill(0x6b, 0, 16);
+            if (failure === "aborts") controller.abort(new Error("startup deadline"));
+            return Promise.resolve({ bytesRead: 16 });
+          }
+          return Promise.reject(new Error("device error"));
+        },
+        close() {
+          closed++;
+          return Promise.resolve();
+        },
+      };
+      await assertRejects(
+        () =>
+          readHostFilePrefix("/host/configuration-key", {
+            maxBytes: 64,
+            signal: controller.signal,
+            open: () => Promise.resolve(handle),
+          }),
+        Error,
+        failure === "throws" ? "device error" : "startup deadline",
+      );
+      assertEquals(buffers.length > 0, true, failure);
+      assertEquals(buffers[0]!.every((byte) => byte === 0), true, failure);
+      assertEquals(closed, 1, failure);
+    }
+  });
+
+  it("wipes the host file read buffer when a later read stalls, and again if it finishes", async () => {
+    const buffers: Uint8Array[] = [];
+    let finishStalledRead: (() => void) | undefined;
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset === 0) {
+          buffer.fill(0x6b, 0, 16);
+          return Promise.resolve({ bytesRead: 16 });
+        }
+        return new Promise<{ bytesRead: number }>((resolve) => {
+          finishStalledRead = () => {
+            buffer.fill(0x6b, 16, 32);
+            resolve({ bytesRead: 16 });
+          };
+        });
+      },
+      close: () => Promise.resolve(),
+    };
+    await assertRejects(
+      () =>
+        readHostFilePrefix("/host/configuration-key", {
+          maxBytes: 64,
+          readTimeoutMs: 10,
+          open: () => Promise.resolve(handle),
+        }),
+      DOMException,
+      "timed out",
+    );
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+
+    // The stalled read finishes later and writes into the buffer; it is wiped again.
+    finishStalledRead!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+  });
+
+  it("wipes the host file read buffer and returns no copy when close fails", async () => {
+    const buffers: Uint8Array[] = [];
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset > 0) return Promise.resolve({ bytesRead: 0 });
+        buffer.fill(0x6b, 0, 16);
+        return Promise.resolve({ bytesRead: 16 });
+      },
+      close() {
+        return Promise.reject(new Error("close failed"));
+      },
+    };
+    await assertRejects(
+      () =>
+        readHostFilePrefix("/host/configuration-key", {
+          maxBytes: 64,
+          open: () => Promise.resolve(handle),
+        }),
+      Error,
+      "close failed",
+    );
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+  });
+
+  it("wipes the host file read buffer and stops waiting when close never settles", async () => {
+    const buffers: Uint8Array[] = [];
+    const releases: Array<() => void> = [];
+    let opened = 0;
+    const handle = {
+      read(buffer: Uint8Array, offset: number) {
+        buffers.push(buffer);
+        if (offset > 0) return Promise.resolve({ bytesRead: 0 });
+        buffer.fill(0x6b, 0, 16);
+        return Promise.resolve({ bytesRead: 16 });
+      },
+      close() {
+        // The buffer is already wiped when close starts.
+        assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+        return new Promise<void>((resolve) => releases.push(resolve));
+      },
+    };
+    const read = () =>
+      readHostFilePrefix("/host/configuration-key", {
+        maxBytes: 64,
+        closeTimeoutMs: 10,
+        open: () => {
+          opened++;
+          return Promise.resolve(handle);
+        },
+      });
+    await assertRejects(read, DOMException, "timed out");
+    assertEquals(buffers[0]!.every((byte) => byte === 0), true);
+
+    // Stalled closes are counted; past the limit a read is refused before opening a file.
+    for (let i = 0; i < 3; i++) await assertRejects(read, DOMException, "timed out");
+    assertEquals(opened, 4);
+    await assertRejects(read, Error, "still closing");
+    assertEquals(opened, 4);
+
+    // Once the closes settle, reads are admitted again.
+    for (const release of releases) release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await assertRejects(read, DOMException, "timed out");
+    assertEquals(opened, 5);
+    for (const release of releases) release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
   it("detaches a broker token read that never settles", async () => {
     let allocatorOptions: Parameters<typeof createHostedExecutorAllocatorClient>[0] | undefined;
     const host = defaultFiles();
@@ -534,6 +786,27 @@ describe("hosted HTTP host composition", () => {
     );
   });
 
+  it("accepts a configuration key of exactly 16 KiB and refuses a larger one", async () => {
+    const start = (key: Uint8Array) => {
+      const host = defaultFiles();
+      host.files.set("/host/configuration-key", key);
+      return createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile: host.readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+      });
+    };
+    const composition = await start(new Uint8Array(16 * 1024).fill(0x41));
+    assertEquals(typeof composition.ingress.resolve, "function");
+    await assertRejects(
+      () => start(new Uint8Array(16 * 1024 + 1).fill(0x41)),
+      Error,
+      "The file named by VERYFRONT_HOSTED_HTTP_CONFIGURATION_KEY_FILE is too large",
+    );
+  });
+
   it("reads the configuration key as raw bytes, without decoding or trimming", async () => {
     const host = defaultFiles();
     // Not valid UTF-8, and starts and ends with whitespace bytes.
@@ -547,5 +820,51 @@ describe("hosted HTTP host composition", () => {
       createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
     });
     assertEquals(typeof composition.ingress.resolve, "function");
+  });
+
+  it("wipes a configuration key that arrives after the startup deadline", async () => {
+    const host = defaultFiles();
+    const late = Promise.withResolvers<Uint8Array>();
+    const key = new Uint8Array(32).fill(9);
+    await assertRejects(
+      () =>
+        createHostedHttpComposition(config, {
+          runtime: nodeRuntime,
+          isOverrideEnabled: () => false,
+          hostFileReadTimeoutMs: 10,
+          readFile: (path) =>
+            path === "/host/configuration-key" ? late.promise : host.readFile(path),
+          createAllocatorClient: () => allocator,
+          createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+        }),
+      Error,
+      "in time",
+    );
+    late.resolve(key);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(key.every((byte) => byte === 0), true);
+  });
+
+  it("wipes the configuration key buffer after startup succeeds or fails", async () => {
+    for (const startup of [config, { ...config, sourceImageRepository: "registry/source:tag" }]) {
+      const host = defaultFiles();
+      const keys: Uint8Array[] = [];
+      const readFile = async (path: string) => {
+        const bytes = await host.readFile(path);
+        if (path === "/host/configuration-key") keys.push(bytes);
+        return bytes;
+      };
+      const composing = createHostedHttpComposition(startup, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => fakeBroker({ release: "released", pending: 0 }).broker,
+      });
+      if (startup === config) await composing;
+      else await assertRejects(() => composing);
+      assertEquals(keys.length, 1);
+      assertEquals(keys[0]!.every((byte) => byte === 0), true);
+    }
   });
 });

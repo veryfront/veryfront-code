@@ -1,0 +1,120 @@
+{
+  "version": "0.5.19",
+  "licenseSHA256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985",
+  "imports": "import plugin from \"tailwindcss/plugin\";\nimport colors from \"tailwindcss/colors\";\nimport parser from \"postcss-selector-parser\";\n",
+  "files": {
+    "utils.js": {
+      "sha256": "d6eef872ef76e56bdff51ebd0350818040d7bd53ad0ea96431f08d02cb2ea295",
+      "edits": [
+        {
+          "before": "const parser = require('postcss-selector-parser')\nconst parseSelector = parser()\n",
+          "after": "const parseSelector = parser()\n"
+        },
+        {
+          "before": "\nmodule.exports = {\n",
+          "after": "\nreturn {\n"
+        },
+        {
+          "before": "let ast ",
+          "after": "const ast "
+        },
+        {
+          "before": "let matrix ",
+          "after": "const matrix "
+        },
+        {
+          "before": "let [i, sel] ",
+          "after": "const [i, sel] "
+        },
+        {
+          "before": "let trailingPseudos ",
+          "after": "const trailingPseudos "
+        },
+        {
+          "before": "let values ",
+          "after": "const values "
+        },
+        {
+          "before": "    for (const key in source) {\n",
+          "after": "    for (const key of Object.keys(source)) {\n      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {\n        throw new TypeError('Typography configuration contains an unsafe property')\n      }\n"
+        }
+      ],
+      "prefix": "const typographyUtils = (() => {\n",
+      "suffix": "\n})();\n"
+    },
+    "styles.js": {
+      "sha256": "45c9b9c89339b29a0e414bb80267c2b697e82f87e5b8f0641d9442b1b4f5e359",
+      "edits": [
+        {
+          "before": "const colors = require('tailwindcss/colors')\n\nconst round = (num) =>\n",
+          "after": "\nconst round = (num) =>\n"
+        },
+        {
+          "before": "\nmodule.exports = {\n",
+          "after": "\nreturn {\n"
+        },
+        {
+          "before": "let r ",
+          "after": "const r "
+        },
+        {
+          "before": "let g ",
+          "after": "const g "
+        },
+        {
+          "before": "let b ",
+          "after": "const b "
+        },
+        {
+          "before": "let defaultModifiers ",
+          "after": "const defaultModifiers "
+        }
+      ],
+      "prefix": "const styles = (() => {\n",
+      "suffix": "\n})();\n"
+    },
+    "index.js": {
+      "sha256": "0650b9739a9ae52731159a8bc53fb07de020412b413071fa701fc9ecc8ffbace",
+      "edits": [
+        {
+          "before": "const plugin = require('tailwindcss/plugin')\nconst styles = require('./styles')\nconst { commonTrailingPseudos, isObject, isPlainObject, merge, castArray } = require('./utils')\n",
+          "after": "const { commonTrailingPseudos, isObject, merge, castArray } = typographyUtils\n"
+        },
+        {
+          "before": "module.exports = plugin.withOptions(",
+          "after": "/** @type {unknown} */\nconst typography = plugin.withOptions("
+        },
+        {
+          "before": "let prefixedNot ",
+          "after": "const prefixedNot "
+        },
+        {
+          "before": "let selectorPrefix ",
+          "after": "const selectorPrefix "
+        },
+        {
+          "before": "let [trailingPseudo, rebuiltSelector] ",
+          "after": "const [trailingPseudo, rebuiltSelector] "
+        },
+        {
+          "before": "let nested ",
+          "after": "const nested "
+        },
+        {
+          "before": "let modifiers ",
+          "after": "const modifiers "
+        },
+        {
+          "before": "let options ",
+          "after": "const options "
+        },
+        {
+          "before": "let selector ",
+          "after": "const selector "
+        }
+      ],
+      "prefix": "",
+      "suffix": "\nexport default typography;\n"
+    }
+  }
+}

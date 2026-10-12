@@ -13,7 +13,10 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
-import { guardedOutboundFetch, trustedHostFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   assertNativeRequestProcessing,
   createNativeRequestInit,
@@ -43,6 +46,7 @@ const NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS = new WeakSet<object>();
 // initialization so replacing `Headers` or its accessors cannot observe a
 // host-private token.
 const NativeHeaders = Headers;
+const NativeURL = URL;
 const IntrinsicReflectApply = Reflect.apply;
 const HeadersPrototypeHas = NativeHeaders.prototype.has;
 const HeadersPrototypeSet = NativeHeaders.prototype.set;
@@ -241,10 +245,10 @@ function createValidatedVeryfrontApiTransport<T>(
             });
             let res: Response;
             if (config.outboundPolicy) {
-              res = await guardedOutboundFetch(
+              await config.outboundPolicy.authorizeUrl?.(new NativeURL(url));
+              res = await createVeryfrontApiOriginBoundOutboundFetch(config.baseUrl)(
                 url,
                 createNativeRequestInit(requestInit, { redirect: "error" }),
-                { authorizeUrl: config.outboundPolicy.authorizeUrl },
               );
             } else {
               // Indexed, not destructured: destructuring runs Array.prototype's

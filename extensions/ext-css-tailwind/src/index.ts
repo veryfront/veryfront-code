@@ -8,12 +8,13 @@ import type { ExtensionFactory } from "veryfront/extensions";
 import { type CSSCompiler, type CSSProcessor, CSSProcessorName } from "veryfront/extensions/css";
 import { IMPORT_RESOLUTION_ERROR } from "veryfront/errors";
 import { compile } from "tailwindcss";
+import vendorSources from "../vendor-sources.json" with { type: "json" };
 import extensionPackage from "../deno.json" with { type: "json" };
 import { exactTailwindVersion } from "./manifest-dependency.ts";
 import { loadPlugin } from "./plugin-loader.ts";
 import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
-const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v4";
+const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v5";
 const apply = Reflect.apply;
 const arrayJoin = Array.prototype.join;
 const freeze = Object.freeze;
@@ -90,6 +91,7 @@ export class TailwindCSSProcessor implements CSSProcessor {
       `ext-css-tailwind@${extensionPackage.version}`,
       `tailwindcss@${tailwindVersion}`,
       `base=${sha256(tailwindBaseStylesheet)}`,
+      `vendor=${sha256(JSON.stringify(vendorSources))}`,
       `default=${sha256(this.defaultStylesheet)}`,
       `plugins=${sha256(TAILWIND_PLUGIN_POLICY_IDENTITY)}`,
     ];

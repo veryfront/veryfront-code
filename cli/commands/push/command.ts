@@ -1147,7 +1147,7 @@ async function computePushedSourceDigest(
  * The read goes through the platform's typed reader rather than a hand-rolled
  * `client.get`, because these bytes decide whether a remote `package.json` is
  * written over the user's own file.
- * {@linkcode VeryfrontApiClient.readDependencyMetadataHistory} binds the
+ * `VeryfrontApiClient.dependencies.getHistory` binds the
  * response to the project id and branch this push resolved — a history
  * answered for some other project cannot seed the proof — caps the response
  * body, and reads every field off own-property descriptors so a crafted
@@ -1171,9 +1171,9 @@ async function readDependencyPreimages(params: {
       projectId: params.projectId,
     });
     await historyClient.initialize();
-    const history = await historyClient.readDependencyMetadataHistory(
-      params.branch === "main" ? null : params.branch,
-    );
+    const history = await historyClient.dependencies.getHistory({
+      branch: params.branch === "main" ? null : params.branch,
+    });
     // The parsed maps are frozen and null-prototyped; copy each into an
     // ordinary object so the comparison helpers see a plain record.
     return history.entries
@@ -1181,15 +1181,13 @@ async function readDependencyPreimages(params: {
       .map((entry) => ({ ...entry.dependencies }));
   } catch (error) {
     // A control plane that predates the history endpoint answers 404 here, and
-    // the push falls back to the conflict it raises today. Say so under
-    // --verbose rather than leaving the reconciliation looking broken.
-    if (isVerbose()) {
-      cliLogger.info(
-        `Dependency pin history unavailable (${
-          sanitizeTerminalDiagnosticText(error instanceof Error ? error.message : String(error))
-        }); a package.json rewrite will be reported as a conflict.`,
-      );
-    }
+    // the push falls back to the conflict it raises today. Warn rather than
+    // leaving the reconciliation looking broken.
+    cliLogger.warn(
+      `Dependency pin history unavailable (${
+        sanitizeTerminalDiagnosticText(error instanceof Error ? error.message : String(error))
+      }); a package.json rewrite will be reported as a conflict.`,
+    );
     return [];
   }
 }
