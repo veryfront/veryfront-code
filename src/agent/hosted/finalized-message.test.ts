@@ -2252,3 +2252,110 @@ Deno.test("earlier final-step reasoning still takes its closed exact match befor
     state: "done" as const,
   }]);
 });
+
+Deno.test("a reused framework reasoning id starts a new open block that finalization completes", async () => {
+  const events = [
+    { type: "message-start", messageId: "m" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "Sec" },
+    { type: "message-finish" },
+  ];
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  let responseMessage: ChatUiMessage | undefined;
+  const mirrored = createMirroredToolChunkState();
+  const reasoningChunkIds: string[] = [];
+  for await (
+    const chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+      sendReasoning: true,
+      generateMessageId: () => "m",
+      onFinish: (finish) => {
+        responseMessage = finish.responseMessage;
+      },
+    })
+  ) {
+    if (chunk.type === "reasoning-start") reasoningChunkIds.push(chunk.id);
+    recordMirroredToolChunkState(mirrored, chunk);
+  }
+  if (!responseMessage) throw new Error("Expected a framework response message");
+  // The second span is emitted under a replacement id and stays a separate, open part.
+  assertEquals(reasoningChunkIds.length, 2);
+  assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [
+    { type: "reasoning", text: "First" },
+    { type: "reasoning", text: "Sec" },
+  ]);
+
+  const finalStep = {
+    response: {
+      messages: [{ role: "assistant", content: [{ type: "reasoning", text: "Second" }] }],
+    },
+  };
+  const state = buildFinalizedMessageState({
+    responseMessage,
+    finalStep,
+    isAborted: false,
+    mirroredToolChunkState: mirrored,
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+  assertEquals(
+    state.sanitizedFinalizedMessage.parts.filter((part) => part.type === "reasoning"),
+    [{ type: "reasoning", text: "First" }, { type: "reasoning", text: "Second" }],
+  );
+  assertEquals(
+    buildFinalizedMessageFallbackChunks({
+      isAborted: false,
+      ...state,
+      finalStep,
+      mirroredToolChunkState: mirrored,
+      capturedMessageId: "m",
+    }),
+    [
+      { type: "reasoning-delta", id: reasoningChunkIds[1]!, delta: "ond" },
+      { type: "reasoning-end", id: reasoningChunkIds[1]! },
+    ],
+  );
+});
+
+Deno.test("a replayed framework reasoning id does not duplicate its block", async () => {
+  const events = [
+    { type: "message-start", messageId: "m" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: "First" },
+    { type: "reasoning-end", id: "r" },
+    { type: "message-finish" },
+  ];
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  let responseMessage: ChatUiMessage | undefined;
+  for await (
+    const _chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+      sendReasoning: true,
+      generateMessageId: () => "m",
+      onFinish: (finish) => {
+        responseMessage = finish.responseMessage;
+      },
+    })
+  ) { /* drain */ }
+  if (!responseMessage) throw new Error("Expected a framework response message");
+  assertEquals(responseMessage.parts.filter((part) => part.type === "reasoning"), [
+    { type: "reasoning", text: "First" },
+  ]);
+});

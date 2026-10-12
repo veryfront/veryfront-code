@@ -22,6 +22,7 @@ import {
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
 import {
+  createChatUiMessageChunkDeduper,
   normalizeChatMessageMetadata,
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
@@ -719,6 +720,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
   const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
   let manuallyPaused = false;
+  const dedupeObservedReasoning = createChatUiMessageChunkDeduper<MessageMetadata>();
 
   return normalizeChatUiMessageStream(
     (async function* () {
@@ -773,12 +775,23 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
                 : {}),
             }
             : chatEvent;
-          observeChatStreamEvent({
-            event: observedEvent,
-            responseMessageId,
-            state,
-            replaceExistingSourceDocument: replacesDerivedSourceDocument,
-          });
+          // The response message follows the reasoning spans the client stream emits: a
+          // restarted id replays its content, and diverging content continues under the
+          // same replacement id the emitted chunks carry.
+          const observed = observedEvent.type === "reasoning-start" ||
+              observedEvent.type === "reasoning-delta" || observedEvent.type === "reasoning-end"
+            ? dedupeObservedReasoning(
+              observedEvent as unknown as ChatUiMessageChunk<MessageMetadata>,
+            ) as unknown as Iterable<typeof observedEvent>
+            : [observedEvent];
+          for (const observedPart of observed) {
+            observeChatStreamEvent({
+              event: observedPart,
+              responseMessageId,
+              state,
+              replaceExistingSourceDocument: replacesDerivedSourceDocument,
+            });
+          }
           const chunk = toUiChunk(chatEvent);
           if (
             options.privateToolCallAdmissions && event.type === "tool-input-start" &&
