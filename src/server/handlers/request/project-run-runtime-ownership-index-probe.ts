@@ -27,8 +27,15 @@ const arrayIsArray = Array.isArray;
 const ceil = Math.ceil;
 const max = Math.max;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
+const ownDescriptor = Object.getOwnPropertyDescriptor;
+/**
+ * An own data property of an API response object. Parsed JSON inherits Object.prototype,
+ * which earlier project code in this process can extend, so an inherited or accessor
+ * value is never evidence.
+ */
+function own(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return undefined;
+  return (apply(ownDescriptor, Object, [value, key]) as PropertyDescriptor | undefined)?.value;
 }
 
 /** The host retains real vectors and replays identical bytes for stale authority; no new inference. */
@@ -52,12 +59,15 @@ export function createRuntimeOwnershipIndexProbe(input: {
       input.branchId ? { branch_id: input.branchId } : undefined,
       { signal },
     );
+    const canonicalId = own(canonical, "id");
+    const canonicalVersionId = own(canonical, "version_id");
+    const canonicalChecksum = own(canonical, "checksum");
     if (
-      !record(canonical) || typeof canonical.id !== "string" ||
-      !apply(match, uuid, [canonical.id]) ||
-      typeof canonical.version_id !== "string" || !apply(match, uuid, [canonical.version_id]) ||
-      canonical.content !== request.content || canonical.path !== request.sourcePath ||
-      canonical.checksum !== await computeHash(request.content)
+      typeof canonicalId !== "string" || !apply(match, uuid, [canonicalId]) ||
+      typeof canonicalVersionId !== "string" || !apply(match, uuid, [canonicalVersionId]) ||
+      own(canonical, "content") !== request.content ||
+      own(canonical, "path") !== request.sourcePath ||
+      canonicalChecksum !== await computeHash(request.content)
     ) throw new Error("Canonical index source identity changed");
     const ready = async () => {
       const response: unknown = await reader.post(
@@ -70,13 +80,14 @@ export function createRuntimeOwnershipIndexProbe(input: {
         },
         { signal },
       );
-      if (!record(response) || !arrayIsArray(response.data) || response.data.length !== 1) {
+      const rows = own(response, "data");
+      if (!arrayIsArray(rows) || rows.length !== 1) {
         throw new Error("Index readiness is incomplete");
       }
-      const row: unknown = response.data[0];
+      const row: unknown = own(rows, "0");
       if (
-        !record(row) || row.path !== request.sourcePath || row.file_id !== canonical.id ||
-        row.file_version_id !== canonical.version_id || row.index_ready !== true
+        own(row, "path") !== request.sourcePath || own(row, "file_id") !== canonicalId ||
+        own(row, "file_version_id") !== canonicalVersionId || own(row, "index_ready") !== true
       ) throw new Error("Current canonical version is not index ready");
       return await computeHash(privateJsonStringify(response));
     };
@@ -85,8 +96,8 @@ export function createRuntimeOwnershipIndexProbe(input: {
     }/files/${encode(request.sourcePath)}/index`;
     if (request.stale) {
       if (
-        !retained || retained.path !== request.sourcePath || retained.fileId !== canonical.id ||
-        retained.versionId !== canonical.version_id
+        !retained || retained.path !== request.sourcePath || retained.fileId !== canonicalId ||
+        retained.versionId !== canonicalVersionId
       ) throw new Error("No matching current canonical index receipt");
       const before = await ready();
       let rejected = false;
@@ -122,7 +133,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
     ) throw new Error("Managed index probe vector is invalid");
     const offset = request.content.length - body.length;
     const payload = {
-      expected_version_id: canonical.version_id,
+      expected_version_id: canonicalVersionId,
       model: { provider: "openai", name: "text-embedding-3-small", dimension: 1536 },
       chunks: [{
         chunk_index: 0,
@@ -132,8 +143,8 @@ export function createRuntimeOwnershipIndexProbe(input: {
         token_count: max(1, ceil(body.length / 4)),
         metadata: {
           source: request.sourcePath,
-          document_id: canonical.id,
-          file_version_id: canonical.version_id,
+          document_id: canonicalId,
+          file_version_id: canonicalVersionId,
           title: inspected.metadata.title ?? request.sourcePath,
           okf_metadata: inspected.metadata,
         },
@@ -144,21 +155,22 @@ export function createRuntimeOwnershipIndexProbe(input: {
     // Parse once here to ensure retained bytes are valid JSON; transport sends them unchanged later.
     privateJsonParse(wire);
     const acknowledgement: unknown = await writer.postRaw(indexPath, wire, { signal });
+    const model = own(acknowledgement, "model");
     if (
-      !record(acknowledgement) || acknowledgement.file_id !== canonical.id ||
-      acknowledgement.version_id !== canonical.version_id ||
-      acknowledgement.path !== request.sourcePath ||
-      acknowledgement.checksum !== canonical.checksum ||
-      acknowledgement.indexed_chunk_count !== 1 ||
-      !record(acknowledgement.model) || acknowledgement.model.name !== "text-embedding-3-small" ||
-      acknowledgement.model.provider !== "openai" || acknowledgement.model.dimension !== 1536
+      own(acknowledgement, "file_id") !== canonicalId ||
+      own(acknowledgement, "version_id") !== canonicalVersionId ||
+      own(acknowledgement, "path") !== request.sourcePath ||
+      own(acknowledgement, "checksum") !== canonicalChecksum ||
+      own(acknowledgement, "indexed_chunk_count") !== 1 ||
+      own(model, "name") !== "text-embedding-3-small" ||
+      own(model, "provider") !== "openai" || own(model, "dimension") !== 1536
     ) throw new Error("Canonical index acknowledgement mismatched");
     const after = await ready();
     retained = {
       wire,
       path: request.sourcePath,
-      fileId: canonical.id,
-      versionId: canonical.version_id,
+      fileId: canonicalId,
+      versionId: canonicalVersionId,
     };
     return {
       requestHash: await computeHash(wire),

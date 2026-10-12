@@ -167,6 +167,27 @@ describe("host-owned canonical index authority proof", () => {
     assertEquals(f.embeds(), 1);
     assertEquals(stale.readinessBeforeHash, stale.readinessAfterHash);
   });
+  it("does not accept an inherited readiness flag as index evidence", async () => {
+    const f = await fixture();
+    const post = f.client.post.bind(f.client);
+    // The row omits its own flag; the value is only reachable through its prototype.
+    f.client.post = async <T>(...args: Parameters<typeof post>) => {
+      const response = await post<{ data?: Record<string, unknown>[] }>(...args);
+      const row = response?.data?.[0];
+      if (!row || !("index_ready" in row)) return response as T;
+      const { index_ready, ...rest } = row;
+      return {
+        ...response,
+        data: [Object.assign(Object.create({ index_ready }), rest)],
+      } as T;
+    };
+    await assertRejects(
+      () => f.probe({ ...f.request, stale: false }),
+      Error,
+      "not index ready",
+    );
+  });
+
   it("fails an accepted stale write even when readiness is unchanged", async () => {
     const f = await fixture();
     await f.probe({ ...f.request, stale: false });
