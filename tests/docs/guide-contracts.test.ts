@@ -710,7 +710,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agent source",
       "There is no project integration policy",
       "Make your first call",
-      "executeIntegrationTool",
+      "runIntegrationTool",
       "/projects/<PROJECT_SLUG>/mcp",
       "expected_connection_generation_id",
       "Connection inventory",

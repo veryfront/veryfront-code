@@ -36,7 +36,7 @@ describe("integration CLI envelopes", () => {
         createClient: (context) => {
           assertEquals(context.projectReference, "explicit");
           return Promise.resolve({
-            call: () => {
+            runTool: () => {
               calls++;
               return Promise.resolve(result);
             },

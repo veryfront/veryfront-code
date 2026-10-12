@@ -29,7 +29,7 @@ const SIGNATURE_EXPORTS: Record<DiscoveryRuntimeModuleName, string> = {
   "veryfront/eval": "evalAgent",
   "veryfront/metrics": "counter",
   "veryfront/schemas": "defineSchema",
-  "veryfront/integrations": "executeRemoteIntegrationTool",
+  "veryfront/integrations": "runRemoteIntegrationTool",
   "veryfront/middleware": "MiddlewarePipeline",
   "veryfront/chat/uploads": "createChatUploadHandler",
 };

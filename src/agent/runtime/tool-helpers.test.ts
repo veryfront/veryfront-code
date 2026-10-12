@@ -578,7 +578,7 @@ describe("tool-helpers", () => {
         assertEquals(result, { structuredContent: { ok: true } });
         assertEquals(
           requestUrl,
-          "https://api.test/integrations/gmail/tools/list_emails/call",
+          "https://api.test/integration-tools/gmail__list_emails/run",
         );
         assertEquals(requestBody, {
           arguments: { maxResults: 10 },

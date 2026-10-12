@@ -493,6 +493,7 @@ async function fetchToolListAttempt(
     token,
     projectSlug,
     signal,
+    method: "GET",
   });
 
   if (!response.ok) {
@@ -657,7 +658,7 @@ async function callRemoteTool(
     const serializedBody = serializeCallRequest(args, context);
     const projectSlug = resolveRequestProjectSlug(context);
     const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      `/integrations/${encodeURIComponent(integration)}/tools/${encodeURIComponent(toolId)}/call`,
+      `/integration-tools/${encodeURIComponent(`${integration}__${toolId}`)}/run`,
     );
     const response = await dispatchIntegrationApiRequest({
       requestUrl,
@@ -754,9 +755,8 @@ export async function getRemoteIntegrationToolDiscovery(
   if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
-    const toolListUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      "/integrations/tools/list",
-    );
+    // No query parameters: the API then returns the complete list in one response.
+    const toolListUrl = createVeryfrontApiRequestUrlResolver(baseUrl)("/integration-tools");
     const projectSlug = resolveRequestProjectSlug(requestContext);
     const catalog = await getRemoteIntegrationToolCatalog(
       toolListUrl,
@@ -813,12 +813,12 @@ export function isRemoteIntegrationTool(toolName: string): boolean {
 }
 
 /**
- * Execute a remote integration tool via the API.
+ * Run a remote integration tool via the API.
  * Called by the agent runtime when a tool isn't found in the local registry.
  * The request, response, and caller-supplied cancellation signal remain
  * bounded for the complete network and response-body lifecycle.
  */
-export async function executeRemoteIntegrationTool(
+export async function runRemoteIntegrationTool(
   toolName: string,
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
@@ -865,3 +865,11 @@ export async function executeRemoteIntegrationTool(
     requestContext,
   );
 }
+
+/**
+ * Deprecated alias of `runRemoteIntegrationTool`.
+ *
+ * @deprecated Use `runRemoteIntegrationTool`.
+ */
+export const executeRemoteIntegrationTool: typeof runRemoteIntegrationTool =
+  runRemoteIntegrationTool;
