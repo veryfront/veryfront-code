@@ -497,7 +497,11 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
 // The framework and ext-dev-ui-react both consume the application's React
 // generation. The root-bundled schema adapter also owns Zod. These remain
 // root dependencies when another extension uses them.
-const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom", "zod"]);
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set([
+  "react",
+  "react-dom",
+  "zod",
+]);
 
 it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
@@ -543,6 +547,16 @@ it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async 
 });
 
 describe("normalizeNpmPackageMetadata", () => {
+  it("shares React and its renderer with the consumer instead of installing split nested peers", () => {
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: { react: "19.2.4", "react-dom": "19.2.4", zod: "^4.3.6" },
+    });
+    assertEquals(pkg.dependencies, { zod: "4.3.6" });
+    assertEquals(pkg.peerDependencies?.react, "^19.2.4");
+    assertEquals(pkg.peerDependencies?.["react-dom"], "^19.2.4");
+    assertEquals(pkg.peerDependenciesMeta?.react, undefined);
+  });
+
   it("removes source files from the published npm file list", () => {
     const pkg = normalizeNpmPackageMetadata({
       files: ["esm", "script", "src", "bin", "README.md"],
@@ -801,8 +815,14 @@ describe("npm supply-chain policy", () => {
     assertEquals(exports["./chat/ag-ui"], "./src/chat/ag-ui.ts");
     assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
     assertEquals(exports["./events/ag-ui"], "./src/events/ag-ui/public.ts");
-    assertEquals(imports["veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
-    assertEquals(imports["#veryfront/events/ag-ui"], "./src/events/ag-ui/public.ts");
+    assertEquals(
+      imports["veryfront/events/ag-ui"],
+      "./src/events/ag-ui/public.ts",
+    );
+    assertEquals(
+      imports["#veryfront/events/ag-ui"],
+      "./src/events/ag-ui/public.ts",
+    );
   });
 
   it("exports agent-service evals without legacy agent testing", async () => {

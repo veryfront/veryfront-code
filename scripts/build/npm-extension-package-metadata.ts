@@ -1,4 +1,12 @@
-import { dirname, isAbsolute, join, normalize, relative, toFileUrl } from "#std/path";
+import { normalizeReactPeerDependencies } from "./npm-react-peers.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  toFileUrl,
+} from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -78,7 +86,8 @@ const TEST_ONLY_IMPORTS = new Set([
   "@std/testing/bdd",
 ]);
 
-const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+const NODE_ENGINE_PATTERN =
+  /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
 /**
  * Native npm dependencies must be pinned to a release that ships prebuilt
@@ -578,6 +587,8 @@ export function normalizeExtensionPackageJson(input: {
   } else {
     delete pkg.peerDependencies;
   }
+
+  normalizeReactPeerDependencies(pkg);
 
   pkg.type = "module";
   const importPath = packageImportPath(pkg);

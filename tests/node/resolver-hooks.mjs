@@ -8,7 +8,7 @@
  * 4. React package fallbacks from ./npm/node_modules for Node tests
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -400,7 +400,7 @@ export function resolve(specifier, context, nextResolve) {
     if (typeof resolvedAlias === "string") {
       return {
         shortCircuit: true,
-        url: pathToFileURL(resolvedAlias).href + querySuffix,
+        url: pathToFileURL(realpathSync(resolvedAlias)).href + querySuffix,
       };
     }
   }
@@ -411,7 +411,7 @@ export function resolve(specifier, context, nextResolve) {
     if (actualPath) {
       return {
         shortCircuit: true,
-        url: pathToFileURL(actualPath).href + querySuffix,
+        url: pathToFileURL(realpathSync(actualPath)).href + querySuffix,
       };
     }
   }

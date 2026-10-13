@@ -125,8 +125,7 @@ export function getLocalReactPath(specifier: string, reactVersion?: string): str
   if (isNode) return resolveReactSpecifier(specifier);
   const mapped = getLocalReactPaths()[specifier];
   if (mapped) return mapped;
-  // Unsupported or missing Node subpaths must fail through package exports.
-  return isNode ? resolveReactSpecifier(specifier) : undefined;
+  return undefined;
 }
 
 export function isReactSpecifier(specifier: string): boolean {
