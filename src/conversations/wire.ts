@@ -8,6 +8,7 @@ import type {
   ConversationBranchSelection,
   ConversationDetails,
   ConversationMessage,
+  ConversationMessagePart,
   ConversationMessageRole,
   ConversationMessageSenderType,
   ConversationMessageStatus,
@@ -158,6 +159,13 @@ function objects(value: unknown, field: string): Wire[] {
   return value;
 }
 
+/** Message parts pass through unchanged; each must carry its string `type` discriminator. */
+function parts(value: unknown): ConversationMessagePart[] {
+  const items = objects(value, "parts");
+  if (!items.every((item) => typeof item.type === "string")) invalid("parts.type", "a string");
+  return items as ConversationMessagePart[];
+}
+
 function userMessageFields(input: CreateConversationInitialMessageInput): Wire {
   return defined({
     role: "user",
@@ -283,7 +291,7 @@ export function fromMessage(wire: Wire): ConversationMessage {
     senderType: oneOfOr(wire, "sender_type", MESSAGE_SENDER_TYPES, "user"),
     senderId: optStr(wire, "sender_id"),
     senderDisplayName: optStr(wire, "sender_display_name"),
-    parts: objects(wire.parts, "parts") as ConversationMessage["parts"],
+    parts: parts(wire.parts),
     model: optStr(wire, "model"),
     runUsage: optObj(wire, "run_usage"),
     tokenUsage: optObj(wire, "token_usage"),

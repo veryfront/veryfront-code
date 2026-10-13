@@ -737,6 +737,15 @@ describe("conversations SDK request handling", () => {
       ["seq", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, seq: "secret-seq" }],
       ["parts", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, parts: undefined }],
       ["metadata", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, metadata: "secret" }],
+      ["parts.type", (c) => c.getMessage(MESSAGE_ID), { ...WIRE_MESSAGE, parts: [{}] }],
+      ["parts.type", (c) => c.getMessage(MESSAGE_ID), {
+        ...WIRE_MESSAGE,
+        parts: [{ type: "text", text: "ok" }, { type: 1, text: "secret" }],
+      }],
+      ["parts.type", (c) => c.listMessages(), {
+        data: [{ ...WIRE_MESSAGE, parts: [{ type: null }] }],
+        page_info: EMPTY_PAGE_INFO,
+      }],
       ["message_count", (c) => c.update({ title: "x" }), {
         ...WIRE_CONVERSATION,
         message_count: undefined,
