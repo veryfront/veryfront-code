@@ -6355,6 +6355,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
+                // The signed eval credential authorizes headless project execution,
+                // not a user-owned conversation for the service account's owner.
+                if (
+                  (requestBody?.config as Record<string, unknown>)?.conversation_mode !== "none"
+                ) {
+                  return Response.json({ code: "authorization-denied" }, { status: 403 });
+                }
                 const runId = "77777777-7777-4777-8777-777777777777";
                 return Response.json({
                   id: runId,
@@ -6415,7 +6422,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(createRequest?.body?.request, undefined);
       assertEquals(
         (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
-        "create_new",
+        "none",
       );
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
       assertEquals(agentInput.forwarded_props, {
