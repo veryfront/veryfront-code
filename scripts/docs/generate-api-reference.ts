@@ -799,6 +799,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/chat": "Chat components and hooks.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
+  "veryfront/conversations": "Conversations, messages, branches, participants, and read state.",
   "veryfront/embedding": "Embedding and retrieval helpers.",
   "veryfront/extensions": "Extension contracts and loader helpers.",
   "veryfront/fonts": "Font components.",
@@ -1623,6 +1624,15 @@ const API_DOCS: Record<string, APIDocs> = {
   "veryfront/resource": {
     functions: { resource: { configType: "ResourceConfig" } },
     expandTypes: ["ResourceConfig"],
+  },
+  "veryfront/conversations": {
+    methods: { Conversation: "Conversation client" },
+    expandTypes: [
+      "ConversationClientOptions",
+      "CreateConversationInput",
+      "ConversationDetails",
+      "ConversationMessage",
+    ],
   },
   "veryfront/sandbox": {
     methods: { Sandbox: "Sandbox session client" },
