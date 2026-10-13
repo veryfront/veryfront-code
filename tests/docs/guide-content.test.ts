@@ -1258,6 +1258,15 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("links the CI and configuration guides to the API keys concept section", async () => {
+    const apiKeysLink =
+      "[API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.";
+    for (const path of ["docs/guides/deploy-from-ci.md", "docs/guides/configuration.md"]) {
+      const guide = (await Deno.readTextFile(new URL(path, repoRoot))).replace(/\s+/g, " ");
+      assertStringIncludes(guide, apiKeysLink);
+    }
+  });
+
   it("links the runs guide to the webhook concept page for manual webhook runs", async () => {
     const guide = (await Deno.readTextFile(
       new URL("docs/guides/runs.md", repoRoot),

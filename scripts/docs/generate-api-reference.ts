@@ -2318,6 +2318,12 @@ const CATEGORY_LABELS: Record<CommandCategory, string> = {
   auth: "Auth",
 };
 
+// Hand-written notes rendered below a category's command table.
+const CATEGORY_NOTES: Partial<Record<CommandCategory, string>> = {
+  auth:
+    "`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions. For an API key, `whoami` reports the credential type, not a user.",
+};
+
 const CATEGORY_ORDER: CommandCategory[] = [
   "development",
   "deploy",
@@ -2358,6 +2364,11 @@ function generateCLICommandCatalog(): string[] {
       lines.push(`| \`veryfront ${cmd.name}\` | ${desc} |`);
     }
     lines.push("");
+    const note = CATEGORY_NOTES[category];
+    if (note) {
+      lines.push(note);
+      lines.push("");
+    }
   }
 
   return lines;
