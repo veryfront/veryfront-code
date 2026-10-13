@@ -1143,8 +1143,11 @@ export async function resolveProjectPackageVersions(
   }
   if (hasEnabledDependencySnapshot(options)) {
     const dependencies = options.dependencyPinningDependencies;
+    const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
     return {
-      react: dependencies?.react
+      react: capturedReact !== undefined
+        ? normalizeReactVersion(capturedReact)
+        : dependencies?.react
         ? selectReactDeclarationVersion(dependencies.react)
         : normalizeReactVersion(undefined),
       veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
@@ -1183,6 +1186,23 @@ export async function resolveProjectPackageVersions(
  * This is the single source of truth for React version resolution.
  * Both HTML import map generation and module server transforms should use this.
  */
+function capturedDependencyConfiguration(
+  options: ProjectPackageVersionOptions,
+): CapturedDependencyConfiguration {
+  const configuration = options.dependencyPinningConfiguredVersions;
+  if (
+    configuration !== undefined &&
+    (!options.dependencyPinningDependencies || !options.dependencyPinningCacheKey ||
+      `on:${hashDependencyPins(options.dependencyPinningDependencies, configuration)}` !==
+        options.dependencyPinningCacheKey)
+  ) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Captured dependency configuration does not match its snapshot key",
+    });
+  }
+  return configuration;
+}
+
 /** Authored constraint for validating a supplied runtime without selecting host peers. */
 export async function resolveProjectReactDeclaration(
   options: ProjectPackageVersionOptions,
@@ -1191,18 +1211,7 @@ export async function resolveProjectReactDeclaration(
     options.dependencyPinningDependencies !== undefined ||
     options.dependencyPinningCacheKey?.startsWith("on:")
   ) {
-    const configuration = options.dependencyPinningConfiguredVersions;
-    if (configuration !== undefined) {
-      if (
-        !options.dependencyPinningDependencies || !options.dependencyPinningCacheKey ||
-        `on:${hashDependencyPins(options.dependencyPinningDependencies, configuration)}` !==
-          options.dependencyPinningCacheKey
-      ) {
-        throw INITIALIZATION_ERROR.create({
-          detail: "Captured dependency configuration does not match its snapshot key",
-        });
-      }
-    }
+    const configuration = capturedDependencyConfiguration(options);
     const declaration = configuration?.react?.declaration ??
       options.dependencyPinningDependencies?.react;
     assertReactPackageDeclaration(declaration);
@@ -1262,6 +1271,8 @@ export async function resolveProjectReactVersion(
     dependencyPinningDependencies !== undefined ||
     dependencyPinningCacheKey?.startsWith("on:")
   ) {
+    const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
+    if (capturedReact !== undefined) return normalizeReactVersion(capturedReact);
     const snapshotReactVersion = dependencyPinningDependencies?.react;
     return normalizeReactVersion(
       snapshotReactVersion ? selectReactDeclarationVersion(snapshotReactVersion) : undefined,

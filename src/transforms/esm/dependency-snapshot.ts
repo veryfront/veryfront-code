@@ -115,9 +115,9 @@ export function applyConfiguredDependencyOverrides(
   configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
 ): Record<string, string> {
   const effective = copyRecord(dependencies) as Record<string, string>;
-  // Preserve the authored constraint for every prepared-runtime consumer.
-  // The effective host version still participates in the snapshot hash.
-  if (configuredVersions?.react) effective.react = configuredVersions.react.declaration;
+  // Host consumers retain the immutable effective pin. Prepared runtimes
+  // receive the authenticated authored declaration separately.
+  if (configuredVersions?.react) effective.react = configuredVersions.react.effective;
   if (configuredVersions?.veryfront) effective.veryfront = configuredVersions.veryfront.effective;
   return effective;
 }

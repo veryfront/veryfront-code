@@ -81,9 +81,11 @@ describe("project runtime delegation", () => {
       await Deno.remove(join(f.project, "node_modules"));
       await Deno.writeTextFile(
         join(f.project, ".pnp.cjs"),
-        `if (module.parent?.id === "internal/preload") process.versions.pnp = "3"; exports.setup = () => {}; exports.resolveToUnqualified = (name) => { if (name !== "veryfront") throw new Error("unexpected request"); return ${
-          JSON.stringify(store)
-        }; };`,
+        'if (module.parent?.id === "internal/preload") process.versions.pnp = "3"; const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => {}; exports.resolveToUnqualified = (name) => { if (name !== "veryfront") throw new Error("unexpected request"); return root; };',
+      );
+      await Deno.writeTextFile(
+        join(f.project, "pnp-fixture.json"),
+        JSON.stringify({ root: store }),
       );
       await Deno.writeTextFile(
         join(f.project, ".pnp.loader.mjs"),
@@ -129,10 +131,12 @@ describe("project runtime delegation", () => {
     const f = await fixture(true);
     try {
       await Deno.writeTextFile(
+        join(f.project, "pnp-fixture.json"),
+        JSON.stringify({ root: join(f.project, "node_modules", "veryfront") }),
+      );
+      await Deno.writeTextFile(
         join(f.project, ".pnp.cjs"),
-        `exports.setup = () => {}; exports.resolveToUnqualified = () => ${
-          JSON.stringify(join(f.project, "node_modules", "veryfront"))
-        };`,
+        'const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => {}; exports.resolveToUnqualified = () => root;',
       );
       const result = await new Deno.Command("node", {
         args: [join(f.global, "bin", "veryfront.js"), "dev"],

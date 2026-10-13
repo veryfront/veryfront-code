@@ -255,6 +255,49 @@ describe("react-paths", () => {
     }
   });
 
+  it("keeps captured effective React pins after installed peers change", async () => {
+    if (!isNode) return;
+    const { createDependencyPinningSource, getDependencyPinningSnapshot } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const { getHostEnv, setEnv } = await import("#veryfront/platform/compat/process.ts");
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    const flag = "VERYFRONT_DEPENDENCY_PINNING";
+    const previous = getHostEnv(flag);
+    const directory = mkdtempSync(join(tmpdir(), "captured-effective-peer-"));
+    let restoreReact: (() => void) | undefined;
+    let restoreDom: (() => void) | undefined;
+    try {
+      setEnv(flag, "1");
+      fs.writeFileSync(join(directory, "package.json"), "{}");
+      const config = { react: { version: "^19.2.0" } };
+      const snapshot = await getDependencyPinningSnapshot(
+        createDependencyPinningSource({ projectDir: directory, isLocalProject: true, config }),
+      );
+      const options = {
+        projectDir: directory,
+        config,
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
+        dependencyPinningConfiguredVersions: snapshot.configuredVersions,
+      };
+      restoreReact = overrideInstalledVersion("react", "19.2.5");
+      restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+      assertEquals(await resolveProjectReactVersion(options), "19.2.4");
+      assertEquals((await resolveProjectPackageVersions(options)).react, "19.2.4");
+      assertEquals(
+        JSON.parse((await buildImportMap(options)).json).imports.react.includes("react@19.2.4"),
+        true,
+      );
+      assertThrows(() => getLocalReactPath("react", "19.2.4"), TypeError);
+    } finally {
+      restoreDom?.();
+      restoreReact?.();
+      setEnv(flag, previous ?? "");
+      rmSync(directory, { recursive: true });
+    }
+  });
+
   it("refreshes a cached project range when only the installed peer changes", async () => {
     if (!isNode) return;
     const dir = mkdtempSync(join(tmpdir(), "sdk-cached-range-"));

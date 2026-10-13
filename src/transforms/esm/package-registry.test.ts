@@ -652,7 +652,7 @@ describe("package-registry adapter-backed snapshot sources", () => {
     );
 
     assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
-    assertEquals(snapshotA.dependencies?.react, "^18.3.1");
+    assertEquals(snapshotA.dependencies?.react, "18.3.1");
     assertEquals(snapshotA.dependencies?.veryfront, "0.1.10");
     assertEquals(snapshotA.configuredVersions?.react?.declaration, "^18.3.1");
     assertEquals(snapshotA.configuredVersions?.veryfront?.declaration, "^0.1.10");
@@ -665,7 +665,7 @@ describe("package-registry adapter-backed snapshot sources", () => {
         sourceB,
         snapshotA.cacheKey,
       ))?.dependencies?.react,
-      "^18.3.1",
+      "18.3.1",
     );
     assertEquals(
       await resolveProjectReactVersion({
@@ -703,7 +703,7 @@ describe("package-registry adapter-backed snapshot sources", () => {
 
     assertEquals(resolved.cacheKey, captured.cacheKey);
     assertEquals(resolved.dependencies?.tenant, "1.0.0");
-    assertEquals(resolved.dependencies?.react, "^18.3.1");
+    assertEquals(resolved.dependencies?.react, "18.3.1");
     assertEquals(resolved.dependencies?.veryfront, "0.1.10");
     assertEquals(resolved.configuredVersions?.react?.declaration, "^18.3.1");
     assertEquals(resolved.configuredVersions?.veryfront?.declaration, "^0.1.10");

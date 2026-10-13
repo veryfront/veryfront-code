@@ -170,6 +170,16 @@ export function selectCapturedHistoricalDependencySnapshot(
     let snapshotConfiguration = configuredVersions;
     let key = `on:${hashDependencyPins(effective, snapshotConfiguration)}`;
     if (key !== requestedKey && configuredVersions?.react) {
+      // Preserve keys emitted during authored-map migration too. Runtime host
+      // consumers use the separately captured effective pin after validation.
+      const authored = { ...effective, react: configuredVersions.react.declaration };
+      const authoredKey = `on:${hashDependencyPins(authored, configuredVersions)}`;
+      if (authoredKey === requestedKey) {
+        effective = authored;
+        key = authoredKey;
+      }
+    }
+    if (key !== requestedKey && configuredVersions?.react) {
       // Older captures pinned config React to the host's effective version.
       // Match their original bytes/key without mutating or extending history.
       const legacy = { ...effective, react: configuredVersions.react.effective };

@@ -242,6 +242,7 @@ describe("Node SSR local React graph", () => {
           config,
           dependencyPinningCacheKey: snapshot.cacheKey,
           dependencyPinningDependencies: snapshot.dependencies,
+          dependencyPinningConfiguredVersions: snapshot.configuredVersions,
         }),
         "19.2.0",
       );

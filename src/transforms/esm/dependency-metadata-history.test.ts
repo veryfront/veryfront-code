@@ -103,6 +103,20 @@ describe("API-derived dependency metadata history", () => {
     );
   });
 
+  it("preserves authored-map migration keys with their original captured configuration", () => {
+    const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const dependencies: Record<string, string> = { react: "^19.2.0" };
+    const key = `on:${hashDependencyPins(dependencies, config)}`;
+    const envelope = history({});
+    const bytes = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, config, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, dependencies);
+    assertEquals(result?.snapshot.configuredVersions, config);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), bytes);
+  });
+
   it("retains legacy effective React snapshot identities without rewriting history", () => {
     const dependencies = { react: "^18" };
     const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
