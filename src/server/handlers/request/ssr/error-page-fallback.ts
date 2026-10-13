@@ -83,6 +83,7 @@ export async function tryErrorPageFallback(
     }
 
     const reactVersion = await resolveProjectReactVersion({
+      adapter: ctx.adapter,
       projectDir: ctx.projectDir,
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,

@@ -140,6 +140,7 @@ export class PageRenderer {
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        adapter: this.adapter,
         projectDir: this.projectDir,
         config: this.config,
         dependencyPinningCacheKey,
@@ -148,6 +149,7 @@ export class PageRenderer {
     }
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
+      adapter: this.adapter,
       projectDir: this.projectDir,
       config: this.config,
     });

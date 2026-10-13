@@ -281,6 +281,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       }
       const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
       const snapshotReactVersion = await resolveProjectReactVersion({
+        adapter: adapter,
         projectDir,
         config,
         dependencyPinningCacheKey,

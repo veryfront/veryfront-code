@@ -38,6 +38,59 @@ import {
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 describe("Node SSR local React graph", () => {
+  it("selects the prepared peer before layout/page transforms and browser import-map construction", async () => {
+    const { resolveProjectReactVersion } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    const React = await getProjectReact();
+    const prepared = { ...React, version: "19.2.0" };
+    const adapter = {
+      moduleLoader: { importModule: () => Promise.resolve({ default: prepared }) },
+    } as unknown as RuntimeAdapter;
+    const options = { adapter, config: { react: { version: "^19.2.0" } } as VeryfrontConfig };
+    assertEquals(await resolveProjectReactVersion(options), "19.2.0");
+    const { LayoutOrchestrator } = await import("#veryfront/rendering/orchestrator/layout.ts");
+    const layouts = new LayoutOrchestrator({ adapter, config: options.config } as never);
+    assertEquals(
+      await (layouts as unknown as { getReactVersion(): Promise<string> }).getReactVersion(),
+      "19.2.0",
+    );
+    await assertRejects(
+      () =>
+        resolveProjectReactVersion({
+          ...options,
+          config: { react: { version: "19.2.4" } } as VeryfrontConfig,
+        }),
+      Error,
+      "Prepared React runtime version",
+    );
+    assertEquals(
+      await resolveProjectReactVersion({
+        ...options,
+        config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+        dependencyPinningCacheKey: "on:captured",
+        dependencyPinningDependencies: { react: "^19.2.0" },
+      }),
+      "19.2.0",
+    );
+    const map = await buildImportMap(options);
+    assertEquals(JSON.parse(map.json).imports.react.includes("react@19.2.0"), true);
+    const { generateHTMLShellParts } = await import("#veryfront/html/html-shell-generator.ts");
+    const shell = await generateHTMLShellParts({ slug: "prepared" }, {
+      ...options,
+      mode: "development",
+      isLocalProject: true,
+    });
+    assertEquals(shell.start.includes("react@19.2.0"), true);
+    assertEquals(shell.start.includes("react@19.2.4"), false);
+    const defaultMap = await buildImportMap();
+    assertEquals(
+      JSON.parse(defaultMap.json).imports.react.includes(`react@${React.version}`),
+      true,
+    );
+  });
+
   it("renders installed and supplied runtimes for tag declarations while preserving range rejection", async () => {
     if (!isNode && !isBun) return;
     const React = await getProjectReact("latest");

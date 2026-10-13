@@ -166,6 +166,7 @@ export class SSRRenderer {
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return await resolveProjectReactVersion({
+        adapter: this.adapter,
         projectDir: this.projectDir,
         config: this.config,
         dependencyPinningCacheKey,
@@ -176,6 +177,7 @@ export class SSRRenderer {
     if (this.resolvedReactVersion) return this.resolvedReactVersion;
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
+      adapter: this.adapter,
       projectDir: this.projectDir,
       config: this.config,
     });

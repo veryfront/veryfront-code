@@ -376,6 +376,7 @@ async function handleActionRequestInner(
     (branch ? `branch:${branch}` : undefined) ??
     (mode === "development" ? "preview-main" : "production");
   const reactVersion = await resolveProjectReactVersion({
+    adapter: adapter,
     projectDir,
     dependencyPinningSource: dependencySource,
     config,

@@ -420,6 +420,7 @@ export class HTMLGenerator {
       resolveReleaseAssetManifestForHTML(context.options),
     ]);
     const importMapJson = await buildImportMapJson({
+      adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
       moduleServerOrigin: context.options?.url?.origin,
@@ -666,6 +667,7 @@ export class HTMLGenerator {
 
     try {
       const reactVersion = await resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
@@ -714,6 +716,7 @@ export class HTMLGenerator {
       const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
       const dirs = await collectAncestorDirs(segmentDir, appRoot);
       const reactVersion = await resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
@@ -866,6 +869,7 @@ export class HTMLGenerator {
       )
       : undefined;
     return profileSyncPhase("html.build_options.finalize", () => ({
+      adapter: this.config.adapter,
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,

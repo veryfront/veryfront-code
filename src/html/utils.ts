@@ -1,3 +1,4 @@
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -250,6 +251,7 @@ function getCdnImportMap(
 }
 
 interface BuildImportMapOptions {
+  adapter?: RuntimeAdapter;
   projectDir?: string;
   config?: VeryfrontConfig;
   /** Absolute request origin used to identify same-origin module URLs. */
@@ -265,6 +267,7 @@ interface BuildImportMapOptions {
 async function resolveVersions(
   options: Pick<
     BuildImportMapOptions,
+    | "adapter"
     | "projectDir"
     | "config"
     | "dependencyPinningCacheKey"
@@ -434,6 +437,7 @@ export async function buildImportMap(
   }
 
   const {
+    adapter,
     projectDir,
     config,
     moduleServerOrigin,
@@ -445,16 +449,14 @@ export async function buildImportMap(
     releaseAssetManifest,
   } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
-  const versions = projectDir || config || dependencyPinningCacheKey ||
-      dependencyPinningDependencies || dependencyPinningSource
-    ? await resolveVersions({
-      projectDir,
-      config,
-      dependencyPinningCacheKey,
-      dependencyPinningDependencies,
-      dependencyPinningSource,
-    })
-    : DEFAULT_VERSIONS;
+  const versions = await resolveVersions({
+    adapter,
+    projectDir,
+    config,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+  });
 
   if (mode === "bundled") {
     let imports: Record<string, string> = { ...esmShReactImports(versions.react) };

@@ -253,6 +253,7 @@ export class RenderPipeline {
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey,
@@ -261,6 +262,7 @@ export class RenderPipeline {
     }
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
+      adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
     });

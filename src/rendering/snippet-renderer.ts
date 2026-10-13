@@ -88,6 +88,7 @@ export async function wrapSnippetInHTMLShell(
     })
     : undefined;
   const htmlOptions: HTMLGenerationOptions = {
+    adapter: options.adapter,
     mode: options.mode,
     config: snippetConfig,
     projectDir: options.projectDir,

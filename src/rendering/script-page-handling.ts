@@ -256,6 +256,7 @@ async function generateFullHtml(
     const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
     const importMapJson = hasEnabledDependencySnapshot
       ? await buildImportMapJson({
+        adapter: options.adapter,
         projectDir: options.projectDir,
         config: options.config,
         moduleServerOrigin: options.url?.origin,
@@ -280,6 +281,7 @@ async function generateFullHtml(
     (options.mode === "production" ? getProdHydrationModulePath() : undefined);
 
   const htmlOptions: HTMLGenerationOptions = {
+    adapter: options.adapter,
     mode: options.mode as "development" | "production",
     config: options.config,
     moduleServerOrigin: options.url?.origin,

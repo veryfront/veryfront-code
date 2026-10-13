@@ -1,3 +1,4 @@
+import { readProjectDependencyVersions } from "#veryfront/transforms/esm/package-registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -123,6 +124,25 @@ describe("react-paths", () => {
       assertThrows(() => getLocalReactPath("react", "18.3.1"), TypeError, "does not match");
     } finally {
       restore();
+    }
+  });
+
+  it("refreshes a cached project range when only the installed peer changes", async () => {
+    if (!isNode) return;
+    const dir = mkdtempSync(join(tmpdir(), "sdk-cached-range-"));
+    let restore: (() => void) | undefined;
+    try {
+      fs.writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ dependencies: { react: "^19.2.0" } }),
+      );
+      assertEquals((await readProjectDependencyVersions(dir)).react, "19.2.4");
+      restore = overrideInstalledVersion("react", "19.2.5");
+      assertEquals((await readProjectDependencyVersions(dir)).react, "19.2.5");
+      assertEquals(await resolveProjectReactVersion({ projectDir: dir }), "19.2.5");
+    } finally {
+      restore?.();
+      rmSync(dir, { recursive: true });
     }
   });
 

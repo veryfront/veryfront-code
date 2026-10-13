@@ -1,3 +1,4 @@
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
@@ -90,7 +91,12 @@ export const getHydrationDataSchema = defineSchema((v) =>
 );
 
 // Inferred types
-export type HTMLGenerationOptions = InferSchema<ReturnType<typeof getHTMLGenerationOptionsSchema>>;
+export type HTMLGenerationOptions =
+  & InferSchema<ReturnType<typeof getHTMLGenerationOptionsSchema>>
+  & {
+    /** Server-side runtime authority; never serialized into hydration data. */
+    adapter?: RuntimeAdapter;
+  };
 export type HydrationData = InferSchema<ReturnType<typeof getHydrationDataSchema>>;
 
 // Backward compat aliases

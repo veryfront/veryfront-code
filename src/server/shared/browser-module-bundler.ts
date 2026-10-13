@@ -508,6 +508,7 @@ function createTrackedDependencyPinningSource(
 async function buildTrackedImportMapJson(
   options: Pick<
     BrowserModuleBundlerOptions,
+    | "adapter"
     | "projectDir"
     | "config"
     | "moduleServerOrigin"
@@ -526,6 +527,7 @@ async function buildTrackedImportMapJson(
       tracked,
     );
   const importMapJson = await buildImportMapJson({
+    adapter: options.adapter,
     projectDir: options.projectDir,
     config: options.config,
     moduleServerOrigin: options.moduleServerOrigin,
@@ -1009,7 +1011,7 @@ export async function validateBrowserModuleBundle(
     tracked = createTrackingAdapter(options.adapter, options.projectDir, limits, signal);
     if (options.importMap) {
       const importMapJson = await buildTrackedImportMapJson(
-        { projectDir: options.projectDir, ...options.importMap },
+        { adapter: options.adapter, projectDir: options.projectDir, ...options.importMap },
         tracked,
         signal,
       );

@@ -470,6 +470,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const dependencyPinningCacheKey = snapshot.cacheKey;
         const dependencyPinningDependencies = snapshot.dependencies;
         const snapshotReactVersion = await resolveProjectReactVersion({
+          adapter: adapter,
           projectDir,
           config,
           dependencyPinningCacheKey,

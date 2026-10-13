@@ -286,6 +286,7 @@ export async function buildPagesRoutes(
 
       if (!hasImportMapScript(enhancedHtml)) {
         const importMap = await buildImportMap({
+          adapter: options.adapter,
           projectDir: options.projectDir,
           config: options.config,
           moduleServerOrigin: getConfiguredModuleServerOrigin(baseUrl),

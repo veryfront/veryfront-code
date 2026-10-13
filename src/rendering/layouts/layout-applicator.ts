@@ -152,6 +152,7 @@ export class LayoutApplicator {
     this.reactVersionPromise ??= this.configuredReactVersion
       ? Promise.resolve(this.configuredReactVersion)
       : resolveProjectReactVersion({
+        adapter: this.adapter,
         projectDir: this.projectDir,
         config: this.config,
         dependencyPinningCacheKey: this.dependencyPinningCacheKey,

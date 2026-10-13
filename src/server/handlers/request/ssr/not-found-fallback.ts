@@ -58,6 +58,7 @@ export async function tryNotFoundFallback(
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
     const reactVersion = await resolveProjectReactVersion({
+      adapter: ctx.adapter,
       projectDir: ctx.projectDir,
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,

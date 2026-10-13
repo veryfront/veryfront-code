@@ -101,6 +101,7 @@ export class LayoutOrchestrator {
       dependencyPinningCacheKey?.startsWith("on:")
     ) {
       return resolveProjectReactVersion({
+        adapter: this.config.adapter,
         projectDir: this.config.projectDir,
         config: this.config.config,
         dependencyPinningCacheKey,
@@ -109,6 +110,7 @@ export class LayoutOrchestrator {
     }
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
+      adapter: this.config.adapter,
       projectDir: this.config.projectDir,
       config: this.config.config,
     });

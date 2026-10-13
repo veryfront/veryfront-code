@@ -157,6 +157,7 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningDependencies,
   );
   const snapshotReactVersion = await resolveProjectReactVersion({
+    adapter: adapter,
     projectDir,
     config,
     dependencyPinningSource,
@@ -279,6 +280,7 @@ async function renderAppRouteToHTMLWithInternals(
   const headElements = buildHeadElements(committedHead);
   const slug = routePathToSlug(routePath);
   const importMapJson = await buildImportMapJson({
+    adapter: adapter,
     projectDir,
     config: {
       ...config,

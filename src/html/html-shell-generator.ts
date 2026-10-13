@@ -291,6 +291,7 @@ async function generateHTMLShellPartsImpl(
       getReadyManifestForRenderAsync(options.releaseId));
 
   const importMapPromise = buildImportMap({
+    adapter: options.adapter,
     projectDir: options.projectDir,
     config: options.config,
     moduleServerOrigin: options.moduleServerOrigin,

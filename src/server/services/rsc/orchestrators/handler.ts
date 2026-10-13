@@ -58,6 +58,7 @@ export class RSCDevServerHandler {
   private renderer: RSCRenderer | null = null;
   private clientManifest: Map<string, ClientComponentMeta> | null = null;
   private rendererPromise: Promise<void> | null = null;
+  private readonly adapter?: RuntimeAdapter;
   private reactVersionPromise: Promise<string> | null = null;
   private invalidationGeneration = 0;
 
@@ -70,6 +71,7 @@ export class RSCDevServerHandler {
     private readonly projectDir: string,
     options: RSCServerHandlerOptions = {},
   ) {
+    this.adapter = options.adapter;
     const appDir = options.config?.directories?.app ?? "app";
     const isLocalProject = options.isLocalProject === true;
     const mode = options.mode ?? "production";
@@ -219,6 +221,7 @@ export class RSCDevServerHandler {
 
   private getReactVersion(): Promise<string> {
     this.reactVersionPromise ??= resolveProjectReactVersion({
+      adapter: this.adapter,
       projectDir: this.projectDir,
       dependencyPinningSource: this.dependencyPinningSource,
       config: this.config,
@@ -231,6 +234,7 @@ export class RSCDevServerHandler {
   ): Promise<string> {
     if (dependencySnapshot.cacheKey.startsWith("on:")) {
       return resolveProjectReactVersion({
+        adapter: this.adapter,
         projectDir: this.projectDir,
         dependencyPinningSource: this.dependencyPinningSource,
         config: this.config,

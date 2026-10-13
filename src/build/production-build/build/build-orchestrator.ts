@@ -109,6 +109,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         });
         const dependencySnapshot = dependencyContext.snapshot;
         const buildReactVersion = await resolveProjectReactVersion({
+          adapter: context.adapter,
           projectDir: normalizedOptions.projectDir,
           config: context.config,
           dependencyPinningSource: dependencyContext.source,

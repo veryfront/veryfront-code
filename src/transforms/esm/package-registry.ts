@@ -1,3 +1,6 @@
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 /****
  * Central package version registry and dependency-pinning snapshot accessors.
  *
@@ -101,8 +104,11 @@ function trimDependencyVersionCache(): void {
     let evicted = false;
     for (const cacheIdentity of dependencyVersionCache.keys()) {
       if (
-        pendingDependencyVersionReads.has(`${cacheIdentity}\0on`) ||
-        pendingDependencyVersionReads.has(`${cacheIdentity}\0off`)
+        ["on", "off"].some((mode) =>
+          ["selected", "authored"].some((selection) =>
+            pendingDependencyVersionReads.has(`${cacheIdentity}\0${mode}\0${selection}`)
+          )
+        )
       ) {
         continue;
       }
@@ -863,10 +869,13 @@ export async function readProjectDependencyVersions(
 async function readProjectDependencyVersionsWithMode(
   source: DependencyPinningSourceInput,
   pinningOn: boolean,
+  selectReact = true,
 ): Promise<DependencyVersionsResult> {
   const normalized = normalizeDependencyPinningSource(source);
   if (!normalized.packageJsonPath) return { dependencyState: "absent" };
-  const pendingKey = `${normalized.cacheIdentity}\0${pinningOn ? "on" : "off"}`;
+  const pendingKey = `${normalized.cacheIdentity}\0${pinningOn ? "on" : "off"}\0${
+    selectReact ? "selected" : "authored"
+  }`;
   const pending = pendingDependencyVersionReads.get(pendingKey);
   if (pending) return pending;
 
@@ -878,6 +887,7 @@ async function readProjectDependencyVersionsWithMode(
   const read = readProjectDependencyVersionsUncoalesced(
     normalized,
     pinningOn,
+    selectReact,
   ).then((result) => {
     const capture = activeSnapshotCaptures.get(normalized.cacheIdentity);
     if (capture) capture.metadata = result;
@@ -896,6 +906,7 @@ async function readProjectDependencyVersionsWithMode(
 async function readProjectDependencyVersionsUncoalesced(
   source: NormalizedDependencyPinningSource,
   pinningOn: boolean,
+  selectReact = true,
 ): Promise<DependencyVersionsResult> {
   dependencyVersionReadOperations++;
   const packageJsonPath = source.packageJsonPath!;
@@ -924,7 +935,11 @@ async function readProjectDependencyVersionsUncoalesced(
       cached.mtimeMs === mtimeMs
     ) {
       return {
-        react: cached.react,
+        react: selectReact
+          ? cached.reactDeclaration
+            ? selectReactDeclarationVersion(cached.reactDeclaration)
+            : cached.react
+          : undefined,
         reactDeclaration: cached.reactDeclaration,
         veryfront: cached.veryfront,
         dependencies: undefined,
@@ -951,7 +966,7 @@ async function readProjectDependencyVersionsUncoalesced(
     }
 
     const deps = parsePackageDependencyMap(content);
-    const react = deps.react ? selectReactDeclarationVersion(deps.react) : undefined;
+    const react = selectReact && deps.react ? selectReactDeclarationVersion(deps.react) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
     // Full maps are needed for pinning captures and historical revision checks.
@@ -1010,6 +1025,8 @@ async function readProjectDependencyVersionsUncoalesced(
 }
 
 export interface ProjectPackageVersionOptions {
+  /** Prepared module authority used to select the graph-owned React peer. */
+  adapter?: RuntimeAdapter;
   projectDir?: string | null;
   dependencyPinningSource?: DependencyPinningSourceInput;
   config?: VeryfrontConfig | null;
@@ -1098,6 +1115,23 @@ function hasEnabledDependencySnapshot(
 export async function resolveProjectPackageVersions(
   options: ProjectPackageVersionOptions,
 ): Promise<ResolvedProjectPackageVersions> {
+  if (getRuntimeModuleLoader(options.adapter)) {
+    const react = (await resolvePreparedReactVersion(options))!;
+    if (hasEnabledDependencySnapshot(options)) {
+      const declaration = options.dependencyPinningDependencies?.veryfront;
+      return { react, veryfront: declaration ? stripSemverRange(declaration) : undefined };
+    }
+    let veryfront = getConfiguredVeryfrontVersion(options.config);
+    if (veryfront === undefined && (options.projectDir || options.dependencyPinningSource)) {
+      const detected = await readProjectDependencyVersionsWithMode(
+        options.dependencyPinningSource ?? options.projectDir!,
+        false,
+        false,
+      );
+      veryfront = detected.veryfront;
+    }
+    return { react, veryfront };
+  }
   if (hasEnabledDependencySnapshot(options)) {
     const dependencies = options.dependencyPinningDependencies;
     return {
@@ -1153,15 +1187,39 @@ export async function resolveProjectReactDeclaration(
   const configured = getConfiguredReactDeclaration(options.config);
   if (configured) return configured;
   if (!options.projectDir && !options.dependencyPinningSource) return undefined;
-  const detected = await readProjectDependencyVersions(
+  const detected = await readProjectDependencyVersionsWithMode(
     options.dependencyPinningSource ?? options.projectDir!,
+    false,
+    false,
   );
   return detected.reactDeclaration ?? detected.react;
+}
+
+async function resolvePreparedReactVersion(
+  options: ProjectPackageVersionOptions,
+): Promise<string | undefined> {
+  const loader = getRuntimeModuleLoader(options.adapter);
+  if (!loader) return undefined;
+  const declaration = await resolveProjectReactDeclaration(options);
+  const module = await loader.importModule({ kind: "package", specifier: "react" });
+  const react = (module.default ?? module) as { version?: unknown };
+  const version = react.version;
+  if (
+    typeof version !== "string" || !isValidReactVersion(version) ||
+    (declaration !== undefined && versionAdmission(version, declaration) === false)
+  ) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Prepared React runtime version does not match the authored project declaration",
+    });
+  }
+  return version;
 }
 
 export async function resolveProjectReactVersion(
   options: ProjectPackageVersionOptions,
 ): Promise<string> {
+  const preparedVersion = await resolvePreparedReactVersion(options);
+  if (preparedVersion !== undefined) return preparedVersion;
   const {
     projectDir,
     dependencyPinningCacheKey,

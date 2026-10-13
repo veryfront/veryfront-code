@@ -93,6 +93,7 @@ export async function generateLocalReleaseAssetManifest(
         await resolveDependencyPinningSnapshot(dependencyPinningSource);
       const reactVersion = options.reactVersion ??
         await resolveProjectReactVersion({
+          adapter: options.adapter,
           projectDir: options.projectDir,
           config: options.config,
           dependencyPinningSource,
