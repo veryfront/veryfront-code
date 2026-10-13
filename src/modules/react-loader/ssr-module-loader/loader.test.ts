@@ -180,6 +180,28 @@ function buildSSRModuleCacheKey(
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("reads one peer scope for concurrent modules in a graph and refreshes the next graph", async () => {
+    const { createDependencyHashCache } = await import("#veryfront/cache/dependency-graph.ts");
+    let reads = 0;
+    const readScope = () => Promise.resolve(`scope-${++reads}`);
+    const graph = createDependencyHashCache();
+    const scopes = await Promise.all(
+      Array.from(
+        { length: 20 },
+        () => __ssrModuleLoaderInternals.getGraphReactRuntimeScope(graph, readScope),
+      ),
+    );
+    assertEquals(new Set(scopes), new Set(["scope-1"]));
+    assertEquals(reads, 1);
+    assertEquals(
+      await __ssrModuleLoaderInternals.getGraphReactRuntimeScope(
+        createDependencyHashCache(),
+        readScope,
+      ),
+      "scope-2",
+    );
+  });
+
   afterAll(async () => {
     await stopEsbuild();
   });
