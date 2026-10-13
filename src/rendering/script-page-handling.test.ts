@@ -43,7 +43,7 @@ describe("prepared script pages", () => {
     assertStringIncludes(rendered.html, "<main>prepared script</main>");
     assertEquals(rendered.frontmatter?.title, "Prepared metadata");
     const imports = extractInlineJson(rendered.html, "importmap").imports as Record<string, string>;
-    assertStringIncludes(imports.react, "react@19.2.0");
+    assertStringIncludes(imports.react ?? "", "react@19.2.0");
   });
 });
 
