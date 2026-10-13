@@ -1,5 +1,5 @@
+import { getModuleFetcherReactRuntimeIdentity } from "./react-runtime-identity.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
-import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /****
  * Module Fetcher
  *
@@ -16,8 +16,6 @@ import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-pat
 
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { getSSRReactRuntimeCacheScope } from "../../../esm/http-cache-helpers.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
@@ -339,7 +337,7 @@ export async function fetchAndCacheModule(
       projectSlug,
       parentModulePath,
     );
-  const startFetch = (): Promise<string | null> => {
+  const startFetch = async (): Promise<string | null> => {
     if (context.sourceCapture) {
       return captureResolvedModule(
         normalizedPath,
@@ -394,9 +392,11 @@ export async function fetchAndCacheModule(
 /** Reuse one peer snapshot across every module of a request-scoped context. */
 export function getModuleFetcherReactRuntimeScope(
   context: ModuleFetcherContext,
-  readScope: () => Promise<string> = getSSRReactRuntimeCacheScope,
+  readScope?: () => Promise<string>,
 ): Promise<string> {
-  return context.reactRuntimeScope ??= readScope();
+  return readScope
+    ? context.reactRuntimeScope ??= readScope()
+    : getModuleFetcherReactRuntimeIdentity(context).scope;
 }
 
 /**
@@ -411,8 +411,8 @@ async function doFetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
-  const effectiveReactVersion = context.reactVersion ?? resolveInstalledReactRange() ??
-    REACT_DEFAULT_VERSION;
+  const identity = getModuleFetcherReactRuntimeIdentity(context);
+  const effectiveReactVersion = identity.reactVersion;
   const dev = context.dev === true;
   const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
   const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
@@ -420,7 +420,7 @@ async function doFetchAndCacheModule(
     : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const runtimeScope = await getModuleFetcherReactRuntimeScope(context);
+  const runtimeScope = await identity.scope;
   const versionedKey = getVersionedPathCacheKey(
     normalizedPath,
     effectiveReactVersion,

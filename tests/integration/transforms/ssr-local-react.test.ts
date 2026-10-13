@@ -78,6 +78,12 @@ describe("Node SSR local React graph", () => {
       }),
       "19.2.0",
     );
+    const legacyAdapterMap = await buildImportMap({
+      adapter: "https://example.invalid/adapter.js",
+    });
+    assertEquals(JSON.parse(legacyAdapterMap.json).imports, {
+      adapter: "https://example.invalid/adapter.js",
+    });
     const adapterOnlyMap = await buildImportMap({ adapter });
     assertEquals(JSON.parse(adapterOnlyMap.json).imports.adapter, undefined);
     assertEquals(JSON.parse(adapterOnlyMap.json).imports.react.includes("react@19.2.0"), true);

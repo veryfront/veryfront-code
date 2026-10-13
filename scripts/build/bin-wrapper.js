@@ -57,8 +57,30 @@ function checkedProjectCli(packageFile, pnpApi) {
   return selected;
 }
 
+function selectedProjectDirectory() {
+  const args = process.argv.slice(2);
+  const command = args.find((arg) => !arg.startsWith("-"));
+  const keys = command === "dev"
+    ? ["--project"]
+    : command === "start"
+    ? ["--project", "--project-dir"]
+    : [];
+  let selected;
+  for (let index = 0; index < args.length && args[index] !== "--"; index++) {
+    const arg = args[index];
+    const key = keys.find((name) => arg === name || arg.startsWith(`${name}=`));
+    if (!key) continue;
+    const value = arg === key ? args[++index] : arg.slice(key.length + 1);
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${key} requires a project directory`);
+    }
+    selected = resolve(process.cwd(), value);
+  }
+  return selected ?? process.cwd();
+}
+
 function findProjectPnp() {
-  let directory = process.cwd();
+  let directory = selectedProjectDirectory();
   while (true) {
     const candidate = join(directory, ".pnp.cjs");
     if (existsSync(candidate)) return candidate;
@@ -69,7 +91,7 @@ function findProjectPnp() {
 }
 
 function resolveProjectCli() {
-  const issuer = join(process.cwd(), "package.json");
+  const issuer = join(selectedProjectDirectory(), "package.json");
   const require = createRequire(issuer);
   const pnpFile = findProjectPnp();
   if (pnpFile) {
@@ -131,7 +153,7 @@ async function runJsFallback() {
 const pnpStartup = findProjectPnp();
 let needsPnpStartup = false;
 if (pnpStartup && !process.versions.pnp) {
-  const issuer = join(process.cwd(), "package.json");
+  const issuer = join(selectedProjectDirectory(), "package.json");
   const api = createRequire(issuer)(pnpStartup);
   if (typeof api.resolveToUnqualified !== "function") {
     throw new Error("Invalid project Plug'n'Play API");

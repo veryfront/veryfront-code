@@ -73,6 +73,34 @@ describe("project runtime delegation", () => {
       await Deno.remove(f.root, { recursive: true });
     }
   });
+  it("selects the explicitly requested project framework from outside its directory", async () => {
+    const f = await fixture(true);
+    try {
+      for (
+        const args of [["dev", "--project", f.project], ["dev", `--project=${f.project}`], [
+          "start",
+          "--project-dir",
+          f.project,
+        ], ["start", `--project-dir=${f.project}`]]
+      ) {
+        const result = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), ...args],
+          cwd: f.root,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+        assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
+          react: "19.2.5",
+          origin: "project",
+          args,
+        });
+      }
+    } finally {
+      await Deno.remove(f.root, { recursive: true });
+    }
+  });
+
   it("selects a Plug'n'Play project without a physical node_modules framework", async () => {
     const f = await fixture(true);
     try {
@@ -103,6 +131,18 @@ describe("project runtime delegation", () => {
         react: "19.2.5",
         origin: "project",
         args: ["dev"],
+      });
+      const outside = await new Deno.Command("node", {
+        args: [join(f.global, "bin", "veryfront.js"), "dev", "--project", f.project],
+        cwd: f.root,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(outside.code, 0, new TextDecoder().decode(outside.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(outside.stdout)), {
+        react: "19.2.5",
+        origin: "project",
+        args: ["dev", "--project", f.project],
       });
     } finally {
       await Deno.remove(f.root, { recursive: true });

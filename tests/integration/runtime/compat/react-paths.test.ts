@@ -199,6 +199,52 @@ describe("react-paths", () => {
     }
   });
 
+  it("keeps one effective peer version and scope in a recursive fetch graph", async () => {
+    if (!isNode) return;
+    const { getSharedModuleFetchKey } = await import(
+      "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/shared-module-fetches.ts"
+    );
+    const { getModuleFetcherReactRuntimeIdentity } = await import(
+      "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/react-runtime-identity.ts"
+    );
+    const context = {
+      projectId: "fetch-peer-pair",
+      projectDir: "/project",
+      esmCacheDir: "/tmp/fetch-peer-pair",
+    } as import("#veryfront/transforms/mdx/esm-module-loader/types.ts").ModuleFetcherContext;
+    const key = await getSharedModuleFetchKey(context, "entry");
+    const first = getModuleFetcherReactRuntimeIdentity(context);
+    const firstScope = await first.scope;
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      for (let index = 0; index < 20; index++) {
+        assertEquals(await getSharedModuleFetchKey(context, "entry"), key);
+        const identity = getModuleFetcherReactRuntimeIdentity(context);
+        assertEquals(identity.reactVersion, "19.2.4");
+        assertEquals(await identity.scope, firstScope);
+      }
+      const next = getModuleFetcherReactRuntimeIdentity({
+        ...context,
+        reactVersion: undefined,
+        reactRuntimeScope: undefined,
+        reactRuntimeIdentity: undefined,
+      });
+      assertEquals(next.reactVersion, "19.2.5");
+      assertEquals(await next.scope === firstScope, false);
+      const fixedNext = {
+        ...context,
+        reactVersion: "19.2.4",
+        reactRuntimeScope: undefined,
+        reactRuntimeIdentity: undefined,
+      };
+      assertEquals(await getSharedModuleFetchKey(fixedNext, "entry") === key, false);
+    } finally {
+      restoreDom();
+      restoreReact();
+    }
+  });
+
   it("revalidates a fixed React version after peers change behind the outer transform cache", async () => {
     if (!isNode) return;
     const { transformModuleCodeWithCache } = await import(
@@ -338,6 +384,35 @@ describe("react-paths", () => {
         await assertRejects(
           () =>
             resolveProjectReactVersion({ adapter, config: { react: { version: declaration } } }),
+          TypeError,
+        );
+      } finally {
+        rmSync(directory, { recursive: true });
+      }
+    }
+  });
+
+  it("rejects alternate React DOM sources in project and snapshot peer maps", async () => {
+    for (
+      const declaration of [
+        "file:../react-dom",
+        "link:../react-dom",
+        "git+https://example.invalid/react-dom.git",
+      ]
+    ) {
+      const directory = mkdtempSync(join(tmpdir(), "dom-source-declaration-"));
+      try {
+        fs.writeFileSync(
+          join(directory, "package.json"),
+          JSON.stringify({ dependencies: { react: "19.2.4", "react-dom": declaration } }),
+        );
+        await assertRejects(() => resolveProjectReactVersion({ projectDir: directory }), TypeError);
+        await assertRejects(
+          () =>
+            resolveProjectReactVersion({
+              dependencyPinningCacheKey: "on:fixture",
+              dependencyPinningDependencies: { react: "19.2.4", "react-dom": declaration },
+            }),
           TypeError,
         );
       } finally {

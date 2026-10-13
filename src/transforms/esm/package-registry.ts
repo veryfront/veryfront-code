@@ -973,6 +973,7 @@ async function readProjectDependencyVersionsUncoalesced(
     }
 
     const deps = parsePackageDependencyMap(content);
+    assertReactPackageDeclaration(deps["react-dom"]);
     const react = selectReact && deps.react ? selectReactDeclarationVersion(deps.react) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
@@ -1190,6 +1191,7 @@ export async function resolveProjectPackageVersions(
 function capturedDependencyConfiguration(
   options: ProjectPackageVersionOptions,
 ): CapturedDependencyConfiguration {
+  assertReactPackageDeclaration(options.dependencyPinningDependencies?.["react-dom"]);
   const configuration = options.dependencyPinningConfiguredVersions;
   if (
     configuration !== undefined &&

@@ -437,12 +437,19 @@ function getRequestImportMapFingerprint(
 }
 
 /** Scope cached SSR code to the runtime and its immutable local peer paths. */
-export async function getSSRReactRuntimeCacheScope(): Promise<string> {
-  const peers = await fingerprintImportMap({
-    imports: getLocalReactPaths(),
-    scopes: { "installed-peer-versions": getLocalReactVersions() },
-  });
-  return `local-react:${runtimeKind}:${peers}`;
+export function captureSSRReactRuntimeIdentity(): {
+  reactVersion: string | undefined;
+  scope: Promise<string>;
+} {
+  const imports = getLocalReactPaths();
+  const versions = getLocalReactVersions();
+  const scope = fingerprintImportMap({ imports, scopes: { "installed-peer-versions": versions } })
+    .then((peers) => `local-react:${runtimeKind}:${peers}`);
+  return { reactVersion: versions.react, scope };
+}
+
+export function getSSRReactRuntimeCacheScope(): Promise<string> {
+  return captureSSRReactRuntimeIdentity().scope;
 }
 
 /** Canonical identity shared by normal caching and all recovery paths. */
