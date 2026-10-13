@@ -106,6 +106,55 @@ describe("react-paths", () => {
       assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
     }
   });
+  it("revalidates a fixed React version after peers change behind the outer transform cache", async () => {
+    if (!isNode) return;
+    const { transformModuleCodeWithCache } = await import(
+      "#veryfront/rendering/orchestrator/module-loader/module-transform-cache.ts"
+    );
+    const cache = new Map<string, string>();
+    const deps:
+      import("#veryfront/rendering/orchestrator/module-loader/module-transform-cache.ts").ModuleTransformCacheDeps =
+        {
+          initializeTransformCache: () => Promise.resolve(false),
+          getOrComputeTransform: async (key, compute) => {
+            const cached = cache.get(key);
+            if (cached !== undefined) return { code: cached, cacheHit: true };
+            const code = await compute();
+            cache.set(key, code);
+            return { code, cacheHit: false };
+          },
+          transformToESM: (_code, _path, _directory, _adapter, options) => {
+            getLocalReactPath("react", options.reactVersion);
+            return Promise.resolve("export const page = 1;");
+          },
+          validateCachedBundlesByManifestOrCode: () =>
+            Promise.resolve({ valid: true, failedHashes: [], source: "code" }),
+          findMissingFrameworkBundlePaths: () => Promise.resolve([]),
+          getHttpBundleCacheDir: () => "/tmp/runtime-cache-test",
+          setCachedTransformAsync: () => Promise.resolve(),
+          runPipeline: () => Promise.reject(new Error("Unexpected retry")),
+        };
+    const input = {
+      fileContent: "export const page = 1;",
+      filePath: "/project/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "runtime-cache-test",
+      mode: "production" as const,
+      adapter: {} as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+      reactVersion: "19.2.4",
+      deps,
+    };
+    await transformModuleCodeWithCache(input);
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      await assertRejects(() => transformModuleCodeWithCache(input), TypeError, "does not match");
+    } finally {
+      restoreDom();
+      restoreReact();
+    }
+  });
+
   it("rejects an aliased installed peer package identity", () => {
     if (!isNode) return;
     const restore = overrideInstalledVersion("react", "19.2.4", "preact");

@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Transform-cache and retry phase for the SSR module loader.
  *
@@ -138,6 +139,8 @@ const defaultDeps: ModuleTransformCacheDeps = {
 };
 
 export interface TransformModuleCodeWithCacheInput {
+  /** React peer scope captured once by the enclosing module graph. */
+  runtimeScope?: string;
   fileContent: string;
   filePath: string;
   projectDir: string;
@@ -211,6 +214,7 @@ export async function transformModuleCodeWithCache(
   const contentHash = hashCodeHex(input.fileContent);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
   const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
+  const runtimeScope = input.runtimeScope ?? await getSSRReactRuntimeCacheScope();
   const cacheVariant = buildDependencyPinningCacheVariant(
     input.dependencyPinningCacheKey,
     input.moduleServerOrigin,
@@ -220,6 +224,7 @@ export async function transformModuleCodeWithCache(
     input.projectDir,
     input.mode,
     reactVersion,
+    runtimeScope,
   ];
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
     input.serverExternalPackages,

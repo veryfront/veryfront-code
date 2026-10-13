@@ -77,6 +77,32 @@ describe("API-derived dependency metadata history", () => {
     assertEquals(result?.expiresAt, now + 60_000);
   });
 
+  it("recovers pre-peer-selection keys using the prior normalized effective version", () => {
+    const dependencies = { react: "^18" };
+    const current = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const previous = { react: { declaration: "^19.2.0", effective: "19.2.0" } };
+    const legacy: Record<string, string> = { react: "19.2.0" };
+    const key = `on:${hashDependencyPins(legacy, previous)}`;
+    const envelope = history(dependencies);
+    const before = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, current, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, legacy);
+    assertEquals(result?.snapshot.configuredVersions, previous);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), before);
+    assertEquals(
+      selectHistoricalDependencySnapshot(envelope, scope, key, {
+        react: { declaration: "^19.1.0", effective: "19.2.4" },
+      }, now),
+      undefined,
+    );
+    assertEquals(
+      selectHistoricalDependencySnapshot(envelope, scope, key, current, now + 60_000),
+      undefined,
+    );
+  });
+
   it("retains legacy effective React snapshot identities without rewriting history", () => {
     const dependencies = { react: "^18" };
     const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };

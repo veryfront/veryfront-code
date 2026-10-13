@@ -1,3 +1,5 @@
+import { isExactSemver } from "#veryfront/platform/compat/semver.ts";
+import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
@@ -165,7 +167,8 @@ export function selectCapturedHistoricalDependencySnapshot(
     if (expiresAt <= now) continue;
     const dependencies = own(entry, "dependencies") as Readonly<Record<string, string>>;
     let effective = applyConfiguredDependencyOverrides(dependencies, configuredVersions);
-    let key = `on:${hashDependencyPins(effective, configuredVersions)}`;
+    let snapshotConfiguration = configuredVersions;
+    let key = `on:${hashDependencyPins(effective, snapshotConfiguration)}`;
     if (key !== requestedKey && configuredVersions?.react) {
       // Older captures pinned config React to the host's effective version.
       // Match their original bytes/key without mutating or extending history.
@@ -176,8 +179,26 @@ export function selectCapturedHistoricalDependencySnapshot(
         key = legacyKey;
       }
     }
+    if (key !== requestedKey && configuredVersions?.react) {
+      // Before installed-peer selection, range prefixes were stripped and an
+      // invalid exact version used the framework default. Keep that identity
+      // algorithm only for matching an acknowledged, unexpired history key.
+      const stripped = configuredVersions.react.declaration.replace(/^[~^>=<]+/, "");
+      const previousVersion = isExactSemver(stripped) ? stripped : DEFAULT_REACT_VERSION;
+      const previousConfiguration = {
+        ...configuredVersions,
+        react: { declaration: configuredVersions.react.declaration, effective: previousVersion },
+      };
+      const legacy = { ...effective, react: previousVersion };
+      const legacyKey = `on:${hashDependencyPins(legacy, previousConfiguration)}`;
+      if (legacyKey === requestedKey) {
+        effective = legacy;
+        key = legacyKey;
+        snapshotConfiguration = previousConfiguration;
+      }
+    }
     if (key !== requestedKey) continue;
-    const snapshot = createDependencyPinningSnapshot(key, effective, configuredVersions);
+    const snapshot = createDependencyPinningSnapshot(key, effective, snapshotConfiguration);
     const bytes = encodeDependencySnapshot("metadata-history", snapshot);
     if (selectedBytes !== undefined && selectedBytes !== bytes) throw unavailable();
     if (!selected || selected.expiresAt < expiresAt) {

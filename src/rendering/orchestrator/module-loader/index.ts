@@ -570,6 +570,7 @@ async function transformModuleWithDepsUnmemoized(
   const useCycleArtifact = cycleBound;
   const effectiveProjectId = projectId ?? projectDir;
   let { code: transformedCode } = await transformModuleCodeWithCache({
+    runtimeScope: config.runtimeScope,
     fileContent,
     filePath,
     projectDir,
