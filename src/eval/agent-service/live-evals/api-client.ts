@@ -463,7 +463,7 @@ export async function createLiveEvalConversation(
     method: "POST",
     headers: createLiveEvalJsonHeaders(context),
     body: JSON.stringify({
-      ...(projectId ? { project_id: projectId } : {}),
+      ...(projectId ? { project_reference: projectId } : {}),
       title,
     }),
     signal: createRequestSignal(input.requestTimeoutMs),

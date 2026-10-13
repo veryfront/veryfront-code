@@ -103,7 +103,7 @@ export async function getBranchByName(
     };
 
     const response = await client.get<ListBranchesResponse>(
-      `/projects/${projectSlug}/branches`,
+      `/projects/${encodeURIComponent(projectSlug)}/branches`,
       params,
     );
 
@@ -125,15 +125,16 @@ export function mergeBranch(
   branchId: string,
   targetBranchId?: string,
 ): Promise<MergeResponse> {
-  return client.post<MergeResponse>(`/projects/${projectSlug}/branches/${branchId}/merge`, {
-    target_branch_id: targetBranchId ?? null,
-  });
+  return client.post<MergeResponse>(
+    `/projects/${encodeURIComponent(projectSlug)}/branches/${encodeURIComponent(branchId)}/merge`,
+    { target_branch_id: targetBranchId ?? null },
+  );
 }
 
 /**
  * Get merge preview
  */
-function getMergePreview(
+export function getMergePreview(
   client: ApiClient,
   projectSlug: string,
   branchId: string,
@@ -142,7 +143,9 @@ function getMergePreview(
   const params: Record<string, string> = targetBranchId ? { target_branch_id: targetBranchId } : {};
   return client
     .get<{ diffs: MergePreviewDiff[] }>(
-      `/projects/${projectSlug}/branches/${branchId}/merge-preview`,
+      `/projects/${encodeURIComponent(projectSlug)}/branches/${
+        encodeURIComponent(branchId)
+      }/merge-preview`,
       params,
     )
     .then((response) => response.diffs);

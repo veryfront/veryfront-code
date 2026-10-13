@@ -37,6 +37,8 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/middleware",
   // Server-side chat upload route handler (app/api/uploads/route.ts).
   "veryfront/chat/uploads",
+  // Conversations SDK (`import { Conversation } from "veryfront/conversations"`).
+  "veryfront/conversations",
 ] as const;
 
 interface DenoRewriteOptions {

@@ -91,3 +91,5 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront login`  | Authenticate with Veryfront             |
 | `veryfront logout` | Clear stored authentication credentials |
 | `veryfront whoami` | Show the current authenticated identity |
+
+`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions. For an API key, `whoami` reports the credential type, not a user.

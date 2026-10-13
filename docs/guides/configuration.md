@@ -338,6 +338,9 @@ In CI, set the API URL variable used by the command next to
 self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
 
+Use an API key as the `VERYFRONT_API_TOKEN` value in CI. See
+[API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.
+
 ### Provider stream idle deadline
 
 Once a provider has sent its response headers, the body it streams back is
