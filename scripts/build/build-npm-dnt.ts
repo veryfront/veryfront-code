@@ -420,7 +420,6 @@ async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Prom
 		args: [
 			"install",
 			"--ignore-scripts",
-			"--legacy-peer-deps",
 			"--no-audit",
 			"--no-fund",
 			"--no-package-lock",

@@ -12,17 +12,19 @@
 // Bun global type declaration for cross-runtime compatibility
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { satisfies, valid } from "./semver.ts";
-import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 const ReflectApply = Reflect.apply;
 const StringStartsWith = String.prototype.startsWith;
 const JSONParse = JSON.parse;
 const ObjectFreeze = Object.freeze;
+function reactDependencyBase(): string {
+  return fileURLToPath(new URL(".", import.meta.url));
+}
 
 let localReactPathsCache: Readonly<Record<string, string>> | null = null;
 const EMPTY_REACT_PATHS: Readonly<Record<string, string>> = Object.freeze({});
@@ -38,7 +40,7 @@ const REACT_SPECIFIERS = [
 
 function localPackageManifestPath(packageName: string): string {
   if (isBun && typeof Bun?.resolveSync === "function") {
-    return Bun.resolveSync(`${packageName}/package.json`, cwd());
+    return Bun.resolveSync(`${packageName}/package.json`, reactDependencyBase());
   }
   return createRequire(import.meta.url).resolve(`${packageName}/package.json`);
 }
@@ -75,7 +77,7 @@ function resolveReactSpecifier(specifier: string): string | undefined {
   if (isNode) return pathToFileURL(createRequire(import.meta.url).resolve(specifier)).href;
   try {
     if (isBun && typeof Bun?.resolveSync === "function") {
-      const resolved = Bun.resolveSync(specifier, cwd());
+      const resolved = Bun.resolveSync(specifier, reactDependencyBase());
       return pathToFileURL(resolved).href;
     }
   } catch (_) {
@@ -122,6 +124,12 @@ export function getLocalReactPath(specifier: string, reactVersion?: string): str
     }
   }
   if (isNode) return resolveReactSpecifier(specifier);
+  if (isBun) {
+    if (typeof Bun?.resolveSync !== "function") {
+      throw new TypeError("Local React module resolution is unavailable");
+    }
+    return pathToFileURL(Bun.resolveSync(specifier, reactDependencyBase())).href;
+  }
   const mapped = getLocalReactPaths()[specifier];
   if (mapped) return mapped;
   return undefined;

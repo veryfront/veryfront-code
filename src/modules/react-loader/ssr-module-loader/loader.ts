@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * SSR Module Loader Class
  *
@@ -222,17 +223,19 @@ function wasRetainedInProgressTransformLeader(
   return retainedInProgressTransformLeaders.has(leader);
 }
 
-function getMdxEsmCacheVariant(
+async function getMdxEsmCacheVariant(
   options: Pick<
     SSRModuleLoaderOptions,
     "dependencyPinningCacheKey" | "moduleServerOrigin" | "serverExternalPackages" | "dev"
   >,
-): string | undefined {
+  runtimeScope?: string,
+): Promise<string | undefined> {
   return getMdxModuleCacheVariant(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,
     options.serverExternalPackages,
     options.dev,
+    runtimeScope ?? await getSSRReactRuntimeCacheScope(),
   );
 }
 
@@ -620,7 +623,7 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
-      getMdxEsmCacheVariant(this.options),
+      await getMdxEsmCacheVariant(this.options),
     );
   }
 
@@ -651,7 +654,7 @@ export class SSRModuleLoader {
     return withSpan(
       SpanNames.SSR_LOAD_MODULE,
       async () => {
-        const circuitKey = this.cache.getCacheKey(filePath);
+        const circuitKey = this.cache.getCacheKey(filePath, await getSSRReactRuntimeCacheScope());
         this.circuitBreaker.check(circuitKey, filePath);
 
         this.depValidator.reset();
@@ -798,9 +801,10 @@ export class SSRModuleLoader {
       code = injectNodePositions(code, { filePath: relativeFilePath });
     }
 
+    const runtimeScope = await getSSRReactRuntimeCacheScope();
     const contentHash = await this.cache.hashContentAsync(code);
-    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`);
-    const filePathCacheKey = this.cache.getCacheKey(filePath);
+    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`, runtimeScope);
+    const filePathCacheKey = this.cache.getCacheKey(filePath, runtimeScope);
     const inProgressKey = contentCacheKey;
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
@@ -884,7 +888,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
-        getMdxEsmCacheVariant(this.options),
+        await getMdxEsmCacheVariant(this.options, runtimeScope),
       );
 
       if (mdxCacheResult.status === "hit") {

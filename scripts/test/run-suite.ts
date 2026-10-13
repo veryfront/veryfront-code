@@ -111,6 +111,8 @@ const HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS =
 const RUNTIME_PATTERNS = {
   node: [
     "src/**/*.test.ts",
+    "tests/integration/runtime/compat/react-paths.test.ts",
+    "tests/integration/transforms/ssr-local-react.test.ts",
     "extensions/ext-bundler-esbuild/src/binary.test.ts",
     "tests/ensure-npm-links.test.mjs",
     "tests/test-file-utils.test.mjs",
@@ -141,6 +143,8 @@ const RUNTIME_PATTERNS = {
   ],
   bun: [
     "src/",
+    "tests/integration/runtime/compat/react-paths.test.ts",
+    "tests/integration/transforms/ssr-local-react.test.ts",
     "tests/bun/dynamic-alias-resolution.test.ts",
     "tests/bun/npm-protocol-resolution.test.ts",
     "tests/bun/workspace-resolution.test.ts",

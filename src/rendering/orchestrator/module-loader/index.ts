@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /****
  * Module Loader
  *
@@ -344,6 +345,7 @@ async function transformModuleWithDepsUnmemoized(
   // cache-hit branch therefore replays what the first resolution found.
   unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
+  config = { ...config, runtimeScope: config.runtimeScope ?? await getSSRReactRuntimeCacheScope() };
   const ownsCycleManifest = cycleManifest === undefined;
   let sourceGraph = cycleManifest ? sourceGraphByCycleManifest.get(cycleManifest) : undefined;
   let recoveryNonce: string | undefined;
@@ -359,6 +361,7 @@ async function transformModuleWithDepsUnmemoized(
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
     config.serverExternalPackages,
+    config.runtimeScope,
   );
 
   const cachedPath = await resolveCachedModulePath({
@@ -373,6 +376,7 @@ async function transformModuleWithDepsUnmemoized(
     moduleServerOrigin: config.moduleServerOrigin,
     serverExternalPackages: config.serverExternalPackages,
     dev: config.mode === "development",
+    runtimeScope: config.runtimeScope,
   });
   if (cachedPath) {
     const cycleManifestState = await inspectCycleManifestCache(
@@ -610,6 +614,7 @@ async function transformModuleWithDepsUnmemoized(
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     serverExternalPackages: config.serverExternalPackages,
     dev: config.mode === "development",
+    runtimeScope: config.runtimeScope,
     unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
     cycleArtifactPath: useCycleArtifact ? cycleManifest.reserveArtifactPath(filePath) : undefined,
     deferCachePublication: (publication) => {
@@ -704,6 +709,8 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** React peer identity captured for one recursive transformation graph. */
+  runtimeScope?: string;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */
@@ -954,6 +961,7 @@ export async function loadModule(
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
           config.serverExternalPackages,
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(),
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
@@ -969,6 +977,7 @@ export async function loadModule(
           config.moduleServerOrigin,
           config.serverExternalPackages,
           config.mode === "development",
+          config.runtimeScope ?? await getSSRReactRuntimeCacheScope(),
         ),
       );
 

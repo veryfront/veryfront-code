@@ -207,6 +207,14 @@ it("npm lifecycle probe installs auto-loaded extensions in a real consumer layou
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   assertStringIncludes(source, '"--install-links"');
+  assertEquals(
+    source.slice(
+      source.indexOf("async function installBuiltNpmLifecycleConsumer"),
+      source.indexOf("async function runNpmRootImportLifecycleProbe"),
+    ).includes('"--legacy-peer-deps"'),
+    false,
+    "lifecycle consumers install required React peers through normal npm resolution",
+  );
   assertStringIncludes(source, 'const agent = await import("veryfront/agent")');
   assertStringIncludes(source, "agent.parseRuntimeSkillMetadata(");
   assertStringIncludes(

@@ -6,15 +6,21 @@ import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 import {
   rewriteSSRImportsCompat,
   rewriteSSRImportsCompatAsync,
-} from "../../import-rewriter/ssr-adapter.ts";
-import { buildReplacements, rewriteModuleImports } from "../../esm/specifier-resolver.ts";
-import { resolveReactSpecifier } from "./ssr-vf-modules/specifier-resolver.ts";
-import { buildHttpCacheIdentity, resolveBareSpecifier } from "../../esm/http-cache-helpers.ts";
-import { resolveReactImports } from "../../esm/react-imports.ts";
+} from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
+import {
+  buildReplacements,
+  rewriteModuleImports,
+} from "#veryfront/transforms/esm/specifier-resolver.ts";
+import { resolveReactSpecifier } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules/specifier-resolver.ts";
+import {
+  buildHttpCacheIdentity,
+  resolveBareSpecifier,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { resolveReactImports } from "#veryfront/transforms/esm/react-imports.ts";
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import { getSSRReactRuntimeCacheScope } from "../../esm/http-cache-helpers.ts";
-import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import {
   getProjectReact,
   getReactDOMServer,
