@@ -106,6 +106,99 @@ describe("react-paths", () => {
       assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
     }
   });
+  it("does not accept an inner framework cache after installed peers change", async () => {
+    if (!isNode) return;
+    const { transformFrameworkCode } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/transform.ts"
+    );
+    const { frameworkFileCache } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/constants.ts"
+    );
+    const { createFileSystem } = await import("#veryfront/platform/compat/fs.ts");
+    frameworkFileCache.clear();
+    const context = {
+      reactVersion: "19.2.4",
+      projectDir: "/framework-runtime-test",
+      fs: createFileSystem(),
+      importMap: { imports: {} },
+      importMapFingerprint: "framework-runtime-test",
+    };
+    const source = 'import React from "react"; export const value = React.version;';
+    await transformFrameworkCode(source, "/framework-runtime-test/source.ts", context);
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      await assertRejects(
+        () => transformFrameworkCode(source, "/framework-runtime-test/source.ts", context),
+        Error,
+        "does not match",
+      );
+    } finally {
+      restoreDom();
+      restoreReact();
+      frameworkFileCache.clear();
+    }
+  });
+
+  it("does not accept a specifier framework cache from an older peer scope", async () => {
+    if (!isNode) return;
+    const { resolveAndTransformVeryfrontImport } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/transform.ts"
+    );
+    const { resolveVeryfrontSourcePath } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/path-resolver.ts"
+    );
+    const { buildFrameworkTransformCacheKey, veryfrontTransformCache } = await import(
+      "#veryfront/transforms/pipeline/stages/ssr-vf-modules/constants.ts"
+    );
+    const { getSSRReactRuntimeCacheScope } = await import(
+      "#veryfront/transforms/esm/http-cache-helpers.ts"
+    );
+    const { createFileSystem } = await import("#veryfront/platform/compat/fs.ts");
+    const { pathToFileURL } = await import("node:url");
+    const directory = mkdtempSync(join(tmpdir(), "framework-specifier-peer-"));
+    const specifier = "#veryfront/utils";
+    const sourcePath = await resolveVeryfrontSourcePath(specifier);
+    assertEquals(typeof sourcePath, "string");
+    const source = 'import React from "react"; export const value = React.version;';
+    const adapterFs = createFileSystem();
+    const originalRead = adapterFs.readTextFile.bind(adapterFs);
+    adapterFs.readTextFile = (path: string) =>
+      path === sourcePath ? Promise.resolve(source) : originalRead(path);
+    const context = {
+      reactVersion: "19.2.4",
+      projectDir: directory,
+      fs: adapterFs,
+      importMap: { imports: {} },
+      importMapFingerprint: "specifier-peer-test",
+    };
+    const key = buildFrameworkTransformCacheKey(
+      `${specifier}:${sourcePath}`,
+      "19.2.4",
+      directory,
+      source,
+      context.importMapFingerprint,
+      await getSSRReactRuntimeCacheScope(),
+    );
+    const cachedPath = join(directory, "cached.mjs");
+    fs.writeFileSync(cachedPath, "export const cached = 1;");
+    veryfrontTransformCache.set(key, pathToFileURL(cachedPath).href);
+    assertEquals(
+      await resolveAndTransformVeryfrontImport(specifier, context),
+      pathToFileURL(cachedPath).href,
+    );
+    const restoreReact = overrideInstalledVersion("react", "19.2.5");
+    const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
+    try {
+      assertEquals(await resolveAndTransformVeryfrontImport(specifier, context), null);
+    } finally {
+      restoreDom();
+      restoreReact();
+      veryfrontTransformCache.delete(key);
+      rmSync(directory, { recursive: true });
+    }
+  });
+
   it("revalidates a fixed React version after peers change behind the outer transform cache", async () => {
     if (!isNode) return;
     const { transformModuleCodeWithCache } = await import(

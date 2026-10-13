@@ -47,6 +47,7 @@ import {
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
 import {
+  assertReactDOMPeerVersion,
   assertReactPackageDeclaration,
   ReactPackageIdentityError,
   resolveInstalledReactRange,
@@ -1250,6 +1251,9 @@ async function resolvePreparedReactVersion(
       detail: "Prepared React runtime version does not match the authored project declaration",
     });
   }
+  const domModule = await loader.importModule({ kind: "package", specifier: "react-dom/server" });
+  const dom = (domModule.default ?? domModule) as { version?: unknown };
+  assertReactDOMPeerVersion(version, dom.version);
   return version;
 }
 

@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -195,8 +196,23 @@ describe("transformFrameworkCode depth-limit fallback", {
     await Deno.mkdir(projectA);
     await Deno.mkdir(projectB);
 
-    const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
-    const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
+    const runtimeScope = await getSSRReactRuntimeCacheScope();
+    const keyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      undefined,
+      runtimeScope,
+    );
+    const keyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectB,
+      source,
+      undefined,
+      runtimeScope,
+    );
 
     const importMapKeyA = buildFrameworkTransformCacheKey(
       sourcePath,
@@ -364,6 +380,8 @@ describe("transformFrameworkCode depth-limit fallback", {
       "19.2.4",
       tmp,
       source,
+      undefined,
+      await getSSRReactRuntimeCacheScope(),
     );
 
     try {

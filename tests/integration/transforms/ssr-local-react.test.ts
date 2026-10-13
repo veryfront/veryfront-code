@@ -37,6 +37,10 @@ import {
   resolveSSRRuntime,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
+// Deno loads the browser renderer, whose module-level MessageChannel must be
+// initialized outside sanitized test boundaries. Node/Bun retain real loading.
+if (!isNode && !isBun) await import("#veryfront/react/compat/ssr-adapter/test-setup.ts");
+
 describe("Node SSR local React graph", () => {
   it("selects the prepared peer before layout/page transforms and browser import-map construction", async () => {
     const { resolveProjectReactVersion } = await import(
@@ -100,6 +104,7 @@ describe("Node SSR local React graph", () => {
     const React = await getProjectReact();
     const react = { ...React, version: "19.2.0" } as typeof import("react");
     const server: ReactDOMServer = {
+      version: "19.2.0",
       renderToString: () => "prepared",
       renderToStaticMarkup: () => "prepared",
     };
@@ -138,6 +143,31 @@ describe("Node SSR local React graph", () => {
       fs.readFileSync = original;
       native.syncBuiltinESMExports();
     }
+  });
+
+  it("rejects mismatched React DOM from a prepared peer graph", async () => {
+    const { resolveProjectReactVersion } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const React = await getProjectReact();
+    const react = { ...React, version: "19.2.4" };
+    const server = {
+      version: "19.2.5",
+      renderToString: () => "wrong",
+      renderToStaticMarkup: () => "wrong",
+    };
+    const adapter = {
+      moduleLoader: {
+        importModule: (reference: { specifier: string }) =>
+          Promise.resolve(reference.specifier === "react" ? { default: react } : server),
+      },
+    } as unknown as RuntimeAdapter;
+    await assertRejects(
+      () => resolveProjectReactVersion({ adapter, config: { react: { version: "^19.2.0" } } }),
+      TypeError,
+      "React DOM",
+    );
+    await assertRejects(() => getReactDOMServer("^19.2.0", adapter), TypeError, "React DOM");
   });
 
   it("uses the authenticated authored range from a recovered legacy snapshot", async () => {
@@ -305,7 +335,11 @@ describe("Node SSR local React graph", () => {
     const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
     const React = await getProjectReact();
     const react = { ...React, version: "19.2.0" };
-    const server = { renderToString: () => "prepared", renderToStaticMarkup: () => "prepared" };
+    const server = {
+      version: "19.2.0",
+      renderToString: () => "prepared",
+      renderToStaticMarkup: () => "prepared",
+    };
     const adapter = {
       moduleLoader: {
         importModule: (reference: { specifier: string }) =>

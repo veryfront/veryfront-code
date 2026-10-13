@@ -14,6 +14,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
 import {
+  assertReactDOMPeerVersion,
   getLocalReactPath,
   resolveInstalledReactRange,
 } from "#veryfront/platform/compat/react-paths.ts";
@@ -21,6 +22,7 @@ import {
 const logger = rendererLogger.component("server-loader");
 
 export interface ReactDOMServer {
+  readonly version?: string;
   renderToString: typeof import("react-dom/server").renderToString;
   renderToStaticMarkup: typeof import("react-dom/server").renderToStaticMarkup;
   renderToPipeableStream?: typeof import("react-dom/server").renderToPipeableStream;
@@ -60,6 +62,7 @@ export async function resolveSSRRuntime(
         detail: "Explicit React server runtime has invalid render exports",
       });
     }
+    if (server.version !== undefined) assertReactDOMPeerVersion(react.version, server.version);
     return { react, server };
   }
   const [server, react] = await Promise.all([
@@ -210,7 +213,10 @@ export function getReactDOMServer(
             detail: "Prepared React server module has invalid render exports",
           });
         }
-        return module;
+        return getProjectReact(version, adapter).then((react) => {
+          assertReactDOMPeerVersion(react.version, module.version);
+          return module;
+        });
       },
     );
   }

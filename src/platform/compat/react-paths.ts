@@ -68,6 +68,13 @@ function localPackageVersion(packageName: string): string {
 
 export class ReactPackageIdentityError extends TypeError {}
 
+/** Require the two modules of a prepared React peer graph to identify one version. */
+export function assertReactDOMPeerVersion(reactVersion: string, domVersion: unknown): void {
+  if (typeof domVersion !== "string" || !valid(domVersion) || domVersion !== reactVersion) {
+    throw new ReactPackageIdentityError("Prepared React DOM version does not match React");
+  }
+}
+
 /** Package aliases cannot define the React/React DOM identity used by CDN URLs. */
 export function assertReactPackageDeclaration(declaration?: string): void {
   if (declaration !== undefined && /^npm:/i.test(declaration)) {

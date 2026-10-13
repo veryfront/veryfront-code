@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Code transformation logic for the SSR VF Modules stage.
  *
@@ -263,6 +264,7 @@ async function transformAndCacheFallbackDep(
     ctx.projectDir,
     depContent,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope()),
   );
   // Prefer the main path's fully-resolved cache entry when present —
   // that output is strictly higher quality than what the fallback
@@ -423,12 +425,14 @@ export async function transformFrameworkCode(
   throwOnMissingImport = false,
   depth = 0,
 ): Promise<string> {
+  ctx = { ...ctx, reactRuntimeScope: ctx.reactRuntimeScope ?? getSSRReactRuntimeCacheScope() };
   const transformKey = buildFrameworkTransformCacheKey(
     sourcePath,
     ctx.reactVersion,
     ctx.projectDir,
     content,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope()),
   );
   const ancestry = ctx.transformAncestry ?? new Set<string>();
 
@@ -494,6 +498,7 @@ async function transformFrameworkCodeUncoalesced(
     ctx.projectDir,
     content,
     ctx.importMapFingerprint,
+    await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope()),
   );
   const cached = frameworkFileCache.get(transformKey);
   if (cached) {
@@ -625,6 +630,7 @@ async function transformFrameworkCodeUncoalesced(
             ctx.projectDir,
             depContent,
             ctx.importMapFingerprint,
+            await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope()),
           );
           const existingFileUrl = frameworkFileCache.get(dependencyTransformKey);
           if (existingFileUrl) {
@@ -740,6 +746,7 @@ export async function resolveAndTransformVeryfrontImport(
   specifier: string,
   ctx: TransformContext,
 ): Promise<string | null> {
+  ctx = { ...ctx, reactRuntimeScope: ctx.reactRuntimeScope ?? getSSRReactRuntimeCacheScope() };
   const sourcePath = Object.hasOwn(ROOT_BUNDLED_EXTENSION_SOURCES, specifier)
     ? await resolveRootBundledExtensionSourcePath(specifier)
     : await resolveVeryfrontSourcePath(specifier);
@@ -753,6 +760,7 @@ export async function resolveAndTransformVeryfrontImport(
       ctx.projectDir,
       content,
       ctx.importMapFingerprint,
+      await (ctx.reactRuntimeScope ??= getSSRReactRuntimeCacheScope()),
     );
     const cached = veryfrontTransformCache.get(transformKey);
     if (cached) {

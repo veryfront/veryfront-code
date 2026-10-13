@@ -19,7 +19,7 @@ describe("prepared script pages", () => {
       value: {
         importModule: async (reference: RuntimeModuleReference) => {
           if (reference.kind === "package") {
-            assertEquals(reference.specifier, "react");
+            assertEquals(["react", "react-dom/server"].includes(reference.specifier), true);
             return { default: { version: "19.2.0" } };
           }
           assertEquals(reference, { kind: "source", path: "/project/page.ts" });
