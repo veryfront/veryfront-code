@@ -4,8 +4,60 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { clearReactPathsCache, getLocalReactPaths, isReactSpecifier } from "./react-paths.ts";
 import { isBun, isNode } from "./runtime.ts";
 import { createRequire } from "node:module";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { getLocalReactPath } from "./react-paths.ts";
 
 describe("react-paths", () => {
+  it("accepts authored ranges satisfied by the installed React singleton", () => {
+    if (!isNode) return;
+    for (const range of ["^19.2.0", "~19.2.0", "19"]) {
+      assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
+    }
+  });
+  it("selects a compatible installed patch for both config and captured React ranges", async () => {
+    if (!isNode) return;
+    const manifest = createRequire(import.meta.url)("react/package.json");
+    const original = manifest.version;
+    try {
+      manifest.version = "19.2.5";
+      assertEquals(
+        await resolveProjectReactVersion({
+          dependencyPinningCacheKey: "on:range",
+          dependencyPinningDependencies: { react: "^19.2.4" },
+        }),
+        "19.2.5",
+      );
+      assertEquals(
+        await resolveProjectReactVersion({ config: { react: { version: "^19.2.4" } } }),
+        "19.2.5",
+      );
+      assertEquals(
+        await resolveProjectReactVersion({ config: { react: { version: "19.2.4" } } }),
+        "19.2.4",
+      );
+    } finally {
+      manifest.version = original;
+    }
+  });
+
+  it("rejects a separately mismatched installed React DOM renderer", () => {
+    if (!isNode) return;
+    const manifest = createRequire(import.meta.url)("react-dom/package.json");
+    const original = manifest.version;
+    try {
+      manifest.version = "18.3.1";
+      let rejected = false;
+      try {
+        getLocalReactPath("react-dom/server", "19.2.4");
+      } catch (error) {
+        rejected = error instanceof TypeError;
+      }
+      assertEquals(rejected, true);
+    } finally {
+      manifest.version = original;
+    }
+  });
+
   describe("isReactSpecifier", () => {
     const cases: Array<[string, boolean]> = [
       ["react", true],

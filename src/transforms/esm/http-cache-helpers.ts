@@ -386,7 +386,10 @@ function getHttpCacheRequestIdentityContext(
 export function prepareHttpCacheRequestOptions<T extends CacheOptions>(options: T): T {
   const prepared = {
     ...options,
-    ...(options.localReact ? { reactVersion: options.reactVersion ?? DEFAULT_REACT_VERSION } : {}),
+    localReact: options.localReact === true && (runtimeKind === "node" || runtimeKind === "bun"),
+    ...(options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
+      ? { reactVersion: options.reactVersion ?? DEFAULT_REACT_VERSION }
+      : {}),
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
   } as T;
   return attachHttpCacheRequestIdentityContext(prepared, {});
@@ -442,7 +445,7 @@ export async function buildHttpCacheIdentity(
   const importMapFingerprint = await getRequestImportMapFingerprint(url, effective.options);
   const reactVersion = effective.options.reactVersion;
   let localReactScope = "";
-  if (effective.options.localReact) {
+  if (effective.options.localReact && (runtimeKind === "node" || runtimeKind === "bun")) {
     getLocalReactPath("react", reactVersion ?? DEFAULT_REACT_VERSION);
     // Absolute peer URLs are process-installation references, not portable
     // cache dependencies. Recovery recomputes this scope in the consumer.
@@ -474,7 +477,9 @@ export async function buildHttpCacheIdentityMetadata(
     url: normalizeHttpUrl(effective.url),
     importMap: effective.options.importMap,
     reactVersion: effective.options.reactVersion,
-    ...(effective.options.localReact ? { localReact: true } : {}),
+    ...(effective.options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
+      ? { localReact: true }
+      : {}),
     serverExternalPackages: canonicalizeServerExternalPackages(
       effective.options.serverExternalPackages,
     ),

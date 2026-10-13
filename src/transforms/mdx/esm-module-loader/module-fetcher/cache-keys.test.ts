@@ -9,6 +9,35 @@ import {
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
+  it("separates both transform and path caches by runtime and peer scope", () => {
+    const transformKey = (scope: string) =>
+      getTransformCacheKey(
+        "p",
+        "release",
+        "19.2.4",
+        "module.ts",
+        "hash",
+        undefined,
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+    const pathKey = (scope: string) =>
+      getVersionedPathCacheKey(
+        "module.ts",
+        "19.2.4",
+        undefined,
+        undefined,
+        undefined,
+        false,
+        scope,
+      );
+    assertEquals(transformKey("node:peers-a") === transformKey("deno:peers-a"), false);
+    assertEquals(pathKey("node:peers-a") === pathKey("deno:peers-a"), false);
+    assertEquals(transformKey("node:peers-a") === transformKey("node:peers-b"), false);
+    assertEquals(pathKey("node:peers-a") === pathKey("node:peers-b"), false);
+  });
   describe("getTransformCacheKey", () => {
     it("includes cache namespace, projectId, content source, react version, path, hash, and ssr suffix", () => {
       const key = getTransformCacheKey("proj1", "preview-main", "19.1.1", "lib/utils.ts", "abc123");

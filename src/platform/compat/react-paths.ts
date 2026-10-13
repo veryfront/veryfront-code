@@ -14,12 +14,12 @@ declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } 
 
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { satisfies, valid } from "npm:semver@7.8.5";
 import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 const ReflectApply = Reflect.apply;
 const StringStartsWith = String.prototype.startsWith;
-const StringReplace = String.prototype.replace;
 
 let localReactPathsCache: Readonly<Record<string, string>> | null = null;
 const EMPTY_REACT_PATHS: Readonly<Record<string, string>> = Object.freeze({});
@@ -32,6 +32,13 @@ const REACT_SPECIFIERS = [
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
 ] as const;
+
+/** Select a compatible installed version before emitting SSR and browser URLs. */
+export function resolveInstalledReactRange(declaration: string): string | undefined {
+  if (!isNode || valid(declaration)) return undefined;
+  const version = createRequire(import.meta.url)("react/package.json").version;
+  return satisfies(version, declaration) ? version : undefined;
+}
 
 function resolveReactSpecifier(specifier: string): string | undefined {
   // Resolve from the framework, never from an application or writable cache.
@@ -70,8 +77,12 @@ export function getLocalReactPaths(): Readonly<Record<string, string>> {
 export function getLocalReactPath(specifier: string, reactVersion?: string): string | undefined {
   if (!isReactSpecifier(specifier)) return undefined;
   if (isNode && reactVersion !== undefined) {
-    const installedVersion = createRequire(import.meta.url)("react/package.json").version;
-    if (ReflectApply(StringReplace, reactVersion, [/^[~^]?v?/, ""]) !== installedVersion) {
+    const packageName =
+      specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])
+        ? "react-dom"
+        : "react";
+    const installedVersion = createRequire(import.meta.url)(`${packageName}/package.json`).version;
+    if (!satisfies(installedVersion, reactVersion)) {
       throw new TypeError("Local React runtime does not match the selected project version");
     }
   }

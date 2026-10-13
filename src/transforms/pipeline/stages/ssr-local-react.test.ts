@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 import { rewriteSSRImportsCompatAsync } from "../../import-rewriter/ssr-adapter.ts";
 import { buildReplacements, rewriteModuleImports } from "../../esm/specifier-resolver.ts";
@@ -138,7 +138,7 @@ describe("Node SSR local React graph", () => {
       ...options,
       localReact: true,
     });
-    assertEquals(remote === local, false);
+    assertEquals(remote === local, !isNode && !isBun);
   });
 
   it("uses local React for relative CDN dependency imports", async () => {

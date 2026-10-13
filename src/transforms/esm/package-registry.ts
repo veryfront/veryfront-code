@@ -42,6 +42,7 @@ import {
 } from "./dependency-pinning-cohort.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
@@ -415,6 +416,11 @@ export function normalizeReactVersion(version: string | undefined): string {
  */
 export function stripSemverRange(version: string): string {
   return version.replace(/^[~^>=<]+/, "");
+}
+
+function selectReactDeclarationVersion(declaration: string): string {
+  return resolveInstalledReactRange(declaration) ??
+    normalizeReactVersion(stripSemverRange(declaration));
 }
 
 /**
@@ -942,7 +948,7 @@ async function readProjectDependencyVersionsUncoalesced(
     }
 
     const deps = parsePackageDependencyMap(content);
-    const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
+    const react = deps.react ? selectReactDeclarationVersion(deps.react) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
     // Full maps are needed for pinning captures and historical revision checks.
@@ -1010,7 +1016,7 @@ function getConfiguredReactVersion(
   config?: VeryfrontConfig | null,
 ): string | undefined {
   const declaration = getConfiguredReactDeclaration(config);
-  return declaration ? normalizeReactVersion(stripSemverRange(declaration)) : undefined;
+  return declaration ? selectReactDeclarationVersion(declaration) : undefined;
 }
 
 function getConfiguredVeryfrontVersion(
@@ -1051,7 +1057,7 @@ function captureConfiguredVersions(
       ? {
         react: {
           declaration: reactDeclaration,
-          effective: normalizeReactVersion(stripSemverRange(reactDeclaration)),
+          effective: selectReactDeclarationVersion(reactDeclaration),
         },
       }
       : {}),
@@ -1086,7 +1092,7 @@ export async function resolveProjectPackageVersions(
     const dependencies = options.dependencyPinningDependencies;
     return {
       react: dependencies?.react
-        ? normalizeReactVersion(stripSemverRange(dependencies.react))
+        ? selectReactDeclarationVersion(dependencies.react)
         : DEFAULT_REACT_VERSION,
       veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
     };
@@ -1142,7 +1148,7 @@ export async function resolveProjectReactVersion(
   ) {
     const snapshotReactVersion = dependencyPinningDependencies?.react;
     return normalizeReactVersion(
-      snapshotReactVersion ? stripSemverRange(snapshotReactVersion) : undefined,
+      snapshotReactVersion ? selectReactDeclarationVersion(snapshotReactVersion) : undefined,
     );
   }
 

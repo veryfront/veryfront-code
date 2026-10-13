@@ -15,6 +15,7 @@
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { getSSRReactRuntimeCacheScope } from "../../../esm/http-cache-helpers.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
@@ -408,6 +409,7 @@ async function doFetchAndCacheModule(
     : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
+  const runtimeScope = await getSSRReactRuntimeCacheScope();
   const versionedKey = getVersionedPathCacheKey(
     normalizedPath,
     effectiveReactVersion,
@@ -415,6 +417,7 @@ async function doFetchAndCacheModule(
     moduleServerOrigin,
     context.serverExternalPackages,
     dev,
+    runtimeScope,
   );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
@@ -449,6 +452,7 @@ async function doFetchAndCacheModule(
         moduleServerOrigin,
         serverExternalPackages: context.serverExternalPackages,
         dev,
+        runtimeScope,
         parentModulePath,
       });
     }
@@ -475,6 +479,7 @@ async function doFetchAndCacheModule(
         moduleServerOrigin,
         context.serverExternalPackages,
         dev,
+        runtimeScope,
       )
       : null;
 
@@ -548,6 +553,7 @@ async function doFetchAndCacheModule(
       moduleServerOrigin,
       serverExternalPackages: context.serverExternalPackages,
       dev,
+      runtimeScope,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
