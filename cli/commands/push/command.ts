@@ -67,6 +67,7 @@ import {
   resolveGitTrackedSourcePaths,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { getBranchByName } from "../merge/command.ts";
 import { buildStudioUrl } from "../studio/command.ts";
 import { getCloudDomain } from "#cli/shared/constants";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
@@ -230,13 +231,6 @@ interface PushRemoteTarget {
   remoteFiles: RemoteFile[];
   source: PullSource;
   branchExists: boolean;
-}
-
-interface ListBranchesResponse {
-  data: BranchListItem[];
-  page_info?: {
-    next?: string;
-  };
 }
 
 interface RemoteFile {
@@ -608,34 +602,6 @@ export function createBranch(
   return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
     name: branchName,
   });
-}
-
-async function getBranchByName(
-  client: ApiClient,
-  projectSlug: string,
-  branchName: string,
-): Promise<BranchListItem | null> {
-  let cursor: string | undefined;
-
-  do {
-    const params: Record<string, string> = {
-      search: branchName,
-      limit: "100",
-      ...(cursor ? { cursor } : {}),
-    };
-
-    const response = await client.get<ListBranchesResponse>(
-      `/projects/${encodeURIComponent(projectSlug)}/branches`,
-      params,
-    );
-
-    const branch = response.data.find((candidate) => candidate.name === branchName);
-    if (branch) return branch;
-
-    cursor = response.page_info?.next;
-  } while (cursor);
-
-  return null;
 }
 
 export async function ensureBranch(

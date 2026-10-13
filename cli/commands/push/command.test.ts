@@ -793,6 +793,41 @@ describe("ensureBranch", () => {
     ]);
   });
 
+  it("URL-encodes the project slug in the lookup after a create conflict", async () => {
+    const getRequests: Array<{ url: string; params?: Record<string, string> }> = [];
+    const conflict = Object.assign(new Error("conflict"), { status: 409 });
+    const mockClient = createMockClient({
+      post: () => Promise.reject(conflict),
+      get: (url: string, params?: Record<string, string>) => {
+        getRequests.push({ url, params });
+        if (getRequests.length === 1) {
+          return Promise.resolve({
+            data: [{ id: "other-branch", name: "feature-x-old", project_id: "proj-456" }],
+            page_info: { next: "cursor-2" },
+          });
+        }
+        return Promise.resolve({
+          data: [{ id: "branch-existing", name: "feature-x", project_id: "proj-456" }],
+        });
+      },
+    });
+
+    const result = await ensureBranch(mockClient, "my project/x", "feature-x");
+
+    assertEquals(result.id, "branch-existing");
+    assertEquals(result.created, false);
+    assertEquals(getRequests, [
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100" },
+      },
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100", cursor: "cursor-2" },
+      },
+    ]);
+  });
+
   it("rethrows a create conflict when the existing branch cannot be found", async () => {
     const conflict = Object.assign(new Error("conflict"), { status: 409 });
     const mockClient = createMockClient({
