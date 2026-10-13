@@ -1,3 +1,4 @@
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
 import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
@@ -15,11 +16,15 @@ import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
+  resolveProjectReactDeclaration,
   resolveProjectReactVersion,
   selectReactDeclarationVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
-import type { ReactServerRuntime } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  type ReactServerRuntime,
+  resolveSSRRuntime,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
@@ -184,10 +189,31 @@ export class SSRRenderer {
   ): Promise<SSRRenderResult> {
     setupSSRGlobals();
 
-    const reactVersion = await this.getReactVersion(
-      options.dependencyPinningCacheKey,
-      options.dependencyPinningDependencies,
-    );
+    let reactVersion: string;
+    let reactRuntime = options.reactRuntime;
+    if (reactRuntime || getRuntimeModuleLoader(this.adapter)) {
+      const requestedVersion = await resolveProjectReactDeclaration({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+      });
+      const runtime = await resolveSSRRuntime({
+        reactRuntime,
+        reactVersion: requestedVersion,
+        renderContext: options.renderContext,
+      }, this.adapter);
+      if (!runtime.react) {
+        throw RENDER_ERROR.create({ detail: "Prepared React runtime is unavailable" });
+      }
+      reactRuntime = { react: runtime.react, server: runtime.server };
+      reactVersion = runtime.react.version;
+    } else {
+      reactVersion = await this.getReactVersion(
+        options.dependencyPinningCacheKey,
+        options.dependencyPinningDependencies,
+      );
+    }
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
     const maxBufferedBytes = options.maxBufferedBytes ?? SSR_MAX_BUFFERED_BYTES;
@@ -221,7 +247,7 @@ export class SSRRenderer {
             nonce: options.nonce,
             renderContext: options.renderContext,
             reactVersion,
-            reactRuntime: options.reactRuntime,
+            reactRuntime,
           }, this.adapter),
         {
           "ssr.method": "string",
@@ -246,7 +272,7 @@ export class SSRRenderer {
           nonce: options.nonce,
           renderContext: options.renderContext,
           reactVersion,
-          reactRuntime: options.reactRuntime,
+          reactRuntime,
         }, this.adapter),
       {
         "ssr.method": "streaming",

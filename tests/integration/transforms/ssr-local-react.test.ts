@@ -1,3 +1,13 @@
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  readProjectDependencyVersions,
+  resolveProjectReactDeclaration,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { ReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -28,6 +38,95 @@ import {
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 describe("Node SSR local React graph", () => {
+  it("retains the package declaration when a supplied runtime follows a cached range", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "sdk-react-declaration-"));
+    try {
+      writeFileSync(
+        join(projectDir, "package.json"),
+        JSON.stringify({ dependencies: { react: "^19.2.0" } }),
+      );
+      await readProjectDependencyVersions(projectDir);
+      assertEquals(await resolveProjectReactDeclaration({ projectDir }), "^19.2.0");
+      assertEquals(
+        await resolveProjectReactDeclaration({
+          projectDir,
+          dependencyPinningCacheKey: "on:empty",
+          dependencyPinningDependencies: {},
+        }),
+        undefined,
+      );
+    } finally {
+      rmSync(projectDir, { recursive: true });
+    }
+  });
+
+  it("selects a prepared runtime's version without replacing it with a host peer", async () => {
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const React = await getProjectReact();
+    const react = { ...React, version: "19.2.0" };
+    const server = { renderToString: () => "prepared", renderToStaticMarkup: () => "prepared" };
+    const adapter = {
+      moduleLoader: {
+        importModule: (reference: { specifier: string }) =>
+          Promise.resolve(reference.specifier === "react" ? { default: react } : server),
+      },
+    } as unknown as RuntimeAdapter;
+    const renderer = new SSRRenderer(
+      "development",
+      adapter,
+      undefined,
+      undefined,
+      { react: { version: "^19.2.0" } } as VeryfrontConfig,
+    );
+    assertEquals(
+      (await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+      })).html,
+      "prepared",
+    );
+  });
+
+  it("validates supplied runtimes against authored ranges without selecting host peers", async () => {
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const React = await getProjectReact();
+    const react = { ...React, version: "19.2.0" } as typeof import("react");
+    const server: ReactDOMServer = {
+      renderToString: () => "provided",
+      renderToStaticMarkup: () => "provided",
+    };
+    for (const snapshot of [false, true]) {
+      const renderer = new SSRRenderer("development", undefined, undefined, undefined, {
+        react: { version: snapshot ? "18.3.1" : "^19.2.0" },
+      } as VeryfrontConfig);
+      const result = await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+        reactRuntime: { react, server },
+        ...(snapshot
+          ? {
+            dependencyPinningCacheKey: "on:captured",
+            dependencyPinningDependencies: { react: "^19.2.0" },
+          }
+          : {}),
+      });
+      assertEquals(result.html, "provided");
+    }
+    const exact = new SSRRenderer("development", undefined, undefined, undefined, {
+      react: { version: "19.2.4" },
+    } as VeryfrontConfig);
+    await assertRejects(
+      () =>
+        exact.renderToHTML(React.createElement("div"), {
+          mode: "development",
+          wantsStream: false,
+          reactRuntime: { react, server },
+        }),
+      Error,
+      "React runtime version",
+    );
+  });
+
   it("renders a configured compatible range through SSRRenderer", async () => {
     if (!isBun) return;
     const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");

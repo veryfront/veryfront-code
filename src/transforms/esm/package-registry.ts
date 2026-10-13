@@ -47,6 +47,7 @@ import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-pat
 interface CachedDependencyVersions {
   mtimeMs: number | null;
   react?: string;
+  reactDeclaration?: string;
   veryfront?: string;
   /** Full merged dependency map (dependencies + devDependencies, raw semver strings). */
   dependencies?: Record<string, string>;
@@ -64,6 +65,7 @@ const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
 const currentDependencyPinningKeys = new Map<string, string>();
 type DependencyVersionsResult = {
   react?: string;
+  reactDeclaration?: string;
   veryfront?: string;
   dependencies?: Record<string, string>;
   dependencyState?: "verified" | "absent" | "unknown";
@@ -923,6 +925,7 @@ async function readProjectDependencyVersionsUncoalesced(
     ) {
       return {
         react: cached.react,
+        reactDeclaration: cached.reactDeclaration,
         veryfront: cached.veryfront,
         dependencies: undefined,
         dependencyState: "verified",
@@ -964,12 +967,19 @@ async function readProjectDependencyVersionsUncoalesced(
     setDependencyVersionCache(source.cacheIdentity, {
       mtimeMs,
       react,
+      reactDeclaration: deps.react,
       veryfront,
       dependencies,
       dependencyPinHash,
     });
 
-    return { react, veryfront, dependencies, dependencyState: "verified" };
+    return {
+      react,
+      reactDeclaration: deps.react,
+      veryfront,
+      dependencies,
+      dependencyState: "verified",
+    };
   } catch (error) {
     // Never retain transform-affecting pins after the backing package.json
     // disappears or becomes unreadable/malformed. A later valid file will be
@@ -1130,6 +1140,25 @@ export async function resolveProjectPackageVersions(
  * This is the single source of truth for React version resolution.
  * Both HTML import map generation and module server transforms should use this.
  */
+/** Authored constraint for validating a supplied runtime without selecting host peers. */
+export async function resolveProjectReactDeclaration(
+  options: ProjectPackageVersionOptions,
+): Promise<string | undefined> {
+  if (
+    options.dependencyPinningDependencies !== undefined ||
+    options.dependencyPinningCacheKey?.startsWith("on:")
+  ) {
+    return options.dependencyPinningDependencies?.react;
+  }
+  const configured = getConfiguredReactDeclaration(options.config);
+  if (configured) return configured;
+  if (!options.projectDir && !options.dependencyPinningSource) return undefined;
+  const detected = await readProjectDependencyVersions(
+    options.dependencyPinningSource ?? options.projectDir!,
+  );
+  return detected.reactDeclaration ?? detected.react;
+}
+
 export async function resolveProjectReactVersion(
   options: ProjectPackageVersionOptions,
 ): Promise<string> {
