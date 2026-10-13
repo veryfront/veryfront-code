@@ -38,6 +38,33 @@ import {
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 describe("Node SSR local React graph", () => {
+  it("renders installed and supplied runtimes for tag declarations while preserving range rejection", async () => {
+    if (!isNode && !isBun) return;
+    const React = await getProjectReact("latest");
+    const server = await getReactDOMServer("latest");
+    assertEquals(server.renderToStaticMarkup(React.createElement("p", null, "tag")), "<p>tag</p>");
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const renderer = new SSRRenderer(
+      "development",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: "latest" } } as VeryfrontConfig,
+    );
+    const provided = { ...React, version: "19.2.0" };
+    assertEquals(
+      (await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+        reactRuntime: {
+          react: provided,
+          server: { renderToString: () => "tagged", renderToStaticMarkup: () => "tagged" },
+        },
+      })).html,
+      "tagged",
+    );
+  });
+
   it("retains the package declaration when a supplied runtime follows a cached range", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "sdk-react-declaration-"));
     try {

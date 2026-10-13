@@ -15,7 +15,7 @@ declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { satisfies, valid } from "./semver.ts";
+import { satisfies, valid, versionAdmission } from "./semver.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 const ReflectApply = Reflect.apply;
@@ -67,7 +67,7 @@ export function resolveInstalledReactRange(declaration?: string): string | undef
   if ((!isNode && !isBun) || (declaration && valid(declaration))) return undefined;
   const version = localPackageVersion("react");
   if (declaration === undefined) return version;
-  return satisfies(version, declaration) ? version : undefined;
+  return versionAdmission(version, declaration) === false ? undefined : version;
 }
 
 function resolveReactSpecifier(specifier: string): string | undefined {
@@ -119,7 +119,8 @@ export function getLocalReactPath(specifier: string, reactVersion?: string): str
         ? "react-dom"
         : "react";
     const installedVersion = localPackageVersion(packageName);
-    if (!satisfies(installedVersion, reactVersion)) {
+    const selectedVersion = resolveInstalledReactRange(reactVersion) ?? reactVersion;
+    if (!satisfies(installedVersion, selectedVersion)) {
       throw new TypeError("Local React runtime does not match the selected project version");
     }
   }

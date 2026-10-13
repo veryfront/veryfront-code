@@ -12,7 +12,7 @@ import { rendererLogger } from "#veryfront/utils";
 import type { SSROptions } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
-import { satisfies } from "#veryfront/platform/compat/semver.ts";
+import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
 import {
   getLocalReactPath,
   resolveInstalledReactRange,
@@ -83,7 +83,7 @@ function validateReactRuntimeVersion(
   }
   if (
     requestedVersion !== undefined &&
-    !satisfies(version, requestedVersion)
+    versionAdmission(version, requestedVersion) === false
   ) {
     throw INITIALIZATION_ERROR.create({
       detail: "React runtime version does not match the selected project version",

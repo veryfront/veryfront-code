@@ -100,6 +100,32 @@ describe("react-paths", () => {
       assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
     }
   });
+  it("selects the installed peer for non-semver declarations without accepting mismatching ranges", async () => {
+    if (!isNode) return;
+    const restore = overrideInstalledVersion("react", "19.2.5");
+    try {
+      for (const declaration of ["latest", "next", "workspace:*"]) {
+        assertEquals(resolveInstalledReactRange(declaration), "19.2.5");
+        assertEquals(
+          await resolveProjectReactVersion({ config: { react: { version: declaration } } }),
+          "19.2.5",
+        );
+        assertEquals(
+          await resolveProjectReactVersion({
+            dependencyPinningCacheKey: "on:tag",
+            dependencyPinningDependencies: { react: declaration },
+          }),
+          "19.2.5",
+        );
+        assertEquals(getLocalReactPath("react", declaration)?.startsWith("file:"), true);
+      }
+      assertEquals(resolveInstalledReactRange("^18.3.1"), undefined);
+      assertThrows(() => getLocalReactPath("react", "18.3.1"), TypeError, "does not match");
+    } finally {
+      restore();
+    }
+  });
+
   it("selects a compatible installed patch for both config and captured React ranges", async () => {
     if (!isNode) return;
     createRequire(import.meta.url)("react/package.json"); // Warm Node's JSON cache.

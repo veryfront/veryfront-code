@@ -436,6 +436,11 @@ export const valid = isExactSemver;
 
 /** Admit only ranges understood by the existing evaluator. */
 export function satisfies(version: string, declaration: string): boolean {
+  return versionAdmission(version, declaration) === true;
+}
+
+/** Distinguish rejected ranges from declarations that do not encode a version constraint. */
+export function versionAdmission(version: string, declaration: string): boolean | null {
   if (!isExactSemver(version)) return false;
-  return rangeAdmitsVersion(declaration, version.replace(/^v/, "")) === true;
+  return rangeAdmitsVersion(declaration, version.replace(/^v/, ""));
 }
