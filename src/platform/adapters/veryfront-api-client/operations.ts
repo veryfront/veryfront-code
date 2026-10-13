@@ -350,7 +350,11 @@ export interface GetFileOptions {
   signal?: AbortSignal;
 }
 
-/** Selects the style artifact record: exactly one of branch, environment or release. */
+/**
+ * Selects the style artifact record. Set exactly one of `branch`,
+ * `environmentName` or `releaseId`. The type does not enforce this: the API
+ * rejects any other combination with a validation error.
+ */
 export interface StyleArtifactSelector {
   branch?: string;
   environmentName?: string;
