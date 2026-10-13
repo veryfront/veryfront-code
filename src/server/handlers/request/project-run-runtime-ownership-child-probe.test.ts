@@ -203,6 +203,52 @@ describe("host-owned child admission after cancellation", () => {
     );
     assertEquals(f.attempts.length, 0);
   });
+  it("rejects inherited event acknowledgement evidence", async () => {
+    const f = fixture();
+    f.client.postRaw = <T>() => Promise.resolve(Object.create({ appended_count: 1 }) as T);
+    await assertRejects(
+      () => f.probe({ ...f.request, staleAfterCancel: false }),
+      NativeError,
+      "Owned child invocation was not acknowledged",
+    );
+    await assertRejects(
+      () => f.probe({ ...f.request, staleAfterCancel: true }),
+      NativeError,
+      "No current owned child invocation receipt",
+    );
+  });
+  it("rejects readback belonging to another parent run", async () => {
+    const f = fixture();
+    await f.probe({ ...f.request, staleAfterCancel: false });
+    f.client.get = <T>() =>
+      Promise.resolve({
+        id: "another-parent",
+        project_id: "project",
+        status: "cancelled",
+      } as T);
+    await assertRejects(
+      () => f.probe({ ...f.request, staleAfterCancel: true }),
+      NativeError,
+      "Child lineage readback is incomplete",
+    );
+    assertEquals(f.attempts.length, 0);
+  });
+  it("rejects inherited parent identity as readback evidence", async () => {
+    const f = fixture();
+    await f.probe({ ...f.request, staleAfterCancel: false });
+    f.client.get = <T>() =>
+      Promise.resolve(Object.create({
+        id: "parent",
+        project_id: "project",
+        status: "cancelled",
+      }) as T);
+    await assertRejects(
+      () => f.probe({ ...f.request, staleAfterCancel: true }),
+      NativeError,
+      "Child lineage readback is incomplete",
+    );
+    assertEquals(f.attempts.length, 0);
+  });
   it("accepts canonical zero-descendant parent readback when descendants is omitted", async () => {
     const f = fixture();
     await f.probe({ ...f.request, staleAfterCancel: false });

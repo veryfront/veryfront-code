@@ -900,21 +900,19 @@ function validateCanonicalIndexStateResponse(
   const matching = RuntimeReflectApply(RuntimeArrayPrototypeFind, data, [
     (item: unknown) => {
       if (item === null || typeof item !== "object") return false;
-      const record = item as Record<string, unknown>;
-      return record.path === input.sourcePath;
+      return ownValue(item, "path") === input.sourcePath;
     },
   ]) as unknown;
   if (matching === undefined || matching === null || typeof matching !== "object") {
     return "canonical-index-state-missing";
   }
-  const record = matching as Record<string, unknown>;
-  if (record.file_id !== input.fileId) {
+  if (ownValue(matching, "file_id") !== input.fileId) {
     return "canonical-index-state-file-mismatch";
   }
-  if (record.file_version_id !== input.versionId) {
+  if (ownValue(matching, "file_version_id") !== input.versionId) {
     return "canonical-index-state-version-mismatch";
   }
-  if (record.index_ready !== true) {
+  if (ownValue(matching, "index_ready") !== true) {
     return "canonical-index-state-not-ready";
   }
   return undefined;

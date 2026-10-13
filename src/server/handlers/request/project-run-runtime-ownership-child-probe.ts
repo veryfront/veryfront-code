@@ -21,6 +21,12 @@ export interface OwnershipChildProof {
   authorizationDenied: boolean;
 }
 const encode = encodeURIComponent;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isSafeInteger = Number.isSafeInteger;
+function ownValue(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
@@ -28,41 +34,46 @@ function readCanonicalDescendantCounts(
   value: unknown,
 ): { total: number; active: number; hasFailures: boolean } | undefined {
   if (!record(value)) return undefined;
-  const descendants = value.descendants;
+  const descendants = ownValue(value, "descendants");
   if (descendants === undefined) {
-    return value.descendant_count === undefined && value.active_descendant_count === undefined
+    return ownValue(value, "descendant_count") === undefined &&
+        ownValue(value, "active_descendant_count") === undefined
       ? { total: 0, active: 0, hasFailures: false }
       : undefined;
   }
   if (!record(descendants)) return undefined;
-  const total = descendants.total;
-  const active = descendants.active;
-  const hasFailures = descendants.has_failures;
-  return typeof total === "number" && Number.isSafeInteger(total) && total >= 0 &&
-      typeof active === "number" && Number.isSafeInteger(active) && active >= 0 &&
+  const total = ownValue(descendants, "total");
+  const active = ownValue(descendants, "active");
+  const hasFailures = ownValue(descendants, "has_failures");
+  return typeof total === "number" && isSafeInteger(total) && total >= 0 &&
+      typeof active === "number" && isSafeInteger(active) && active >= 0 &&
       typeof hasFailures === "boolean"
     ? { total, active, hasFailures }
     : undefined;
 }
-function readStableParentProjection(value: unknown, projectId: string): unknown | undefined {
+function readStableParentProjection(
+  value: unknown,
+  projectId: string,
+  canonicalRunId: string,
+): unknown | undefined {
   if (
-    !record(value) || value.project_id !== projectId || typeof value.id !== "string" ||
-    typeof value.status !== "string"
+    !record(value) || ownValue(value, "project_id") !== projectId ||
+    ownValue(value, "id") !== canonicalRunId || typeof ownValue(value, "status") !== "string"
   ) {
     return undefined;
   }
   const descendants = readCanonicalDescendantCounts(value);
   if (descendants === undefined) return undefined;
+  const parentRunId = ownValue(value, "parent_run_id");
+  const rootRunId = ownValue(value, "root_run_id");
   return {
-    id: value.id,
-    project_id: value.project_id,
-    status: value.status,
-    parent_run_id: typeof value.parent_run_id === "string" || value.parent_run_id === null
-      ? value.parent_run_id
+    id: canonicalRunId,
+    project_id: projectId,
+    status: ownValue(value, "status"),
+    parent_run_id: typeof parentRunId === "string" || parentRunId === null
+      ? parentRunId
       : undefined,
-    root_run_id: typeof value.root_run_id === "string" || value.root_run_id === null
-      ? value.root_run_id
-      : undefined,
+    root_run_id: typeof rootRunId === "string" || rootRunId === null ? rootRunId : undefined,
     descendants,
   };
 }
@@ -98,7 +109,7 @@ export function createRuntimeOwnershipChildProbe(
         privateJsonStringify({ events: [{ type: "STEP_STARTED", stepId: invocation }] }),
         { signal, idempotencyKey: startKey },
       );
-      if (!record(acknowledgement) || acknowledgement.appended_count !== 1) {
+      if (!record(acknowledgement) || ownValue(acknowledgement, "appended_count") !== 1) {
         throw new Error("Owned child invocation was not acknowledged");
       }
       const wire = privateJsonStringify({
@@ -114,7 +125,11 @@ export function createRuntimeOwnershipChildProbe(
       throw new Error("No current owned child invocation receipt");
     }
     const before: unknown = await reader.get(runPath, undefined, { signal });
-    const beforeProjection = readStableParentProjection(before, input.projectId);
+    const beforeProjection = readStableParentProjection(
+      before,
+      input.projectId,
+      input.canonicalRunId,
+    );
     if (beforeProjection === undefined) {
       throw new Error("Child lineage readback is incomplete");
     }
@@ -129,7 +144,11 @@ export function createRuntimeOwnershipChildProbe(
     }
     if (!rejected) throw new Error("Child creation was accepted after cancellation");
     const after: unknown = await reader.get(runPath, undefined, { signal });
-    const afterProjection = readStableParentProjection(after, input.projectId);
+    const afterProjection = readStableParentProjection(
+      after,
+      input.projectId,
+      input.canonicalRunId,
+    );
     if (afterProjection === undefined) {
       throw new Error("Denied child creation changed parent state or lineage");
     }

@@ -114,7 +114,7 @@ type ClaimFetchOptions = {
   wrongIndexVersion?: boolean;
   wrongIndexFile?: boolean;
   indexAckChecksum?: "missing" | "wrong";
-  indexStatus?: "empty" | "wrong-file" | "wrong-version" | "not-ready";
+  indexStatus?: "empty" | "wrong-file" | "wrong-version" | "not-ready" | "missing-ready";
   denyReplayCredentials?: boolean;
   replayCredentialDenial?:
     | "authority-403"
@@ -316,7 +316,9 @@ function claimProofFetch(options: ClaimFetchOptions = {}): typeof fetch {
             file_version_id: options.indexStatus === "wrong-version"
               ? "99999999-9999-4999-8999-999999999999"
               : "22222222-2222-4222-8222-222222222222",
-            index_ready: options.indexStatus !== "not-ready",
+            ...(options.indexStatus === "missing-ready" ? {} : {
+              index_ready: options.indexStatus !== "not-ready",
+            }),
           })),
         });
       });
@@ -1237,6 +1239,34 @@ it("does not accept a field inherited from Object.prototype as index acknowledge
     delete (Object.prototype as { checksum?: unknown }).checksum;
   }
 
+  assertEquals(receipts[0]?.phase, "canonical-source-index");
+  assertEquals(receipts[0]?.status, "error");
+});
+
+it("does not accept inherited readiness as canonical index evidence", async () => {
+  const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
+  const probe = createAgentWorkerRuntimeOwnershipProbe(
+    activation,
+    (receipt) => receipts.push(receipt),
+  );
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, "index_ready");
+  Object.defineProperty(Object.prototype, "index_ready", {
+    configurable: true,
+    value: true,
+  });
+  try {
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: claimProofFetch({ indexStatus: "missing-ready" }),
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    if (original) Object.defineProperty(Object.prototype, "index_ready", original);
+    else Reflect.deleteProperty(Object.prototype, "index_ready");
+  }
   assertEquals(receipts[0]?.phase, "canonical-source-index");
   assertEquals(receipts[0]?.status, "error");
 });
