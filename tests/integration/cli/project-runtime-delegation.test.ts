@@ -77,11 +77,18 @@ describe("project runtime delegation", () => {
     const f = await fixture(true);
     try {
       for (
-        const args of [["dev", "--project", f.project], ["dev", `--project=${f.project}`], [
-          "start",
-          "--project-dir",
-          f.project,
-        ], ["start", `--project-dir=${f.project}`]]
+        const args of [
+          ["dev", "--project", f.project],
+          ["dev", `--project=${f.project}`],
+          [
+            "start",
+            "--project-dir",
+            f.project,
+          ],
+          ["start", `--project-dir=${f.project}`],
+          ["--project", f.project, "dev"],
+          ["--project-dir", f.project],
+        ]
       ) {
         const result = await new Deno.Command("node", {
           args: [join(f.global, "bin", "veryfront.js"), ...args],

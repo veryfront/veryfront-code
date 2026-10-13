@@ -59,24 +59,31 @@ function checkedProjectCli(packageFile, pnpApi) {
 
 function selectedProjectDirectory() {
   const args = process.argv.slice(2);
-  const command = args.find((arg) => !arg.startsWith("-"));
-  const keys = command === "dev"
-    ? ["--project"]
-    : command === "start"
-    ? ["--project", "--project-dir"]
-    : [];
-  let selected;
+  let command;
+  let project;
+  let projectDirectory;
   for (let index = 0; index < args.length && args[index] !== "--"; index++) {
     const arg = args[index];
-    const key = keys.find((name) => arg === name || arg.startsWith(`${name}=`));
-    if (!key) continue;
-    const value = arg === key ? args[++index] : arg.slice(key.length + 1);
-    if (!value || value.startsWith("--")) {
-      throw new Error(`${key} requires a project directory`);
+    const key = ["--project", "--project-dir"].find((name) =>
+      arg === name || arg.startsWith(`${name}=`)
+    );
+    if (key) {
+      const value = arg === key ? args[++index] : arg.slice(key.length + 1);
+      if (!value || value.startsWith("--")) {
+        throw new Error(`${key} requires a project directory`);
+      }
+      if (key === "--project-dir") {
+        projectDirectory = resolve(process.cwd(), value);
+      } else project = resolve(process.cwd(), value);
+    } else if (!arg.startsWith("-") && command === undefined) {
+      command = arg;
     }
-    selected = resolve(process.cwd(), value);
   }
-  return selected ?? process.cwd();
+  if (command === "dev") return project ?? process.cwd();
+  if (command === "start" || command === undefined) {
+    return projectDirectory ?? project ?? process.cwd();
+  }
+  return process.cwd();
 }
 
 function findProjectPnp() {

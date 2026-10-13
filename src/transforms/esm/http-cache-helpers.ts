@@ -441,7 +441,7 @@ export function captureSSRReactRuntimeIdentity(): {
   reactVersion: string | undefined;
   scope: Promise<string>;
 } {
-  const imports = getLocalReactPaths();
+  const imports = getLocalReactPaths({ fresh: true });
   const versions = getLocalReactVersions();
   const scope = fingerprintImportMap({ imports, scopes: { "installed-peer-versions": versions } })
     .then((peers) => `local-react:${runtimeKind}:${peers}`);

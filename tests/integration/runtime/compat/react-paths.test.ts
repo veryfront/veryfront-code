@@ -106,6 +106,165 @@ describe("react-paths", () => {
       assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
     }
   });
+  it("refreshes peer URLs in the runtime fingerprint when package paths change at fixed versions", async () => {
+    if (!isNode) return;
+    const { captureSSRReactRuntimeIdentity } = await import(
+      "#veryfront/transforms/esm/http-cache-helpers.ts"
+    );
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `peer-path-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    try {
+      const before = captureSSRReactRuntimeIdentity();
+      const beforeScope = await before.scope;
+      generation = "new";
+      const after = captureSSRReactRuntimeIdentity();
+      assertEquals(before.reactVersion, after.reactVersion);
+      assertEquals(await after.scope === beforeScope, false);
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      getLocalReactPaths({ fresh: true });
+      clearReactPathsCache();
+    }
+  });
+
+  it("reloads React and renderer caches when resolved paths change at fixed versions", async () => {
+    if (!isNode) return;
+    const { getProjectReact, getReactDOMServer, resetReactCache, __setServerModuleLoaderForTests } =
+      await import("#veryfront/react/compat/ssr-adapter/server-loader.ts");
+    const actual = await getProjectReact("19.2.4");
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `renderer-path-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    __setServerModuleLoaderForTests((_url, label) =>
+      Promise.resolve(
+        label === "React" ? { default: { ...actual, marker: generation } } : {
+          version: "19.2.4",
+          marker: generation,
+          renderToString: () => generation,
+          renderToStaticMarkup: () => generation,
+        },
+      )
+    );
+    resetReactCache();
+    try {
+      const beforeReact = await getProjectReact("19.2.4");
+      const beforeDom = await getReactDOMServer("19.2.4");
+      generation = "new";
+      assertEquals(await getProjectReact("19.2.4") === beforeReact, false);
+      assertEquals(await getReactDOMServer("19.2.4") === beforeDom, false);
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      getLocalReactPaths({ fresh: true });
+      resetReactCache();
+      __setServerModuleLoaderForTests(null);
+    }
+  });
+
+  it("separates cached and concurrent layouts after same-version peer relocation", async () => {
+    if (!isNode) return;
+    const { createLayoutComponentCache, loadTSXComponent } = await import(
+      "#veryfront/rendering/layouts/utils/component-loader.ts"
+    );
+    const adapter = {
+      fs: { readFile: () => Promise.resolve("export default function Layout() { return null; }") },
+    } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+    const cache = createLayoutComponentCache();
+    const original = Reflect.get(Module, "_resolveFilename");
+    let generation = "old";
+    const entries = new Set([
+      "react",
+      "react-dom",
+      "react-dom/server",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
+      return entries.has(request)
+        ? join(tmpdir(), `layout-peer-${generation}`, resolved.split("/").pop()!)
+        : resolved;
+    });
+    let loads = 0;
+    let enteredOld: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      enteredOld = resolve;
+    });
+    let releaseOld: (() => void) | undefined;
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve;
+    });
+    const load = () =>
+      loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        adapter,
+        "project",
+        "slug",
+        "release",
+        { compileMode: "production", environment: "production" },
+        "19.2.4",
+        {
+          loadComponentFromSource: async () => {
+            loads++;
+            const captured = generation;
+            if (captured === "old") {
+              enteredOld!();
+              await oldGate;
+            }
+            return function Layout() {
+              return captured;
+            };
+          },
+        },
+      );
+    try {
+      const old = load();
+      await entered;
+      generation = "new";
+      const current = load();
+      // Release the old flight so a broken shared key fails rather than hangs.
+      releaseOld!();
+      const [oldLayout, newLayout] = await Promise.all([old, current]);
+      assertEquals(oldLayout === newLayout, false);
+      assertEquals(loads, 2);
+      assertEquals(await load(), newLayout);
+      assertEquals(loads, 2);
+    } finally {
+      releaseOld!();
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+    }
+  });
+
   it("does not accept an inner framework cache after installed peers change", async () => {
     if (!isNode) return;
     const { transformFrameworkCode } = await import(

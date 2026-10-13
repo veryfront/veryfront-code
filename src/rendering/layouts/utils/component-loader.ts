@@ -34,6 +34,7 @@ import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/depend
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -308,8 +309,11 @@ export async function loadTSXComponent(
   if (serverExternalPackagesIdentity) {
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
+  // Layout exports retain their React imports; peer replacement must separate
+  // both persistent entries and the single-flight work using this key.
+  cacheKey += `:react-runtime:${await getSSRReactRuntimeCacheScope()}`;
   // The transform output differs by mode, so the two modes must not share an
-  // entry. Production keeps the historical key shape. Preview instruments the
+  // entry. Preview instruments the
   // output with node positions on top of a production compile, so it needs its
   // own entry too.
   if (dev) cacheKey += ":dev";

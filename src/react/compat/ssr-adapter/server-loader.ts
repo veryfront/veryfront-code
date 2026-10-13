@@ -16,6 +16,8 @@ import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
 import {
   assertReactDOMPeerVersion,
   getLocalReactPath,
+  getLocalReactPaths,
+  getLocalReactVersions,
   resolveInstalledReactRange,
 } from "#veryfront/platform/compat/react-paths.ts";
 
@@ -122,7 +124,7 @@ export function __injectReactDOMServerForTests(
     return;
   }
 
-  reactDOMServerCache.set(resolveReactVersion(version), server);
+  reactDOMServerCache.set(rendererRuntimeCacheKey(resolveReactVersion(version)), server);
 }
 
 export function __injectProjectReactForTests(
@@ -133,7 +135,7 @@ export function __injectProjectReactForTests(
     projectReactCache.clear();
     return;
   }
-  projectReactCache.set(resolveReactVersion(version), react);
+  projectReactCache.set(rendererRuntimeCacheKey(resolveReactVersion(version)), react);
 }
 
 async function loadFromCachedHttpModule<T>(
@@ -151,6 +153,18 @@ async function loadFromCachedHttpModule<T>(
   const cachedPath = await cacheModuleToLocal(url, cacheDir, reactVersion);
   logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });
   return (await import(cachedPath)) as T;
+}
+
+const encodeCachePart = JSON.stringify;
+
+/** Keep renderer modules and flights on the same fresh physical peer identity. */
+function rendererRuntimeCacheKey(version: string): string {
+  const paths = getLocalReactPaths({ fresh: true });
+  const versions = getLocalReactVersions();
+  // Quote only primitives; inherited object/array toJSON hooks cannot merge keys.
+  return `${encodeCachePart(version)}|${encodeCachePart(paths.react ?? "")}|${
+    encodeCachePart(paths["react-dom/server"] ?? "")
+  }|${encodeCachePart(versions.react ?? "")}|${encodeCachePart(versions["react-dom"] ?? "")}`;
 }
 
 let serverModuleLoader: ServerModuleLoader = loadFromCachedHttpModule;
@@ -172,11 +186,12 @@ export function getProjectReact(
     });
   }
   const normalizedVersion = resolveReactVersion(version);
-  const cached = projectReactCache.get(normalizedVersion);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion);
+  const cached = projectReactCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
-  return reactLoadFlight.do(`react:${normalizedVersion}`, async () => {
-    const cachedInFlight = projectReactCache.get(normalizedVersion);
+  return reactLoadFlight.do(`react:${cacheKey}`, async () => {
+    const cachedInFlight = projectReactCache.get(cacheKey);
     if (cachedInFlight) return cachedInFlight;
 
     // Always load React from cached HTTP modules to ensure the same React
@@ -195,7 +210,7 @@ export function getProjectReact(
       normalizedVersion,
     ) as { default?: typeof import("react") };
     const loadedReact = (reactModule.default ?? reactModule) as typeof import("react");
-    projectReactCache.set(normalizedVersion, loadedReact);
+    projectReactCache.set(cacheKey, loadedReact);
     return loadedReact;
   });
 }
@@ -221,11 +236,12 @@ export function getReactDOMServer(
     );
   }
   const normalizedVersion = resolveReactVersion(version);
-  const cached = reactDOMServerCache.get(normalizedVersion);
+  const cacheKey = rendererRuntimeCacheKey(normalizedVersion);
+  const cached = reactDOMServerCache.get(cacheKey);
   if (cached) return Promise.resolve(cached);
 
-  return reactDOMServerLoadFlight.do(`react-dom-server:${normalizedVersion}`, async () => {
-    const cachedInFlight = reactDOMServerCache.get(normalizedVersion);
+  return reactDOMServerLoadFlight.do(`react-dom-server:${cacheKey}`, async () => {
+    const cachedInFlight = reactDOMServerCache.get(cacheKey);
     if (cachedInFlight) return cachedInFlight;
 
     const react18Plus = Number(normalizedVersion.split(".")[0]) >= 18;
@@ -253,7 +269,7 @@ export function getReactDOMServer(
       renderToReadableStream: react18Plus ? serverModule.renderToReadableStream : undefined,
     };
 
-    reactDOMServerCache.set(normalizedVersion, loadedServer);
+    reactDOMServerCache.set(cacheKey, loadedServer);
     return loadedServer;
   });
 }

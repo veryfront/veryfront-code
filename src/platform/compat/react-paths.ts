@@ -9,12 +9,11 @@
  * @module
  */
 
-// Bun global type declaration for cross-runtime compatibility
-declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
-
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import nodeModule from "node:module";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { satisfies, valid, versionAdmission } from "./semver.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
@@ -22,9 +21,6 @@ const ReflectApply = Reflect.apply;
 const StringStartsWith = String.prototype.startsWith;
 const JSONParse = JSON.parse;
 const ObjectFreeze = Object.freeze;
-function reactDependencyBase(): string {
-  return fileURLToPath(new URL(".", import.meta.url));
-}
 
 let localReactPathsCache: Readonly<Record<string, string>> | null = null;
 const EMPTY_REACT_PATHS: Readonly<Record<string, string>> = Object.freeze({});
@@ -38,11 +34,41 @@ const REACT_SPECIFIERS = [
   "react/jsx-dev-runtime",
 ] as const;
 
-function localPackageManifestPath(packageName: string): string {
-  if (isBun && typeof Bun?.resolveSync === "function") {
-    return Bun.resolveSync(`${packageName}/package.json`, reactDependencyBase());
+function freshPeerRoot(packageName: string): string {
+  const issuer = fileURLToPath(import.meta.url);
+  const pnp = (nodeModule as unknown as {
+    findPnpApi?: (
+      path: string,
+    ) => { resolveToUnqualified: (name: string, issuer: string) => string | null };
+  }).findPnpApi?.(issuer);
+  if (pnp) {
+    const root = pnp.resolveToUnqualified(packageName, issuer);
+    if (root) return root;
+    throw new TypeError("Local React package resolution is unavailable");
   }
-  return createRequire(import.meta.url).resolve(`${packageName}/package.json`);
+  for (const directory of createRequire(import.meta.url).resolve.paths(packageName) ?? []) {
+    const root = join(directory, packageName);
+    if (existsSync(join(root, "package.json"))) return realpathSync(root);
+  }
+  throw new TypeError("Local React package resolution is unavailable");
+}
+
+function resolveFreshPeer(specifier: string): string {
+  const packageName = specifier === "react-dom" || specifier.startsWith("react-dom/")
+    ? "react-dom"
+    : "react";
+  const root = freshPeerRoot(packageName);
+  const require = createRequire(pathToFileURL(join(root, "package.json")));
+  const manifest = JSONParse(readFileSync(join(root, "package.json"), "utf8"));
+  // A fresh physical issuer avoids Node's SDK-relative symlink path cache.
+  // Self exports preserve Node conditions and missing-export failures.
+  if (manifest.exports !== undefined) return require.resolve(specifier);
+  const suffix = specifier.slice(packageName.length).replace(/^\//, "");
+  return require.resolve(suffix ? join(root, suffix) : root);
+}
+
+function localPackageManifestPath(packageName: string): string {
+  return join(freshPeerRoot(packageName), "package.json");
 }
 
 /** Fresh on-disk peer versions for cache invalidation after dependency updates. */
@@ -107,23 +133,16 @@ function resolveReactSpecifier(specifier: string): string | undefined {
   // Resolve from the framework, never from an application or writable cache.
   // Node imports CJS through file URLs with its normal ESM interop.
   // Missing peers are fatal: falling back to a CDN could split React identity.
-  if (isNode) return pathToFileURL(createRequire(import.meta.url).resolve(specifier)).href;
-  try {
-    if (isBun && typeof Bun?.resolveSync === "function") {
-      const resolved = Bun.resolveSync(specifier, reactDependencyBase());
-      return pathToFileURL(resolved).href;
-    }
-  } catch (_) {
-    /* expected: module resolution may fail in some runtimes */
-  }
-
+  if (isNode || isBun) return pathToFileURL(resolveFreshPeer(specifier)).href;
   return undefined;
 }
 
-export function getLocalReactPaths(): Readonly<Record<string, string>> {
+export function getLocalReactPaths(
+  options?: { fresh?: boolean },
+): Readonly<Record<string, string>> {
   // Deno owns its HTTP import graph; Node/Bun use the framework's local peers.
   if (isDeno) return EMPTY_REACT_PATHS;
-  if (localReactPathsCache) return localReactPathsCache;
+  if (localReactPathsCache && !options?.fresh) return localReactPathsCache;
 
   const paths: Record<string, string> = {};
 
@@ -158,13 +177,7 @@ export function getLocalReactPath(specifier: string, reactVersion?: string): str
       throw new TypeError("Local React runtime does not match the selected project version");
     }
   }
-  if (isNode) return resolveReactSpecifier(specifier);
-  if (isBun) {
-    if (typeof Bun?.resolveSync !== "function") {
-      throw new TypeError("Local React module resolution is unavailable");
-    }
-    return pathToFileURL(Bun.resolveSync(specifier, reactDependencyBase())).href;
-  }
+  if (isNode || isBun) return resolveReactSpecifier(specifier);
   const mapped = getLocalReactPaths()[specifier];
   if (mapped) return mapped;
   return undefined;
