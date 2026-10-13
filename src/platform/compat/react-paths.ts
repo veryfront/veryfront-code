@@ -75,6 +75,16 @@ export function assertReactPackageDeclaration(declaration?: string): void {
       "React package aliases are unsupported; install React peers directly",
     );
   }
+  if (declaration !== undefined && versionAdmission("0.0.0", declaration) === null) {
+    const registryTag = /^[A-Za-z0-9._-]+$/.test(declaration) &&
+      declaration !== "." && declaration !== ".." &&
+      !/\.(?:tgz|tar(?:\.gz)?)$/i.test(declaration);
+    if (!registryTag) {
+      throw new ReactPackageIdentityError(
+        "Alternate-source React declarations are unsupported; use registry versions, ranges or tags",
+      );
+    }
+  }
 }
 
 /** Select a compatible installed version before emitting SSR and browser URLs. */

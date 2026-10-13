@@ -187,11 +187,53 @@ describe("react-paths", () => {
     assertThrows(() => resolveInstalledReactRange("npm:preact@^10.0.0"), TypeError);
   });
 
+  it("rejects alternate-source React declarations before using official CDN versions", async () => {
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    for (
+      const declaration of [
+        "workspace:*",
+        "file:../react",
+        "link:../react",
+        "../react",
+        "git+https://example.invalid/react.git",
+        "https://example.invalid/react.tgz",
+        "owner/react",
+        "github:owner/react",
+        "react-fork.tgz",
+        "react-fork.tar.gz",
+      ]
+    ) {
+      assertThrows(() => resolveInstalledReactRange(declaration), TypeError);
+      await assertRejects(
+        () => buildImportMap({ config: { react: { version: declaration } } }),
+        TypeError,
+      );
+      const directory = mkdtempSync(join(tmpdir(), "react-source-declaration-"));
+      try {
+        fs.writeFileSync(
+          join(directory, "package.json"),
+          JSON.stringify({ dependencies: { react: declaration } }),
+        );
+        await assertRejects(() => resolveProjectReactVersion({ projectDir: directory }), TypeError);
+        const adapter = {
+          moduleLoader: { importModule: () => Promise.resolve({ default: { version: "19.2.4" } }) },
+        } as unknown as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+        await assertRejects(
+          () =>
+            resolveProjectReactVersion({ adapter, config: { react: { version: declaration } } }),
+          TypeError,
+        );
+      } finally {
+        rmSync(directory, { recursive: true });
+      }
+    }
+  });
+
   it("selects the installed peer for non-semver declarations without accepting mismatching ranges", async () => {
     if (!isNode) return;
     const restore = overrideInstalledVersion("react", "19.2.5");
     try {
-      for (const declaration of ["latest", "next", "workspace:*"]) {
+      for (const declaration of ["latest", "next", "canary"]) {
         assertEquals(resolveInstalledReactRange(declaration), "19.2.5");
         assertEquals(
           await resolveProjectReactVersion({ config: { react: { version: declaration } } }),
