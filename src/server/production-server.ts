@@ -19,6 +19,8 @@ import {
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
+import { startProcessEventLoopStallDetector } from "#veryfront/observability/event-loop-stall-detector.ts";
+import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { getConfig } from "#veryfront/config";
@@ -312,6 +314,14 @@ export function startProductionServerWithDependencies(
         onRecycle: initialOnRecycle,
       });
       let ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      // Probe timeouts and hard request timeouts on a blocked loop look like
+      // network faults. Name the block and the requests that were running.
+      const eventLoopStallDetector = startProcessEventLoopStallDetector({
+        getInFlightRequests: (sinceMs) => [
+          ...requestTracker.getInFlightRequests(),
+          ...requestTracker.getRecentlyCompletedRequests(sinceMs),
+        ],
+      });
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped
       // promise must not take the others down with it. Embedders that own the
@@ -501,6 +511,7 @@ export function startProductionServerWithDependencies(
         const stop = async (): Promise<void> => {
           setServerInitialized(false);
           if (ownsMemoryMonitoring) stopMemoryMonitoring();
+          eventLoopStallDetector.stop();
           rejectionGuard?.dispose();
 
           try {
@@ -514,6 +525,7 @@ export function startProductionServerWithDependencies(
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        eventLoopStallDetector.stop();
         rejectionGuard?.dispose();
         try {
           await awaitBeforeDeadline(

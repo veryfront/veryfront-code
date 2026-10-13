@@ -213,13 +213,16 @@ describe("interactive callback interruption cleanup", () => {
             credential_requirement: { mode: "oauth_connection" },
           });
         }
-        if (path === "/oauth/status/github") {
+        if (path === `/projects/${project.id}/integrations/github/connection-status`) {
           return Response.json({
             integration: "github",
+            scope: "user",
             connected: false,
+            connection_id: null,
+            connection_generation_id: null,
           });
         }
-        if (path === "/oauth/connect/session") {
+        if (path === `/projects/${project.id}/integrations/github/connect-sessions`) {
           handoffs++;
           return Response.json({
             session_token: token,

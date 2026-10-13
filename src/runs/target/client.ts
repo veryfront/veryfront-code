@@ -106,9 +106,25 @@ type SuccessResponse<K extends RunsOperationId> = Operation<K>["responses"][
   >
 ];
 
-/** Success body of one operation; `undefined` for 204 responses. */
-export type RunsOutput<K extends RunsOperationId> = SuccessResponse<K> extends
-  { content: { "application/json": infer B } } ? B : undefined;
+type SuccessBody<R> = R extends { content: { "application/json": infer B } } ? B : undefined;
+
+/** Acknowledgement body of a DELETE answered with 200 instead of an empty 204. */
+export interface RunsDeleteAcknowledgement {
+  ok: true;
+}
+
+// The acknowledgement postdates the immutable pin; remove the extension when the pin includes it.
+type DeleteAcknowledgement<K extends RunsOperationId> =
+  (typeof RUNS_OPERATIONS)[K]["method"] extends "DELETE" ? RunsDeleteAcknowledgement : never;
+
+/**
+ * Success body of one operation: the JSON body of each success response, `undefined` for a
+ * 204 response. A DELETE may answer 200 with {@link RunsDeleteAcknowledgement} or an empty 204.
+ * Distributes over a union of operations, so each member keeps its own success body.
+ */
+export type RunsOutput<K extends RunsOperationId> = K extends RunsOperationId
+  ? SuccessBody<SuccessResponse<K>> | DeleteAcknowledgement<K>
+  : never;
 
 /** What an SDK method returns: the parsed body, or the frames of an event stream. */
 export type RunsResult<K extends RunsOperationId> = SuccessResponse<K> extends

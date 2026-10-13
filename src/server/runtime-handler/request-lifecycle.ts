@@ -67,7 +67,9 @@ export function startRequestLifecycle(
 }
 
 /**
- * Start tracking a request in the request tracker.
+ * Start tracking a request in the request tracker. Returns the tracking key to
+ * pass to the completion helpers; it equals `requestId` unless a request with
+ * the same id is already in flight.
  */
 export function startRequestTracking(
   requestId: string,
@@ -77,8 +79,8 @@ export function startRequestTracking(
   environment: string | undefined,
   releaseId: string | undefined,
   productionRuntime = false,
-): void {
-  requestTracker.start(
+): string {
+  return requestTracker.start(
     requestId,
     projectSlug,
     pathname,

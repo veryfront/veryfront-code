@@ -1,5 +1,5 @@
 {
-  "_source": "Introspection of the integration query and mutation types served by the Veryfront API (captured 2026-09-27; integrationReadiness, integrationTools and runIntegrationTool added 2026-10-12 from the API type definitions). Refresh when those GraphQL types change. executeIntegrationTool is the deprecated alias of runIntegrationTool.",
+  "_source": "Introspection of the integration query and mutation types served by the Veryfront API (captured 2026-09-27; integrationReadiness, integrationTools and runIntegrationTool added 2026-10-12 from the API type definitions). Refresh when those GraphQL types change. The deprecated executeIntegrationTool alias is left out so guide snippets must use runIntegrationTool.",
   "Boolean": {
     "kind": "SCALAR"
   },
@@ -290,12 +290,6 @@
   },
   "Mutation": {
     "fields": {
-      "executeIntegrationTool": {
-        "args": {
-          "input": "ExecuteIntegrationToolInput!"
-        },
-        "type": "IntegrationToolResult!"
-      },
       "runIntegrationTool": {
         "args": {
           "input": "ExecuteIntegrationToolInput!"

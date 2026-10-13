@@ -695,7 +695,7 @@ export function createVeryfrontHandler(
         }
       }
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         lifecycle.requestId,
         preparedRequest.trackingFacts.projectSlug,
         preparedRequest.trackingFacts.pathname,
@@ -719,7 +719,7 @@ export function createVeryfrontHandler(
           pathname: url.pathname,
           mode: "isolation",
         });
-        completeRequestTracking(lifecycle.requestId, 503, false);
+        completeRequestTracking(trackingKey, 503, false);
         const response = createIsolationErrorResponse(isolationCheck);
         endRequestTracing(spanInfo.span, response.status);
         return response;
@@ -1146,7 +1146,7 @@ export function createVeryfrontHandler(
         );
 
         return completeRequestTrackingOnResponseEnd(
-          lifecycle.requestId,
+          trackingKey,
           withServerTimingHeader(response, requestProfileRecord),
           isTimeout,
           requestProfileRecord,
