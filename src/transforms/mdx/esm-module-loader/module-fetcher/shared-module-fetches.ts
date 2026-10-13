@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Process-wide single-flight for entry module fetches.
  *
@@ -126,7 +127,7 @@ export function getSharedModuleFetchKey(
     context.projectDir,
     context.isLocalProject === true,
     context.dev === true,
-    context.reactVersion ?? REACT_DEFAULT_VERSION,
+    context.reactVersion ?? resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION,
     context.dependencyPinningCacheKey ?? "off",
     context.moduleServerOrigin ?? "",
     [...(context.serverExternalPackages ?? [])].sort(compareStrings),

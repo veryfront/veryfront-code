@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
@@ -216,7 +217,7 @@ export async function transformModuleCodeWithCache(
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
   const contentHash = hashCodeHex(input.fileContent);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
-  const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
+  const reactVersion = input.reactVersion ?? resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION;
   const runtimeScope = input.runtimeScope ?? await getSSRReactRuntimeCacheScope();
   const cacheVariant = buildDependencyPinningCacheVariant(
     input.dependencyPinningCacheKey,

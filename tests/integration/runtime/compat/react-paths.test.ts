@@ -149,6 +149,30 @@ describe("react-paths", () => {
     const restoreDom = overrideInstalledVersion("react-dom", "19.2.5");
     try {
       await assertRejects(() => transformModuleCodeWithCache(input), TypeError, "does not match");
+      const selected = await transformModuleCodeWithCache({ ...input, reactVersion: undefined });
+      assertEquals(selected.code, "export const page = 1;");
+      const { transformResolvedModuleSource } = await import(
+        "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/source-transform.ts"
+      );
+      let recursiveVersion: string | undefined;
+      await transformResolvedModuleSource({
+        sourceCode: "export const page = 1;",
+        actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
+        projectDir: "/project",
+        projectId: "runtime-cache-test",
+        normalizedPath: "_veryfront/react/runtime/core.js",
+        projectSlug: "runtime-cache-test",
+        dev: false,
+        adapter: input.adapter,
+        log: { debug: () => {}, error: () => {} },
+        loadImportMap: () => Promise.resolve({ imports: {} }),
+        transformFrameworkSource: (_source, _path, version) => {
+          recursiveVersion = version;
+          getLocalReactPath("react", version);
+          return Promise.resolve("export const page = 1;");
+        },
+      });
+      assertEquals(recursiveVersion, "19.2.5");
     } finally {
       restoreDom();
       restoreReact();

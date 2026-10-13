@@ -1,6 +1,7 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { join } from "#std/path";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const wrapper = await Deno.readTextFile(
   new URL("../../../scripts/build/bin-wrapper.js", import.meta.url),
@@ -10,7 +11,7 @@ const engine = await Deno.readTextFile(
 );
 
 async function fixture(local: boolean) {
-  const root = await Deno.makeTempDir({ prefix: "vf-cli-peer-graph-" });
+  const root = await makeTempDir({ prefix: "vf-cli-peer-graph-" });
   const global = join(root, "global", "veryfront");
   const project = join(root, "project");
   await Deno.mkdir(project, { recursive: true });

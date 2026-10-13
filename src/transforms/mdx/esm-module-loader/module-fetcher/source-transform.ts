@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Source-file transform phase for the MDX ESM module fetcher.
@@ -98,7 +99,7 @@ export async function transformResolvedModuleSource(
       return await transformFramework(
         input.sourceCode,
         input.actualFilePath,
-        input.reactVersion ?? REACT_DEFAULT_VERSION,
+        input.reactVersion ?? resolveInstalledReactRange() ?? REACT_DEFAULT_VERSION,
         input.projectDir,
         createFileSystem(),
         undefined,
