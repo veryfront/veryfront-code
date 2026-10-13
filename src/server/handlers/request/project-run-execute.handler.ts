@@ -5268,7 +5268,7 @@ async function executeStyleArtifactBuildRun(input: {
     });
     input.signal.throwIfAborted();
 
-    await apiClient.upsertStyleArtifact(
+    await apiClient.styleArtifacts.update(
       {
         ...selector,
         styleProfileHash,
@@ -5298,7 +5298,7 @@ async function executeStyleArtifactBuildRun(input: {
   } catch (error) {
     if (input.signal.aborted) throw input.signal.reason;
     if (apiClient && selector && styleProfileHash) {
-      await apiClient.upsertStyleArtifact(
+      await apiClient.styleArtifacts.update(
         {
           ...selector,
           styleProfileHash,

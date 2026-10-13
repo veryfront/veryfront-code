@@ -196,7 +196,7 @@ async function markStyleArtifactFailed(
   if (!client || !styleProfileHash) return;
 
   try {
-    await client.upsertStyleArtifact({
+    await client.styleArtifacts.update({
       ...(selector.type === "branch" ? { branch: selector.branch } : {}),
       ...(selector.type === "environment" ? { environmentName: selector.environmentName } : {}),
       ...(selector.type === "release" ? { releaseId: selector.releaseId } : {}),
@@ -278,7 +278,7 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
       buildMode: "production",
     });
 
-    const resolution = await client.upsertStyleArtifact({
+    const resolution = await client.styleArtifacts.update({
       ...(selector.type === "branch" ? { branch: selector.branch } : {}),
       ...(selector.type === "environment" ? { environmentName: selector.environmentName } : {}),
       ...(selector.type === "release" ? { releaseId: selector.releaseId } : {}),

@@ -263,8 +263,9 @@ describe("schemas", () => {
         "listReleaseFiles",
         "getReleaseFile",
         "lookupDomain",
-        "resolveStyleArtifact",
-        "ensureStyleArtifactBuild",
+        "getStyleArtifact",
+        "updateStyleArtifact",
+        "startStyleArtifactBuild",
         "getDependencyHistory",
         "resolveDependencies",
       ] as const;
@@ -286,7 +287,7 @@ describe("schemas", () => {
 
     it("should use supported HTTP methods for all endpoints", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
-        assertEquals(["GET", "POST"].includes(endpoint.method), true);
+        assertEquals(["GET", "POST", "PUT"].includes(endpoint.method), true);
       }
     });
 
@@ -304,8 +305,25 @@ describe("schemas", () => {
     });
 
     it("should use the expected methods for style artifact endpoints", () => {
-      assertEquals(API_ENDPOINTS.resolveStyleArtifact.method, "GET");
-      assertEquals(API_ENDPOINTS.ensureStyleArtifactBuild.method, "POST");
+      assertEquals(API_ENDPOINTS.getStyleArtifact.method, "GET");
+      assertEquals(API_ENDPOINTS.updateStyleArtifact.method, "PUT");
+      assertEquals(API_ENDPOINTS.startStyleArtifactBuild.method, "POST");
+      assertEquals(
+        API_ENDPOINTS.updateStyleArtifact.path,
+        API_ENDPOINTS.getStyleArtifact.path,
+      );
+      assertEquals(
+        API_ENDPOINTS.startStyleArtifactBuild.path,
+        "/projects/{projectRef}/style-artifacts/current/builds",
+      );
+    });
+
+    it("keeps the legacy style artifact keys as aliases", () => {
+      assertEquals(API_ENDPOINTS.resolveStyleArtifact, API_ENDPOINTS.getStyleArtifact);
+      assertEquals(
+        API_ENDPOINTS.ensureStyleArtifactBuild,
+        API_ENDPOINTS.startStyleArtifactBuild,
+      );
     });
 
     it("should have paths starting with /", () => {
