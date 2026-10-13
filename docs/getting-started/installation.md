@@ -20,31 +20,36 @@ Add Veryfront Code to an existing or blank Node.js, Deno, or Bun project.
 <CodeGroup>
 
 ```bash npm
-npm install veryfront
+npm install veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash pnpm
-pnpm add veryfront
+pnpm add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash yarn
-yarn add veryfront
+yarn add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash bun
-bun add veryfront
+bun add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ```bash deno
-deno add npm:veryfront
+deno add npm:veryfront npm:react@19.2.4 npm:react-dom@19.2.4
 ```
 
 </CodeGroup>
 
-Installing the package adds the framework, the CLI, and `react` / `react-dom`,
-which ship as dependencies of `veryfront`. It does not scaffold any files or
-touch your `package.json` beyond the dependency entry. Add the four pieces
-below yourself. `veryfront init` writes all of them for you, see
+`veryfront` provides the framework and CLI. React and React DOM are required
+peer dependencies; the commands above install a matching supported pair
+explicitly. Node.js and Bun SSR use this installed pair. Keep both packages at
+the same version when upgrading; the supported peer range starts at 19.2.4
+within React 19. Package managers such as Yarn may require you to install peers
+yourself.
+
+These commands add the dependency entries without scaffolding files. Add the
+four pieces below yourself. `veryfront init` writes all of them for you, see
 [Create project](./create-project.md).
 
 ### Set the module type
@@ -161,7 +166,7 @@ adds approximately 500 MB, and supported model weights add 0.9 to 6 GB.
 ### npm (recommended)
 
 ```bash
-npm install -g veryfront@latest
+npm install -g veryfront@latest react@19.2.4 react-dom@19.2.4
 ```
 
 This installs the latest published Veryfront CLI and adds `veryfront` to your
@@ -170,19 +175,19 @@ shell path.
 ### pnpm
 
 ```bash
-pnpm add -g veryfront
+pnpm add -g veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### yarn
 
 ```bash
-yarn global add veryfront
+yarn global add veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### bun
 
 ```bash
-bun add -g veryfront
+bun add -g veryfront react@19.2.4 react-dom@19.2.4
 ```
 
 ### deno
