@@ -1,7 +1,6 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/semver@1.0.8": "1.0.8",
     "npm:@opentelemetry/api-logs@0.221.0": "0.221.0",
     "npm:@opentelemetry/api@1.9.1": "1.9.1",
     "npm:@opentelemetry/auto-instrumentations-node@0.79.0": "0.79.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.10.0__@opentelemetry+api@1.9.1",
@@ -24,11 +23,6 @@
     "npm:jose@5.9.6": "5.9.6",
     "npm:redis@5.11.0": "5.11.0",
     "npm:zod@4.3.6": "4.3.6"
-  },
-  "jsr": {
-    "@std/semver@1.0.8": {
-      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
-    }
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.7.1": {
@@ -1497,7 +1491,6 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/semver@1.0.8",
       "jsr:@std/testing@1.0.17"
     ],
     "packageJson": {

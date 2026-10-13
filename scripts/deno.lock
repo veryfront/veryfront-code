@@ -15,7 +15,6 @@
     "jsr:@std/path@1.1.4": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.6",
     "jsr:@std/path@^1.1.5": "1.1.6",
-    "jsr:@std/semver@1.0.8": "1.0.8",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "jsr:@ts-morph/bootstrap@0.29": "0.29.0",
@@ -107,9 +106,6 @@
       "dependencies": [
         "jsr:@std/internal@^1.0.14"
       ]
-    },
-    "@std/semver@1.0.8": {
-      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
     },
     "@std/testing@1.0.17": {
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
@@ -1620,7 +1616,6 @@
       "jsr:@std/cli@1.0.28",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/semver@1.0.8",
       "jsr:@std/testing@1.0.17",
       "jsr:@std/yaml@1.1.0",
       "npm:@babel/parser@7.29.2",
