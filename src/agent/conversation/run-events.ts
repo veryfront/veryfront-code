@@ -362,6 +362,9 @@ export class ConversationRunEventEncoder {
         }];
 
       case "reasoning-end":
+        // An end with no segment open has nothing to close; emitting one would consume
+        // an ordinal and shift every later segment's id.
+        if (!this.openReasoningContentIds.has(chunk.id)) return [];
         return [{
           type: conversationRunEventTypes.reasoningMessageEnd,
           ...this.getReasoningMessagePayload(chunk),

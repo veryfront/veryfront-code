@@ -394,6 +394,16 @@ describe("agent/conversation-run-events", () => {
   // Providers restart their block ids (`thinking-0`) every step, so the provider id
   // alone collides across a multi-step run. The ordinal is the span id veryfront-api
   // derives (`message:<id>:reasoning:<n>`) and the live AG-UI encoder emits.
+  it("drops an orphan reasoning end without consuming an ordinal", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "assistant-1" });
+    assertEquals(encoder.encode({ type: "reasoning-end", id: "thinking-0" }), []);
+    assertEquals(
+      encoder.encode({ type: "reasoning-start", id: "thinking-0" })[0]?.contentId,
+      "assistant-1:reasoning:0",
+    );
+  });
+
   it("numbers reasoning segments across steps even when the provider id repeats", () => {
     const encoder = new ConversationRunEventEncoder();
     encoder.encode({ type: "start", messageId: "assistant-1" });
