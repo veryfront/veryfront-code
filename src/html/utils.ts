@@ -415,7 +415,8 @@ function applyDependencyPinningKeys(
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
-  return !("projectDir" in options) &&
+  return !("adapter" in options) &&
+    !("projectDir" in options) &&
     !("config" in options) &&
     !("moduleServerOrigin" in options) &&
     !("dependencyPinningCacheKey" in options) &&

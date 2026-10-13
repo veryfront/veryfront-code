@@ -74,6 +74,9 @@ describe("Node SSR local React graph", () => {
       }),
       "19.2.0",
     );
+    const adapterOnlyMap = await buildImportMap({ adapter });
+    assertEquals(JSON.parse(adapterOnlyMap.json).imports.adapter, undefined);
+    assertEquals(JSON.parse(adapterOnlyMap.json).imports.react.includes("react@19.2.0"), true);
     const map = await buildImportMap(options);
     assertEquals(JSON.parse(map.json).imports.react.includes("react@19.2.0"), true);
     const { generateHTMLShellParts } = await import("#veryfront/html/html-shell-generator.ts");
