@@ -369,26 +369,47 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
-  it("encodes reasoning segment ids as content ids under the active assistant message", () => {
+  it("encodes reasoning segments as ordinal content ids under the active assistant message", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
     assertEquals(encoder.encode({ type: "reasoning-start", id: "reasoning-1" }), [{
       type: conversationRunEventTypes.reasoningMessageStart,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
       role: "assistant",
     }]);
     assertEquals(encoder.encode({ type: "reasoning-delta", id: "reasoning-1", delta: "think" }), [{
       type: conversationRunEventTypes.reasoningMessageContent,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
       delta: "think",
     }]);
     assertEquals(encoder.encode({ type: "reasoning-end", id: "reasoning-1" }), [{
       type: conversationRunEventTypes.reasoningMessageEnd,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
     }]);
+  });
+
+  // Providers restart their block ids (`thinking-0`) every step, so the provider id
+  // alone collides across a multi-step run. The ordinal is the span id veryfront-api
+  // derives (`message:<id>:reasoning:<n>`) and the live AG-UI encoder emits.
+  it("numbers reasoning segments across steps even when the provider id repeats", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "assistant-1" });
+    const contentIds = [0, 1].flatMap(() => [
+      ...encoder.encode({ type: "reasoning-start", id: "thinking-0" }),
+      ...encoder.encode({ type: "reasoning-delta", id: "thinking-0", delta: "x" }),
+      ...encoder.encode({ type: "reasoning-end", id: "thinking-0" }),
+    ]).map((event) => event.contentId);
+    assertEquals(contentIds, [
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:1",
+      "assistant-1:reasoning:1",
+      "assistant-1:reasoning:1",
+    ]);
   });
 
   it("encodes tool input availability with args when not previously streamed", () => {

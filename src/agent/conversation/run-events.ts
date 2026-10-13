@@ -144,6 +144,8 @@ export class ConversationRunEventEncoder {
   private readonly toolInputs = new Map<string, unknown>();
   private activeMessageId: string | null = null;
   private activeTextContentId: string | null = null;
+  private readonly openReasoningContentIds = new Map<string, string>();
+  private readonly reasoningSegmentCounts = new Map<string, number>();
   private textContentIndex = 0;
   private activeStepName: string | null = null;
   private activeStepId: string | null = null;
@@ -242,11 +244,27 @@ export class ConversationRunEventEncoder {
     };
   }
 
-  private getReasoningMessagePayload(chunk: { id: string }) {
-    return {
-      messageId: this.activeMessageId ?? chunk.id,
-      contentId: chunk.id,
-    };
+  // A reasoning segment is identified by its ordinal under the assistant message,
+  // `<messageId>:reasoning:<n>`, not by the provider's block id: providers restart
+  // block ids (`thinking-0`) every step, so the provider id collides across a
+  // multi-step run. veryfront-api derives the reasoning span from this content id,
+  // and the live AG-UI encoder numbers the same segments the same way.
+  private getReasoningMessagePayload(chunk: {
+    type: "reasoning-start" | "reasoning-delta" | "reasoning-end";
+    id: string;
+  }) {
+    const messageId = this.activeMessageId ?? chunk.id;
+    let contentId = this.openReasoningContentIds.get(chunk.id);
+    if (contentId === undefined) {
+      const ordinal = this.reasoningSegmentCounts.get(messageId) ?? 0;
+      this.reasoningSegmentCounts.set(messageId, ordinal + 1);
+      contentId = `${messageId}:reasoning:${ordinal}`;
+      this.openReasoningContentIds.set(chunk.id, contentId);
+    }
+    if (chunk.type === "reasoning-end") {
+      this.openReasoningContentIds.delete(chunk.id);
+    }
+    return { messageId, contentId };
   }
 
   // Tool call state is only needed until the call resolves; keeping it for the
