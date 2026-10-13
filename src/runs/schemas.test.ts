@@ -188,9 +188,34 @@ describe("runs/schemas", () => {
     );
   });
 
+  it("accepts the legacy schedules key and rejects a response with neither list key", () => {
+    const schedule = {
+      id: "schedule_1",
+      name: "Sync helpdesk",
+      status: "active",
+      target: { kind: "task", id: "sync-helpdesk" },
+      definition_source: "source",
+      source_trigger_id: "sync-helpdesk",
+      timeout_seconds: 900,
+    };
+
+    const canonical = getScheduleReferenceListSchema().parse({ data: [schedule] });
+    assertEquals(canonical.data?.[0]?.id, "schedule_1");
+    assertEquals(canonical.schedules, undefined);
+
+    const legacy = getScheduleReferenceListSchema().parse({ schedules: [schedule] });
+    assertEquals(legacy.schedules?.[0]?.id, "schedule_1");
+    assertEquals(legacy.data, undefined);
+
+    assertEquals(
+      getScheduleReferenceListSchema().safeParse({ source_schedules: [] }).success,
+      false,
+    );
+  });
+
   it("requires source schedule timeouts to be positive integers", () => {
     const response = (timeout_seconds: number) => ({
-      schedules: [{
+      data: [{
         id: "schedule_1",
         name: "Sync helpdesk",
         status: "active",
@@ -216,7 +241,7 @@ describe("runs/schemas", () => {
   // extension fields the SDK does not model before local resolution.
   it("maps known schedule target fields and strips unknown fields", () => {
     const parsed = getScheduleReferenceListSchema().parse({
-      schedules: [
+      data: [
         {
           id: "schedule_1",
           name: "Triage new cases",
@@ -235,7 +260,7 @@ describe("runs/schemas", () => {
       ],
     });
 
-    const target = parsed.schedules[0]?.target;
+    const target = parsed.data?.[0]?.target;
     assertEquals(target, {
       kind: "agent",
       id: "case-triage",
@@ -248,7 +273,7 @@ describe("runs/schemas", () => {
   for (const [kind, id] of [["task", "sync-helpdesk"], ["workflow", "billing/sync"]] as const) {
     it(`maps ${kind} schedule targets without conversation fields`, () => {
       const parsed = getScheduleReferenceListSchema().parse({
-        schedules: [
+        data: [
           {
             id: "schedule_1",
             name: "Sync helpdesk",
@@ -261,7 +286,7 @@ describe("runs/schemas", () => {
         ],
       });
 
-      const target = parsed.schedules[0]?.target;
+      const target = parsed.data?.[0]?.target;
       assertEquals(
         target,
         { kind, id },
@@ -277,7 +302,7 @@ describe("runs/schemas", () => {
 
   it("rejects conversation fields on non-agent schedule targets", () => {
     const result = getScheduleReferenceListSchema().safeParse({
-      schedules: [
+      data: [
         {
           id: "schedule_1",
           name: "Sync helpdesk",
@@ -299,7 +324,7 @@ describe("runs/schemas", () => {
 
   it("rejects existing agent schedule targets without a conversation id", () => {
     const result = getScheduleReferenceListSchema().safeParse({
-      schedules: [
+      data: [
         {
           id: "schedule_1",
           name: "Resume triage",
@@ -322,7 +347,7 @@ describe("runs/schemas", () => {
   for (const conversationMode of ["none", "create_new"] as const) {
     it(`rejects ${conversationMode} agent schedule targets with a conversation id`, () => {
       const result = getScheduleReferenceListSchema().safeParse({
-        schedules: [
+        data: [
           {
             id: "schedule_1",
             name: "Start triage",
@@ -346,7 +371,7 @@ describe("runs/schemas", () => {
 
   it("maps existing agent schedule targets with a valid conversation id", () => {
     const parsed = getScheduleReferenceListSchema().parse({
-      schedules: [
+      data: [
         {
           id: "schedule_1",
           name: "Resume triage",
@@ -364,7 +389,7 @@ describe("runs/schemas", () => {
       ],
     });
 
-    const target = parsed.schedules[0]?.target;
+    const target = parsed.data?.[0]?.target;
     assertEquals(target, {
       kind: "agent",
       id: "case-triage",
