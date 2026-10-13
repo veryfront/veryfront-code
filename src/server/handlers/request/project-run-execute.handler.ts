@@ -3584,7 +3584,9 @@ function createDurableEvalAgentRunBody(
         : { type: "main_branch" },
     },
     config: {
-      conversation_mode: "create_new",
+      // Eval examples are isolated headless executions. A runtime service
+      // account's owner is attribution, not authority to own a conversation.
+      conversation_mode: "none",
       tools: request.tools,
       context: request.context,
       forwarded_props: createDurableEvalAgentForwardedProps(input, request),
