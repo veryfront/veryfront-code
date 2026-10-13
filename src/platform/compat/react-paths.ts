@@ -46,19 +46,18 @@ function localPackageManifestPath(packageName: string): string {
 /** Fresh on-disk peer versions for cache invalidation after dependency updates. */
 export function getLocalReactVersions(): Readonly<Record<string, string>> {
   if (!isNode && !isBun) return ObjectFreeze({});
-  const versions: Record<string, string> = {};
-  for (const name of ["react", "react-dom"]) {
-    const version = JSONParse(readFileSync(localPackageManifestPath(name), "utf8")).version;
-    if (typeof version !== "string" || !valid(version)) {
-      throw new TypeError("Invalid installed React package version");
-    }
-    versions[name] = version;
-  }
-  return ObjectFreeze(versions);
+  return ObjectFreeze({
+    react: localPackageVersion("react"),
+    "react-dom": localPackageVersion("react-dom"),
+  });
 }
 
 function localPackageVersion(packageName: string): string {
-  return createRequire(import.meta.url)(localPackageManifestPath(packageName)).version;
+  const version = JSONParse(readFileSync(localPackageManifestPath(packageName), "utf8")).version;
+  if (typeof version !== "string" || !valid(version)) {
+    throw new TypeError("Invalid installed React package version");
+  }
+  return version;
 }
 
 /** Select a compatible installed version before emitting SSR and browser URLs. */

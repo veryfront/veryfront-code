@@ -237,6 +237,12 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
+      - name: Install cross-runtime alias audit dependencies
+        if: ${{ matrix.check == 'lint' }}
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in

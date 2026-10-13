@@ -5,11 +5,32 @@ import { clearReactPathsCache, getLocalReactPaths, isReactSpecifier } from "./re
 import { isBun, isNode } from "./runtime.ts";
 import { createRequire } from "node:module";
 import Module from "node:module";
+import fs from "node:fs";
+import { resolveInstalledReactRange } from "./react-paths.ts";
 import {
   resolveProjectPackageVersions,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getLocalReactPath } from "./react-paths.ts";
+
+function overrideInstalledVersion(packageName: string, version: string): () => void {
+  const syncBuiltinESMExports = Reflect.get(Module, "syncBuiltinESMExports") as () => void;
+  const original = fs.readFileSync;
+  fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+    const content = Reflect.apply(original, fs, args);
+    if (String(args[0]).endsWith(`/${packageName}/package.json`)) {
+      const manifest = JSON.parse(String(content));
+      manifest.version = version;
+      return JSON.stringify(manifest);
+    }
+    return content;
+  }) as typeof fs.readFileSync;
+  syncBuiltinESMExports();
+  return () => {
+    fs.readFileSync = original;
+    syncBuiltinESMExports();
+  };
+}
 
 describe("react-paths", () => {
   it("does not require an optional client export to resolve React and its server", () => {
@@ -51,10 +72,10 @@ describe("react-paths", () => {
   });
   it("selects a compatible installed patch for both config and captured React ranges", async () => {
     if (!isNode) return;
-    const manifest = createRequire(import.meta.url)("react/package.json");
-    const original = manifest.version;
+    createRequire(import.meta.url)("react/package.json"); // Warm Node's JSON cache.
+    assertEquals(resolveInstalledReactRange("^19.2.4"), "19.2.4");
+    const restore = overrideInstalledVersion("react", "19.2.5");
     try {
-      manifest.version = "19.2.5";
       assertEquals(await resolveProjectReactVersion({}), "19.2.5");
       assertEquals((await resolveProjectPackageVersions({})).react, "19.2.5");
       assertEquals(
@@ -83,16 +104,16 @@ describe("react-paths", () => {
         "19.2.4",
       );
     } finally {
-      manifest.version = original;
+      restore();
     }
   });
 
   it("rejects a separately mismatched installed React DOM renderer", () => {
     if (!isNode) return;
-    const manifest = createRequire(import.meta.url)("react-dom/package.json");
-    const original = manifest.version;
+    createRequire(import.meta.url)("react-dom/package.json"); // Warm Node's JSON cache.
+    getLocalReactPath("react-dom/server", "19.2.4");
+    const restore = overrideInstalledVersion("react-dom", "18.3.1");
     try {
-      manifest.version = "18.3.1";
       let rejected = false;
       try {
         getLocalReactPath("react-dom/server", "19.2.4");
@@ -101,7 +122,7 @@ describe("react-paths", () => {
       }
       assertEquals(rejected, true);
     } finally {
-      manifest.version = original;
+      restore();
     }
   });
 
