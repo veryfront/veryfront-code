@@ -29,6 +29,7 @@ const localProjectImportMap = Object.fromEntries(
 );
 
 const stdImportMap: Record<string, string> = {
+  "#std/semver": "./npm/node_modules/@jsr/std__semver/mod.js",
   "#std/assert": "./src/testing/assert.ts",
   "#std/assert.ts": "./src/testing/assert.ts",
   "#std/testing": "./src/testing/index.ts",

@@ -2,7 +2,7 @@
   "lock": "./deno.lock",
   "minimumDependencyAge": "P2D",
   "imports": {
-    "semver": "npm:semver@7.8.5",
+    "#std/semver": "jsr:@std/semver@1.0.8",
     "#babel/parser": "npm:@babel/parser@7.29.2",
     "#veryfront/": "../src/",
     "#dnt": "jsr:@deno/dnt@0.43.2",

@@ -12,7 +12,7 @@ import { rendererLogger } from "#veryfront/utils";
 import type { SSROptions } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
-import { satisfies } from "semver";
+import { satisfies } from "#veryfront/platform/compat/semver.ts";
 import {
   getLocalReactPath,
   resolveInstalledReactRange,
@@ -139,7 +139,11 @@ async function loadFromCachedHttpModule<T>(
   reactVersion: string,
 ): Promise<T> {
   const localPath = getLocalReactPath(label === "React" ? "react" : label, reactVersion);
-  if (localPath) return (await import(localPath)) as T;
+  if (localPath) {
+    const module = await import(localPath);
+    if (label === "React") validateReactRuntimeVersion(module.default ?? module, reactVersion);
+    return module as T;
+  }
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir, reactVersion);
   logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });
@@ -188,7 +192,6 @@ export function getProjectReact(
       normalizedVersion,
     ) as { default?: typeof import("react") };
     const loadedReact = (reactModule.default ?? reactModule) as typeof import("react");
-    validateReactRuntimeVersion(loadedReact, normalizedVersion);
     projectReactCache.set(normalizedVersion, loadedReact);
     return loadedReact;
   });

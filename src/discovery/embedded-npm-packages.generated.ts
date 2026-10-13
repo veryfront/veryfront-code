@@ -843,7 +843,6 @@ export const PROXY_EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly strin
   "require-in-the-middle": ["8.0.1"],
   "rimraf": ["5.0.10"],
   "semifies": ["1.0.0"],
-  "semver": ["7.8.5"],
   "shebang-command": ["2.0.0"],
   "shebang-regex": ["3.0.0"],
   "signal-exit": ["4.1.0"],
@@ -955,7 +954,6 @@ export const EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly string[]
   "remark-gfm": ["4.0.1"],
   "remark-parse": ["11.0.0"],
   "remark-rehype": ["11.1.2"],
-  "semver": ["7.8.5"],
   "sharp": ["0.35.5"],
   "tailwind-scrollbar-hide": ["2.0.0"],
   "tailwindcss": ["4.2.2"],
@@ -992,6 +990,5 @@ export const PROXY_EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly st
   "ajv-formats": ["3.0.1"],
   "jose": ["5.9.6"],
   "redis": ["5.11.0"],
-  "semver": ["7.8.5"],
   "zod": ["4.3.6"],
 };

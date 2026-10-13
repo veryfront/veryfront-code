@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/semver@1.0.8": "1.0.8",
     "npm:@opentelemetry/api-logs@0.221.0": "0.221.0",
     "npm:@opentelemetry/api@1.9.1": "1.9.1",
     "npm:@opentelemetry/auto-instrumentations-node@0.79.0": "0.79.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.10.0__@opentelemetry+api@1.9.1",
@@ -22,8 +23,12 @@
     "npm:ajv@8.18.0": "8.18.0",
     "npm:jose@5.9.6": "5.9.6",
     "npm:redis@5.11.0": "5.11.0",
-    "npm:semver@7.8.5": "7.8.5",
     "npm:zod@4.3.6": "4.3.6"
+  },
+  "jsr": {
+    "@std/semver@1.0.8": {
+      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
+    }
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.7.1": {
@@ -1366,10 +1371,6 @@
     "semifies@1.0.0": {
       "integrity": "sha512-xXR3KGeoxTNWPD4aBvL5NUpMTT7WMANr3EWnaS190QVkY52lqqcVRD7Q05UVbBhiWDGWMlJEUam9m7uFFGVScw=="
     },
-    "semver@7.8.5": {
-      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
-      "bin": true
-    },
     "shebang-command@2.0.0": {
       "integrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
       "dependencies": [
@@ -1496,8 +1497,8 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17",
-      "npm:semver@7.8.5"
+      "jsr:@std/semver@1.0.8",
+      "jsr:@std/testing@1.0.17"
     ],
     "packageJson": {
       "overrides": {

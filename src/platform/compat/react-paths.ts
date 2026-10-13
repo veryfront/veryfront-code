@@ -15,7 +15,7 @@ declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } 
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { satisfies, valid } from "semver";
+import { satisfies, valid } from "./semver.ts";
 import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 

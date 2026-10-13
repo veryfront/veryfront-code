@@ -28,6 +28,7 @@ const workspacePackagePatterns = [];
 export const workspaceImportScopes = [];
 
 const stdImportMap = {
+  "#std/semver": "./npm/node_modules/@jsr/std__semver/mod.js",
   "#std/assert": "./src/testing/assert.ts",
   "#std/assert.ts": "./src/testing/assert.ts",
   "#std/testing": "./src/testing/index.ts",

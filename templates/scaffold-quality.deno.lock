@@ -18,6 +18,7 @@
     "jsr:@std/path@1.1.4": "1.1.4",
     "jsr:@std/path@^1.0.9": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/semver@1.0.8": "1.0.8",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "npm:@aws-sdk/client-ec2@^3.600.0": "3.1142.0",
@@ -112,7 +113,6 @@
     "npm:remark-gfm@4.0.1": "4.0.1",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:remark-rehype@11.1.2": "11.1.2",
-    "npm:semver@7.8.5": "7.8.5",
     "npm:sharp@0.35.5": "0.35.5",
     "npm:tailwind-scrollbar-hide@2.0.0": "2.0.0_tailwindcss@4.2.2",
     "npm:tailwindcss-animate@1.0.7": "1.0.7_tailwindcss@4.2.2",
@@ -169,6 +169,9 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
+    },
+    "@std/semver@1.0.8": {
+      "integrity": "dc830e8b8b6a380c895d53fbfd1258dc253704ca57bbe1629ac65fd7830179b7"
     },
     "@std/testing@1.0.17": {
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
@@ -4899,8 +4902,8 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17",
-      "npm:semver@7.8.5"
+      "jsr:@std/semver@1.0.8",
+      "jsr:@std/testing@1.0.17"
     ],
     "packageJson": {
       "overrides": {

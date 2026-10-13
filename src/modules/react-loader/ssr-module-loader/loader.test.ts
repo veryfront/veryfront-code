@@ -52,7 +52,11 @@ import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  getMdxModuleCacheVariant,
+  MDX_MODULE_DEV_COMPILE_VARIANT,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -2001,7 +2005,17 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await loader.loadRawModule(filePath, source);
 
       const pathCache = await getModulePathCache(mdxCacheDir);
-      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey("_vf_modules/util.js"));
+      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey(
+        "_vf_modules/util.js",
+        undefined,
+        getMdxModuleCacheVariant(
+          undefined,
+          undefined,
+          undefined,
+          false,
+          await getSSRReactRuntimeCacheScope(),
+        ),
+      ));
       assert(artifactPath !== undefined, "expected the _vf_modules artifact to be cached");
 
       const artifact = await Deno.readTextFile(artifactPath);
