@@ -250,12 +250,36 @@ export interface AppendExternalAgentWorkerRunEventsInput {
 
 /** Public API contract for external agent worker client. */
 export interface ExternalAgentWorkerClient {
+  /**
+   * Register a worker for a project. Calls the Veryfront API operation
+   * `createAgentWorker` (`POST /agent-workers/projects/{project_reference}/workers`).
+   */
   registerWorker(input: RegisterExternalAgentWorkerInput): Promise<ExternalAgentWorker>;
+  /**
+   * Report that a worker is alive. Calls the Veryfront API operation
+   * `heartbeatAgentWorker` (`POST /agent-workers/workers/{worker_id}/heartbeat`).
+   */
   heartbeatWorker(workerId: string): Promise<ExternalAgentWorker>;
+  /**
+   * Claim the next queued run for a worker. Calls the Veryfront API operation
+   * `claimAgentWorkerRun` (`POST /agent-workers/workers/{worker_id}/claim`).
+   * Returns `null` when no run is queued.
+   */
   claimRun(input: ClaimExternalAgentWorkerRunInput): Promise<ExternalAgentWorkerRun | null>;
+  /**
+   * Extend the lease on a claimed run. Calls the Veryfront API operation
+   * `renewAgentWorkerRunLease`
+   * (`POST /agent-workers/workers/{worker_id}/runs/{run_id}/lease`).
+   * Returns `null` when the lease cannot be renewed.
+   */
   renewLease(input: ClaimExternalAgentWorkerRunInput & { runId: string }): Promise<
     ExternalAgentWorkerRun | null
   >;
+  /**
+   * Record the worker session for a claimed run. Calls the Veryfront API operation
+   * `updateAgentWorkerRunSession`
+   * (`PUT /agent-workers/workers/{worker_id}/runs/{run_id}/session`).
+   */
   recordSession(input: RecordExternalAgentWorkerSessionInput): Promise<
     ExternalAgentWorkerSession
   >;

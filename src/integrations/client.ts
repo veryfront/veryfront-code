@@ -578,18 +578,11 @@ export async function createIntegrationClient(
         ? await options.redirectUri()
         : options.redirectUri;
       signal?.throwIfAborted();
-      requireRedirectUri(redirectUri);
-      const body = JSON.stringify({
-        integration,
-        project_reference: selectedProject.id,
+      const session = await client.createConnectSession(integration, {
         scope,
-        redirect_uri: redirectUri,
+        redirectUri: requireRedirectUri(redirectUri),
+        ...(signal ? { abortSignal: signal } : {}),
       });
-      if (new TextEncoder().encode(body).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
-        throw new RangeError("Integration connect request exceeds the byte limit");
-      }
-      const result = await request("/oauth/connect/session", { method: "POST", body, signal });
-      const session = readConnectSession(result, integration);
       const handoff: IntegrationOAuthHandoff = {
         status: "oauth_handoff",
         integration,
@@ -637,22 +630,23 @@ export async function createIntegrationClient(
       if (scope !== "user" && scope !== "project") {
         throw new TypeError("OAuth status requires an explicit user or project scope");
       }
-      const params = new URLSearchParams({ project_reference: selectedProject.id, scope });
-      const status = requireShape<IntegrationConnectionStatus>(
-        await request(`/oauth/status/${integrationPath(integration)}?${params}`, {
-          signal: options.abortSignal,
-        }),
-        (item) =>
-          typeof item.connected === "boolean" && item.integration === integration &&
-          ["connection_id", "connection_generation_id", "connectionId", "connectionGenerationId"]
-            .every((key) => item[key] === undefined || uuid(item[key])) &&
-          (item.connection_id === undefined || item.connectionId === undefined ||
-            item.connection_id === item.connectionId) &&
-          (item.connection_generation_id === undefined ||
-            item.connectionGenerationId === undefined ||
-            item.connection_generation_id === item.connectionGenerationId),
-      );
-      return { ...status, scope };
+      const current = await client.getConnectionStatus(integration, scope, options);
+      // Keep the legacy status shape: both ID spellings when connected, neither when not.
+      const ids: Record<string, string> = current.connectionId && current.connectionGenerationId
+        ? {
+          connectionId: current.connectionId,
+          connectionGenerationId: current.connectionGenerationId,
+          connection_id: current.connectionId,
+          connection_generation_id: current.connectionGenerationId,
+        }
+        : {};
+      const status: IntegrationConnectionStatus = {
+        connected: current.connected,
+        ...ids,
+        integration,
+        scope,
+      };
+      return status;
     },
     async createConnectSession(
       name: string,
