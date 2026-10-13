@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /**
  * Module Writer
  *
@@ -451,7 +452,8 @@ async function writeModuleESM(
     rewritten = await rewriteMdxRootDependencyImports(rewritten, importMap, {
       projectDir,
       projectId: effectiveContext.projectId,
-      reactVersion: effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION,
+      reactVersion: effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+        REACT_DEFAULT_VERSION,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
@@ -530,7 +532,8 @@ async function writeModuleESM(
     if (!sourceCapture) rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    const effectiveReactVersion = effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION;
+    const effectiveReactVersion = effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+      REACT_DEFAULT_VERSION;
     const cacheIdentity = await buildMdxModuleCacheIdentity(
       esmCacheDir,
       effectiveContext.projectId,
@@ -742,7 +745,8 @@ async function writeModuleESM(
           filePath: filePath,
           projectDir,
           target: "ssr" as const,
-          reactVersion: effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION,
+          reactVersion: effectiveContext.reactVersion ?? resolveInstalledReactRange() ??
+            REACT_DEFAULT_VERSION,
         } as Parameters<typeof ssrVfModulesPlugin.transform>[0];
 
         rewritten = await ssrVfModulesPlugin.transform(transformCtx);

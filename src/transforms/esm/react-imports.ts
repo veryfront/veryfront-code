@@ -1,6 +1,9 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
-import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  getLocalReactPath,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -18,8 +21,9 @@ function getVeryfrontModulePaths(): Record<string, string> {
 export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
-  reactVersion: string = DEFAULT_REACT_VERSION,
+  reactVersion?: string,
 ): Promise<string> {
+  reactVersion ??= (forSSR ? resolveInstalledReactRange() : undefined) ?? DEFAULT_REACT_VERSION;
   const reactImports = getReactImportMap(reactVersion);
 
   if (!forSSR) {

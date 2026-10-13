@@ -15,9 +15,8 @@ import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
-  normalizeReactVersion,
   resolveProjectReactVersion,
-  stripSemverRange,
+  selectReactDeclarationVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
 import type { ReactServerRuntime } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
@@ -145,12 +144,11 @@ export class SSRRenderer {
     this.mode = mode;
     this.projectDir = projectDir;
     this.config = config;
-
     const legacyVersions = config?.client?.cdn?.versions;
     const configuredVersion = config?.react?.version ??
       (legacyVersions && legacyVersions !== "auto" ? legacyVersions.react : undefined);
     if (configuredVersion) {
-      this.resolvedReactVersion = normalizeReactVersion(stripSemverRange(configuredVersion));
+      this.resolvedReactVersion = selectReactDeclarationVersion(configuredVersion);
     }
   }
 

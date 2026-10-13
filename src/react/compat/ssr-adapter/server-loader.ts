@@ -12,7 +12,11 @@ import { rendererLogger } from "#veryfront/utils";
 import type { SSROptions } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
-import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
+import { satisfies } from "semver";
+import {
+  getLocalReactPath,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 const logger = rendererLogger.component("server-loader");
 
@@ -79,7 +83,7 @@ function validateReactRuntimeVersion(
   }
   if (
     requestedVersion !== undefined &&
-    version.replace(/^v/, "") !== resolveReactVersion(requestedVersion).replace(/^v/, "")
+    !satisfies(version, requestedVersion)
   ) {
     throw INITIALIZATION_ERROR.create({
       detail: "React runtime version does not match the selected project version",
@@ -101,6 +105,8 @@ export function resetReactCache(): void {
 }
 
 function resolveReactVersion(version?: string): string {
+  const installed = resolveInstalledReactRange(version);
+  if (installed) return installed;
   return normalizeReactVersion(version ? stripSemverRange(version) : undefined);
 }
 
@@ -182,6 +188,7 @@ export function getProjectReact(
       normalizedVersion,
     ) as { default?: typeof import("react") };
     const loadedReact = (reactModule.default ?? reactModule) as typeof import("react");
+    validateReactRuntimeVersion(loadedReact, normalizedVersion);
     projectReactCache.set(normalizedVersion, loadedReact);
     return loadedReact;
   });

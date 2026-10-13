@@ -1,13 +1,48 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { clearReactPathsCache, getLocalReactPaths, isReactSpecifier } from "./react-paths.ts";
 import { isBun, isNode } from "./runtime.ts";
 import { createRequire } from "node:module";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import Module from "node:module";
+import {
+  resolveProjectPackageVersions,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { getLocalReactPath } from "./react-paths.ts";
 
 describe("react-paths", () => {
+  it("does not require an optional client export to resolve React and its server", () => {
+    if (!isNode) return;
+    const original = Reflect.get(Module, "_resolveFilename");
+    clearReactPathsCache();
+    try {
+      Reflect.set(Module, "_resolveFilename", function (request: string, ...args: unknown[]) {
+        if (request === "react-dom/client") {
+          throw Object.assign(new Error("optional export unavailable"), {
+            code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+          });
+        }
+        return Reflect.apply(original, Module, [request, ...args]);
+      });
+      assertEquals(getLocalReactPath("react", "19.2.4")?.startsWith("file:"), true);
+      assertEquals(getLocalReactPath("react-dom/server", "19.2.4")?.startsWith("file:"), true);
+      assertEquals(getLocalReactPaths()["react-dom/client"], undefined);
+      assertThrows(() => getLocalReactPath("react-dom/client", "19.2.4"));
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+    }
+  });
+  it("rejects a selected version absent from Bun's resolved React peers", () => {
+    if (!isBun) return;
+    assertThrows(() => getLocalReactPath("react", "18.3.1"), TypeError, "does not match");
+    assertThrows(
+      () => getLocalReactPath("react-dom/server", "18.3.1"),
+      TypeError,
+      "does not match",
+    );
+  });
   it("accepts authored ranges satisfied by the installed React singleton", () => {
     if (!isNode) return;
     for (const range of ["^19.2.0", "~19.2.0", "19"]) {
@@ -20,6 +55,18 @@ describe("react-paths", () => {
     const original = manifest.version;
     try {
       manifest.version = "19.2.5";
+      assertEquals(await resolveProjectReactVersion({}), "19.2.5");
+      assertEquals((await resolveProjectPackageVersions({})).react, "19.2.5");
+      assertEquals(
+        (await resolveProjectPackageVersions({
+          dependencyPinningCacheKey: "on:empty",
+          dependencyPinningDependencies: {},
+        })).react,
+        await resolveProjectReactVersion({
+          dependencyPinningCacheKey: "on:empty",
+          dependencyPinningDependencies: {},
+        }),
+      );
       assertEquals(
         await resolveProjectReactVersion({
           dependencyPinningCacheKey: "on:range",

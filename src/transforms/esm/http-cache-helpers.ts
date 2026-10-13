@@ -22,7 +22,12 @@ import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
-import { getLocalReactPath, getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  getLocalReactPath,
+  getLocalReactPaths,
+  getLocalReactVersions,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 import { runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 
 const logger = rendererLogger.component("http-cache");
@@ -388,7 +393,9 @@ export function prepareHttpCacheRequestOptions<T extends CacheOptions>(options: 
     ...options,
     localReact: options.localReact === true && (runtimeKind === "node" || runtimeKind === "bun"),
     ...(options.localReact && (runtimeKind === "node" || runtimeKind === "bun")
-      ? { reactVersion: options.reactVersion ?? DEFAULT_REACT_VERSION }
+      ? {
+        reactVersion: options.reactVersion ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION,
+      }
       : {}),
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
   } as T;
@@ -431,7 +438,10 @@ function getRequestImportMapFingerprint(
 
 /** Scope cached SSR code to the runtime and its immutable local peer paths. */
 export async function getSSRReactRuntimeCacheScope(): Promise<string> {
-  const peers = await fingerprintImportMap({ imports: getLocalReactPaths() });
+  const peers = await fingerprintImportMap({
+    imports: getLocalReactPaths(),
+    scopes: { "installed-peer-versions": getLocalReactVersions() },
+  });
   return `local-react:${runtimeKind}:${peers}`;
 }
 
@@ -446,7 +456,10 @@ export async function buildHttpCacheIdentity(
   const reactVersion = effective.options.reactVersion;
   let localReactScope = "";
   if (effective.options.localReact && (runtimeKind === "node" || runtimeKind === "bun")) {
-    getLocalReactPath("react", reactVersion ?? DEFAULT_REACT_VERSION);
+    getLocalReactPath(
+      "react",
+      reactVersion ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION,
+    );
     // Absolute peer URLs are process-installation references, not portable
     // cache dependencies. Recovery recomputes this scope in the consumer.
     localReactScope = `,${JSONStringify(await getSSRReactRuntimeCacheScope())}`;

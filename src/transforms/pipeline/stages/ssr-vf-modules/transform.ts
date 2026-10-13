@@ -11,7 +11,7 @@ import {
 } from "#veryfront/transforms/esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { dirname, fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, relative, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
@@ -215,6 +215,7 @@ async function compileFallbackSource(
     format: "esm",
     target: "es2022",
     supported: ESBUILD_SUPPORTED_FEATURES,
+    define: { "import.meta.url": JSON.stringify(toFileUrl(sourcePath).href) },
   });
   return await restoreRootBundledSourceSpecifiers(
     await upgradeImportAssertions(result.code),
@@ -524,6 +525,7 @@ async function transformFrameworkCodeUncoalesced(
       format: "esm",
       target: "es2022",
       supported: ESBUILD_SUPPORTED_FEATURES,
+      define: { "import.meta.url": JSON.stringify(toFileUrl(sourcePath).href) },
     });
 
     let transformed = await restoreRootBundledSourceSpecifiers(

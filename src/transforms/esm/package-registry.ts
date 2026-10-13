@@ -402,7 +402,7 @@ export function isValidReactVersion(version: string): boolean {
  * Validate and normalize React version.
  */
 export function normalizeReactVersion(version: string | undefined): string {
-  if (!version) return DEFAULT_REACT_VERSION;
+  if (!version) return resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
 
   rendererLogger.warn(
@@ -418,7 +418,7 @@ export function stripSemverRange(version: string): string {
   return version.replace(/^[~^>=<]+/, "");
 }
 
-function selectReactDeclarationVersion(declaration: string): string {
+export function selectReactDeclarationVersion(declaration: string): string {
   return resolveInstalledReactRange(declaration) ??
     normalizeReactVersion(stripSemverRange(declaration));
 }
@@ -1093,7 +1093,7 @@ export async function resolveProjectPackageVersions(
     return {
       react: dependencies?.react
         ? selectReactDeclarationVersion(dependencies.react)
-        : DEFAULT_REACT_VERSION,
+        : normalizeReactVersion(undefined),
       veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
     };
   }
@@ -1114,7 +1114,7 @@ export async function resolveProjectPackageVersions(
   }
 
   return {
-    react: configuredReact ?? detectedReact ?? DEFAULT_REACT_VERSION,
+    react: configuredReact ?? detectedReact ?? normalizeReactVersion(undefined),
     veryfront: configuredVeryfront ?? detectedVeryfront,
   };
 }
@@ -1165,5 +1165,5 @@ export async function resolveProjectReactVersion(
   }
 
   // 5. Fallback to default
-  return DEFAULT_REACT_VERSION;
+  return normalizeReactVersion(undefined);
 }

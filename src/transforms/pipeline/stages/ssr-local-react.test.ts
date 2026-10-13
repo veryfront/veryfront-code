@@ -3,17 +3,112 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
-import { rewriteSSRImportsCompatAsync } from "../../import-rewriter/ssr-adapter.ts";
+import {
+  rewriteSSRImportsCompat,
+  rewriteSSRImportsCompatAsync,
+} from "../../import-rewriter/ssr-adapter.ts";
 import { buildReplacements, rewriteModuleImports } from "../../esm/specifier-resolver.ts";
 import { resolveReactSpecifier } from "./ssr-vf-modules/specifier-resolver.ts";
 import { buildHttpCacheIdentity, resolveBareSpecifier } from "../../esm/http-cache-helpers.ts";
 import { resolveReactImports } from "../../esm/react-imports.ts";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import { getSSRReactRuntimeCacheScope } from "../../esm/http-cache-helpers.ts";
+import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
 import {
   getProjectReact,
   getReactDOMServer,
+  resolveSSRRuntime,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 describe("Node SSR local React graph", () => {
+  it("renders a configured compatible range through SSRRenderer", async () => {
+    if (!isBun) return;
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const react = await getProjectReact();
+    const renderer = new SSRRenderer(
+      "development",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: "^19.2.0" } } as never,
+    );
+    const result = await renderer.renderToHTML(
+      react.createElement("main", null, "configured-range"),
+      { mode: "development", wantsStream: false },
+    );
+    assertEquals(result.html?.includes("<main>configured-range</main>"), true);
+  });
+  it("defaults public local-cache and SSR rewriting entrypoints to installed peers", async () => {
+    if (!isNode) return;
+    const require = createRequire(import.meta.url);
+    const react = require("react/package.json");
+    const dom = require("react-dom/package.json");
+    const originalReact = react.version;
+    const originalDom = dom.version;
+    try {
+      react.version = "19.2.5";
+      dom.version = "19.2.5";
+      const code = 'import { jsx } from "react/jsx-runtime"; export const value = jsx;';
+      assertEquals(rewriteSSRImportsCompat(code).includes("esm.sh"), false);
+      assertEquals((await rewriteSSRImportsCompatAsync(code)).includes("esm.sh"), false);
+      const cached = await cacheHttpImportsToLocal(code, {
+        cacheDir: "/unused",
+        importMap: { imports: {} },
+        localReact: true,
+      });
+      assertEquals(cached.code.includes("esm.sh"), false);
+      assertEquals((await resolveReactImports(code, true)).includes("esm.sh"), false);
+    } finally {
+      react.version = originalReact;
+      dom.version = originalDom;
+    }
+  });
+  it("validates an explicitly supplied runtime against its own version", async () => {
+    const runtime = {
+      react: { version: "19.2.0" },
+      server: { renderToString: () => "supplied", renderToStaticMarkup: () => "supplied" },
+    };
+    const selected = await resolveSSRRuntime({
+      reactRuntime: runtime as never,
+      reactVersion: "^19.2.0",
+    });
+    assertEquals(selected.react, runtime.react);
+    assertEquals(selected.server, runtime.server);
+  });
+  it("accepts compatible ranges on the public renderer entrypoints", async () => {
+    if (!isNode) return;
+    const react = await getProjectReact("^19.2.0");
+    const server = await getReactDOMServer("^19.2.0");
+    assertEquals(
+      server.renderToStaticMarkup(react.createElement("main", null, "compatible")),
+      "<main>compatible</main>",
+    );
+  });
+  it("invalidates the scope when installed versions change at unchanged peer paths", async () => {
+    if (!isNode) return;
+    const { syncBuiltinESMExports } = await import("node:module");
+    const before = await getSSRReactRuntimeCacheScope();
+    const manifestPath = createRequire(import.meta.url).resolve("react/package.json");
+    const originalRead = fs.readFileSync;
+    try {
+      fs.readFileSync = ((path: unknown, options: unknown) => {
+        const content = Reflect.apply(originalRead, fs, [path, options]);
+        if (path === manifestPath && typeof content === "string") {
+          const manifest = JSON.parse(content);
+          manifest.version = "19.2.5";
+          return JSON.stringify(manifest);
+        }
+        return content;
+      }) as typeof fs.readFileSync;
+      syncBuiltinESMExports();
+      assertEquals(await getSSRReactRuntimeCacheScope() === before, false);
+    } finally {
+      fs.readFileSync = originalRead;
+      syncBuiltinESMExports();
+    }
+    assertEquals(await getSSRReactRuntimeCacheScope(), before);
+  });
   it("keeps browser release dependency resolution on the CDN graph", () => {
     assertEquals(
       resolveBareSpecifier("react", { imports: {} }, "19.2.4").startsWith("https://esm.sh/"),

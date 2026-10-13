@@ -112,6 +112,7 @@
     "npm:remark-gfm@4.0.1": "4.0.1",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:remark-rehype@11.1.2": "11.1.2",
+    "npm:semver@7.8.5": "7.8.5",
     "npm:sharp@0.35.5": "0.35.5",
     "npm:tailwind-scrollbar-hide@2.0.0": "2.0.0_tailwindcss@4.2.2",
     "npm:tailwindcss-animate@1.0.7": "1.0.7_tailwindcss@4.2.2",
@@ -4898,7 +4899,8 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17"
+      "jsr:@std/testing@1.0.17",
+      "npm:semver@7.8.5"
     ],
     "packageJson": {
       "overrides": {

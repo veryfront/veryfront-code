@@ -14,12 +14,15 @@ declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } 
 
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { satisfies, valid } from "npm:semver@7.8.5";
+import { readFileSync } from "node:fs";
+import { satisfies, valid } from "semver";
 import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 const ReflectApply = Reflect.apply;
 const StringStartsWith = String.prototype.startsWith;
+const JSONParse = JSON.parse;
+const ObjectFreeze = Object.freeze;
 
 let localReactPathsCache: Readonly<Record<string, string>> | null = null;
 const EMPTY_REACT_PATHS: Readonly<Record<string, string>> = Object.freeze({});
@@ -33,10 +36,36 @@ const REACT_SPECIFIERS = [
   "react/jsx-dev-runtime",
 ] as const;
 
+function localPackageManifestPath(packageName: string): string {
+  if (isBun && typeof Bun?.resolveSync === "function") {
+    return Bun.resolveSync(`${packageName}/package.json`, cwd());
+  }
+  return createRequire(import.meta.url).resolve(`${packageName}/package.json`);
+}
+
+/** Fresh on-disk peer versions for cache invalidation after dependency updates. */
+export function getLocalReactVersions(): Readonly<Record<string, string>> {
+  if (!isNode && !isBun) return ObjectFreeze({});
+  const versions: Record<string, string> = {};
+  for (const name of ["react", "react-dom"]) {
+    const version = JSONParse(readFileSync(localPackageManifestPath(name), "utf8")).version;
+    if (typeof version !== "string" || !valid(version)) {
+      throw new TypeError("Invalid installed React package version");
+    }
+    versions[name] = version;
+  }
+  return ObjectFreeze(versions);
+}
+
+function localPackageVersion(packageName: string): string {
+  return createRequire(import.meta.url)(localPackageManifestPath(packageName)).version;
+}
+
 /** Select a compatible installed version before emitting SSR and browser URLs. */
-export function resolveInstalledReactRange(declaration: string): string | undefined {
-  if (!isNode || valid(declaration)) return undefined;
-  const version = createRequire(import.meta.url)("react/package.json").version;
+export function resolveInstalledReactRange(declaration?: string): string | undefined {
+  if ((!isNode && !isBun) || (declaration && valid(declaration))) return undefined;
+  const version = localPackageVersion("react");
+  if (declaration === undefined) return version;
   return satisfies(version, declaration) ? version : undefined;
 }
 
@@ -65,8 +94,15 @@ export function getLocalReactPaths(): Readonly<Record<string, string>> {
   const paths: Record<string, string> = {};
 
   for (const specifier of REACT_SPECIFIERS) {
-    const resolved = resolveReactSpecifier(specifier);
-    if (resolved) paths[specifier] = resolved;
+    try {
+      const resolved = resolveReactSpecifier(specifier);
+      if (resolved) paths[specifier] = resolved;
+    } catch (error) {
+      // Older peers may not export optional client/runtime entrypoints. A
+      // requested Node entrypoint is resolved separately and still fails closed.
+      const code = (error as { code?: string }).code;
+      if (code !== "MODULE_NOT_FOUND" && code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
+    }
   }
 
   localReactPathsCache = Object.freeze(paths);
@@ -76,16 +112,17 @@ export function getLocalReactPaths(): Readonly<Record<string, string>> {
 /** Resolve SSR React imports against the same peers as the framework renderer. */
 export function getLocalReactPath(specifier: string, reactVersion?: string): string | undefined {
   if (!isReactSpecifier(specifier)) return undefined;
-  if (isNode && reactVersion !== undefined) {
+  if ((isNode || isBun) && reactVersion !== undefined) {
     const packageName =
       specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])
         ? "react-dom"
         : "react";
-    const installedVersion = createRequire(import.meta.url)(`${packageName}/package.json`).version;
+    const installedVersion = localPackageVersion(packageName);
     if (!satisfies(installedVersion, reactVersion)) {
       throw new TypeError("Local React runtime does not match the selected project version");
     }
   }
+  if (isNode) return resolveReactSpecifier(specifier);
   const mapped = getLocalReactPaths()[specifier];
   if (mapped) return mapped;
   // Unsupported or missing Node subpaths must fail through package exports.

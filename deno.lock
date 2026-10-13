@@ -4823,7 +4823,8 @@
       "jsr:@std/fmt@1.0.9",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17"
+      "jsr:@std/testing@1.0.17",
+      "npm:semver@7.8.5"
     ],
     "packageJson": {
       "overrides": {

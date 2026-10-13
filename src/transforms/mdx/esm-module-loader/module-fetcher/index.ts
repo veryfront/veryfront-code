@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /****
  * Module Fetcher
  *
@@ -401,7 +402,8 @@ async function doFetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
-  const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const effectiveReactVersion = context.reactVersion ?? resolveInstalledReactRange() ??
+    REACT_DEFAULT_VERSION;
   const dev = context.dev === true;
   const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
   const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")

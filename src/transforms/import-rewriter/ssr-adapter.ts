@@ -2,7 +2,10 @@ import { BUNDLE_ERROR } from "#veryfront/errors";
 import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  getLocalReactPath,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { assertContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
@@ -162,7 +165,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   if (localPath) return localPath;
 
   // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
-  const v = version ?? DEFAULT_REACT_VERSION;
+  const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
   const mapped = getReactImportMap(v)[specifier];
   if (mapped) return mapped;
 
@@ -283,7 +286,7 @@ function rewriteBareImports(
   ) => void,
   serverExternalPackages?: readonly string[],
 ): string {
-  const v = version ?? DEFAULT_REACT_VERSION;
+  const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
 
   observeSpecialImportDependencies(
     code,

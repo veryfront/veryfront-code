@@ -10,7 +10,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   isCyclePlaceholder,
   reactReExportToEsmUrl,
@@ -140,6 +140,22 @@ describe("transformFrameworkCode depth-limit fallback", {
 }, () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  it("preserves the original framework URL after relocating a module into cache", async () => {
+    const directory = await makeTempDir({ prefix: "vf-framework-anchor-" });
+    const sourcePath = join(directory, "framework", "peer-resolution.ts");
+    try {
+      const code = await transformFrameworkCode(
+        "export const anchor = import.meta.url;",
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: directory, fs: createFileSystem() },
+      );
+      assertStringIncludes(code, toFileUrl(sourcePath).href);
+      assertEquals(code.includes("import.meta.url"), false);
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
   });
 
   it("isolates cached framework transforms by React version", async () => {

@@ -198,6 +198,7 @@
     "./server/http-host": "./src/server/isolated-http/hosted-http-composition.ts"
   },
   "imports": {
+    "semver": "npm:semver@7.8.5",
     "veryfront/integrations/diagnostics": "./src/integrations/error-context.ts",
     "veryfront/index.client": "./src/index.client.ts",
     "veryfront/head": "./src/react/runtime/core.ts",
