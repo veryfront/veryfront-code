@@ -951,7 +951,7 @@ describe("resolvePushRemoteFiles", () => {
         params: { search: "feature-x", limit: "100" },
       },
       {
-        url: "/projects/my-project/files?branch=feature-x",
+        url: "/projects/my-project/files?ref=branch%3Afeature-x",
         params: { limit: "100", sort_by: "updated_at", sort_order: "desc" },
       },
     ]);
@@ -2284,7 +2284,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2364,7 +2364,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2490,7 +2490,7 @@ describe("push divergence guard", () => {
             return Response.json({ error: "already exists" }, { status: 409 });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2559,7 +2559,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",

@@ -42,8 +42,8 @@ const stringReplace = String.prototype.replace;
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
-    file_upload_url: v.string().url(),
-    file_path: v.string(),
+    upload_url: v.string().url(),
+    path: v.string(),
     upload_id: v.string(),
     required_headers: v.record(v.string(), v.string()),
   })
@@ -55,14 +55,20 @@ const getUploadMetadataResponseSchema = defineSchema((v) =>
     path: v.string(),
     file_name: v.string(),
     content_type: v.string().nullable(),
-    size: v.number(),
+    // `size_bytes` is the size field. `size` is its earlier spelling, which the
+    // route still serves beside it and which an API without `size_bytes` serves alone.
+    size_bytes: v.number().optional(),
+    size: v.number().optional(),
     url: v.string().nullable(),
     status: v.enum(["pending", "active", "failed"]),
     visibility: v.enum(["project", "public", "private"]),
     created_at: v.string(),
     updated_at: v.string(),
     deleted_at: v.string().nullable(),
-  })
+  }).refine(
+    (upload) => upload.size_bytes !== undefined || upload.size !== undefined,
+    "size_bytes is required",
+  )
 );
 
 const getUploadSignedUrlResponseSchema = defineSchema((v) =>
@@ -391,7 +397,7 @@ function mapUploadMetadataToRef(upload: UploadMetadataResponse, id: string): Blo
   return {
     __kind: "blob",
     id,
-    size: upload.size,
+    size: (upload.size_bytes ?? upload.size) as number,
     mimeType: upload.content_type ?? "application/octet-stream",
     createdAt: new Date(upload.created_at),
   };
@@ -758,9 +764,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            file_path: path,
+            path,
             content_type: mimeType,
-            size,
+            size_bytes: size,
           }),
           signal,
         },
@@ -777,7 +783,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     if (!requestSignal) throw new TypeError("Blob upload request signal is unavailable");
     let response: Response;
     try {
-      response = await guardedOutboundFetch(upload.file_upload_url, {
+      response = await guardedOutboundFetch(upload.upload_url, {
         method: "PUT",
         headers,
         body,
@@ -839,7 +845,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     resolved: ResolvedConfig,
   ): Promise<{ signedUrl: string; expiresAt: Date } | null> {
     const ttl = resolved.downloadTtl;
-    const query = ttl ? `?ttl=${encodeURIComponent(String(ttl))}` : "";
+    const query = ttl ? `?ttl_seconds=${encodeURIComponent(String(ttl))}` : "";
     const raw = await this.#requestJson(
       "GET",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads/${

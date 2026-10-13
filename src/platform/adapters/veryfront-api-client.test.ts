@@ -182,7 +182,9 @@ describe("VeryfrontApiClient", () => {
             );
           }
 
-          if (urlStr.includes("/projects/test-project/files?") && urlStr.includes("branch=main")) {
+          if (
+            urlStr.includes("/projects/test-project/files?") && urlStr.includes("ref=branch%3Amain")
+          ) {
             fileListUrls.push(urlStr);
             const cursor = new URL(urlStr).searchParams.get("cursor");
             if (cursor !== null && cursor !== "page2") unexpectedCursors.push(cursor);
@@ -327,7 +329,7 @@ describe("VeryfrontApiClient", () => {
 
           if (
             urlStr.includes("/projects/test-project/files/test.ts?") &&
-            urlStr.includes("branch=main")
+            urlStr.includes("ref=branch%3Amain")
           ) {
             return Promise.resolve(
               new Response(
@@ -343,7 +345,9 @@ describe("VeryfrontApiClient", () => {
             );
           }
 
-          if (urlStr.includes("/projects/test-project/files?") && urlStr.includes("branch=main")) {
+          if (
+            urlStr.includes("/projects/test-project/files?") && urlStr.includes("ref=branch%3Amain")
+          ) {
             return Promise.resolve(
               new Response(
                 JSON.stringify({

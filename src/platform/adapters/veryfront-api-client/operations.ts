@@ -319,8 +319,20 @@ export interface ListFilesOptions {
   signal?: AbortSignal;
 }
 
-/** Every branch listing field except `content`. */
-const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size,type,updated_at,checksum)";
+/**
+ * Every branch listing field except `content`. `size_bytes` is the size field;
+ * `size` is its earlier spelling, selected beside it so an API that answers only
+ * `size` still returns a file size.
+ */
+const BRANCH_FILE_METADATA_FIELDS = "(id,version_id,path,size_bytes,size,type,updated_at,checksum)";
+
+/**
+ * The `ref` content selector for a branch. An empty reference addresses main,
+ * as the route treats an omitted selector.
+ */
+function branchFileRef(branchRef: string): string {
+  return branchRef === "" ? "main" : `branch:${branchRef}`;
+}
 
 export interface FileListResult {
   files: ProjectFile[];
@@ -636,7 +648,7 @@ export class VeryfrontAPIOperations {
   ): Promise<FileListResult> {
     const params = addRuntimeServerFunctionAccess(buildListParams(options));
     if (options.withoutContent) params.set("fields", BRANCH_FILE_METADATA_FIELDS);
-    params.set("branch", branchRef);
+    params.set("ref", branchFileRef(branchRef));
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
@@ -694,7 +706,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;
@@ -736,7 +750,9 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
-        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const params = addRuntimeServerFunctionAccess(
+          new URLSearchParams({ ref: branchFileRef(branchRef) }),
+        );
         const url = `/projects/${encodeURIComponent(projectRef)}/files/${
           encodeURIComponent(pathOrId)
         }?${params}`;

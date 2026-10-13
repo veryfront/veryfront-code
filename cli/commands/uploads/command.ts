@@ -24,6 +24,9 @@ export interface UploadItem {
   type: "file" | "folder";
   path: string;
   file_name?: string;
+  /** File size in bytes. */
+  size_bytes?: number;
+  /** Earlier spelling of `size_bytes`. */
   size?: number;
   content_type?: string | null;
   status?: string;
@@ -32,8 +35,19 @@ export interface UploadItem {
   updated_at?: string;
 }
 
+/** A visible folder in the `folders` array of an uploads listing. */
+interface UploadFolder {
+  path: string;
+  visibility?: string;
+  permission?: string;
+  created_at?: string;
+}
+
 interface UploadsListResponse {
+  /** Uploads. An API that predates `folders` also lists folders here as `type: "folder"` items. */
   data: UploadItem[];
+  /** Visible folders, unpaginated: every page carries the same array. */
+  folders?: UploadFolder[];
   page_info?: {
     next?: string | null;
     prev?: string | null;
@@ -46,10 +60,11 @@ interface SignedUrlResponse {
 }
 
 interface CreateUploadResponse {
-  file_upload_url: string;
-  file_path: string;
+  upload_url: string;
+  path: string;
   upload_id: string;
   required_headers: Record<string, string>;
+  status?: "pending";
 }
 
 const getUploadListArgsSchema = defineSchema((v) =>
@@ -117,7 +132,8 @@ export type UploadDeleteOptions = InferSchema<ReturnType<typeof getUploadDeleteA
 
 function formatUploadItem(item: UploadItem): string {
   if (item.type === "folder") return `[folder] ${item.path}`;
-  const size = typeof item.size === "number" ? ` (${item.size} bytes)` : "";
+  const sizeBytes = item.size_bytes ?? item.size;
+  const size = typeof sizeBytes === "number" ? ` (${sizeBytes} bytes)` : "";
   return `[file] ${item.path}${size}`;
 }
 
@@ -226,7 +242,8 @@ export async function listAllUploads(
   projectSlug: string,
   options: Partial<Pick<UploadListOptions, "path" | "recursive" | "limit">> = {},
 ): Promise<UploadItem[]> {
-  const allItems: UploadItem[] = [];
+  const uploads: UploadItem[] = [];
+  let folders: UploadItem[] | undefined;
   let cursor: string | undefined;
 
   do {
@@ -241,11 +258,16 @@ export async function listAllUploads(
       buildUploadsListUrl(projectSlug),
       params,
     );
-    allItems.push(...response.data);
+    // Folders are unpaginated: every page carries the same `folders` array, so
+    // the first page supplies them. The `type: "folder"` items in `data` repeat
+    // it and are read only when the response has no `folders` array.
+    folders ??= response.folders?.map((folder) => ({ type: "folder" as const, ...folder })) ??
+      response.data.filter((item) => item.type === "folder");
+    uploads.push(...response.data.filter((item) => item.type !== "folder"));
     cursor = response.page_info?.next ?? undefined;
   } while (cursor);
 
-  return allItems;
+  return [...(folders ?? []), ...uploads];
 }
 
 export function resolveUploadOutputPath(uploadPath: string, outputDir: string): string {
@@ -302,13 +324,13 @@ export async function uploadLocalFileToUploads(
   const createResponse = await client.post<CreateUploadResponse>(
     buildUploadCreateUrl(projectSlug),
     {
-      file_path: normalizedPath,
+      path: normalizedPath,
       content_type: inferredContentType,
-      size: bytes.byteLength,
+      size_bytes: bytes.byteLength,
     },
   );
 
-  const uploadResponse = await fetch(createResponse.file_upload_url, {
+  const uploadResponse = await fetch(createResponse.upload_url, {
     method: "PUT",
     headers: createResponse.required_headers,
     body: bytes as BodyInit,

@@ -244,7 +244,7 @@ describe("VeryfrontAPIOperations", () => {
             id: "file-id",
             version_id: "version-id",
             path: "agents/assistant.ts",
-            size: 18,
+            size_bytes: 18,
             type: "file",
             updated_at: "2026-10-02T00:00:00.000Z",
             checksum: "abc123",
@@ -260,11 +260,83 @@ describe("VeryfrontAPIOperations", () => {
       const parsed = new URL(requestedUrl);
       assertEquals(
         parsed.searchParams.get("fields"),
-        "(id,version_id,path,size,type,updated_at,checksum)",
+        "(id,version_id,path,size_bytes,size,type,updated_at,checksum)",
       );
       assertEquals(parsed.searchParams.get("include_server_functions"), "true");
       assertEquals(result.files[0]?.checksum, "abc123");
       assertEquals(result.files[0]?.content, undefined);
+      assertEquals(result.files[0]?.size, 18);
+    });
+
+    it("addresses a branch with the ref selector on file lists and reads", async () => {
+      const requestedUrls: string[] = [];
+      stubJsonFetch((url) => {
+        requestedUrls.push(url);
+        return url.includes("/files/")
+          ? {
+            path: "pages/index.tsx",
+            content: "export {}",
+            type: "page",
+            size_bytes: 9,
+            size: 9,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          }
+          : { data: [], page_info: { self: null, first: null, next: null, prev: null } };
+      });
+
+      const ops = createOps();
+      await ops.listBranchFiles("project-slug", "feature/x");
+      const file = await ops.getBranchFile("project-slug", "feature/x", "pages/index.tsx");
+      await ops.listBranchFiles("project-slug", "");
+
+      const [list, detail, emptyRef] = requestedUrls.map((url) => new URL(url).searchParams);
+      assertEquals(list?.get("ref"), "branch:feature/x");
+      assertEquals(list?.has("branch"), false);
+      assertEquals(detail?.get("ref"), "branch:feature/x");
+      assertEquals(detail?.has("branch"), false);
+      assertEquals(emptyRef?.get("ref"), "main");
+      assertEquals(file.size, 9);
+    });
+
+    it("reads size_bytes before size and still accepts a file that carries only size", async () => {
+      stubJsonFetch(() => ({
+        data: [
+          {
+            path: "a.ts",
+            content: "a",
+            type: "file",
+            size_bytes: 7,
+            size: 1,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          },
+          {
+            path: "b.ts",
+            content: "b",
+            type: "file",
+            size: 3,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          },
+        ],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }));
+
+      const result = await createOps().listBranchFiles("project-slug", "main");
+
+      assertEquals(result.files.map((file) => file.size), [7, 3]);
+    });
+
+    it("rejects a branch file that carries neither size_bytes nor size", async () => {
+      stubJsonFetch(() => ({
+        data: [{
+          path: "a.ts",
+          content: "a",
+          type: "file",
+          updated_at: "2026-10-02T00:00:00.000Z",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }));
+
+      await assertRejects(() => createOps().listBranchFiles("project-slug", "main"));
     });
 
     it("lists branch metadata in 1000-file pages and contents in 100-file pages", async () => {
@@ -1058,7 +1130,7 @@ describe("VeryfrontAPIOperations", () => {
 
       assertEquals([...bytes], [0xc3, 0xa9]);
       assertStringIncludes(requestedUrl, "/projects/project-slug/files/styles%2Fmanifest.json?");
-      assertStringIncludes(requestedUrl, "branch=main");
+      assertEquals(new URL(requestedUrl).searchParams.get("ref"), "branch:main");
       assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
 

@@ -160,6 +160,32 @@ describe("schemas", () => {
       });
       assertEquals(result.success, true);
     });
+
+    it("reads the size from size_bytes and falls back to size", () => {
+      const file = {
+        path: "pages/index.tsx",
+        type: "page",
+        updated_at: "2024-01-01T00:00:00Z",
+        content: "export default function Home() {}",
+      };
+      const both = getBranchFileListItemSchema().safeParse({ ...file, size_bytes: 512, size: 1 });
+      const canonical = getBranchFileListItemSchema().safeParse({ ...file, size_bytes: 512 });
+      const earlier = getBranchFileListItemSchema().safeParse({ ...file, size: 256 });
+
+      assertEquals(both.success && both.data.size, 512);
+      assertEquals(canonical.success && canonical.data.size, 512);
+      assertEquals(earlier.success && earlier.data.size, 256);
+    });
+
+    it("rejects a branch file without a size", () => {
+      const result = getBranchFileListItemSchema().safeParse({
+        path: "pages/index.tsx",
+        type: "page",
+        updated_at: "2024-01-01T00:00:00Z",
+        content: "export default function Home() {}",
+      });
+      assertEquals(result.success, false);
+    });
   });
 
   describe("ListBranchFilesResponseSchema", () => {

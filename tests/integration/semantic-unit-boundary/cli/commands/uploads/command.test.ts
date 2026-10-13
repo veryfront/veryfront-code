@@ -31,7 +31,11 @@ import {
   uploadLocalFileToUploads,
   uploadsCommand,
 } from "#cli/commands/uploads/command";
-import type { ApiClient } from "../../../../../../cli/shared/config.ts";
+import {
+  type ApiClient,
+  createApiClient,
+  type ResolvedConfig,
+} from "../../../../../../cli/shared/config.ts";
 import type { ParsedArgs } from "../../../../../../cli/shared/types.ts";
 
 const denoOnlyIt = typeof Deno === "undefined" ? it.skip : it;
@@ -129,6 +133,74 @@ describe("listAllUploads", () => {
       recursive: "true",
       cursor: "cursor-2",
     });
+  });
+
+  it("reads folders from the folders array once and uploads from data", async () => {
+    const folders = [
+      { path: "contracts/", visibility: "project", permission: "admin", created_at: "2026-10-01" },
+    ];
+    const pages = [
+      {
+        data: [
+          { type: "folder", ...folders[0] },
+          { type: "file", path: "contracts/q1.pdf", size_bytes: 10, size: 10 },
+        ],
+        folders,
+        page_info: { next: "cursor-2" },
+      },
+      {
+        data: [
+          { type: "folder", ...folders[0] },
+          { type: "file", path: "contracts/q2.pdf", size_bytes: 20, size: 20 },
+        ],
+        folders,
+        page_info: { next: null },
+      },
+    ];
+    const client = createMockClient({ get: () => Promise.resolve(pages.shift()) });
+
+    const uploads = await listAllUploads(client, "my-project");
+
+    assertEquals(uploads.map((upload) => [upload.type, upload.path, upload.size_bytes]), [
+      ["folder", "contracts/", undefined],
+      ["file", "contracts/q1.pdf", 10],
+      ["file", "contracts/q2.pdf", 20],
+    ]);
+  });
+
+  it("lists no folders when the folders array is empty", async () => {
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [{ type: "file", path: "q1.pdf", size_bytes: 10 }],
+          folders: [],
+          page_info: { next: null },
+        }),
+    });
+
+    const uploads = await listAllUploads(client, "my-project");
+
+    assertEquals(uploads.map((upload) => upload.type), ["file"]);
+  });
+
+  it("reads folder items from data when the response has no folders array", async () => {
+    const client = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            { type: "folder", path: "contracts/" },
+            { type: "file", path: "contracts/q1.pdf", size: 10 },
+          ],
+          page_info: { next: null },
+        }),
+    });
+
+    const uploads = await listAllUploads(client, "my-project");
+
+    assertEquals(uploads.map((upload) => [upload.type, upload.path]), [
+      ["folder", "contracts/"],
+      ["file", "contracts/q1.pdf"],
+    ]);
   });
 });
 
@@ -678,7 +750,11 @@ describe("uploadLocalFileToUploads", () => {
           metadataPath = path;
           metadataBody = body;
           return Promise.resolve({
-            file_upload_url: "https://signed.example.test/upload/q1.pdf",
+            upload_url: "https://signed.example.test/upload/q1.pdf",
+            path: "contracts/q1.pdf",
+            status: "pending",
+            // Earlier spellings the route still serves; the command must not read them.
+            file_upload_url: "https://signed.example.test/legacy-spelling-must-not-be-used",
             file_path: "project-123/contracts/q1.pdf",
             upload_id: "upload-123",
             required_headers: {
@@ -697,14 +773,15 @@ describe("uploadLocalFileToUploads", () => {
 
       assertEquals(metadataPath, "/projects/my-project/uploads");
       assertEquals(metadataBody, {
-        file_path: "contracts/q1.pdf",
+        path: "contracts/q1.pdf",
         content_type: "application/pdf",
-        size: 16,
+        size_bytes: 16,
       });
       assertEquals(uploadedMethod, "PUT");
       assertEquals(uploadedHeaders.get("Content-Type"), "application/pdf");
       assertEquals(uploadedBytes, 16);
       assertEquals(result.upload_id, "upload-123");
+      assertEquals(result.path, "contracts/q1.pdf");
     } finally {
       restoreMockFetch();
       await remove(tempDir, { recursive: true });
@@ -725,5 +802,30 @@ describe("deleteUpload", () => {
     await deleteUpload(client, "my-project", "contracts/q1.pdf");
 
     assertEquals(capturedPath, "/projects/my-project/uploads/contracts%2Fq1.pdf");
+  });
+
+  it("accepts a 200 acknowledgement and an empty 204 response", async () => {
+    const responses = [
+      () => Response.json({ ok: true }),
+      () => new Response(null, { status: 204 }),
+    ];
+    for (const respond of responses) {
+      const methods: string[] = [];
+      installMockFetch((_input: string | URL | Request, init?: RequestInit) => {
+        methods.push(init?.method ?? "GET");
+        return Promise.resolve(respond());
+      });
+      try {
+        const client = createApiClient({
+          apiUrl: "https://api.example.test",
+          apiToken: "<TOKEN>",
+          projectSlug: "my-project",
+        } as ResolvedConfig);
+        await deleteUpload(client, "my-project", "contracts/q1.pdf");
+        assertEquals(methods, ["DELETE"]);
+      } finally {
+        restoreMockFetch();
+      }
+    }
   });
 });

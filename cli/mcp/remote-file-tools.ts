@@ -194,9 +194,16 @@ interface RemoteFile {
   id?: string;
   path: string;
   content: string;
-  size: number;
+  /** File size in bytes. */
+  size_bytes?: number;
+  /** Earlier spelling of `size_bytes`; the only size field on branch file routes. */
+  size?: number;
   type: string;
   updated_at: string;
+}
+
+function remoteFileSize(file: RemoteFile): number {
+  return (file.size_bytes ?? file.size) as number;
 }
 
 interface FileListResponse {
@@ -215,8 +222,12 @@ interface SearchResult {
 }
 
 interface SearchResponse {
-  results: SearchResult[];
-  total_files: number;
+  /** Matching files and their count, as the project text search answers them. */
+  data?: SearchResult[];
+  total_matches?: number;
+  /** Earlier spellings of `data` and `total_matches`; the only ones on the branch search route. */
+  results?: SearchResult[];
+  total_files?: number;
 }
 
 interface Branch {
@@ -311,7 +322,7 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const params = new URLSearchParams();
         if (input.pattern) params.set("pattern", input.pattern);
         params.set("limit", String(input.limit));
-        params.set("fields", "(path,type,size)");
+        params.set("fields", "(path,type,size_bytes,size)");
 
         const apiPath = `${
           buildProjectApiPath(input.project, "files", input.branch)
@@ -322,7 +333,7 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const files = result.data?.data ?? [];
         return {
           success: true,
-          files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
+          files: files.map((f) => ({ path: f.path, type: f.type, size: remoteFileSize(f) })),
           total: files.length,
         };
       },
@@ -371,7 +382,12 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
 
         return {
           success: true,
-          file: { path: file.path, content: file.content, size: file.size, type: file.type },
+          file: {
+            path: file.path,
+            content: file.content,
+            size: remoteFileSize(file),
+            type: file.type,
+          },
         };
       },
       { "tool.project": input.project, "tool.path": input.path },
@@ -521,7 +537,9 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
             pattern: input.pattern,
             is_regex: input.is_regex,
             case_sensitive: input.case_sensitive,
-            max_results: input.max_results,
+            // The project text search takes `limit`. The branch search route
+            // takes only `max_results`.
+            ...(input.branch ? { max_results: input.max_results } : { limit: input.max_results }),
           },
         });
 
@@ -529,8 +547,8 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
 
         return {
           success: true,
-          results: result.data?.results ?? [],
-          total_files: result.data?.total_files ?? 0,
+          results: result.data?.data ?? result.data?.results ?? [],
+          total_files: result.data?.total_matches ?? result.data?.total_files ?? 0,
         };
       },
       { "tool.project": input.project, "tool.query": input.query },

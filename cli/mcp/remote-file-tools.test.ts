@@ -464,6 +464,114 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(result.file?.size, 42);
     });
 
+    it("reads file sizes from size_bytes and selects it on file lists", async () => {
+      resetEnv();
+
+      let listUrl = "";
+      const file = {
+        id: "1",
+        path: "pages/index.tsx",
+        content: "export default function Page() {}",
+        // `size` deliberately differs so a tool that reads it is caught.
+        size_bytes: 42,
+        size: 1,
+        type: "file",
+        updated_at: "2024-01-01T00:00:00.000Z",
+      };
+
+      const [detail, list] = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        const isList = new URL(request.url).pathname.endsWith("/files");
+        if (isList) listUrl = request.url;
+        return Response.json(isList ? { data: [file] } : file);
+      }, async () =>
+        [
+          await vfRemoteGetFile.execute({ project: "my-project", path: "pages/index.tsx" }),
+          await vfRemoteListFiles.execute({ project: "my-project", limit: 50 }),
+        ] as const);
+
+      assertEquals(detail.file?.size, 42);
+      assertEquals(list.files, [{ path: "pages/index.tsx", type: "file", size: 42 }]);
+      assertEquals(new URL(listUrl).searchParams.get("fields"), "(path,type,size_bytes,size)");
+    });
+
+    it("still reads a file size from size when the route answers no size_bytes", async () => {
+      resetEnv();
+
+      const result = await withMockFetch(
+        () =>
+          Promise.resolve(Response.json({
+            data: [{ path: "pages/index.tsx", type: "file", size: 7 }],
+          })),
+        async () =>
+          await vfRemoteListFiles.execute({ project: "my-project", branch: "feature", limit: 50 }),
+      );
+
+      assertEquals(result.files, [{ path: "pages/index.tsx", type: "file", size: 7 }]);
+    });
+
+    it("searches project file text with limit and reads data and total_matches", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestBody: unknown;
+      const matches = [{ path: "pages/index.tsx", matches: [{ line: 1, content: "Page" }] }];
+
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestBody = await request.json();
+        return Response.json({
+          data: matches,
+          total_matches: 1,
+          // Earlier spellings the route still serves; the tool must not prefer them.
+          results: [],
+          total_files: 0,
+        });
+      }, async () => {
+        return await vfRemoteSearchFiles.execute({
+          project: "my-project",
+          query: "Page",
+          max_results: 25,
+        });
+      });
+
+      assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/search");
+      assertEquals(requestBody, { query: "Page", limit: 25 });
+      assertEquals(result.results, matches);
+      assertEquals(result.total_files, 1);
+    });
+
+    it("keeps max_results and results on the branch search route", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestBody: unknown;
+      const matches = [{ path: "pages/index.tsx", matches: [{ line: 1, content: "Page" }] }];
+
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestBody = await request.json();
+        return Response.json({ results: matches, total_files: 1 });
+      }, async () => {
+        return await vfRemoteSearchFiles.execute({
+          project: "my-project",
+          query: "Page",
+          max_results: 25,
+          branch: "feature",
+        });
+      });
+
+      assertEquals(
+        requestUrl,
+        "https://api.remote-vf.test/api/my-project/branches/feature/files/search",
+      );
+      assertEquals(requestBody, { query: "Page", max_results: 25 });
+      assertEquals(result.results, matches);
+      assertEquals(result.total_files, 1);
+    });
+
     it("prefers the host-private credential over a blank exported token", async () => {
       resetEnv();
       // The environment snapshot keeps a whitespace-only export verbatim, and
