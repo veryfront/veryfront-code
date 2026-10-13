@@ -1068,6 +1068,7 @@ export class SSRModuleLoader {
           dependencyHashCache,
           dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: this.options.dependencyPinningConfiguredVersions,
           dependencyPinningSource: this.options.dependencyPinningSource,
         };
         const localFs = createFileSystem();
@@ -1135,6 +1136,7 @@ export class SSRModuleLoader {
             moduleServerOrigin: this.options.moduleServerOrigin,
             dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
             dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: this.options.dependencyPinningConfiguredVersions,
             dependencyPinningSource: this.options.dependencyPinningSource,
           });
 

@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Logger } from "#veryfront/utils";
@@ -33,6 +34,7 @@ export interface ESMLoaderContext {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /**
@@ -117,6 +119,7 @@ export interface ModuleFetcherContext {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */

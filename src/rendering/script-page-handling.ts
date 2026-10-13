@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Script Page Handling (TS/JS files)
  *
@@ -56,6 +57,7 @@ interface ScriptPageOptions {
   /** Immutable dependency snapshot that owns all browser work for this document. */
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 const ESBUILD_EXTERNALS = [
@@ -262,6 +264,7 @@ async function generateFullHtml(
         moduleServerOrigin: options.url?.origin,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       })
       : undefined;
     return injectHTMLContent(htmlBody, "", metadata, {
@@ -295,6 +298,7 @@ async function generateFullHtml(
         projectDir: options.projectDir,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       }
       : {}),
   };

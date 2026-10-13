@@ -435,12 +435,14 @@ export class Renderer {
           dependencyPinningSource,
           options?.dependencyPinningCacheKey,
           options?.dependencyPinningDependencies,
+          options?.dependencyPinningConfiguredVersions,
         );
         const effectiveOptions = {
           ...options,
           releaseAssetManifest: releaseManifest,
           dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
           dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
           dependencyPinningSource,
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
@@ -694,6 +696,7 @@ export class Renderer {
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
       dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
       // Background HTML still needs nonce slots so a later request can bind
@@ -1235,6 +1238,7 @@ export class Renderer {
         dependencyPinningSource,
         options?.dependencyPinningCacheKey,
         options?.dependencyPinningDependencies,
+        options?.dependencyPinningConfiguredVersions,
       );
       const services = this.createServicesForContext(effectiveCtx);
 
@@ -1248,6 +1252,7 @@ export class Renderer {
         releaseAssetManifest: releaseManifest,
         dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
         dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
         dependencyPinningSource,
       });
     }, {

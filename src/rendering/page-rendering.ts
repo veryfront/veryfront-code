@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { ensureError, getErrorMessage, RENDER_ERROR } from "#veryfront/errors";
 import type * as BundledReact from "react";
@@ -347,6 +348,7 @@ export function handleMDXPage(
     dependencyPinningCacheKey?: string;
     /** Immutable package map paired with dependencyPinningCacheKey. */
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
     /** Bare npm package roots that the runtime resolves without bundling. */
@@ -383,6 +385,7 @@ export function handleMDXPage(
           serverExternalPackages: options?.serverExternalPackages,
           dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
           dependencyPinningDependencies: options?.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
           dependencyPinningSource: options?.dependencyPinningSource,
           moduleServerOrigin: options?.url?.origin,
           isLocalProject: options?.isLocalProject,

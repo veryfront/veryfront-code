@@ -426,6 +426,7 @@ export class HTMLGenerator {
       moduleServerOrigin: context.options?.url?.origin,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
       dependencyPinningSource: context.options?.dependencyPinningSource,
       releaseAssetManifest,
     });
@@ -672,6 +673,7 @@ export class HTMLGenerator {
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { getProjectReact } = await import(
@@ -721,6 +723,7 @@ export class HTMLGenerator {
         config: this.config.config,
         dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
         dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
@@ -755,6 +758,9 @@ export class HTMLGenerator {
         context.options?.dependencyPinningSource,
         context.options?.url?.origin,
         this.config.config?.build?.serverExternalPackages,
+        undefined,
+        undefined,
+        context.options?.dependencyPinningConfiguredVersions,
       );
       if (!loaded) return null;
 
@@ -908,6 +914,7 @@ export class HTMLGenerator {
       forceProductionScripts: context.options?.forceProductionScripts,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.options?.dependencyPinningConfiguredVersions,
       ...(context.options?.releaseAssetManifest !== undefined
         ? { releaseAssetManifest: context.options.releaseAssetManifest }
         : {}),

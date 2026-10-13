@@ -428,6 +428,7 @@ async function writeModuleESM(
       dependencyPinningSource,
       context.dependencyPinningCacheKey,
       context.dependencyPinningDependencies,
+      context.dependencyPinningConfiguredVersions,
     );
     const effectiveContext = {
       ...context,
@@ -437,6 +438,7 @@ async function writeModuleESM(
         : undefined,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
     if (!effectiveContext.projectId) {
@@ -456,6 +458,7 @@ async function writeModuleESM(
         REACT_DEFAULT_VERSION,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
       serverExternalPackages: effectiveContext.serverExternalPackages,
     });

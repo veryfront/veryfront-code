@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { BUNDLE_ERROR } from "#veryfront/errors";
 import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
@@ -122,6 +123,7 @@ export interface SSRRewriteOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable dependency map captured with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Collect unresolved dependency observations for cache replay. */
@@ -141,6 +143,7 @@ export function replaySSRDependencyResolutionObservations(
       projectId: options.projectId,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       dependencyPinningSource: options.dependencyPinningSource,
       onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     });
@@ -192,6 +195,7 @@ function resolveBareImportPin(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): string | undefined {
   const parsed = parseBarePackageSpecifier(bareSpecifier);
   if (!parsed || parsed.version) return undefined; // already versioned inline
@@ -201,6 +205,7 @@ function resolveBareImportPin(
     projectId,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     onDependencyResolutionObserved,
   });
@@ -216,6 +221,7 @@ function observeSpecialImportDependency(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): void {
   const parsed = parseBarePackageSpecifier(bareSpecifier);
   if (
@@ -234,6 +240,7 @@ function observeSpecialImportDependency(
     projectId,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     onDependencyResolutionObserved,
   });
@@ -249,6 +256,7 @@ function observeSpecialImportDependencies(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): void {
   const patterns = [
     /\bfrom\s*["']([^"']+)["']/g,
@@ -268,6 +276,7 @@ function observeSpecialImportDependencies(
         dependencyPinningDependencies,
         dependencyPinningSource,
         onDependencyResolutionObserved,
+        dependencyPinningConfiguredVersions,
       );
     }
   }
@@ -285,6 +294,7 @@ function rewriteBareImports(
     observation: DependencyResolutionObservation,
   ) => void,
   serverExternalPackages?: readonly string[],
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): string {
   const v = version ?? resolveInstalledReactRange() ?? DEFAULT_REACT_VERSION;
 
@@ -296,6 +306,7 @@ function rewriteBareImports(
     dependencyPinningDependencies,
     dependencyPinningSource,
     onDependencyResolutionObserved,
+    dependencyPinningConfiguredVersions,
   );
 
   return code.replace(/from\s*["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
@@ -323,6 +334,7 @@ function rewriteBareImports(
       dependencyPinningDependencies,
       dependencyPinningSource,
       onDependencyResolutionObserved,
+      dependencyPinningConfiguredVersions,
     );
     if (pinVersion) {
       const parsed = parseBarePackageSpecifier(bareSpecifier);
@@ -532,6 +544,7 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
+    options.dependencyPinningConfiguredVersions,
   );
   result = rewriteInternalModuleImportsSync(result, options);
   return result;
@@ -579,6 +592,7 @@ export async function rewriteSSRImportsCompatAsync(
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
+    options.dependencyPinningConfiguredVersions,
   );
   result = await rewriteInternalModuleImportsAsync(result, options);
   return result;

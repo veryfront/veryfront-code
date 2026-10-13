@@ -31,6 +31,9 @@ export interface DependencyPinningSnapshot {
   }>;
 }
 
+/** Captured version declarations and effective pins bound into a snapshot key. */
+export type CapturedDependencyConfiguration = DependencyPinningSnapshot["configuredVersions"];
+
 function ownValue(value: Record<string, unknown>, key: string): unknown {
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;

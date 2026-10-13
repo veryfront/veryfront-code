@@ -34,6 +34,7 @@ export async function tryNotFoundFallback(
       dependencyPinningSource,
       requestedDependencySnapshot?.cacheKey,
       requestedDependencySnapshot?.dependencies,
+      requestedDependencySnapshot?.configuredVersions,
     );
     const appRoot = joinPath(
       ctx.projectDir,
@@ -63,6 +64,7 @@ export async function tryNotFoundFallback(
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     });
     // Server-trusted request environment. `resolvedEnvironment` and

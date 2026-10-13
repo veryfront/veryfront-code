@@ -68,6 +68,7 @@ export async function tryErrorPageFallback(
       dependencyPinningSource,
       requestedDependencySnapshot?.cacheKey,
       requestedDependencySnapshot?.dependencies,
+      requestedDependencySnapshot?.configuredVersions,
     );
     const pagesDir = joinPath(
       ctx.projectDir,
@@ -88,6 +89,7 @@ export async function tryErrorPageFallback(
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     });
 
@@ -340,6 +342,7 @@ async function loadErrorComponent(
       moduleServerOrigin,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
       mode: environment,
     },

@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
@@ -219,11 +220,13 @@ export class ComponentRegistry {
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
     environment: RenderEnvironment = this.renderModes.environment,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<string> {
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions,
     );
     let snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
       ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
@@ -427,6 +430,7 @@ export class ComponentRegistry {
       moduleServerOrigin,
       dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
       dependencyPinningDependencies: dependencySnapshot?.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot?.configuredVersions,
       dependencyPinningSource,
       serverExternalPackages,
     };

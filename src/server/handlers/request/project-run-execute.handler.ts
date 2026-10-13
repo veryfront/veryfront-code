@@ -4832,6 +4832,8 @@ async function executeReleaseAssetBuildRun(input: {
             serverExternalPackages: releaseConfig.build?.serverExternalPackages,
             dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
             dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+            dependencyPinningConfiguredVersions: options.dependencyPinningSnapshot
+              ?.configuredVersions,
             dependencyPinningSource: options.dependencyPinningSource,
           })),
       loadConfig: () => {

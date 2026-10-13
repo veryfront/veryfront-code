@@ -382,6 +382,7 @@ async function handleActionRequestInner(
     config,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   });
   const mod = await actionModuleLoader(source, file, projectDir, adapter, {
     projectId: projectId ?? projectDir,
@@ -392,6 +393,7 @@ async function handleActionRequestInner(
     reactVersion,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
     dependencyPinningSource: dependencySource,
     moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
       ? new NativeURL(apply(requestUrlGetter, req, []) as string).origin

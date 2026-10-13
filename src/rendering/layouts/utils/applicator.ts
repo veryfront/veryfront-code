@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -36,6 +37,7 @@ export function applyLayoutsESM(
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
   signal?: AbortSignal,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -86,6 +88,7 @@ export function applyLayoutsESM(
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
+                  dependencyPinningConfiguredVersions,
                   dependencyPinningSource,
                   moduleServerOrigin,
                   config,
@@ -121,6 +124,7 @@ export function applyLayoutsESM(
                 moduleServerOrigin,
                 config?.build?.serverExternalPackages,
                 signal,
+                dependencyPinningConfiguredVersions,
               ),
             spanAttrs,
           );
@@ -155,6 +159,7 @@ export function applyLayoutsESM(
             reactVersion,
             dependencyPinningCacheKey,
             dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions,
             dependencyPinningSource,
             moduleServerOrigin,
             config,
@@ -224,6 +229,7 @@ export async function applyLayoutsFunctionBody(
   config?: VeryfrontConfig,
   signal?: AbortSignal,
   isLocalProject?: boolean,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<BundledReact.ReactElement> {
   assertESMLayoutBundle(layoutBundle?.compiledCode, "named layout");
   for (let index = 0; index < nestedLayouts.length; index++) {
@@ -257,5 +263,6 @@ export async function applyLayoutsFunctionBody(
     config,
     isLocalProject,
     signal,
+    dependencyPinningConfiguredVersions,
   );
 }

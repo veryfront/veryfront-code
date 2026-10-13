@@ -3195,6 +3195,7 @@ async function resolveReleaseReactVersion(
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
     dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
   });
 }
 

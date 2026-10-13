@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Transform pipeline types.
  *
@@ -81,6 +82,7 @@ export interface TransformOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal collector for unresolved dependency cache metadata. */
@@ -142,6 +144,7 @@ export interface TransformContext {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal collector for unresolved dependency cache metadata. */

@@ -140,6 +140,81 @@ describe("Node SSR local React graph", () => {
     }
   });
 
+  it("uses the authenticated authored range from a recovered legacy snapshot", async () => {
+    const { hashDependencyPins } = await import("#veryfront/transforms/esm/dependency-snapshot.ts");
+    const { selectHistoricalDependencySnapshot } = await import(
+      "#veryfront/transforms/esm/dependency-metadata-history.ts"
+    );
+    const { resolveProjectReactVersion } = await import(
+      "#veryfront/transforms/esm/package-registry.ts"
+    );
+    const configuration = { react: { declaration: "^19.2.0", effective: "19.2.0" } };
+    const key = `on:${hashDependencyPins({ react: "19.2.0" }, configuration)}`;
+    const recovered = selectHistoricalDependencySnapshot(
+      {
+        version: 1,
+        projectId: "legacy-project",
+        branch: null,
+        entries: [{ dependencies: {}, expiresAt: 160000 }],
+      },
+      { projectId: "legacy-project", branch: null },
+      key,
+      configuration,
+      100000,
+    );
+    assertEquals(recovered !== undefined, true);
+    const snapshot = recovered!.snapshot;
+    const adapter = {
+      moduleLoader: { importModule: () => Promise.resolve({ default: { version: "19.2.4" } }) },
+    } as unknown as RuntimeAdapter;
+    const options = {
+      adapter,
+      dependencyPinningCacheKey: snapshot.cacheKey,
+      dependencyPinningDependencies: snapshot.dependencies,
+      dependencyPinningConfiguredVersions: snapshot.configuredVersions,
+    };
+    assertEquals(await resolveProjectReactVersion(options), "19.2.4");
+    assertEquals(snapshot.dependencies?.react, "19.2.0");
+    await assertRejects(
+      () =>
+        resolveProjectReactVersion({
+          ...options,
+          dependencyPinningConfiguredVersions: { react: { declaration: "*", effective: "19.2.0" } },
+        }),
+      Error,
+      "Captured dependency configuration",
+    );
+    const React = await getProjectReact("19.2.4");
+    const server = await getReactDOMServer("19.2.4");
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const renderer = new SSRRenderer(
+      "development",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: "20.0.0" } } as VeryfrontConfig,
+    );
+    const Page = () => {
+      const [count] = React.useState(3);
+      return React.createElement("p", null, `legacy:${count}`);
+    };
+    assertEquals(
+      (await renderer.renderToHTML(React.createElement(Page), {
+        ...options,
+        mode: "development",
+        wantsStream: false,
+        reactRuntime: { react: React, server },
+      })).html,
+      "<p>legacy:3</p>",
+    );
+
+    const { buildImportMap } = await import("#veryfront/html/utils.ts");
+    assertEquals(
+      JSON.parse((await buildImportMap(options)).json).imports.react.includes("react@19.2.4"),
+      true,
+    );
+  });
+
   it("preserves configured React ranges when capturing prepared-runtime snapshots", async () => {
     const {
       createDependencyPinningSource,

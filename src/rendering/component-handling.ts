@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /****
  * Component Page Handling (TSX/JSX files)
  */
@@ -52,6 +53,7 @@ interface BundleComponentForClientDeps {
       serverExternalPackages?: readonly string[];
       dependencyPinningCacheKey?: string;
       dependencyPinningDependencies?: Readonly<Record<string, string>>;
+      dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
       dependencyPinningSource?: DependencyPinningSourceInput;
     },
   ) => Promise<string>;
@@ -133,6 +135,7 @@ export async function handleComponentPage(
     dependencyPinningCacheKey?: string;
     /** Immutable package map paired with dependencyPinningCacheKey. */
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
     /** Bare npm package roots that the runtime resolves without bundling. */
@@ -168,6 +171,7 @@ export async function handleComponentPage(
         options?.dependencyPinningSource,
         options?.serverExternalPackages,
         dev,
+        options?.dependencyPinningConfiguredVersions,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
@@ -187,6 +191,7 @@ export async function handleComponentPage(
         serverExternalPackages: options?.serverExternalPackages,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
         dependencyPinningSource: options?.dependencyPinningSource,
         mode: options?.environment,
         signal: options?.signal,
@@ -249,6 +254,7 @@ export async function bundleComponentForClient(
    * inline sourcemap that discloses the project source.
    */
   dev = false,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
@@ -285,6 +291,7 @@ export async function bundleComponentForClient(
           serverExternalPackages,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           dependencyPinningSource,
         });
 

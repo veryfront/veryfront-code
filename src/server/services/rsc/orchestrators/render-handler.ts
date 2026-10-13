@@ -200,6 +200,7 @@ export class RenderHandler {
         serverExternalPackages: this.moduleOptions.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
         dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
         moduleServerOrigin,
         isLocalProject: this.moduleOptions.isLocalProject === true,
@@ -218,6 +219,7 @@ export class RenderHandler {
       serverExternalPackages: this.moduleOptions.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
       moduleServerOrigin,
     });

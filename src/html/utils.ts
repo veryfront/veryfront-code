@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -258,6 +259,7 @@ interface BuildImportMapOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   customImports?: Record<string, string>;
   pretty?: boolean;
@@ -272,6 +274,7 @@ async function resolveVersions(
     | "config"
     | "dependencyPinningCacheKey"
     | "dependencyPinningDependencies"
+    | "dependencyPinningConfiguredVersions"
     | "dependencyPinningSource"
   >,
 ): Promise<DetectedVersions> {
@@ -421,6 +424,7 @@ function isImportMapOnlyOptions(
     !("moduleServerOrigin" in options) &&
     !("dependencyPinningCacheKey" in options) &&
     !("dependencyPinningDependencies" in options) &&
+    !("dependencyPinningConfiguredVersions" in options) &&
     !("dependencyPinningSource" in options) &&
     !("customImports" in options) &&
     !("releaseAssetManifest" in options) &&
@@ -444,6 +448,7 @@ export async function buildImportMap(
     moduleServerOrigin,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     customImports,
     pretty = true,
@@ -456,6 +461,7 @@ export async function buildImportMap(
     config,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
   });
 

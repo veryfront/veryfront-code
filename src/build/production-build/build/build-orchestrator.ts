@@ -115,6 +115,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           dependencyPinningSource: dependencyContext.source,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
         });
         const outputDir = normalizedOptions.outputDir ?? "";
         const dryRun = normalizedOptions.dryRun ?? false;
@@ -195,6 +196,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               isLocalProject: true,
               dependencyPinningCacheKey: dependencySnapshot.cacheKey,
               dependencyPinningDependencies: dependencySnapshot.dependencies,
+              dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
             }),
           {},
         );

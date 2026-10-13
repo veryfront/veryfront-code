@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Module Batch Handler
  *
@@ -286,6 +287,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       });
       const reactVersion = dependencyPinningCacheKey.startsWith("on:")
         ? snapshotReactVersion
@@ -372,6 +374,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
                 reactVersion,
                 dependencyPinningCacheKey,
                 dependencyPinningDependencies: dependencySnapshot.dependencies,
+                dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
                 dependencyPinningSource: dependencySource,
                 moduleServerOrigin: url.origin,
                 serverExternalPackages: config?.build?.serverExternalPackages,
@@ -535,6 +538,7 @@ async function transformModule(
     reactVersion?: string;
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     dependencyPinningSource?: DependencyPinningSourceInput;
     moduleServerOrigin: string;
     serverExternalPackages?: readonly string[];
@@ -557,6 +561,7 @@ async function transformModule(
       reactVersion: options.reactVersion,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       dependencyPinningSource: options.dependencyPinningSource,
       serverExternalPackages: options.serverExternalPackages,
     },

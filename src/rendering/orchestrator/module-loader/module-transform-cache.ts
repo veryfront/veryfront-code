@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Transform-cache and retry phase for the SSR module loader.
@@ -67,6 +68,7 @@ interface TransformOptions {
   serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
@@ -152,6 +154,7 @@ export interface TransformModuleCodeWithCacheInput {
   serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   ttlSeconds?: number;
   onProgress?: TransformProgressListener;
@@ -255,6 +258,7 @@ export async function transformModuleCodeWithCache(
     serverExternalPackages: input.serverExternalPackages,
     dependencyPinningCacheKey: input.dependencyPinningCacheKey,
     dependencyPinningDependencies: input.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: input.dependencyPinningConfiguredVersions,
     dependencyPinningSource: input.dependencyPinningSource,
     onDependencyResolutionObserved: (observation: DependencyResolutionObservation) => {
       dependencyResolutionObservations.set(observation.packageName, observation);
@@ -331,6 +335,7 @@ export async function transformModuleCodeWithCache(
       projectId: input.effectiveProjectId,
       dependencyPinningCacheKey: input.dependencyPinningCacheKey,
       dependencyPinningDependencies: input.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: input.dependencyPinningConfiguredVersions,
       dependencyPinningSource: input.dependencyPinningSource,
     },
   );

@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { versionAdmission } from "#veryfront/platform/compat/semver.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
@@ -693,6 +694,7 @@ export async function resolveDependencyPinningSnapshot(
   source: DependencyPinningSourceInput,
   cacheKey?: string,
   dependencies?: Readonly<Record<string, string>>,
+  capturedConfiguration?: DependencyPinningSnapshot["configuredVersions"],
 ): Promise<DependencyPinningSnapshot> {
   if (!cacheKey) {
     const current = await getDependencyPinningSnapshot(source);
@@ -721,7 +723,7 @@ export async function resolveDependencyPinningSnapshot(
       return remembered;
     }
 
-    const configuredVersions = captureConfiguredVersions(
+    const configuredVersions = capturedConfiguration ?? captureConfiguredVersions(
       normalizeDependencyPinningSource(source).config,
     );
     const matchesDependencyMap = `on:${hashDependencyPins(copiedDependencies)}` === cacheKey;
@@ -1038,6 +1040,7 @@ export interface ProjectPackageVersionOptions {
   config?: VeryfrontConfig | null;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 export interface ResolvedProjectPackageVersions {
@@ -1188,7 +1191,20 @@ export async function resolveProjectReactDeclaration(
     options.dependencyPinningDependencies !== undefined ||
     options.dependencyPinningCacheKey?.startsWith("on:")
   ) {
-    const declaration = options.dependencyPinningDependencies?.react;
+    const configuration = options.dependencyPinningConfiguredVersions;
+    if (configuration !== undefined) {
+      if (
+        !options.dependencyPinningDependencies || !options.dependencyPinningCacheKey ||
+        `on:${hashDependencyPins(options.dependencyPinningDependencies, configuration)}` !==
+          options.dependencyPinningCacheKey
+      ) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Captured dependency configuration does not match its snapshot key",
+        });
+      }
+    }
+    const declaration = configuration?.react?.declaration ??
+      options.dependencyPinningDependencies?.react;
     assertReactPackageDeclaration(declaration);
     return declaration;
   }

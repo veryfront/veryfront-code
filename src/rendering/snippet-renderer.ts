@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { computeHash, rendererLogger } from "#veryfront/utils";
 import { RENDER_ERROR } from "#veryfront/errors";
 import type { RenderMetadata } from "#veryfront/types";
@@ -68,6 +69,7 @@ export async function wrapSnippetInHTMLShell(
     moduleServerBase: string;
     dependencyPinningCacheKey: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   },
 ): Promise<string> {
   const serverPort = getServerPort(options.moduleServerUrl);
@@ -101,6 +103,7 @@ export async function wrapSnippetInHTMLShell(
     prodHydrationModulePath,
     dependencyPinningCacheKey: context.dependencyPinningCacheKey,
     dependencyPinningDependencies: context.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
   };
   return await wrapInHTMLShell(bodyHtml, meta, htmlOptions);
 }
@@ -396,6 +399,7 @@ export function renderSnippet(
           moduleServerBase,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
         });
 
         return { html, frontmatter };

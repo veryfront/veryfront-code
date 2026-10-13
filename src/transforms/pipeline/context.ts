@@ -44,6 +44,7 @@ function buildContext(
     serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     dependencyPinningSource: options.dependencyPinningSource,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     onProgress: options.onProgress,

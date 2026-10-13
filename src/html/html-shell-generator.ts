@@ -297,6 +297,7 @@ async function generateHTMLShellPartsImpl(
     moduleServerOrigin: options.moduleServerOrigin,
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     customImports: options.importMap,
     pretty: useDevScripts,
     releaseAssetManifest: releaseManifest,

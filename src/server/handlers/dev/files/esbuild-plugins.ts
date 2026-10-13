@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import { isVeryfrontError, NETWORK_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
@@ -356,6 +357,7 @@ function buildPinnedEsmUrl(
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): string {
   const parsed = parseBarePackageSpecifier(path);
   if (parsed && !parsed.version) {
@@ -364,6 +366,7 @@ function buildPinnedEsmUrl(
       projectId,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions,
       dependencyPinningSource,
     });
     if (version) {
@@ -379,6 +382,7 @@ function observeImportMapDependency(
   options: BareExternalPluginOptions,
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): void {
   const parsed = parseBarePackageSpecifier(path);
   if (
@@ -397,6 +401,7 @@ function observeImportMapDependency(
     projectId: options.projectId,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource: options.dependencyPinningSource,
   });
 }
@@ -408,6 +413,7 @@ interface BareExternalPluginOptions {
   projectId?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   strict?: boolean;
   importMapImports?: Record<string, string>;
@@ -518,6 +524,7 @@ export function createBareExternalPlugin(
       opts.dependencyPinningSource ?? opts.projectDir,
       opts.dependencyPinningCacheKey,
       opts.dependencyPinningDependencies,
+      opts.dependencyPinningConfiguredVersions,
     )
     : Promise.resolve(undefined);
 
@@ -598,6 +605,7 @@ export function createBareExternalPlugin(
             opts,
             snapshot?.cacheKey ?? opts.dependencyPinningCacheKey,
             snapshot?.dependencies ?? opts.dependencyPinningDependencies,
+            snapshot?.dependencies ?? opts.dependencyPinningConfiguredVersions,
           );
           return { path: args.path, external: true };
         }
@@ -610,6 +618,7 @@ export function createBareExternalPlugin(
             snapshot?.cacheKey,
             snapshot?.dependencies,
             opts.dependencyPinningSource,
+            snapshot?.configuredVersions,
           ),
           bundle,
         );

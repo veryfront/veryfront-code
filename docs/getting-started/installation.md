@@ -175,6 +175,20 @@ shell path. When run inside a project with `veryfront` installed, the npm
 launcher uses that project's CLI and React peer graph. Install the framework
 and matching peers locally as shown above for project rendering.
 
+For Yarn Plug'n'Play, enable its ESM loader in `.yarnrc.yml` and regenerate the
+installation:
+
+```yaml title=".yarnrc.yml"
+pnpEnableEsmLoader: true
+```
+
+```bash
+yarn install
+```
+
+The launcher starts Node with the project's PnP loaders so zipped dependencies
+and virtual peer bindings use the project graph.
+
 ### pnpm
 
 ```bash

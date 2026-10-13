@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Import Transformer
  *
@@ -259,6 +260,7 @@ export interface MdxRootDependencyRewriteOptions {
   reactVersion: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   serverExternalPackages?: readonly string[];
   onDependencyResolutionObserved?: (
@@ -330,6 +332,7 @@ export async function rewriteMdxRootDependencyImports(
     reactVersion: options.reactVersion,
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     dependencyPinningSource: options.dependencyPinningSource,
     serverExternalPackages: options.serverExternalPackages,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,

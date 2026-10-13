@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Static Site Generation (SSG) for Build
  * Handles rendering pages to static HTML
@@ -66,6 +67,7 @@ export interface SSGOptions {
   releaseAssetManifest?: ReleaseAssetManifest | null;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -267,6 +269,7 @@ export async function buildPagesRoutes(
             releaseAssetManifest: options.releaseAssetManifest,
             dependencyPinningCacheKey: options.dependencyPinningCacheKey,
             dependencyPinningDependencies: options.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
           }),
       );
 
@@ -293,6 +296,7 @@ export async function buildPagesRoutes(
           releaseAssetManifest: options.releaseAssetManifest,
           dependencyPinningCacheKey: options.dependencyPinningCacheKey,
           dependencyPinningDependencies: options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
         });
         enhancedHtml = enhancedHtml.replace(
           "</head>",
@@ -417,6 +421,7 @@ export async function buildAppRoutes(
           includePreviewStylesheet: false,
           dependencyPinningCacheKey: options.dependencyPinningCacheKey,
           dependencyPinningDependencies: options.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

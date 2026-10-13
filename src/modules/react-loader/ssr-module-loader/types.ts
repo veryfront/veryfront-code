@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * SSR Module Loader Types
  *
@@ -29,6 +30,7 @@ export interface SSRModuleLoaderOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features */

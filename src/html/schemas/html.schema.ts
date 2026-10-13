@@ -65,6 +65,10 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     forceProductionScripts: v.boolean().optional(),
     dependencyPinningCacheKey: v.string().optional(),
     dependencyPinningDependencies: v.record(v.string(), v.string()).optional(),
+    dependencyPinningConfiguredVersions: v.object({
+      react: v.object({ declaration: v.string(), effective: v.string() }).optional(),
+      veryfront: v.object({ declaration: v.string(), effective: v.string() }).optional(),
+    }).optional(),
   })
 );
 

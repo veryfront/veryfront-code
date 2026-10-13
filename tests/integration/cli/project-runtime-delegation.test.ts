@@ -72,6 +72,82 @@ describe("project runtime delegation", () => {
       await Deno.remove(f.root, { recursive: true });
     }
   });
+  it("selects a Plug'n'Play project without a physical node_modules framework", async () => {
+    const f = await fixture(true);
+    try {
+      const store = join(f.project, ".package-store", "veryfront");
+      await Deno.mkdir(join(f.project, ".package-store"), { recursive: true });
+      await Deno.rename(join(f.project, "node_modules", "veryfront"), store);
+      await Deno.remove(join(f.project, "node_modules"));
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.cjs"),
+        `if (module.parent?.id === "internal/preload") process.versions.pnp = "3"; exports.setup = () => {}; exports.resolveToUnqualified = (name) => { if (name !== "veryfront") throw new Error("unexpected request"); return ${
+          JSON.stringify(store)
+        }; };`,
+      );
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.loader.mjs"),
+        "export function resolve(specifier, context, next) { return next(specifier, context); }",
+      );
+      const result = await new Deno.Command("node", {
+        args: [join(f.global, "bin", "veryfront.js"), "dev"],
+        cwd: f.project,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), {
+        react: "19.2.5",
+        origin: "project",
+        args: ["dev"],
+      });
+    } finally {
+      await Deno.remove(f.root, { recursive: true });
+    }
+  });
+
+  it("keeps global commands available in a PnP project without Veryfront", async () => {
+    const f = await fixture(false);
+    try {
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.cjs"),
+        'exports.setup = () => {}; exports.resolveToUnqualified = () => { const error = new Error("not declared"); error.pnpCode = "UNDECLARED_DEPENDENCY"; throw error; };',
+      );
+      const result = await new Deno.Command("node", {
+        args: [join(f.global, "bin", "veryfront.js"), "--version"],
+        cwd: f.project,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+      assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)).origin, "global");
+    } finally {
+      await Deno.remove(f.root, { recursive: true });
+    }
+  });
+  it("refuses a PnP framework without its ESM loader instead of using global peers", async () => {
+    const f = await fixture(true);
+    try {
+      await Deno.writeTextFile(
+        join(f.project, ".pnp.cjs"),
+        `exports.setup = () => {}; exports.resolveToUnqualified = () => ${
+          JSON.stringify(join(f.project, "node_modules", "veryfront"))
+        };`,
+      );
+      const result = await new Deno.Command("node", {
+        args: [join(f.global, "bin", "veryfront.js"), "dev"],
+        cwd: f.project,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.code, 1);
+      assertEquals(new TextDecoder().decode(result.stdout), "");
+      assertEquals(new TextDecoder().decode(result.stderr).includes("pnpEnableEsmLoader"), true);
+    } finally {
+      await Deno.remove(f.root, { recursive: true });
+    }
+  });
+
   it("refuses an escaping project CLI entry without falling back to global code", async () => {
     const f = await fixture(true);
     try {

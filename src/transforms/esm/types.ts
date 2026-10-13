@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 import type { PreloadImportMapContext } from "#veryfront/modules/import-map/preloader.ts";
@@ -35,6 +36,7 @@ export interface TransformOptions {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal collector for unresolved dependency cache metadata. */

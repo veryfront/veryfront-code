@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
 import { join } from "#veryfront/compat/path/index.ts";
@@ -386,6 +387,7 @@ export interface ModuleServerOptions {
 interface ModuleDependencyState {
   dependencyPinningCacheKey: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   reactVersion: string;
 }
 
@@ -469,16 +471,19 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       ): Promise<ModuleDependencyState> => {
         const dependencyPinningCacheKey = snapshot.cacheKey;
         const dependencyPinningDependencies = snapshot.dependencies;
+        const dependencyPinningConfiguredVersions = snapshot.configuredVersions;
         const snapshotReactVersion = await resolveProjectReactVersion({
           adapter: adapter,
           projectDir,
           config,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
         });
         return {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion: dependencyPinningCacheKey.startsWith("on:")
             ? snapshotReactVersion
             : explicitReactVersion ?? snapshotReactVersion,
@@ -549,6 +554,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
         } = dependencyState;
 
@@ -606,6 +612,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               reactVersion,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             },
@@ -683,6 +690,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
         } = dependencyState;
 
@@ -738,6 +746,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               reactVersion,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             },
@@ -1024,6 +1033,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               ? {
                 dependencyPinningCacheKey: dependencyState.dependencyPinningCacheKey,
                 dependencyPinningDependencies: dependencyState.dependencyPinningDependencies,
+                dependencyPinningConfiguredVersions:
+                  dependencyState.dependencyPinningConfiguredVersions,
               }
               : requestedPinKey
               ? { requestedDependencyPinningCacheKey: requestedPinKey }
@@ -1110,6 +1121,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           reactVersion,
         } = dependencyState;
         releaseModuleResponseCacheKey = getReleaseModuleResponseCacheKey(dependencyState);
@@ -1170,6 +1182,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               reactVersion,
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
+              dependencyPinningConfiguredVersions,
               dependencyPinningSource: dependencySource,
               serverExternalPackages: config?.build?.serverExternalPackages,
             };

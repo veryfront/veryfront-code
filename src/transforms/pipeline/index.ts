@@ -231,6 +231,7 @@ export function runPipeline(
         options.dependencyPinningSource ?? projectDir,
         options.dependencyPinningCacheKey,
         options.dependencyPinningDependencies,
+        options.dependencyPinningConfiguredVersions,
       );
       const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
       // Keep the cache key and dependency map atomic for every later stage and
@@ -240,6 +241,7 @@ export function runPipeline(
         ...options,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       };
 
       const ctx = await createTransformContext(source, filePath, projectDir, effectiveOptions);

@@ -108,6 +108,7 @@ export class SSROrchestrator {
                 debugMode: this.config.debugMode,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
+                dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
               }),
             {
               "ssr.wants_stream": wantsStream,
@@ -251,6 +252,7 @@ export class SSROrchestrator {
         renderOptions?.dependencyPinningSource,
         renderOptions?.abortSignal,
         renderOptions?.environment,
+        renderOptions?.dependencyPinningConfiguredVersions,
       )
       : errorInfo.element;
 
@@ -264,6 +266,7 @@ export class SSROrchestrator {
           debugMode: this.config.debugMode,
           dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
           dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: renderOptions?.dependencyPinningConfiguredVersions,
         }),
       { nonce: renderOptions?.nonce },
     );

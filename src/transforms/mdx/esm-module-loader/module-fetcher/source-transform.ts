@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Source-file transform phase for the MDX ESM module fetcher.
  *
@@ -49,6 +50,7 @@ export interface TransformResolvedModuleSourceInput {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   log: SourceTransformLogger;
@@ -130,6 +132,9 @@ export async function transformResolvedModuleSource(
         ...(input.dependencyPinningDependencies === undefined
           ? {}
           : { dependencyPinningDependencies: input.dependencyPinningDependencies }),
+        ...(input.dependencyPinningConfiguredVersions === undefined
+          ? {}
+          : { dependencyPinningConfiguredVersions: input.dependencyPinningConfiguredVersions }),
         ...(input.dependencyPinningSource === undefined
           ? {}
           : { dependencyPinningSource: input.dependencyPinningSource }),

@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Transforms Mdx
  *
@@ -45,6 +46,7 @@ export interface MDXLoadModuleOptions {
   serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   moduleServerOrigin?: string;
   isLocalProject?: boolean;
@@ -80,6 +82,7 @@ export class MDXRenderer {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     isLocalProject?: boolean,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<MDXModule>;
   async loadModuleESM(
     compiledProgramCode: string,
@@ -94,6 +97,7 @@ export class MDXRenderer {
     legacyDependencyPinningSource?: DependencyPinningSourceInput,
     legacyModuleServerOrigin?: string,
     legacyIsLocalProject?: boolean,
+    legacyDependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<MDXModule> {
     const options: MDXLoadModuleOptions =
       arguments.length <= 2 && !isRuntimeAdapter(optionsOrAdapter)
@@ -107,6 +111,7 @@ export class MDXRenderer {
           reactVersion: legacyReactVersion,
           dependencyPinningCacheKey: legacyDependencyPinningCacheKey,
           dependencyPinningDependencies: legacyDependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: legacyDependencyPinningConfiguredVersions,
           dependencyPinningSource: legacyDependencyPinningSource,
           moduleServerOrigin: legacyModuleServerOrigin,
           isLocalProject: legacyIsLocalProject,
@@ -133,6 +138,7 @@ export class MDXRenderer {
       serverExternalPackages,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions,
       dependencyPinningSource,
       moduleServerOrigin,
       isLocalProject,
@@ -142,6 +148,7 @@ export class MDXRenderer {
       resolvedDependencyPinningSource,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions,
     );
     const context: ESMLoaderContext = {
       esmCacheDir: undefined,
@@ -156,6 +163,7 @@ export class MDXRenderer {
       serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource: resolvedDependencyPinningSource,
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? moduleServerOrigin

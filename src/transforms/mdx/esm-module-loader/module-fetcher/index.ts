@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 /****
  * Module Fetcher
@@ -529,6 +530,7 @@ async function doFetchAndCacheModule(
         moduleServerOrigin,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: context.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
         dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
@@ -603,6 +605,7 @@ export function createModuleFetcherContext(
     moduleServerOrigin?: string;
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
     dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
     serverExternalPackages?: readonly string[];
     logger?: Logger;

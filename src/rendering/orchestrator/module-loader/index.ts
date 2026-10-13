@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /****
  * Module Loader
@@ -582,6 +583,7 @@ async function transformModuleWithDepsUnmemoized(
     serverExternalPackages: config.serverExternalPackages,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     dependencyPinningDependencies: config.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: config.dependencyPinningConfiguredVersions,
     dependencyPinningSource: config.dependencyPinningSource,
     onProgress: config.onProgress,
     signal: config.signal,
@@ -720,6 +722,7 @@ export interface ModuleLoaderConfig {
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Cooperative cancellation for one module-load stage. */

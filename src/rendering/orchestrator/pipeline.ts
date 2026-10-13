@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * Render Pipeline
  *
@@ -247,6 +248,7 @@ export class RenderPipeline {
   private getReactVersion(
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
@@ -258,6 +260,7 @@ export class RenderPipeline {
         config: this.config.config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions,
       });
     }
 
@@ -308,6 +311,7 @@ export class RenderPipeline {
       | "url"
       | "dependencyPinningCacheKey"
       | "dependencyPinningDependencies"
+      | "dependencyPinningConfiguredVersions"
       | "dependencyPinningSource"
     >,
   ): Promise<ModuleLoaderConfig> {
@@ -317,10 +321,12 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     const reactVersion = await this.getReactVersion(
       dependencySnapshot.cacheKey,
       dependencySnapshot.dependencies,
+      dependencySnapshot.configuredVersions,
     );
     return {
       ...this.moduleLoaderConfig,
@@ -333,6 +339,7 @@ export class RenderPipeline {
       serverExternalPackages: this.config.config?.build?.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
   }
@@ -388,6 +395,7 @@ export class RenderPipeline {
       | "url"
       | "dependencyPinningCacheKey"
       | "dependencyPinningDependencies"
+      | "dependencyPinningConfiguredVersions"
       | "dependencyPinningSource"
     >,
     timeoutControl?: ProgressTimeoutControl,
@@ -751,12 +759,14 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
     options = {
       ...options,
       dependencyPinningCacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
@@ -843,6 +853,7 @@ export class RenderPipeline {
                   options?.url?.origin,
                   options?.abortSignal,
                   options?.environment,
+                  options?.dependencyPinningConfiguredVersions,
                 )
                 : Promise.resolve();
 
@@ -1015,6 +1026,7 @@ export class RenderPipeline {
                         options?.dependencyPinningSource,
                         options?.abortSignal,
                         options?.environment,
+                        options?.dependencyPinningConfiguredVersions,
                       ),
                     {
                       "render.slug": slug,
@@ -1155,11 +1167,13 @@ export class RenderPipeline {
       dependencyPinningSource,
       options?.dependencyPinningCacheKey,
       options?.dependencyPinningDependencies,
+      options?.dependencyPinningConfiguredVersions,
     );
     options = {
       ...options,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     };
 

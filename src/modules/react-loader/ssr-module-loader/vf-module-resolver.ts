@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * VF module resolver for SSR transformed code.
  *
@@ -37,6 +38,7 @@ interface ResolveVfModuleImportsOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
@@ -96,6 +98,7 @@ export async function resolveVfModuleImports(
       moduleServerOrigin: options.moduleServerOrigin,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       dependencyPinningSource: options.dependencyPinningSource,
       projectSlug: options.projectId,
       strictMissingModules: false,

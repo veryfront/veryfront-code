@@ -240,6 +240,7 @@ export class RSCDevServerHandler {
         config: this.config,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       });
     }
     return this.getReactVersion();

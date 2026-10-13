@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { serverLogger } from "#veryfront/utils";
 import { buildAppRoutes, buildPagesRoutes } from "../static-generation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -28,6 +29,7 @@ export interface BuildExecutorOptions {
   isLocalProject?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 export interface BuildResult {
@@ -55,11 +57,13 @@ export async function executeBuild(
     }),
     options.dependencyPinningCacheKey,
     options.dependencyPinningDependencies,
+    options.dependencyPinningConfiguredVersions,
   );
   const buildOptions: BuildExecutorOptions = {
     ...options,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   };
 
   logger.debug("Building pages...");

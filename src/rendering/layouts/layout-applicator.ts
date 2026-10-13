@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
@@ -69,6 +70,7 @@ export interface LayoutApplicationOptions {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Server-trusted local-project identity. */
   isLocalProject?: boolean;
@@ -100,6 +102,7 @@ export class LayoutApplicator {
   private readonly configuredReactVersion?: string;
   private readonly dependencyPinningCacheKey?: string;
   private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  private readonly dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   private readonly dependencyPinningSource?: DependencyPinningSourceInput;
   private readonly isLocalProject: boolean;
   private readonly signal?: AbortSignal;
@@ -133,6 +136,7 @@ export class LayoutApplicator {
     this.configuredReactVersion = options.reactVersion;
     this.dependencyPinningCacheKey = options.dependencyPinningCacheKey;
     this.dependencyPinningDependencies = options.dependencyPinningDependencies;
+    this.dependencyPinningConfiguredVersions = options.dependencyPinningConfiguredVersions;
     this.dependencyPinningSource = options.dependencyPinningSource;
     this.isLocalProject = options.isLocalProject === true;
     this.signal = options.signal;
@@ -157,6 +161,7 @@ export class LayoutApplicator {
         config: this.config,
         dependencyPinningCacheKey: this.dependencyPinningCacheKey,
         dependencyPinningDependencies: this.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
       });
     return this.reactVersionPromise;
   }
@@ -332,6 +337,7 @@ export class LayoutApplicator {
           this.config,
           this.isLocalProject,
           this.signal,
+          this.dependencyPinningConfiguredVersions,
         );
       },
       {
@@ -410,6 +416,7 @@ export class LayoutApplicator {
       reactVersion: await this.getReactVersion(),
       dependencyPinningCacheKey: this.dependencyPinningCacheKey,
       dependencyPinningDependencies: this.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
       dependencyPinningSource: this.dependencyPinningSource,
       moduleServerOrigin: this.requestUrl?.origin,
       signal: this.signal,
@@ -478,6 +485,7 @@ export class LayoutApplicator {
                   reactVersion: await this.getReactVersion(),
                   dependencyPinningCacheKey: this.dependencyPinningCacheKey,
                   dependencyPinningDependencies: this.dependencyPinningDependencies,
+                  dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
                   dependencyPinningSource: this.dependencyPinningSource,
                   serverExternalPackages: this.config?.build?.serverExternalPackages,
                   signal: this.signal,
@@ -537,6 +545,7 @@ export class LayoutApplicator {
           reactVersion: await this.getReactVersion(),
           dependencyPinningCacheKey: this.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions: this.dependencyPinningConfiguredVersions,
           dependencyPinningSource: this.dependencyPinningSource,
           serverExternalPackages: this.config?.build?.serverExternalPackages,
           signal: this.signal,
@@ -585,6 +594,7 @@ export class LayoutApplicator {
               this.config?.build?.serverExternalPackages,
               this.signal,
               reservedDeps,
+              this.dependencyPinningConfiguredVersions,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -602,6 +612,7 @@ export class LayoutApplicator {
               this.config?.build?.serverExternalPackages,
               this.signal,
               reservedDeps,
+              this.dependencyPinningConfiguredVersions,
             ),
           ]);
 

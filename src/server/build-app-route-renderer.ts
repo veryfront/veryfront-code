@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * App Route HTML Rendering for Build
  */
@@ -110,6 +111,7 @@ interface RenderAppRouteArgs {
   includePreviewStylesheet?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
 }
 
 interface AppRouteRendererInternals {
@@ -138,6 +140,7 @@ async function renderAppRouteToHTMLWithInternals(
     includePreviewStylesheet,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   } = args;
 
   const appRoot = join(projectDir, config?.directories?.app ?? "app");
@@ -155,6 +158,7 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningSource,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   );
   const snapshotReactVersion = await resolveProjectReactVersion({
     adapter: adapter,
@@ -163,6 +167,7 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   });
   const reactVersion = dependencySnapshot.cacheKey.startsWith("on:")
     ? snapshotReactVersion
@@ -190,6 +195,7 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   };
   const pageSource = await adapter.fs.readFile(pageFile);
   const Page = await internals.componentLoader(
@@ -289,6 +295,7 @@ async function renderAppRouteToHTMLWithInternals(
     moduleServerOrigin,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
     releaseAssetManifest,
   });
   const hydrationData = clientPageIsland || hasUseClientDirective(pageSource)

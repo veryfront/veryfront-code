@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import {
   awaitAbortable,
   computeHash,
@@ -272,6 +273,7 @@ export async function loadTSXComponent(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<BundledReact.ComponentType> {
   throwIfAborted(signal);
   const prepared = getRuntimeModuleLoader(adapter);
@@ -289,6 +291,7 @@ export async function loadTSXComponent(
     dependencyPinningSource ?? projectDir,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
   );
   const hash = await computeHash(source);
   const legacyCacheKey =
@@ -339,6 +342,7 @@ export async function loadTSXComponent(
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
           mode: modes.environment,
           signal: control.signal,
@@ -402,6 +406,7 @@ export interface MDXLayoutModuleOptions {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   moduleServerOrigin?: string;
   config?: VeryfrontConfig;
@@ -435,6 +440,7 @@ export function loadMDXLayout(
     reactVersion,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions,
     dependencyPinningSource,
     moduleServerOrigin,
     config,
@@ -493,6 +499,7 @@ export function loadMDXLayout(
           reactVersion,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           dependencyPinningSource,
           moduleServerOrigin,
           isLocalProject,
@@ -547,6 +554,7 @@ export async function applyTSXLayout(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -578,6 +586,7 @@ export async function applyTSXLayout(
       moduleServerOrigin,
       serverExternalPackages,
       signal,
+      dependencyPinningConfiguredVersions,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {

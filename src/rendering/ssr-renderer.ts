@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
 import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
@@ -124,6 +125,7 @@ export interface SSRRenderOptions {
   debugMode?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   /** Maximum UTF-8 bytes retained when the result must be buffered. */
   maxBufferedBytes?: number;
 }
@@ -163,6 +165,7 @@ export class SSRRenderer {
   private async getReactVersion(
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
   ): Promise<string> {
     if (
       dependencyPinningDependencies !== undefined ||
@@ -174,6 +177,7 @@ export class SSRRenderer {
         config: this.config,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions,
       });
     }
 
@@ -200,6 +204,7 @@ export class SSRRenderer {
         config: this.config,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
         dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
       });
       const runtime = await resolveSSRRuntime({
         reactRuntime,
@@ -215,6 +220,7 @@ export class SSRRenderer {
       reactVersion = await this.getReactVersion(
         options.dependencyPinningCacheKey,
         options.dependencyPinningDependencies,
+        options.dependencyPinningConfiguredVersions,
       );
     }
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;

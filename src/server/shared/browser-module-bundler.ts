@@ -1,3 +1,4 @@
+import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { basename, relative } from "#veryfront/compat/path/index.ts";
@@ -146,6 +147,7 @@ export interface BrowserModuleBundlerOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Resolve this request token only after browser-bundle admission is held. */
   requestedDependencyPinningCacheKey?: string;
@@ -178,6 +180,7 @@ export interface BrowserModuleBundle {
   importMapHash: string;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration;
   dependencies: ReadonlyArray<{ path: string; contentHash: string; byteLength: number }>;
   resolutionProbes: ReadonlyArray<{ path: string; state: ResolutionProbeState }>;
 }
@@ -188,6 +191,7 @@ export type BrowserModuleImportMapValidationOptions = Pick<
   | "moduleServerOrigin"
   | "dependencyPinningCacheKey"
   | "dependencyPinningDependencies"
+  | "dependencyPinningConfiguredVersions"
   | "dependencyPinningSource"
 >;
 
@@ -514,6 +518,7 @@ async function buildTrackedImportMapJson(
     | "moduleServerOrigin"
     | "dependencyPinningCacheKey"
     | "dependencyPinningDependencies"
+    | "dependencyPinningConfiguredVersions"
     | "dependencyPinningSource"
   >,
   tracked: TrackingAdapterResult,
@@ -533,6 +538,7 @@ async function buildTrackedImportMapJson(
     moduleServerOrigin: options.moduleServerOrigin,
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     dependencyPinningSource,
   });
   const trackedFailure = tracked.getFailure();
@@ -828,10 +834,13 @@ export function bundleBrowserModuleWithMetadata(
           options.dependencyPinningCacheKey;
         const dependencyPinningDependencies = dependencySnapshot?.dependencies ??
           options.dependencyPinningDependencies;
+        const dependencyPinningConfiguredVersions = dependencySnapshot?.configuredVersions ??
+          options.dependencyPinningConfiguredVersions;
         const effectiveOptions: BrowserModuleBundlerOptions = {
           ...options,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           dependencyPinningSource,
         };
 
@@ -913,6 +922,7 @@ export function bundleBrowserModuleWithMetadata(
                 serverExternalPackages: options.config?.build?.serverExternalPackages,
                 dependencyPinningCacheKey,
                 dependencyPinningDependencies,
+                dependencyPinningConfiguredVersions,
                 dependencyPinningSource,
               }),
               createHttpExternalPlugin({
@@ -976,6 +986,7 @@ export function bundleBrowserModuleWithMetadata(
           importMapHash,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
+          dependencyPinningConfiguredVersions,
           dependencies,
           resolutionProbes,
         });

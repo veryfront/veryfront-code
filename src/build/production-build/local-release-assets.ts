@@ -99,6 +99,7 @@ export async function generateLocalReleaseAssetManifest(
           dependencyPinningSource,
           dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
           dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
         });
       const built = await buildReactImportMapDependencyAssets({
         tempDir,

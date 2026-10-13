@@ -211,6 +211,7 @@ export async function processVfModuleImports(
       moduleServerOrigin: context.moduleServerOrigin,
       dependencyPinningCacheKey: context.dependencyPinningCacheKey,
       dependencyPinningDependencies: context.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: context.dependencyPinningConfiguredVersions,
       dependencyPinningSource: context.dependencyPinningSource,
       projectSlug: context.projectSlug,
       logger: logger.child({
