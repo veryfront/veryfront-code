@@ -1,3 +1,5 @@
+import { getModuleFetcherReactRuntimeScope } from "./index.ts";
+import type { ModuleFetcherContext } from "../types.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -7,6 +9,21 @@ import {
   getVersionedPathCacheKey,
 } from "./cache-keys.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
+
+it("captures one runtime scope for concurrent fetches and refreshes a new request context", async () => {
+  let reads = 0;
+  const read = () => Promise.resolve(`scope-${++reads}`);
+  const context = {} as ModuleFetcherContext;
+  const scopes = await Promise.all(
+    Array.from({ length: 20 }, () => getModuleFetcherReactRuntimeScope(context, read)),
+  );
+  assertEquals(new Set(scopes), new Set(["scope-1"]));
+  assertEquals(reads, 1);
+  assertEquals(
+    await getModuleFetcherReactRuntimeScope({} as ModuleFetcherContext, read),
+    "scope-2",
+  );
+});
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
   it("separates both transform and path caches by runtime and peer scope", () => {

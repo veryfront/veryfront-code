@@ -80,6 +80,8 @@ export interface NestedImportResult {
 }
 
 export interface ModuleFetcherContext {
+  /** React peer identity captured once for this request-scoped fetch graph. */
+  reactRuntimeScope?: Promise<string>;
   /** Borrowed capture for generation preparation; returned paths identify captured sources. */
   sourceCapture?: ModuleSourceCapture;
   /** Completed source bindings retained only for this capture's lifetime. */

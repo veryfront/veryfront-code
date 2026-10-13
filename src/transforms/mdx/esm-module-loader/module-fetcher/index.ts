@@ -390,6 +390,14 @@ export async function fetchAndCacheModule(
   }
 }
 
+/** Reuse one peer snapshot across every module of a request-scoped context. */
+export function getModuleFetcherReactRuntimeScope(
+  context: ModuleFetcherContext,
+  readScope: () => Promise<string> = getSSRReactRuntimeCacheScope,
+): Promise<string> {
+  return context.reactRuntimeScope ??= readScope();
+}
+
 /**
  * Internal implementation of module fetching.
  */
@@ -411,7 +419,7 @@ async function doFetchAndCacheModule(
     : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const runtimeScope = await getSSRReactRuntimeCacheScope();
+  const runtimeScope = await getModuleFetcherReactRuntimeScope(context);
   const versionedKey = getVersionedPathCacheKey(
     normalizedPath,
     effectiveReactVersion,
