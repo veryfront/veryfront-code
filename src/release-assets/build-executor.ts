@@ -3182,12 +3182,14 @@ export async function runReleaseAssetBuild(
 }
 
 async function resolveReleaseReactVersion(
+  adapter: RuntimeAdapter,
   releaseConfig: VeryfrontConfig,
   tempDir: string,
   dependencyPinningSnapshot: DependencyPinningSnapshot,
   dependencyPinningSource: DependencyPinningSourceInput,
 ): Promise<string> {
   return await resolveProjectReactVersion({
+    adapter,
     projectDir: tempDir,
     config: releaseConfig,
     dependencyPinningSource,
@@ -3306,6 +3308,7 @@ async function runBuildInner(
     dependencyPinningSource,
   );
   const releaseReactVersion = await resolveReleaseReactVersion(
+    transformAdapter,
     releaseConfig,
     tempDir,
     dependencyPinningSnapshot,
