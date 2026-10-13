@@ -3,10 +3,10 @@ import { describe, it } from "#std/testing/bdd";
 import { join } from "#std/path";
 
 const wrapper = await Deno.readTextFile(
-  new URL("../scripts/build/bin-wrapper.js", import.meta.url),
+  new URL("../../../scripts/build/bin-wrapper.js", import.meta.url),
 );
 const engine = await Deno.readTextFile(
-  new URL("../scripts/build/node-engine-precondition.js", import.meta.url),
+  new URL("../../../scripts/build/node-engine-precondition.js", import.meta.url),
 );
 
 async function fixture(local: boolean) {
