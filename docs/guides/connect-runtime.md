@@ -48,6 +48,7 @@ import {
   ConversationRunEventEncoder,
   createExternalAgentWorkerClient,
 } from "veryfront/agent";
+import { Conversation, createConversationsApiTransport } from "veryfront/conversations";
 import { getEnv } from "veryfront/platform";
 
 const assistant = agent({
@@ -99,15 +100,12 @@ export async function POST(request: Request): Promise<Response> {
   });
   await client.heartbeatWorker(worker.id);
 
-  const conversation = await api<{ id: string }>("/conversations", {
-    project_reference: projectId,
-    title: "Runtime connection demo",
-  });
+  const conversation = await Conversation.create(
+    { projectReference: projectId, title: "Runtime connection demo" },
+    { transport: createConversationsApiTransport({ baseUrl: apiUrl, getToken: () => token }) },
+  );
   const prompt = "Say hello to the teammate inspecting this run.";
-  await api(`/conversations/${conversation.id}/messages`, {
-    role: "user",
-    parts: [{ type: "text", text: prompt }],
-  });
+  await conversation.createMessage({ parts: [{ type: "text", text: prompt }] });
   const admissionKey = crypto.randomUUID();
   const accepted = await api<{ id: string }>("/runs", {
     project_id: projectId,

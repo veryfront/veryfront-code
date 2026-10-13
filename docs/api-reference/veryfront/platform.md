@@ -1,7 +1,7 @@
 ---
 title: "veryfront/platform"
 description: "Cross-runtime abstraction layer - adapter detection, process/env/signal compat, filesystem and KV abstractions for Deno, Node.js, and Bun."
-order: 25
+order: 26
 ---
 
 ## Import
