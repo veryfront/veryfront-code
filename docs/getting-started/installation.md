@@ -171,7 +171,9 @@ npm install -g veryfront@latest react@19.2.4 react-dom@19.2.4
 ```
 
 This installs the latest published Veryfront CLI and adds `veryfront` to your
-shell path.
+shell path. When run inside a project with `veryfront` installed, the npm
+launcher uses that project's CLI and React peer graph. Install the framework
+and matching peers locally as shown above for project rendering.
 
 ### pnpm
 
