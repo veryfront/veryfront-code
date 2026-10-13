@@ -46,7 +46,8 @@ peer dependencies; the commands above install a matching supported pair
 explicitly. Node.js and Bun SSR use this installed pair. Keep both packages at
 the same version when upgrading; the supported peer range starts at 19.2.4
 within React 19. Package managers such as Yarn may require you to install peers
-yourself.
+yourself. Install the packages as `react` and `react-dom`; npm package aliases
+are unsupported for this runtime pair.
 
 These commands add the dependency entries without scaffolding files. Add the
 four pieces below yourself. `veryfront init` writes all of them for you, see

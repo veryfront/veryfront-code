@@ -164,8 +164,18 @@ export function selectCapturedHistoricalDependencySnapshot(
     ) throw unavailable();
     if (expiresAt <= now) continue;
     const dependencies = own(entry, "dependencies") as Readonly<Record<string, string>>;
-    const effective = applyConfiguredDependencyOverrides(dependencies, configuredVersions);
-    const key = `on:${hashDependencyPins(effective, configuredVersions)}`;
+    let effective = applyConfiguredDependencyOverrides(dependencies, configuredVersions);
+    let key = `on:${hashDependencyPins(effective, configuredVersions)}`;
+    if (key !== requestedKey && configuredVersions?.react) {
+      // Older captures pinned config React to the host's effective version.
+      // Match their original bytes/key without mutating or extending history.
+      const legacy = { ...effective, react: configuredVersions.react.effective };
+      const legacyKey = `on:${hashDependencyPins(legacy, configuredVersions)}`;
+      if (legacyKey === requestedKey) {
+        effective = legacy;
+        key = legacyKey;
+      }
+    }
     if (key !== requestedKey) continue;
     const snapshot = createDependencyPinningSnapshot(key, effective, configuredVersions);
     const bytes = encodeDependencySnapshot("metadata-history", snapshot);

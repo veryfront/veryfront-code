@@ -94,6 +94,88 @@ describe("Node SSR local React graph", () => {
     );
   });
 
+  it("constructs prepared and supplied renderers without reading host peer manifests", async () => {
+    if (!isNode) return;
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const React = await getProjectReact();
+    const react = { ...React, version: "19.2.0" } as typeof import("react");
+    const server: ReactDOMServer = {
+      renderToString: () => "prepared",
+      renderToStaticMarkup: () => "prepared",
+    };
+    const adapter = {
+      moduleLoader: {
+        importModule: (reference: { specifier: string }) =>
+          Promise.resolve(reference.specifier === "react" ? { default: react } : server),
+      },
+    } as unknown as RuntimeAdapter;
+    const native = await import("node:module");
+    const original = fs.readFileSync;
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      if (String(args[0]).endsWith("/react/package.json")) {
+        throw new Error("host manifest unavailable");
+      }
+      return Reflect.apply(original, fs, args);
+    }) as typeof fs.readFileSync;
+    native.syncBuiltinESMExports();
+    try {
+      for (const supplied of [false, true]) {
+        const renderer = new SSRRenderer(
+          "development",
+          supplied ? undefined : adapter,
+          undefined,
+          undefined,
+          { react: { version: "^19.2.0" } } as VeryfrontConfig,
+        );
+        const result = await renderer.renderToHTML(React.createElement("p"), {
+          mode: "development",
+          wantsStream: false,
+          ...(supplied ? { reactRuntime: { react, server } } : {}),
+        });
+        assertEquals(result.html, "prepared");
+      }
+    } finally {
+      fs.readFileSync = original;
+      native.syncBuiltinESMExports();
+    }
+  });
+
+  it("preserves configured React ranges when capturing prepared-runtime snapshots", async () => {
+    const {
+      createDependencyPinningSource,
+      getDependencyPinningSnapshot,
+      resolveProjectReactVersion,
+    } = await import("#veryfront/transforms/esm/package-registry.ts");
+    const { setEnv, getHostEnv } = await import("#veryfront/platform/compat/process.ts");
+    const flag = "VERYFRONT_DEPENDENCY_PINNING";
+    const previous = getHostEnv(flag);
+    const dir = mkdtempSync(join(tmpdir(), "prepared-snapshot-"));
+    try {
+      setEnv(flag, "1");
+      writeFileSync(join(dir, "package.json"), "{}");
+      const config = { react: { version: "^19.2.0" } } as VeryfrontConfig;
+      const snapshot = await getDependencyPinningSnapshot(
+        createDependencyPinningSource({ projectDir: dir, config, isLocalProject: true }),
+      );
+      assertEquals(snapshot.cacheKey.startsWith("on:"), true);
+      const adapter = {
+        moduleLoader: { importModule: () => Promise.resolve({ default: { version: "19.2.0" } }) },
+      } as unknown as RuntimeAdapter;
+      assertEquals(
+        await resolveProjectReactVersion({
+          adapter,
+          config,
+          dependencyPinningCacheKey: snapshot.cacheKey,
+          dependencyPinningDependencies: snapshot.dependencies,
+        }),
+        "19.2.0",
+      );
+    } finally {
+      setEnv(flag, previous ?? "");
+      rmSync(dir, { recursive: true });
+    }
+  });
+
   it("renders installed and supplied runtimes for tag declarations while preserving range rejection", async () => {
     if (!isNode && !isBun) return;
     const React = await getProjectReact("latest");

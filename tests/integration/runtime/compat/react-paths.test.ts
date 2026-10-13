@@ -1,6 +1,6 @@
 import { readProjectDependencyVersions } from "#veryfront/transforms/esm/package-registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearReactPathsCache,
@@ -19,7 +19,11 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getLocalReactPath } from "#veryfront/platform/compat/react-paths.ts";
 
-function overrideInstalledVersion(packageName: string, version: string): () => void {
+function overrideInstalledVersion(
+  packageName: string,
+  version: string,
+  identity?: string,
+): () => void {
   const syncBuiltinESMExports = Reflect.get(Module, "syncBuiltinESMExports") as () => void;
   const original = fs.readFileSync;
   fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
@@ -27,6 +31,7 @@ function overrideInstalledVersion(packageName: string, version: string): () => v
     if (String(args[0]).endsWith(`/${packageName}/package.json`)) {
       const manifest = JSON.parse(String(content));
       manifest.version = version;
+      if (identity !== undefined) manifest.name = identity;
       return JSON.stringify(manifest);
     }
     return content;
@@ -101,6 +106,38 @@ describe("react-paths", () => {
       assertEquals(getLocalReactPath("react", range), getLocalReactPath("react", "19.2.4"));
     }
   });
+  it("rejects an aliased installed peer package identity", () => {
+    if (!isNode) return;
+    const restore = overrideInstalledVersion("react", "19.2.4", "preact");
+    try {
+      assertThrows(() => resolveInstalledReactRange("latest"), TypeError, "identity");
+      assertThrows(() => getLocalReactPath("react", "19.2.4"), TypeError, "identity");
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects an authored package alias without swallowing it as unreadable metadata", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "react-alias-source-"));
+    try {
+      fs.writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({ dependencies: { react: "npm:preact@^10.0.0" } }),
+      );
+      await assertRejects(
+        () => resolveProjectReactVersion({ projectDir: directory }),
+        TypeError,
+        "aliases",
+      );
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  it("rejects npm aliases before choosing React CDN versions", () => {
+    assertThrows(() => resolveInstalledReactRange("npm:preact@^10.0.0"), TypeError);
+  });
+
   it("selects the installed peer for non-semver declarations without accepting mismatching ranges", async () => {
     if (!isNode) return;
     const restore = overrideInstalledVersion("react", "19.2.5");

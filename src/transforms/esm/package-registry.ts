@@ -45,7 +45,11 @@ import {
 } from "./dependency-pinning-cohort.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
-import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
+import {
+  assertReactPackageDeclaration,
+  ReactPackageIdentityError,
+  resolveInstalledReactRange,
+} from "#veryfront/platform/compat/react-paths.ts";
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
@@ -1002,6 +1006,8 @@ async function readProjectDependencyVersionsUncoalesced(
     dependencyVersionCache.delete(source.cacheIdentity);
     currentDependencyPinningKeys.delete(source.cacheIdentity);
 
+    if (error instanceof ReactPackageIdentityError) throw error;
+
     // ENOENT means there is no package.json in the project dir — expected for
     // framework-only environments.  Any other error (permission denied, malformed
     // JSON, etc.) is logged at warn so it is visible without crashing the server.
@@ -1182,17 +1188,24 @@ export async function resolveProjectReactDeclaration(
     options.dependencyPinningDependencies !== undefined ||
     options.dependencyPinningCacheKey?.startsWith("on:")
   ) {
-    return options.dependencyPinningDependencies?.react;
+    const declaration = options.dependencyPinningDependencies?.react;
+    assertReactPackageDeclaration(declaration);
+    return declaration;
   }
   const configured = getConfiguredReactDeclaration(options.config);
-  if (configured) return configured;
+  if (configured) {
+    assertReactPackageDeclaration(configured);
+    return configured;
+  }
   if (!options.projectDir && !options.dependencyPinningSource) return undefined;
   const detected = await readProjectDependencyVersionsWithMode(
     options.dependencyPinningSource ?? options.projectDir!,
     false,
     false,
   );
-  return detected.reactDeclaration ?? detected.react;
+  const declaration = detected.reactDeclaration ?? detected.react;
+  assertReactPackageDeclaration(declaration);
+  return declaration;
 }
 
 async function resolvePreparedReactVersion(

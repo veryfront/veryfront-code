@@ -77,6 +77,20 @@ describe("API-derived dependency metadata history", () => {
     assertEquals(result?.expiresAt, now + 60_000);
   });
 
+  it("retains legacy effective React snapshot identities without rewriting history", () => {
+    const dependencies = { react: "^18" };
+    const config = { react: { declaration: "^19.2.0", effective: "19.2.4" } };
+    const legacy: Record<string, string> = { react: "19.2.4" };
+    const key = `on:${hashDependencyPins(legacy, config)}`;
+    const envelope = history(dependencies);
+    const before = JSON.stringify(envelope);
+    const result = selectHistoricalDependencySnapshot(envelope, scope, key, config, now);
+    assertEquals(result?.snapshot.cacheKey, key);
+    assertEquals({ ...result?.snapshot.dependencies }, legacy);
+    assertEquals(result?.expiresAt, now + 60_000);
+    assertEquals(JSON.stringify(envelope), before);
+  });
+
   it("combines raw history with captured configuration before matching", () => {
     const dependencies = { react: "^18", veryfront: "~0.1.1", other: "^2" };
     const config = {

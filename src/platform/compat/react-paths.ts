@@ -55,15 +55,31 @@ export function getLocalReactVersions(): Readonly<Record<string, string>> {
 }
 
 function localPackageVersion(packageName: string): string {
-  const version = JSONParse(readFileSync(localPackageManifestPath(packageName), "utf8")).version;
+  const manifest = JSONParse(readFileSync(localPackageManifestPath(packageName), "utf8"));
+  if (manifest.name !== packageName) {
+    throw new ReactPackageIdentityError("Installed React peer package identity does not match");
+  }
+  const version = manifest.version;
   if (typeof version !== "string" || !valid(version)) {
     throw new TypeError("Invalid installed React package version");
   }
   return version;
 }
 
+export class ReactPackageIdentityError extends TypeError {}
+
+/** Package aliases cannot define the React/React DOM identity used by CDN URLs. */
+export function assertReactPackageDeclaration(declaration?: string): void {
+  if (declaration !== undefined && /^npm:/i.test(declaration)) {
+    throw new ReactPackageIdentityError(
+      "React package aliases are unsupported; install React peers directly",
+    );
+  }
+}
+
 /** Select a compatible installed version before emitting SSR and browser URLs. */
 export function resolveInstalledReactRange(declaration?: string): string | undefined {
+  assertReactPackageDeclaration(declaration);
   if ((!isNode && !isBun) || (declaration && valid(declaration))) return undefined;
   const version = localPackageVersion("react");
   if (declaration === undefined) return version;
@@ -113,6 +129,7 @@ export function getLocalReactPaths(): Readonly<Record<string, string>> {
 /** Resolve SSR React imports against the same peers as the framework renderer. */
 export function getLocalReactPath(specifier: string, reactVersion?: string): string | undefined {
   if (!isReactSpecifier(specifier)) return undefined;
+  assertReactPackageDeclaration(reactVersion);
   if ((isNode || isBun) && reactVersion !== undefined) {
     const packageName =
       specifier === "react-dom" || ReflectApply(StringStartsWith, specifier, ["react-dom/"])

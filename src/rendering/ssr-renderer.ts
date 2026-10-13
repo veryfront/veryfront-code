@@ -16,9 +16,10 @@ import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
+  normalizeReactVersion,
   resolveProjectReactDeclaration,
   resolveProjectReactVersion,
-  selectReactDeclarationVersion,
+  stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
 import {
@@ -153,7 +154,9 @@ export class SSRRenderer {
     const configuredVersion = config?.react?.version ??
       (legacyVersions && legacyVersions !== "auto" ? legacyVersions.react : undefined);
     if (configuredVersion) {
-      this.resolvedReactVersion = selectReactDeclarationVersion(configuredVersion);
+      // Preserve early version metadata without selecting host peers. Rendering
+      // resolves the actual graph lazily, including caller-supplied runtimes.
+      this.resolvedReactVersion = normalizeReactVersion(stripSemverRange(configuredVersion));
     }
   }
 
@@ -173,8 +176,6 @@ export class SSRRenderer {
         dependencyPinningDependencies,
       });
     }
-
-    if (this.resolvedReactVersion) return this.resolvedReactVersion;
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
       adapter: this.adapter,
