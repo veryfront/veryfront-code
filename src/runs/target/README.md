@@ -44,9 +44,14 @@ redirect test live under `tests/integration/semantic-unit-boundary/src/runs/targ
 
 ### Canonical-v1 compatible event reads
 
-Select `sdk.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Register the schema validator described in `veryfront/events` before decoding these values.
+Select `sdk.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Install `@veryfront/ext-schema-zod` and register its schema validator before decoding these values:
 
 ```ts
+import { registerEventSchemaValidator } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+registerEventSchemaValidator(createZodAdapter());
+
 const page = await sdk.canonicalEventsV1.list("<RUN_ID>", {
   limit: 20,
   sort_order: "asc",

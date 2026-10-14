@@ -177,6 +177,9 @@ export function createCanonicalEventsV1Facade(
       if (String(member.metadata.event_id) !== eventId) {
         throw new TypeError("canonical-v1 event identity mismatch");
       }
+      if (member.metadata.run_id !== runId) {
+        throw new TypeError("canonical-v1 run identity mismatch");
+      }
       return member;
     },
     async discover(options) {

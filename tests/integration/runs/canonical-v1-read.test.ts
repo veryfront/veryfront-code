@@ -89,6 +89,11 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
           String(member.metadata.event_id),
         );
         assertEquals(matching.metadata.event_id, member.metadata.event_id);
+        await assertRejects(
+          () => sdk.canonicalEventsV1.get("run_other", String(member.metadata.event_id)),
+          TypeError,
+          "run identity mismatch",
+        );
       });
     }
   });
