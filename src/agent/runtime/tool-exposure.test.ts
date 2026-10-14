@@ -586,8 +586,35 @@ it("tool_search tells the model to search before declaring a requested tool unav
   assert(search.description.includes("before declaring a requested tool unavailable"));
   assert(search.description.includes("exactly one of"));
   assert(search.description.length <= 400);
-  assertEquals(Object.keys(properties).sort(), ["inventory", "query", "schema", "search"]);
+  assertEquals(Object.keys(properties).sort(), [
+    "cursor",
+    "domain",
+    "inventory",
+    "limit",
+    "query",
+    "resource",
+    "schema",
+    "search",
+  ]);
   assertEquals(properties.query?.maxLength, undefined);
+});
+
+it("tool_search parameters are flat top-level scalars", () => {
+  // Nested mode objects such as {"search":{"query":"..."}} led Claude models
+  // to stream invalid JSON under fine-grained tool streaming.
+  const parameters = createToolSearchDefinition().parameters as {
+    properties: Record<string, Record<string, unknown>>;
+  };
+  for (const [name, property] of Object.entries(parameters.properties)) {
+    assert(
+      property.type === "string" || property.type === "integer",
+      `${name} must be a scalar, received ${String(property.type)}`,
+    );
+    for (const nested of ["properties", "items", "oneOf", "anyOf", "allOf"]) {
+      assertEquals(Object.hasOwn(property, nested), false, `${name}.${nested}`);
+    }
+  }
+  assertEquals(parameters.properties.inventory?.enum, ["all", "platform"]);
 });
 
 it("tool_search raw parameter schema declares no root combinator", () => {
@@ -674,9 +701,13 @@ it("filters inventory by discovery domain and resource before pagination", () =>
   assertEquals(first.matches.map((entry) => entry.name), ["get_agent"]);
   assertEquals(first.matches[0]!.discovery, platform("agents", "Agents"));
   assertEquals(first.nextPageInput, {
-    inventory: { cursor: "1", limit: 1, domain: "agents" },
+    inventory: "all",
+    cursor: "1",
+    limit: 1,
+    domain: "agents",
   });
-  const second = listToolExposure({ authorized, ...first.nextPageInput!.inventory });
+  const { inventory: scope, ...nextPage } = first.nextPageInput!;
+  const second = listToolExposure({ authorized, scope, ...nextPage });
   assertEquals(second.matches.map((entry) => entry.name), ["list_agents"]);
   assertEquals(second.nextPageInput, null);
   assertEquals(
@@ -697,7 +728,11 @@ it("reports advertised values for an unknown inventory filter", () => {
     allowedValues: ["agents", "files"],
     truncated: false,
   });
-  assertEquals(result.restartInput, { inventory: { limit: 5, scope: "all" } });
+  assertEquals(result.restartInput, { inventory: "all", limit: 5 });
+  assertEquals(
+    listToolExposure({ authorized, domain: "missing", scope: "platform", limit: 5 }).restartInput,
+    { inventory: "platform", limit: 5 },
+  );
   const resource = listToolExposure({ authorized, domain: "agents", resource: "Files" });
   assertEquals(resource.invalidFilter?.field, "resource");
   assertEquals(resource.invalidFilter?.allowedValues, ["Agents"]);

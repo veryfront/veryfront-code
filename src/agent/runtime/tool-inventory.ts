@@ -29,7 +29,7 @@ const RUNTIME_TOOL_SEARCH_GUIDANCE =
 const RUNTIME_DEFERRED_TOOL_HEADER =
   "Authorized but not loaded. You cannot call these until they are loaded:";
 const RUNTIME_DEFERRED_TOOL_FOOTER =
-  `Load one by calling tool_search with schema: { name: "<exact name>" }. It becomes callable on the next model step. You must not call a deferred tool directly.`;
+  `Load one by calling tool_search with schema: "<exact name>". It becomes callable on the next model step. You must not call a deferred tool directly.`;
 const MAX_DEFERRED_TOOL_SUMMARIES = 20;
 const MAX_DEFERRED_TOOL_DESCRIPTION_LENGTH = 240;
 

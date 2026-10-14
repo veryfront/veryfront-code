@@ -431,11 +431,14 @@ function collectSearchCandidates(input: {
   return candidates;
 }
 
-/** Exact selector carried forward by executable inventory pagination. */
+/**
+ * Exact flat `tool_search` arguments carried forward by inventory pagination.
+ * `inventory` selects the mode and its scope; the other fields refine it.
+ */
 export interface ToolInventorySelector {
+  inventory: "all" | "platform";
   cursor?: string;
   limit?: number;
-  scope?: "all" | "platform";
   domain?: string;
   resource?: string;
 }
@@ -456,7 +459,7 @@ export type ToolInventoryPage = {
   miss: boolean;
   nextCursor: string | null;
   /** Exact `tool_search` arguments for the next page, or null when complete. */
-  nextPageInput: { inventory: ToolInventorySelector } | null;
+  nextPageInput: ToolInventorySelector | null;
   /** Present when a domain or resource filter matches no authorized tool. */
   invalidFilter?: {
     field: "domain" | "resource";
@@ -464,7 +467,7 @@ export type ToolInventoryPage = {
     truncated: boolean;
   };
   /** Exact `tool_search` arguments that browse without the rejected filters. */
-  restartInput?: { inventory: ToolInventorySelector };
+  restartInput?: ToolInventorySelector;
 };
 
 /** Ranked capability metadata that does not activate execution schemas. */
@@ -584,7 +587,7 @@ export function listToolExposure(input: {
     ReflectApply(SetAdd, seen, [entry.name]);
     pushPrivateArray(entries, toMetadataMatch(entry));
   }
-  const scope = input.scope === undefined ? {} : { scope: input.scope };
+  const inventory = input.scope ?? "all";
   if (!domainMatched || !resourceMatched) {
     const field = domainMatched ? "resource" : "domain";
     const preview = domainMatched ? resources : domains;
@@ -596,7 +599,7 @@ export function listToolExposure(input: {
       nextCursor: null,
       nextPageInput: null,
       invalidFilter: { field, allowedValues: preview.values, truncated: preview.truncated },
-      restartInput: { inventory: { limit, ...scope } },
+      restartInput: { inventory, limit },
     };
   }
   sortSearchItems(entries, (left, right) => compareAscii(left.name, right.name));
@@ -612,13 +615,11 @@ export function listToolExposure(input: {
     miss: matches.length === 0,
     nextCursor,
     nextPageInput: nextCursor === null ? null : {
-      inventory: {
-        cursor: nextCursor,
-        limit,
-        ...scope,
-        ...(input.domain === undefined ? {} : { domain: input.domain }),
-        ...(input.resource === undefined ? {} : { resource: input.resource }),
-      },
+      inventory,
+      cursor: nextCursor,
+      limit,
+      ...(input.domain === undefined ? {} : { domain: input.domain }),
+      ...(input.resource === undefined ? {} : { resource: input.resource }),
     },
   };
 }
@@ -923,79 +924,65 @@ export function readToolExposureContract(input: {
  * Create the framework `tool_search` definition without exposing catalog
  * schemas. The root schema has no `oneOf`, `anyOf`, or `allOf` because some
  * providers reject root combinators; the runtime enforces exactly one mode.
+ * Every field is a top-level scalar: nested argument objects led models to
+ * stream invalid JSON under fine-grained tool streaming.
  */
 export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      "Find and load this run's executable tools. Provide exactly one of: schema to read one exact tool name's input schema and load it for the next step; search to find tools by a short capability phrase without loading them; inventory to browse tool metadata pages; or query to search and load matching tools. Check discovery before declaring a requested tool unavailable.",
+      'Find and load this run\'s executable tools. Provide exactly one of: schema (exact tool name) to read its input schema and load it; search (short phrase) to find tools without loading; inventory ("all" or "platform") to browse metadata pages; query to search and load matches. Check discovery before declaring a requested tool unavailable.',
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         schema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["name"],
-          properties: {
-            name: {
-              type: "string",
-              minLength: 1,
-              description: "One exact executable tool name.",
-            },
-          },
+          type: "string",
+          minLength: 1,
+          description:
+            "Mode. One exact executable tool name. Returns its input schema and loads it for the next step.",
         },
         search: {
-          type: "object",
-          additionalProperties: false,
-          required: ["query"],
-          properties: {
-            query: {
-              type: "string",
-              minLength: 1,
-              description:
-                `One short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Returns up to ${TOOL_SEARCH_RESULT_LIMIT} metadata matches without loading schemas.`,
-            },
-          },
+          type: "string",
+          minLength: 1,
+          description:
+            `Mode. One short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Returns up to ${TOOL_SEARCH_RESULT_LIMIT} metadata matches without loading schemas.`,
         },
         inventory: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            scope: {
-              type: "string",
-              enum: ["all", "platform"],
-              description:
-                "Use platform for Veryfront platform tools only. Default all browses every authorized tool.",
-            },
-            domain: {
-              type: "string",
-              minLength: 1,
-              maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
-              description: "One exact discovery.domain value. Filters before pagination.",
-            },
-            resource: {
-              type: "string",
-              minLength: 1,
-              maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
-              description: "One exact discovery.resource value. Filters before pagination.",
-            },
-            cursor: {
-              type: "string",
-              description: "Use nextCursor from the preceding page. Omit for the first page.",
-            },
-            limit: {
-              type: "integer",
-              minimum: 1,
-              maximum: 20,
-              description: "Metadata entries per page, default 10.",
-            },
-          },
+          type: "string",
+          enum: ["all", "platform"],
+          description:
+            "Mode. Browse tool metadata pages without loading schemas. Use all for every authorized tool, or platform for Veryfront platform tools only.",
+        },
+        domain: {
+          type: "string",
+          minLength: 1,
+          maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
+          description:
+            "Inventory only. One exact discovery.domain value. Filters before pagination.",
+        },
+        resource: {
+          type: "string",
+          minLength: 1,
+          maxLength: TOOL_INVENTORY_FILTER_MAX_LENGTH,
+          description:
+            "Inventory only. One exact discovery.resource value. Filters before pagination.",
+        },
+        cursor: {
+          type: "string",
+          description:
+            "Inventory only. nextCursor from the preceding page. Omit for the first page.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Inventory only. Metadata entries per page, default 10.",
         },
         query: {
           type: "string",
           description:
-            `One exact tool name or one short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Loads matching input schemas for the next step.`,
+            `Mode. One exact tool name or one short capability phrase, at most ${TOOL_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes. Loads matching input schemas for the next step.`,
         },
       },
     },

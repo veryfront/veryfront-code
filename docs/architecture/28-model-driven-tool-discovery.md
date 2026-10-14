@@ -76,25 +76,25 @@ mechanism.
 
 ### `tool_search`
 
-Provide exactly one of four input forms:
+Provide exactly one of four mode fields. Every argument is a top-level string or
+integer:
 
-- `{"schema":{"name":"get_agent"}}` returns the exact input schema of one
-  authorized executable tool and loads it for the next model step. Use it when
-  the exact name is known. The name never matches by substring. Provider-native
-  tools have no inspectable schema, so load them with `query`.
-- `{"search":{"query":"create agent"}}` ranks up to five tools by a short
-  capability phrase. It returns metadata only and does not load schemas or
-  change exposure.
-- `{"inventory":{"limit":10}}` browses executable tool metadata without loading
-  schemas or changing exposure. Results distinguish `available` and `deferred`
-  tools. Page sizes range from 1 to 20, default 10. Descriptions are previews of
-  at most 240 characters plus an ellipsis. Inventory does not inspect parameter
-  schemas. Optional filters apply before pagination:
-  - `scope`: `all` (default) or `platform` for Veryfront platform tools only,
-    excluding integration and project tools.
-  - `domain` and `resource`: one exact `discovery.domain` or
-    `discovery.resource` value. An unknown value returns `invalidFilter` with
-    the advertised values and a `restartInput` that browses without filters.
+- `{"schema":"get_agent"}` returns the exact input schema of one authorized
+  executable tool and loads it for the next model step. Use it when the exact
+  name is known. The name never matches by substring. Provider-native tools have
+  no inspectable schema, so load them with `query`.
+- `{"search":"create agent"}` ranks up to five tools by a short capability
+  phrase. It returns metadata only and does not load schemas or change exposure.
+- `{"inventory":"all","limit":10}` browses executable tool metadata without
+  loading schemas or changing exposure. `inventory` is `all` for every authorized
+  tool or `platform` for Veryfront platform tools only, excluding integration and
+  project tools. Results distinguish `available` and `deferred` tools. Page sizes
+  range from 1 to 20, default 10. Descriptions are previews of at most 240
+  characters plus an ellipsis. Inventory does not inspect parameter schemas. The
+  inventory-only fields `domain` and `resource` match one exact
+  `discovery.domain` or `discovery.resource` value and apply before pagination.
+  An unknown value returns `invalidFilter` with the advertised values and a
+  `restartInput` that browses without filters.
 
   Pass `nextPageInput` unchanged to browse the next page. A null `nextPageInput`
   means the inventory is complete. `nextCursor` remains for compatibility.
@@ -102,8 +102,11 @@ Provide exactly one of four input forms:
   tools. Their input schemas become visible on the next model step.
 
 The `tool_search` parameter schema declares no root `oneOf`, `anyOf`, or `allOf`
-because some providers reject root combinators. The runtime rejects calls that
-provide zero or several forms with an error naming the forms received.
+because some providers reject root combinators. It also has no nested argument
+objects: under fine-grained tool streaming, models emitted invalid JSON for
+nested mode objects. The runtime rejects calls that provide zero or several mode
+fields with an error naming the fields received. It also rejects `domain`,
+`resource`, `cursor`, or `limit` without `inventory`.
 
 Inventory and search contain only this run's provider-visible authorized tools,
 not project tool definitions. They preserve provider-hidden tool filtering and

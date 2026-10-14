@@ -1576,30 +1576,10 @@ type FrameworkToolSearchResult =
   | (ToolSearchResult & { contract: ToolExposureContract });
 
 const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "query"] as const;
+const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] as const;
 
-function readToolSearchObject(
-  args: Record<string, unknown>,
-  mode: "schema" | "search" | "inventory",
-  allowedKeys: readonly string[],
-): Record<string, unknown> {
-  const value = args[mode];
-  if (value === null || typeof value !== "object" || ArrayIsArray(value)) {
-    throw new Error(`tool_search ${mode} must be an object`);
-  }
-  const keys = ReflectOwnKeys(value);
-  const options: Record<string, unknown> = {};
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    if (typeof key !== "string" || !somePrivateArray(allowedKeys, (allowed) => allowed === key)) {
-      throw new Error(`tool_search ${mode} accepts only ${joinPrivateArray(allowedKeys, ", ")}`);
-    }
-    const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
-    if (!descriptor || !ObjectHasOwn(descriptor, "value")) {
-      throw new Error(`tool_search ${mode} requires data properties`);
-    }
-    options[key] = descriptor.value;
-  }
-  return options;
+function hasToolSearchArg(args: Record<string, unknown>, key: string): boolean {
+  return ObjectHasOwn(args, key) && args[key] !== undefined;
 }
 
 function executeFrameworkToolSearch(input: {
@@ -1613,7 +1593,7 @@ function executeFrameworkToolSearch(input: {
   // The provider schema has no root combinator, so enforce exactly one mode here.
   const modes = filterPrivateArray(
     TOOL_SEARCH_MODES,
-    (mode) => ObjectHasOwn(input.args, mode) && input.args[mode] !== undefined,
+    (mode) => hasToolSearchArg(input.args, mode),
   );
   if (modes.length !== 1) {
     throw new Error(
@@ -1622,18 +1602,27 @@ function executeFrameworkToolSearch(input: {
       }`,
     );
   }
+  const inventoryOptions = filterPrivateArray(
+    TOOL_SEARCH_INVENTORY_OPTIONS,
+    (option) => hasToolSearchArg(input.args, option),
+  );
+  if (modes[0] !== "inventory" && inventoryOptions.length > 0) {
+    throw new Error(
+      `tool_search ${joinPrivateArray(inventoryOptions, ", ")} applies only with inventory`,
+    );
+  }
   const available = filterPrivateArray(
     input.plan.visible,
     (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
   );
   const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
   if (modes[0] === "search") {
-    const { query } = readToolSearchObject(input.args, "search", ["query"]);
-    if (typeof query !== "string" || !privateTextTrim(query)) {
-      throw new Error("tool_search search requires a non-empty query string");
+    const query = typeof input.args.search === "string" ? privateTextTrim(input.args.search) : "";
+    if (!query) {
+      throw new Error("tool_search search requires a non-empty capability phrase string");
     }
     const result = searchToolExposureMetadata({
-      query: privateTextTrim(query),
+      query,
       authorized: input.plan.deferred,
       available,
     });
@@ -1648,9 +1637,9 @@ function executeFrameworkToolSearch(input: {
     };
   }
   if (modes[0] === "schema") {
-    const { name } = readToolSearchObject(input.args, "schema", ["name"]);
-    if (typeof name !== "string") {
-      throw new Error("tool_search schema requires one exact tool name");
+    const name = input.args.schema;
+    if (typeof name !== "string" || !name) {
+      throw new Error("tool_search schema requires one exact tool name string");
     }
     const contract = readToolExposureContract({ name, authorized: input.plan.authorized });
     if (contract === undefined) {
@@ -1691,16 +1680,11 @@ function executeFrameworkToolSearch(input: {
     };
   }
   if (modes[0] === "inventory") {
-    const options = readToolSearchObject(input.args, "inventory", [
-      "scope",
-      "domain",
-      "resource",
-      "cursor",
-      "limit",
-    ]);
-    const { cursor, limit, scope, domain, resource } = options;
-    if (scope !== undefined && scope !== "all" && scope !== "platform") {
-      throw new Error("Tool inventory scope must be all or platform");
+    const { inventory: scope, cursor, limit, domain, resource } = input.args;
+    if (scope !== "all" && scope !== "platform") {
+      throw new Error(
+        'tool_search inventory must be "all" or "platform"; pass domain, resource, cursor, and limit as top-level fields',
+      );
     }
     if (domain !== undefined && typeof domain !== "string") {
       throw new Error("Invalid tool inventory domain");
@@ -1758,7 +1742,7 @@ function executeFrameworkToolSearch(input: {
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
-        ? "No executable tool matched this query. Use tool_search with inventory:{} to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
+        ? "No executable tool matched this query. Use tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name."
         : "Continue with the available tools or answer without a tool.",
     },
     checkpoint: checkpoint(),
