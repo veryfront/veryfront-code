@@ -212,6 +212,18 @@ function isContentFilterAnnotation(choice: Record<string, unknown>): boolean {
     readRecord(choice.content_filter_offsets) !== undefined;
 }
 
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+
+/** Return an own data property, never an inherited or accessor value. */
+function readOwnDataField(record: Record<string, unknown> | undefined, key: string): unknown {
+  if (record === undefined) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value")
+    ? descriptor.value
+    : undefined;
+}
+
 const STREAMED_CONTEXT_LENGTH_PATTERNS = [
   "context size has been exceeded",
   "context length exceeded",
@@ -295,9 +307,12 @@ export async function* streamOpenAICompatibleParts(
     // Providers can report a failed generation inside an HTTP 200 SSE stream.
     // Classify it here from known codes and fixed wording so the thrown error
     // never carries the provider record (or its text) as a cause.
-    const errorRecord = readRecord(record.error);
-    if (errorRecord && typeof errorRecord.message === "string") {
-      throw streamedProviderError(context, errorRecord.code, errorRecord.message);
+    // Own data fields only: an inherited accessor must not run, forge a
+    // retryable code, or mask the provider failure.
+    const errorRecord = readRecord(readOwnDataField(record, "error"));
+    const errorMessage = readOwnDataField(errorRecord, "message");
+    if (errorRecord && typeof errorMessage === "string") {
+      throw streamedProviderError(context, readOwnDataField(errorRecord, "code"), errorMessage);
     }
     const usageRecord = readRecord(record.usage);
     usage = mergeOpenAIUsage(usage, record);
