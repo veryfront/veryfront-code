@@ -1,3 +1,4 @@
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -307,13 +308,20 @@ function describeRetainedStructure(value: unknown): string {
       const key = keys[index]!;
       const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
       if (!descriptor) continue;
-      fields[fields.length] = {
+      pushPrivateArray(fields, {
         pointerToken: escapePointerToken(key),
         type: jsonValueType(descriptor.value),
-      };
+      });
     }
   }
-  return privateJsonStringify({ type: jsonValueType(value), fields })!;
+  // Each retained child contributes one field object and two scalar values.
+  // Include the root, its type, the field array and its length as well.
+  return privateJsonStringify(
+    { type: jsonValueType(value), fields },
+    null,
+    undefined,
+    3 * fields.length + 4,
+  )!;
 }
 
 function selectRetainedText(record: StoredToolResult, request: ToolResultSectionRequest): string {
@@ -321,11 +329,13 @@ function selectRetainedText(record: StoredToolResult, request: ToolResultSection
   if (view !== "value" && view !== "structure") {
     throw new TypeError("Invalid retained result view");
   }
-  if (view === "value" && request.pointer === undefined) return record.serialized;
+  if (
+    view === "value" && (request.pointer === undefined || (request.pointer === "" && record.json))
+  ) return record.serialized;
   if (!record.json) throw new TypeError("Selected tool result is not JSON");
   const value = selectRetainedJsonValue(record.serialized, request.pointer ?? "");
   if (view === "structure") return describeRetainedStructure(value);
-  return privateJsonStringify(value)!;
+  return privateJsonStringify(value, null, undefined, record.serialized.length + 1)!;
 }
 
 function toolResultIdentityKey(
@@ -490,6 +500,14 @@ export class ToolResultContext {
   #primitiveRefs = createPrivateMap<unknown, IdentityIndex>();
   #totalStoredBytes = 0;
   #nextId = 1;
+  // Retain only the most recent selection; continuation pages reuse its encoding.
+  #selection?: {
+    record: StoredToolResult;
+    pointer: string | undefined;
+    view: ToolResultView;
+    text: string;
+    byteLength: number;
+  };
 
   constructor(options: ToolResultContextOptions = {}) {
     this.#limits = resolveLimits(options.limits);
@@ -573,7 +591,23 @@ export class ToolResultContext {
       MIN_SECTION_BYTES,
     );
     const boundedBytes = Math.min(maxBytes, this.#limits.maxSectionBytes);
-    const selected = selectRetainedText(record, request);
+    const view = request.view ?? "value";
+    const cached = this.#selection;
+    const reused = cached?.record === record && cached.pointer === request.pointer &&
+      cached.view === view;
+    const selected = reused ? cached.text : selectRetainedText(record, request);
+    const selectedBytes = reused
+      ? cached.byteLength
+      : view === "value" && (request.pointer === undefined || request.pointer === "")
+      ? record.byteLength
+      : byteLength(selected);
+    this.#selection = {
+      record,
+      pointer: request.pointer,
+      view,
+      text: selected,
+      byteLength: selectedBytes,
+    };
     const section = sliceUnderUtf8Budget(selected, cursor, boundedBytes);
     const nextCursor = section.end < selected.length ? String(section.end) : undefined;
     return {
@@ -583,9 +617,7 @@ export class ToolResultContext {
       toolName: record.toolName,
       ...(request.view === "structure" ? { view: "structure" as const } : {}),
       ...(request.pointer !== undefined ? { pointer: request.pointer } : {}),
-      totalBytes: request.view !== "structure" && request.pointer === undefined
-        ? record.byteLength
-        : byteLength(selected),
+      totalBytes: selectedBytes,
       cursor: String(section.start),
       ...(nextCursor ? { nextCursor } : {}),
       done: nextCursor === undefined,
@@ -608,12 +640,14 @@ export class ToolResultContext {
       return false;
     }
     this.#records.delete(ref);
+    if (this.#selection?.record === record) this.#selection = undefined;
     this.#totalStoredBytes -= record.byteLength;
     this.#forgetIdentity(record);
     return true;
   }
 
   clear(): void {
+    this.#selection = undefined;
     this.#records.clear();
     this.#objectRefs = createPrivateWeakStore();
     this.#primitiveRefs = createPrivateMap();
