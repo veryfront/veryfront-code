@@ -104,6 +104,44 @@ describe("Node SSR local React graph", () => {
     );
   });
 
+  it("preserves a prepared adapter through public HTML schema parsing without hydrating it", async () => {
+    const { HTMLGenerationOptionsSchema, HydrationDataSchema } = await import(
+      "#veryfront/html/schemas/html.schema.ts"
+    );
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const { generateHTMLShellParts } = await import("#veryfront/html/html-shell-generator.ts");
+    const React = await getProjectReact();
+    const adapter = {
+      ...createMockAdapter(),
+      moduleLoader: {
+        importModule: () => Promise.resolve({ default: { ...React, version: "19.2.0" } }),
+      },
+    };
+    const parsed = HTMLGenerationOptionsSchema.parse({
+      adapter,
+      config: { react: { version: "^19.2.0" } },
+      mode: "development",
+      isLocalProject: true,
+    });
+    assertEquals(parsed.adapter, adapter);
+    for (
+      const invalid of [null, "https://example.invalid/adapter.js", {}, { ...adapter, serve: null }]
+    ) {
+      assertThrows(() => HTMLGenerationOptionsSchema.parse({ ...parsed, adapter: invalid }));
+    }
+    const shell = await generateHTMLShellParts({ slug: "schema-prepared" }, parsed);
+    assertEquals(shell.start.includes("react@19.2.0"), true);
+    assertEquals(shell.start.includes("react@19.2.4"), false);
+    const hydration = HydrationDataSchema.parse({
+      slug: "schema-prepared",
+      props: {},
+      params: {},
+      layouts: [],
+      adapter,
+    });
+    assertEquals("adapter" in hydration, false);
+  });
+
   it("constructs prepared and supplied renderers without reading host peer manifests", async () => {
     if (!isNode) return;
     const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");

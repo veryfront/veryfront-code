@@ -14,6 +14,17 @@ export const getClientModuleStrategySchema = defineSchema((v) => v.enum(["fs", "
 export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
   v.object({
     mode: v.enum(["development", "production"]),
+    // Opaque server-side capability. The separate hydration schema excludes it.
+    adapter: v.custom<RuntimeAdapter>((value) => {
+      if (value === null || typeof value !== "object") return false;
+      return typeof Reflect.get(value, "id") === "string" &&
+        typeof Reflect.get(value, "name") === "string" &&
+        typeof Reflect.get(value, "serve") === "function" &&
+        ["capabilities", "fs", "env", "server"].every((key) => {
+          const field = Reflect.get(value, key);
+          return field !== null && typeof field === "object";
+        });
+    }).optional(),
     // deno-lint-ignore no-explicit-any -- VeryfrontConfig is complex, use any
     config: v.any(), // VeryfrontConfig is complex, use any
     importMap: v.record(v.string(), v.string()).optional(),
@@ -95,12 +106,7 @@ export const getHydrationDataSchema = defineSchema((v) =>
 );
 
 // Inferred types
-export type HTMLGenerationOptions =
-  & InferSchema<ReturnType<typeof getHTMLGenerationOptionsSchema>>
-  & {
-    /** Server-side runtime authority; never serialized into hydration data. */
-    adapter?: RuntimeAdapter;
-  };
+export type HTMLGenerationOptions = InferSchema<ReturnType<typeof getHTMLGenerationOptionsSchema>>;
 export type HydrationData = InferSchema<ReturnType<typeof getHydrationDataSchema>>;
 
 // Backward compat aliases
