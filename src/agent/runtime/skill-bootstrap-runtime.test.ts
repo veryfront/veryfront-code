@@ -686,6 +686,64 @@ describe("startup skill and tool bootstrap", () => {
     }
   });
 
+  it("a throwing onToolCall observer settles the persisted startup call with an error result", async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("throwing-observer-plan", {
+      id: "throwing-observer-plan",
+      rootPath: "/skills/throwing-observer-plan",
+      metadata: { name: "throwing-observer-plan", description: "Guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/throwing-observer-plan/SKILL.md": "# Observer guidance",
+      }),
+    });
+    const model = scriptedModel([{ text: "Ready" }], { only: "stream" });
+    const { AgentRuntime } = await import("./index.ts");
+    const runtime = new AgentRuntime("bootstrap-throwing-observer", {
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "throwing-observer-plan",
+      skills: ["throwing-observer-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      memory: { type: "conversation" },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      await new Response(
+        await runtime.stream(
+          [{ id: "request", role: "user", parts: [{ type: "text", text: "Go" }] }],
+          undefined,
+          {
+            onToolCall: () => {
+              throw new Error("observer failed");
+            },
+          },
+        ),
+      ).text();
+      assertEquals(model.callCount, 0);
+      const memory = Reflect.get(runtime, "memory") as {
+        getMessages(): Promise<Array<{ role: string; parts: Array<Record<string, unknown>> }>>;
+      };
+      const persisted = await memory.getMessages();
+      const callIds = persisted.flatMap((message) =>
+        message.role === "assistant"
+          ? message.parts.flatMap((part) => "toolCallId" in part ? [String(part.toolCallId)] : [])
+          : []
+      );
+      const resultIds = persisted.flatMap((message) =>
+        message.role === "tool"
+          ? message.parts.flatMap((part) => "toolCallId" in part ? [String(part.toolCallId)] : [])
+          : []
+      );
+      assertEquals(callIds.length, 1);
+      assertStringIncludes(callIds[0]!, "bootstrap_skill_");
+      assertEquals(resultIds, callIds);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+
   it("a pause requested during the startup load holds before the first model call", async () => {
     clearMCPRegistry();
     skillRegistryInternal.clearAll();
