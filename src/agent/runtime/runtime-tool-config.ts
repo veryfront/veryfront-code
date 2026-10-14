@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition, ToolDiscoveryMetadata } from "#veryfront/tool/types.ts";
 import { copyToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
@@ -201,14 +202,18 @@ export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly s
     ? snapshotStringArray(value)
     : undefined;
   if (names === undefined || names.length > MAX_CONFIGURED_BOOTSTRAP_TOOLS) {
-    throw new Error("bootstrapTools must contain at most 16 exact tool names");
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools must contain at most 16 exact tool names",
+    });
   }
   for (let index = 0; index < names.length; index++) {
     const name = names[index];
     if (
       name === undefined || name.length === 0 || name.length > 512 || name === TOOL_SEARCH_TOOL_NAME
     ) {
-      throw new Error("bootstrapTools requires exact executable tool names, excluding tool_search");
+      throw CONFIG_INVALID.create({
+        detail: "bootstrapTools requires exact executable tool names, excluding tool_search",
+      });
     }
   }
   return names;

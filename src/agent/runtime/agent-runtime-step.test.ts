@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -91,11 +92,12 @@ describe("agent/runtime-step", () => {
   });
 
   it("rejects authored bootstrap tools outside the authorized catalog", async () => {
-    await assertRejects(
+    const error = await assertRejects(
       () => prepareAgentRuntimeStep(bootstrapStepInput(["delete_state"])),
-      Error,
+      VeryfrontError,
       "outside the authorized executable catalog",
     );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
   });
 
   for (const mode of ["generate", "stream"] as const) {

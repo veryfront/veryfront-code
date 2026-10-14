@@ -93,7 +93,11 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
+import {
+  CONFIG_INVALID,
+  DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
+  isVeryfrontError,
+} from "#veryfront/errors";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
@@ -2606,7 +2610,9 @@ async function executeStartupSkill(input: {
   const skillId = resolveRuntimeSkillBootstrapId(input.skillId, input.agentId);
   const args = definition ? prepareFrameworkSkillBootstrap(loader, skillId) : undefined;
   if (!definition || !args) {
-    throw new Error("bootstrapSkill requires an authorized framework skill loader");
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapSkill requires an authorized framework skill loader",
+    });
   }
   const toolCallId = `bootstrap_skill_${crypto.randomUUID()}`;
   const message: Message = {

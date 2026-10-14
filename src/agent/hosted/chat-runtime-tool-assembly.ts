@@ -1206,7 +1206,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         !includesValue(authorizedToolNames, name) ||
         (localTool !== undefined && isRuntimeProviderSchemaHiddenTool(localTool))
       ) {
-        throw new Error("bootstrapTools contains a tool outside the authorized executable catalog");
+        throw CONFIG_INVALID.create({
+          detail: "bootstrapTools contains a tool outside the authorized executable catalog",
+        });
       }
       if (!includesValue(bootstrapToolNames, name)) {
         bootstrapToolNames[bootstrapToolNames.length] = name;

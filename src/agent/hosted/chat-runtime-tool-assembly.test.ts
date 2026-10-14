@@ -12,6 +12,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type {
@@ -3769,7 +3770,7 @@ it("hosted deferred inventory includes authored bootstrap tools and keeps the re
 });
 
 it("hosted bootstrap selection does not bypass an explicit tool denial", async () => {
-  await assertRejects(
+  const error = await assertRejects(
     () =>
       prepareHostedChatRuntimeToolAssembly({
         sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
@@ -3789,9 +3790,10 @@ it("hosted bootstrap selection does not bypass an explicit tool denial", async (
         createRemoteToolSource: remoteSourceFromConfig,
         preloadLatestConversationUserText: false,
       }),
-    Error,
+    VeryfrontError,
     "outside the authorized executable catalog",
   );
+  assertEquals((error as VeryfrontError).slug, "config-invalid");
 });
 
 it("hosted eager capping retains the selected authored remote startup tool", async () => {

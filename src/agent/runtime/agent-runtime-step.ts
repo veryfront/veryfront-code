@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import {
   concatPrivateArrays,
   everyPrivateArray,
@@ -417,7 +418,9 @@ export async function prepareAgentRuntimeStep(
           (tool) => tool.name === name && !isRuntimeProviderSchemaHiddenTool(tool),
         )
       ) {
-        throw new Error("bootstrapTools contains a tool outside the authorized executable catalog");
+        throw CONFIG_INVALID.create({
+          detail: "bootstrapTools contains a tool outside the authorized executable catalog",
+        });
       }
       // A tool hidden by the active step's restrictions stays hidden.
       if (setHas(existingToolNames, name)) {
@@ -444,7 +447,9 @@ export async function prepareAgentRuntimeStep(
     configuredBootstrapNames.length > 0 && maxVisibleTools !== undefined &&
     toolExposurePlan.visible.length > maxVisibleTools
   ) {
-    throw new Error("bootstrapTools exceeds the model's visible tool schema limit");
+    throw CONFIG_INVALID.create({
+      detail: "bootstrapTools exceeds the model's visible tool schema limit",
+    });
   }
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
   const instructionsWithToolInventory = hasRuntimeToolInventory(baseSystemPrompt)

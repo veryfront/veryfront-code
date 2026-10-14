@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
 import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
@@ -444,6 +445,11 @@ it("authored bootstrap selection is bounded, copied, and excludes tool_search", 
     Array(17).fill("get_run"),
   ];
   for (const malformed of malformedSelections) {
-    assertThrows(() => snapshotConfiguredToolBootstrapNames(malformed), Error, "bootstrapTools");
+    const error = assertThrows(
+      () => snapshotConfiguredToolBootstrapNames(malformed),
+      VeryfrontError,
+      "bootstrapTools",
+    );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
   }
 });

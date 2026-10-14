@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
@@ -25,7 +26,9 @@ export function validateRuntimeSkillBootstrapResult(result: unknown, skillId: st
   if (
     readToolResultOwnDataProperty(result, "skillId") !== skillId || typeof instructions !== "string"
   ) {
-    throw new Error("Startup skill could not be loaded through the authorized skill loader");
+    throw CONFIG_INVALID.create({
+      detail: "Startup skill could not be loaded through the authorized skill loader",
+    });
   }
   if (
     !snapshotBoundedJsonValue(
@@ -34,6 +37,6 @@ export function validateRuntimeSkillBootstrapResult(result: unknown, skillId: st
       RUNTIME_SKILL_BOOTSTRAP_MAX_BYTES,
     ).success
   ) {
-    throw new Error("Startup skill exceeds the 16 KiB context budget");
+    throw CONFIG_INVALID.create({ detail: "Startup skill exceeds the 16 KiB context budget" });
   }
 }
