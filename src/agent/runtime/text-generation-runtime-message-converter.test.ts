@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
@@ -13,6 +18,7 @@ import type {
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
+import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
@@ -1490,4 +1496,117 @@ describe("text-generation-runtime-message-converter", () => {
       });
     }
   });
+});
+
+describe("canonical child replay with root response hints", () => {
+  it("projects the canonical alias on direct and persisted converter requests", () => {
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      summary: { text: "conflicting trace" },
+      output: { directory: "accepted" },
+    };
+    for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const before = JSON.stringify(result);
+      const converted = convertToTextGenerationRuntimeMessages([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "call",
+            toolName: "veryfront__invoke_agent",
+            result,
+          }],
+        } as Message,
+      ]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          summary: {},
+          output: { directory: "accepted" },
+        },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+  it("retains accepted output or response once without root hint prose", () => {
+    for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+      for (const output of [{ directory: "accepted" }, "child response"]) {
+        const child = withRootOwnedChildResultHint({
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text: "child response",
+          summary: { text: "child response" },
+          output,
+        });
+        const childHint = child.rootResponseHint;
+        assertExists(childHint);
+        const before = JSON.stringify(child);
+        for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+          const converted = convertToTextGenerationRuntimeMessages([
+            {
+              id: "result",
+              role: "tool",
+              parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+            } as Message,
+          ]);
+          assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+            type: "json",
+            value: {
+              ok: true,
+              status: "completed",
+              childRunId: "child",
+              summary: {},
+              rootResponseHint: { instruction: childHint.instruction },
+              ...(typeof output === "string" ? { text: "child response" } : { output }),
+            },
+          });
+        }
+        assertEquals(JSON.stringify(child), before);
+      }
+    }
+  });
+});
+
+Deno.test("provider requests omit rewritten completed-child hints while preserving distinct summaries", () => {
+  const text = "Let me inspect the receipt. Child result confirmed.";
+  const child = withRootOwnedChildResultHint({
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text,
+    summary: { text: "distinct summary" },
+  });
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  assertEquals(hint.suggestedText, "Child result confirmed.");
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const converted = convertToTextGenerationRuntimeMessages([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+        } as Message,
+      ]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text,
+          summary: child.summary,
+          rootResponseHint: { instruction: hint.instruction },
+        },
+      });
+    }
+  }
+  assertEquals(child.rootResponseHint?.suggestedText, hint.suggestedText);
 });

@@ -33,6 +33,7 @@ import type {
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
+import { normalizeConversationPlatformToolName } from "../platform-tool-names.ts";
 import { createProviderToolResultOutput } from "./message-adapter.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
@@ -210,7 +211,7 @@ function getTextGenerationToolResultPart(
     type: "tool-result",
     toolCallId,
     toolName,
-    output: toolName === "invoke_agent"
+    output: normalizeConversationPlatformToolName(toolName) === "invoke_agent"
       ? createProviderToolResultOutput({ toolName, output: value })
       : { type: "json", value },
   };

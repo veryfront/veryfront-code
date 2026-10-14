@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type {
   ChatToolResultOutput,
   ChatToolResultPart,
@@ -784,5 +785,154 @@ Deno.test("failed children and ordinary tools keep diagnostic prose beside struc
       type: "json",
       value: original,
     });
+  }
+});
+
+Deno.test("canonical child alias projects accepted output through public chat replay", () => {
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text: "conflicting trace",
+    summary: { text: "conflicting trace" },
+    output: { directory: "accepted" },
+  };
+  for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
+    const before = JSON.stringify(recorded);
+    const messages = convertAgentRuntimeMessagesToProviderMessages([{
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "call",
+        toolName: "veryfront__invoke_agent",
+        output: recorded,
+      }],
+    }]);
+    assertEquals(messages, [{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call",
+        toolName: "veryfront__invoke_agent",
+        output: {
+          type: "json",
+          value: {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            summary: {},
+            output: { directory: "accepted" },
+          },
+        },
+      }],
+    }]);
+    assertEquals(JSON.stringify(recorded), before);
+  }
+});
+
+Deno.test("completed child replay removes root hint prose and retains its guidance", () => {
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [{ directory: "accepted" }, "child response"]) {
+      const child = withRootOwnedChildResultHint({
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        text: "child response",
+        summary: { text: "child response" },
+        output,
+      });
+      const childHint = child.rootResponseHint;
+      assertExists(childHint);
+      const before = JSON.stringify(child);
+      for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
+        assertEquals(
+          createToolResultPart({ toolName, toolCallId: "call", output: recorded }).output,
+          {
+            type: "json",
+            value: {
+              ok: true,
+              status: "completed",
+              childRunId: "child",
+              summary: {},
+              rootResponseHint: { instruction: childHint.instruction },
+              ...(typeof output === "string" ? { text: "child response" } : { output }),
+            },
+          },
+        );
+      }
+      assertEquals(JSON.stringify(child), before);
+    }
+  }
+});
+
+Deno.test("child replay retains diagnostic hints for failures and unrelated tools", () => {
+  const failed = {
+    ok: false,
+    status: "failed",
+    childRunId: "child",
+    text: "failure details",
+    summary: { text: "distinct summary" },
+    rootResponseHint: { instruction: "guidance", suggestedText: "failure details" },
+    output: { outcome: "failed" },
+  };
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent", "ordinary_tool"]) {
+    assertEquals(createToolResultPart({ toolName, toolCallId: "call", output: failed }).output, {
+      type: "json",
+      value: failed,
+    });
+  }
+  const ordinary = { ...failed, ok: true, status: "completed" };
+  assertEquals(
+    createToolResultPart({ toolName: "ordinary_tool", toolCallId: "call", output: ordinary })
+      .output,
+    { type: "json", value: ordinary },
+  );
+});
+
+Deno.test("completed prose handoff omits a rewritten root suggestion without requiring summary equality", () => {
+  const text = "Let me inspect the receipt. Child result confirmed.";
+  const child = withRootOwnedChildResultHint({
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text,
+    summary: { text: "distinct summary", truncated: true },
+  });
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  assertEquals(hint.suggestedText, "Child result confirmed.");
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      assertEquals(createToolResultPart({ toolName, toolCallId: "call", output }).output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text,
+          summary: child.summary,
+          rootResponseHint: { instruction: hint.instruction },
+        },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
+});
+
+Deno.test("projection preserves a root suggestion when no accepted child output is available", () => {
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    rootResponseHint: { instruction: "guidance", suggestedText: "Only available result" },
+  };
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      assertEquals(createToolResultPart({ toolName, toolCallId: "call", output }).output, {
+        type: "json",
+        value: output,
+      });
+    }
   }
 });

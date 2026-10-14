@@ -7,6 +7,7 @@ import {
   pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { normalizeConversationPlatformToolName } from "../platform-tool-names.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -474,10 +475,21 @@ function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
     getOptionalStringField(part, "tool_call_id");
 }
 
-function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
+function hasCompletedChildResult(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && value.ok === true && value.status === "completed" &&
-    typeof value.childRunId === "string" && hasOwn(value, "output") &&
+    typeof value.childRunId === "string";
+}
+
+function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
+  return hasCompletedChildResult(value) && hasOwn(value, "output") &&
     value.output !== null && typeof value.output === "object";
+}
+
+function hasCompletedChildResultText(value: unknown): value is Record<string, unknown> {
+  return hasCompletedChildResult(value) &&
+    ((typeof value.text === "string" && value.text.length > 0) ||
+      (isRecord(value.summary) && typeof value.summary.text === "string" &&
+        value.summary.text.length > 0));
 }
 
 /** @internal Normalize provider-visible results while preserving durable tool history. */
@@ -487,7 +499,8 @@ export function createProviderToolResultOutput(part: {
 }): { type: "json"; value: JsonValue } {
   const output = toToolResultOutput(part.output);
   let value = output.value;
-  if (part.toolName === "invoke_agent") {
+  const isChildResult = normalizeConversationPlatformToolName(part.toolName) === "invoke_agent";
+  if (isChildResult) {
     let candidate: unknown = value;
     if (
       isRecord(candidate) && (candidate.type === "json" || candidate.type === "text") &&
@@ -504,6 +517,7 @@ export function createProviderToolResultOutput(part: {
     }
     if (
       hasCompletedStructuredChildOutput(candidate) ||
+      (hasCompletedChildResultText(candidate) && isRecord(candidate.rootResponseHint)) ||
       (isRecord(candidate) && typeof candidate.childRunId === "string" &&
         typeof candidate.text === "string" && isRecord(candidate.summary) &&
         candidate.summary.text === candidate.text)
@@ -512,9 +526,18 @@ export function createProviderToolResultOutput(part: {
       output.value = value;
     }
   }
+  // Root response suggestions derive from the child prose. Keep the guidance,
+  // but do not replay its additional copy beside the accepted child result.
+  if (
+    isChildResult &&
+    (hasCompletedStructuredChildOutput(value) || hasCompletedChildResultText(value)) &&
+    isRecord(value.rootResponseHint)
+  ) {
+    delete value.rootResponseHint.suggestedText;
+  }
   // Structured output is the accepted child value. Trace prose can describe
   // other intermediate results, so keep it in durable history, not the handoff.
-  if (part.toolName === "invoke_agent" && hasCompletedStructuredChildOutput(value)) {
+  if (isChildResult && hasCompletedStructuredChildOutput(value)) {
     delete value.text;
     if (isRecord(value.summary)) delete value.summary.text;
     return output;
@@ -522,7 +545,7 @@ export function createProviderToolResultOutput(part: {
   // The durable child envelope keeps both fields for compatibility. Providers
   // need the text once, alongside the remaining summary metadata.
   if (
-    part.toolName === "invoke_agent" && isRecord(value) &&
+    isChildResult && isRecord(value) &&
     typeof value.childRunId === "string" && typeof value.text === "string" &&
     isRecord(value.summary) && value.summary.text === value.text
   ) {

@@ -204,13 +204,16 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
-For `invoke_agent`, provider replay includes identical child response text once,
-while preserving summary metadata and the original durable result envelope.
+For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
+child response text once while preserving summary metadata and the original
+durable result envelope.
 Both chat replay and text-generation requests use this normalization, including
 JSON-encoded persisted child results. A completed child with accepted structured
 `output` sends that value and lifecycle metadata to the provider. Its original
 prose stays in durable history, so intermediate trace descriptions cannot
-conflict with the accepted result. Failed children retain diagnostic prose.
+conflict with the accepted result. Completed child results keep root response
+hint instructions and metadata while omitting their suggested prose when accepted
+output or child response text is present. Failed children retain diagnostic prose.
 Distinct textual summaries and outputs retain their existing behavior.
 Result references limit inline payloads, not child generation or the total
 conversation size; reading every section can still grow model context.
