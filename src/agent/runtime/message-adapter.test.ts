@@ -11,7 +11,84 @@ import {
   type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
+  createToolResultPart,
 } from "./message-adapter.ts";
+
+Deno.test("provider child handoff carries summary text once without changing the durable result", () => {
+  const original = {
+    ok: true,
+    childRunId: "fixture-child",
+    text: "repeated ".repeat(1000),
+    summary: { text: "repeated ".repeat(1000), truncated: false, returnedChars: 9000 },
+  };
+  const part = createToolResultPart({
+    toolName: "invoke_agent",
+    toolCallId: "fixture-call",
+    output: original,
+  });
+  assertEquals(part.output, {
+    type: "json",
+    value: { ...original, summary: { truncated: false, returnedChars: 9000 } },
+  });
+  assertEquals(original.summary.text, original.text);
+});
+
+Deno.test("provider handoff preserves different summary text and unrelated tool results", () => {
+  for (const toolName of ["invoke_agent", "other_tool"]) {
+    const original = { text: "full", summary: { text: "different" } };
+    assertEquals(
+      createToolResultPart({ toolName, toolCallId: "fixture-call", output: original }).output,
+      { type: "json", value: original },
+    );
+  }
+  const original = { text: "same", summary: { text: "same" } };
+  assertEquals(
+    createToolResultPart({ toolName: "other_tool", toolCallId: "fixture-call", output: original })
+      .output,
+    { type: "json", value: original },
+  );
+});
+
+Deno.test("provider replay deduplicates the recorded JSON-encoded child envelope", () => {
+  const child = {
+    ok: true,
+    childRunId: "fixture-child",
+    text: "annotated fixture ".repeat(500),
+    output: "raw fixture ".repeat(500),
+    summary: { text: "annotated fixture ".repeat(500) },
+  };
+  const recorded = { type: "json", value: JSON.stringify(child) };
+  const part = createToolResultPart({
+    toolName: "invoke_agent",
+    toolCallId: "fixture-call",
+    output: recorded,
+  });
+  assertEquals(part.output, { type: "json", value: { ...child, summary: {} } });
+  assertEquals(recorded.value, JSON.stringify(child));
+  assertEquals(
+    createToolResultPart({
+      toolName: "invoke_agent",
+      toolCallId: "fixture-call",
+      output: { type: "json", value: "not JSON" },
+    }).output,
+    { type: "json", value: { type: "json", value: "not JSON" } },
+  );
+});
+
+Deno.test("provider replay removes raw child output only when it is contained in annotated text", () => {
+  const raw = "synthetic child output";
+  const text = `Host annotation\n${raw}`;
+  const child = { ok: true, childRunId: "fixture-child", text, output: raw, summary: { text } };
+  assertEquals(
+    createToolResultPart({
+      toolName: "invoke_agent",
+      toolCallId: "fixture-call",
+      output: { type: "json", value: JSON.stringify(child) },
+    }).output,
+    { type: "json", value: { ok: true, childRunId: "fixture-child", text, summary: {} } },
+  );
+  assertEquals(child.output, raw);
+});
 
 type ProviderStructuredPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -652,4 +729,60 @@ describe("agent runtime message adapter", () => {
 
     assertEquals(providerMessages, []);
   });
+});
+
+Deno.test("completed structured child output excludes conflicting trace prose from provider context", () => {
+  const receipt = {
+    outcome: "completed",
+    message_id: "message-17",
+    email_directory: "mailboxes/inbox/confirmed",
+  };
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    summary: { text: "Use other directory: mailboxes/inbox/unconfirmed", truncated: false },
+    output: receipt,
+  };
+  for (const original of [child, { ...child, text: "Trace contains ten other directories" }]) {
+    for (
+      const recorded of [original, { type: "json", value: original }, {
+        type: "json",
+        value: JSON.stringify(original),
+      }]
+    ) {
+      const before = JSON.stringify(recorded);
+      assertEquals(
+        createToolResultPart({ toolName: "invoke_agent", toolCallId: "call", output: recorded })
+          .output,
+        {
+          type: "json",
+          value: {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            summary: { truncated: false },
+            output: receipt,
+          },
+        },
+      );
+      assertEquals(JSON.stringify(recorded), before);
+    }
+  }
+});
+
+Deno.test("failed children and ordinary tools keep diagnostic prose beside structured values", () => {
+  for (const toolName of ["invoke_agent", "ordinary_tool"]) {
+    const original = {
+      ok: false,
+      status: "failed",
+      childRunId: "child",
+      summary: { text: "Failure details" },
+      output: { outcome: "failed" },
+    };
+    assertEquals(createToolResultPart({ toolName, toolCallId: "call", output: original }).output, {
+      type: "json",
+      value: original,
+    });
+  }
 });

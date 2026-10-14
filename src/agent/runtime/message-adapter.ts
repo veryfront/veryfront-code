@@ -11,11 +11,12 @@ import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
+  privateTextEndsWith,
   privateTextIncludes,
   privateTextStartsWith,
   privateTextTrim,
 } from "#veryfront/security/private-text.ts";
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
@@ -473,6 +474,69 @@ function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
     getOptionalStringField(part, "tool_call_id");
 }
 
+function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && value.ok === true && value.status === "completed" &&
+    typeof value.childRunId === "string" && hasOwn(value, "output") &&
+    value.output !== null && typeof value.output === "object";
+}
+
+/** @internal Normalize provider-visible results while preserving durable tool history. */
+export function createProviderToolResultOutput(part: {
+  toolName: string;
+  output: unknown;
+}): { type: "json"; value: JsonValue } {
+  const output = toToolResultOutput(part.output);
+  let value = output.value;
+  if (part.toolName === "invoke_agent") {
+    let candidate: unknown = value;
+    if (
+      isRecord(candidate) && (candidate.type === "json" || candidate.type === "text") &&
+      hasOwn(candidate, "value")
+    ) {
+      candidate = candidate.value;
+    }
+    if (typeof candidate === "string") {
+      try {
+        candidate = privateJsonParse(candidate);
+      } catch {
+        // Preserve malformed or non-JSON tool text for error recovery.
+      }
+    }
+    if (
+      hasCompletedStructuredChildOutput(candidate) ||
+      (isRecord(candidate) && typeof candidate.childRunId === "string" &&
+        typeof candidate.text === "string" && isRecord(candidate.summary) &&
+        candidate.summary.text === candidate.text)
+    ) {
+      value = toJsonValue(candidate);
+      output.value = value;
+    }
+  }
+  // Structured output is the accepted child value. Trace prose can describe
+  // other intermediate results, so keep it in durable history, not the handoff.
+  if (part.toolName === "invoke_agent" && hasCompletedStructuredChildOutput(value)) {
+    delete value.text;
+    if (isRecord(value.summary)) delete value.summary.text;
+    return output;
+  }
+  // The durable child envelope keeps both fields for compatibility. Providers
+  // need the text once, alongside the remaining summary metadata.
+  if (
+    part.toolName === "invoke_agent" && isRecord(value) &&
+    typeof value.childRunId === "string" && typeof value.text === "string" &&
+    isRecord(value.summary) && value.summary.text === value.text
+  ) {
+    delete value.summary.text;
+    if (
+      typeof value.output === "string" && value.output.length > 0 &&
+      privateTextEndsWith(value.text, value.output)
+    ) {
+      delete value.output;
+    }
+  }
+  return output;
+}
+
 /** Create a chat tool-result part. */
 export function createToolResultPart(part: {
   toolCallId: string;
@@ -483,7 +547,7 @@ export function createToolResultPart(part: {
     type: "tool-result",
     toolCallId: part.toolCallId,
     toolName: part.toolName,
-    output: toToolResultOutput(part.output),
+    output: createProviderToolResultOutput(part),
   };
 }
 

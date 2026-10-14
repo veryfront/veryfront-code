@@ -17,6 +17,102 @@ import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
+  it("projects the accepted structured child value without conflicting trace prose on replay", () => {
+    const receipt = {
+      outcome: "completed",
+      message_id: "message-17",
+      email_directory: "confirmed-directory",
+    };
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      summary: { text: "Ten other directories" },
+      output: receipt,
+    };
+    for (
+      const result of [child, { type: "json", value: child }, {
+        type: "json",
+        value: JSON.stringify(child),
+      }]
+    ) {
+      const before = JSON.stringify(result);
+      const converted = convertToTextGenerationRuntimeMessages([{
+        id: "child-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          result,
+        }],
+      } as Message]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+        type: "json",
+        value: { ok: true, status: "completed", childRunId: "child", summary: {}, output: receipt },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+
+  it("deduplicates child handoffs on the active provider path without changing durable history", () => {
+    const text = "Synthetic child output ".repeat(1000);
+    const child = {
+      ok: true,
+      childRunId: "child",
+      text,
+      output: text,
+      summary: { text, truncated: false },
+    };
+    for (
+      const result of [child, { type: "json", value: child }, {
+        type: "json",
+        value: JSON.stringify(child),
+      }]
+    ) {
+      const before = JSON.stringify(result);
+      const converted = convertToTextGenerationRuntimeMessages([{
+        id: "child-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          result,
+        }],
+      } as Message]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+        type: "json",
+        value: { ok: true, childRunId: "child", text, summary: { truncated: false } },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+
+  it("preserves distinct child summaries and raw outputs on the active provider path", () => {
+    const child = {
+      ok: true,
+      childRunId: "child",
+      text: "annotated",
+      output: "distinct raw",
+      summary: { text: "distinct summary" },
+    };
+    const converted = convertToTextGenerationRuntimeMessages([{
+      id: "child-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "child-call",
+        toolName: "invoke_agent",
+        result: child,
+      }],
+    } as Message]);
+    assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0].output, {
+      type: "json",
+      value: child,
+    });
+  });
+
   it("reads provider execution only from own data without invoking optional flag getters", () => {
     for (const own of [false, true]) {
       let observations = 0;
