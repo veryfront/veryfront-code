@@ -1234,6 +1234,89 @@ describe("invoke_agent child request budget", () => {
     );
   });
 
+  it("measures a native format that overrides the neutral schema", () => {
+    const base = {
+      model: { provider: "openai", modelId: "gpt-4.1", openAITransport: "chat-completions" },
+      system: "ok",
+      messages: [{ role: "user", content: "Answer" }],
+      responseFormat: { type: "json_schema", name: "small", schema: { type: "object" } },
+      limit: { context: 20_000, output: 4_096 },
+      requestedOutputTokens: 4_096,
+    } as const;
+    enforceProviderRequestBudget(base);
+    assertThrows(
+      () =>
+        enforceProviderRequestBudget({
+          ...base,
+          providerOptions: {
+            openai: {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "large",
+                  schema: { type: "object", description: "Field guidance ".repeat(8_000) },
+                },
+              },
+            },
+          },
+        }),
+      Error,
+      "context window",
+    );
+  });
+
+  it("applies a smaller native output limit before reserving the implicit floor", () => {
+    const result = enforceProviderRequestBudget({
+      model: { provider: "anthropic", modelId: "claude-haiku-4-5" },
+      providerOptions: { anthropic: { max_tokens: 1_000 } },
+      system: "ok",
+      messages: [{ role: "user", content: "x".repeat(690_000) }],
+      limit: { context: 200_000, output: 64_000 },
+      requestedOutputTokens: 64_000,
+    });
+    assertEquals(result.maxOutputTokens, 1_000);
+  });
+
+  it("reads native thinking from the dispatched provider bucket", () => {
+    const model = scriptedModel([{ text: "unused" }], {
+      modelId: "acme/claude-like",
+      provider: "acme",
+    });
+    registerVeryfrontCloudModelFacts(model, () => ({
+      provider: "acme",
+      surface: "anthropic",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }));
+    assertEquals(
+      resolveAdditiveReasoningOutputTokens(model, {
+        providerOptions: { acme: { thinking: { type: "enabled", budget_tokens: 2_048 } } },
+      }),
+      2_048,
+    );
+  });
+
+  it("selects the transport a provider-native tool requires before checking native output", () => {
+    const base = {
+      model: { provider: "openai", modelId: "gpt-4.1", openAITransport: "auto" },
+      providerOptions: { openai: { max_output_tokens: 60_000 } },
+      system: "ok",
+      messages: [{ role: "user", content: "Search" }],
+      limit: { context: 40_000, output: 64_000 },
+      requestedOutputTokens: 4_096,
+    } as const;
+    enforceProviderRequestBudget(base);
+    assertThrows(
+      () =>
+        enforceProviderRequestBudget({
+          ...base,
+          tools: { web_search: { type: "provider", id: "openai.web_search", args: {} } },
+        }),
+      Error,
+      "context window",
+    );
+  });
+
   it("still rejects a child whose input leaves less than the bounded output reserve", async () => {
     const { model, wire } = await runNoToolsChild(700_000);
     assertEquals(wire.includes("AGENT_CONTEXT_WINDOW_EXCEEDED"), true);

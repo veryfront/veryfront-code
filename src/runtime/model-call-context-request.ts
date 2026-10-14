@@ -1786,35 +1786,17 @@ export function resolveAdditiveReasoningOutputTokens(
   // The served surface decides the builder, so a custom provider on the
   // Anthropic surface adds its thinking budget like `anthropic/*`.
   if (resolveModelCallProtocol(model) !== "anthropic") return 0;
-  const reasoning = buildModelCallContextRequest(model, options)?.reasoning;
+  // Use the builder's own resolution, including the dispatched provider bucket.
   if (options.reasoning?.enabled === true) {
-    const budget = reasoning?.budgetTokens ??
-      (reasoning?.effort === "low"
-        ? 1024
-        : reasoning?.effort === "high"
-        ? 16384
-        : reasoning?.effort === "max"
-        ? 32768
-        : 4096);
-    // Match the first-party Anthropic builder; its offline contract matrix guards drift.
-    return numberIsSafeInteger(budget) && budget >= 1024 ? budget : undefined;
+    return resolveAnthropicNeutralThinkingBudget(options.reasoning);
   }
-  // Canonical native thinking has precedence when neutral reasoning does not enable it.
-  const providerOptions = options.providerOptions;
-  const anthropic = providerOptions && typeof providerOptions === "object"
-    ? (providerOptions as Record<string, unknown>).anthropic
-    : undefined;
-  const thinking = anthropic && typeof anthropic === "object" && !Array.isArray(anthropic)
-    ? (anthropic as Record<string, unknown>).thinking
-    : undefined;
+  const source = options as ModelCallRequestSource;
+  const thinking = readProviderControl(model, source, "thinking")?.value;
   if (
-    thinking && typeof thinking === "object" && !Array.isArray(thinking) &&
-    (thinking as Record<string, unknown>).type === "enabled"
+    thinking && typeof thinking === "object" && !ArrayIsArray(thinking) &&
+    readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled"
   ) {
-    const budget = reasoning?.budgetTokens;
-    return budget !== undefined && numberIsSafeInteger(budget) && budget >= 1024
-      ? budget
-      : undefined;
+    return resolveAnthropicProviderThinkingBudget(model, source);
   }
   return 0;
 }
