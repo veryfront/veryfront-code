@@ -695,6 +695,8 @@ interface SourceListingStart {
   dataGeneration: number;
   /** Order of this read among listings and reserved data fetches. */
   readSequence: number;
+  /** Source and request authority that own this listing's absence proof. */
+  recoveryScope: string;
 }
 
 function toSnapshotProjectPath(file: SourceSnapshotFile): string | undefined {
@@ -925,6 +927,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   #sourceReadSequence = 0;
   /** Read sequence of the newest listing applied to the snapshot. */
   #appliedListingReadSequence = 0;
+  #appliedListingRecoveryScope: string | undefined;
   /** Newest refresh requested per reserved data path, so older replies stand down. */
   #reservedDataRequestSequence = 0;
   readonly #reservedDataLatestRequests = new IntrinsicMap<string, number>();
@@ -1727,6 +1730,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       if (!this.#shouldRecoverBranchMiss(path, error)) throw error;
 
       const listingReadSequence = this.#appliedListingReadSequence;
+      const recoveryScope = this.#getBranchMissRecoveryScope();
       const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
         await this.#refreshBranchSnapshotAfterMiss(path, options?.signal);
@@ -1749,6 +1753,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const files = this.sourceSnapshotFiles;
       if (
         this.#appliedListingReadSequence > listingReadSequence &&
+        this.#appliedListingRecoveryScope === recoveryScope &&
         this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
         files !== undefined &&
         IntrinsicReflectApply(ArrayPrototypeSome, VERYFRONT_CONFIG_FILES, [
@@ -2060,12 +2065,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return {
       dataGeneration: this.#reservedDataGeneration,
       readSequence: ++this.#sourceReadSequence,
+      recoveryScope: this.#getBranchMissRecoveryScope(),
     };
   }
 
   #noteListingApplied(listing: SourceListingStart): void {
     if (listing.readSequence > this.#appliedListingReadSequence) {
       this.#appliedListingReadSequence = listing.readSequence;
+      this.#appliedListingRecoveryScope = listing.recoveryScope;
     }
   }
 

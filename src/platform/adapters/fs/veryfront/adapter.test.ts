@@ -29,7 +29,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
-import { runWithRequestContext } from "./request-context.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 import { FSAdapterWrapper } from "../wrapper.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
@@ -3094,6 +3094,83 @@ describe("VeryfrontFSAdapter", () => {
         }
       });
     }
+
+    it("does not certify config absence from another request authority's winning listing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: () => Promise<string>;
+        };
+        wsManager: { connect: () => void };
+      };
+      const ownStarted = Promise.withResolvers<void>();
+      const ownListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      const client = internals.client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        const token = getCurrentRequestContext()?.token;
+        if (token === "own-token") {
+          ownStarted.resolve();
+          return ownListing.promise;
+        }
+        return Promise.resolve(token === "other-token" ? [] : [{ path: "initial.ts" }]);
+      };
+      let ownReads = 0;
+      client.getFileContent = () => {
+        if (getCurrentRequestContext()?.token === "own-token" && ++ownReads > 1) {
+          return Promise.resolve("export default { title: 'own authority' };");
+        }
+        return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
+      };
+      internals.wsManager.connect = () => {};
+      const prefix = buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      try {
+        await adapter.initialize();
+        addPendingInvalidation(prefix);
+        const ownRead = runWithRequestContext({
+          projectSlug: "test-project",
+          token: "own-token",
+          branch: "main",
+        }, () => adapter.readTextFile("/veryfront.config.js"));
+        // Attach rejection handling before releasing the concurrent listings.
+        const ownResult = ownRead.then((content) => ({ content }), (error) => ({ error }));
+        await ownStarted.promise;
+        const otherError = await assertRejects(() =>
+          runWithRequestContext(
+            { projectSlug: "test-project", token: "other-token", branch: "main" },
+            () => adapter.readTextFile("/veryfront.config.js"),
+          )
+        );
+        assertEquals(isNotFoundError(otherError), true);
+        ownListing.resolve([{ path: "veryfront.config.js", content: "export default {};" }]);
+        assertEquals(await ownResult, { content: "export default { title: 'own authority' };" });
+        assertEquals(ownReads, 2);
+      } finally {
+        ownListing.resolve([]);
+        removePendingInvalidation(prefix);
+        adapter.dispose();
+      }
+    });
 
     it("does not refresh for any absent root config candidate in a fresh complete snapshot", async () => {
       const adapter = createAdapter();
