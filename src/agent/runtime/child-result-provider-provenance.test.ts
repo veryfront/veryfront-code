@@ -7,6 +7,14 @@ import { AgentRuntime } from "./index.ts";
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import type { Message, ToolResultPart } from "../types.ts";
+import {
+  buildChildRunExecutionSnapshot,
+  buildChildRunSuccessResult,
+  type ChildRunExecutionUsage,
+} from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
+import { buildHostedDurableChildInvokeSuccessResult } from "../hosted/durable-child-fork-execution.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "./message-adapter.ts";
 import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
 import type { TextGenerationRuntimeToolMessage } from "./text-generation-runtime-message-types.ts";
@@ -170,3 +178,93 @@ Deno.test("accepted scalar child outputs replace conflicting prose on both provi
     }
   }
 });
+
+function durableChildResult(usage?: ChildRunExecutionUsage) {
+  const result = buildChildRunSuccessResult({
+    description: "Synthetic durable child",
+    steps: 1,
+    toolCalls: [],
+    toolResults: [],
+    durationMs: 1,
+    ...(usage === undefined ? {} : { usage }),
+  }, buildChildRunResultSummary("durable child response"));
+  return withRootOwnedChildResultHint(buildHostedDurableChildInvokeSuccessResult({
+    result,
+    snapshot: buildChildRunExecutionSnapshot(result),
+    identifiers: {
+      childConversationId: "conversation",
+      childRunId: "child",
+      childMessageId: "message",
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+    },
+    targets: {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: "branch",
+    },
+  }));
+}
+
+Deno.test("actual durable success producer preserves optional usage and admitted projection", () => {
+  for (const usage of [undefined, { inputTokens: 3, outputTokens: 4, totalTokens: 7 }]) {
+    const result = durableChildResult(usage);
+    assertEquals(Object.hasOwn(result, "usage"), usage !== undefined);
+    if (usage !== undefined) assertEquals(result.usage, usage);
+    const message = resultMessage(false);
+    const part = message.parts[0] as ToolResultPart;
+    part.result = result;
+    markTrustedPlatformPolicyToolResultPart(part);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+    const before = JSON.stringify(message);
+    const replayed = JSON.parse(JSON.stringify(
+      prepareTrustedPlatformPolicyMessageForPersistence(message),
+    )) as Message;
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart), true);
+    for (const admitted of [message, replayed]) {
+      const chat = convertAgentRuntimeMessagesToProviderMessages([admitted]);
+      const active = convertToTextGenerationRuntimeMessages([admitted]);
+      for (const converted of [chat, active]) {
+        const encoded = JSON.stringify(converted);
+        assertEquals(encoded.split("durable child response").length - 1, 1);
+        assertEquals(encoded.includes("suggestedText"), false);
+      }
+    }
+    assertEquals(JSON.stringify(message), before);
+  }
+});
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`actual durable success without usage projects after runtime ${mode} dispatch`, async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: "call", name: "invoke_agent", input: {} }] },
+      { text: "completed" },
+    ], { only: mode });
+    const childTool = markTrustedHostToolProvenance(markRuntimeLocalTool(tool({
+      id: "invoke_agent",
+      description: "Synthetic durable producer",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => durableChildResult(),
+    })));
+    const runtime = new AgentRuntime("durable-projection", {
+      model: "veryfront-cloud/openai/durable-projection",
+      system: "Process the synthetic result.",
+      security: false,
+      skills: false,
+      maxSteps: 2,
+      tools: { invoke_agent: childTool },
+    }, { resolveModelRuntime: () => model });
+    const input: Message[] = [{
+      id: "user",
+      role: "user",
+      parts: [{ type: "text", text: "Process the synthetic result" }],
+    }];
+    if (mode === "generate") await runtime.generate(input);
+    else await new Response(await runtime.stream(input)).text();
+    assertEquals(model.callCount, 2);
+    const prompt = JSON.stringify(model.calls[1]?.prompt);
+    assertEquals(prompt.split("durable child response").length - 1, 1);
+    assertEquals(prompt.includes("suggestedText"), false);
+  });
+}

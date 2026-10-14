@@ -313,7 +313,7 @@ export function buildHostedDurableChildInvokeSuccessResult<
     steps: input.snapshot.steps,
     toolCalls: input.snapshot.toolCalls,
     toolResults: input.snapshot.toolResults,
-    usage: input.snapshot.usage,
+    ...(input.snapshot.usage === undefined ? {} : { usage: input.snapshot.usage }),
     durationMs: input.snapshot.durationMs,
     childConversationId: input.identifiers.childConversationId,
     childRunId: input.identifiers.childRunId,
