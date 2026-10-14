@@ -1,3 +1,4 @@
+import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
@@ -966,6 +967,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         // executor's model proxy carries no cloud facts, so the runtime
         // converts tools for this target too.
         toolSchemaTarget: withServedFacts(() => resolveProviderToolSchemaTarget(modelId)),
+        reservedToolSlots: getToolResultReaderReservedToolSlots(definition.toolResultContext),
         sourceProviderToolNames: definition.providerTools,
         prepareRemoteToolInput: ({ toolName, toolInput }) =>
           applyDefaultResearchArtifactPath(toolName, toolInput, taskContext),

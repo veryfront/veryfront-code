@@ -785,4 +785,27 @@ describe("agent/runtime/model-resolution tool schema target", () => {
     assertEquals(selected.length, 128);
     assertEquals(selected.includes("tool_129"), true);
   });
+
+  it("assumes the strictest wire limit before the run's catalog settles", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "google/local-model",
+        provider: "google",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+
+    assertEquals(resolveProviderToolSchemaTarget("google/local-model"), {
+      model: "veryfront-cloud/google/local-model",
+      wireSurface: "google",
+    });
+    assertEquals(resolveProviderToolSchemaTarget("google/local-model", { catalogSettled: false }), {
+      model: "veryfront-cloud/google/local-model",
+      wireSurface: "openai",
+    });
+  });
 });

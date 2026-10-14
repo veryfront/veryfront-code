@@ -1,3 +1,4 @@
+import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
@@ -306,6 +307,7 @@ async function buildToolAssembly(
     knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
     toolSchemaTarget: input.toolSchemaTarget,
+    reservedToolSlots: getToolResultReaderReservedToolSlots(input.options.toolResultContext),
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -613,7 +615,7 @@ export async function createDefaultHostedChatRuntime(
       // A short model alias resolves through the served catalog. It is loaded
       // and read under the run's own credentials and project, the same scope
       // the run's later model reads use.
-      await runWithVeryfrontCloudContextAsync(
+      const catalogLoaded = await runWithVeryfrontCloudContextAsync(
         cloudContext,
         () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS }),
       );
@@ -640,9 +642,11 @@ export async function createDefaultHostedChatRuntime(
           }),
       );
       // Preselection caps tools by the limit the run's model is converted with.
+      // A model whose catalog has not loaded yet settles against it later, so
+      // preselection then assumes the strictest wire limit.
       const toolSchemaTarget = runWithVeryfrontCloudContext(
         cloudContext,
-        () => resolveProviderToolSchemaTarget(modelId),
+        () => resolveProviderToolSchemaTarget(modelId, { catalogSettled: catalogLoaded }),
       );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 

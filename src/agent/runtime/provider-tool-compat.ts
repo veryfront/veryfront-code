@@ -27,6 +27,8 @@ export interface ProviderToolCompatOptions {
   /** The authenticated gateway model's resolved wire surface, when available. */
   wireSurface?: VeryfrontCloudSurfaceId;
   requiredToolNames?: readonly string[];
+  /** Slots under the tool limit kept for schemas the runtime appends later. */
+  reservedToolSlots?: number;
 }
 
 const OPENAI_MAX_TOOLS = 128;
@@ -159,9 +161,12 @@ export function selectProviderCompatibleToolNames(
   options: ProviderToolCompatOptions = {},
 ): string[] {
   const profile = getProviderToolProfile(options.model, options.wireSurface);
+  const maxTools = profile.maxTools === undefined
+    ? undefined
+    : Math.max(0, profile.maxTools - Math.max(0, options.reservedToolSlots ?? 0));
   const orderedToolNames = uniqueInOrder(toolNames);
 
-  if (profile.maxTools === undefined || orderedToolNames.length <= profile.maxTools) {
+  if (maxTools === undefined || orderedToolNames.length <= maxTools) {
     return orderedToolNames;
   }
 
@@ -186,14 +191,14 @@ export function selectProviderCompatibleToolNames(
   for (let index = 0; index < orderedToolNames.length; index++) {
     const toolName = orderedToolNames[index];
     if (toolName === undefined) continue;
-    if (selected.length >= profile.maxTools) break;
+    if (selected.length >= maxTools) break;
     if (IntrinsicReflectApply(IntrinsicSetHas, selectedSet, [toolName])) continue;
     selected[selected.length] = toolName;
     IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
   }
 
   const bounded: string[] = [];
-  for (let index = 0; index < selected.length && index < profile.maxTools; index++) {
+  for (let index = 0; index < selected.length && index < maxTools; index++) {
     const toolName = selected[index];
     if (toolName !== undefined) bounded[bounded.length] = toolName;
   }

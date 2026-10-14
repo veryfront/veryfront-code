@@ -1998,7 +1998,6 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
  */
 function resolveStepToolSchemaOptions(
   config: AgentConfig,
-  effectiveModel: string,
   languageModel: ModelRuntime,
 ): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
   const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
@@ -3971,7 +3970,7 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
-          ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
+          ...resolveStepToolSchemaOptions(this.config, languageModel),
           reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
@@ -4046,7 +4045,7 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
-          ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
+          ...resolveStepToolSchemaOptions(this.config, languageModel),
           providerTools: stepProviderTools,
           requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
         });
@@ -5044,7 +5043,7 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
-        ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
+        ...resolveStepToolSchemaOptions(this.config, languageModel),
         reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
@@ -5306,7 +5305,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
-        ...resolveStepToolSchemaOptions(this.config, effectiveModel, languageModel),
+        ...resolveStepToolSchemaOptions(this.config, languageModel),
         providerTools: stepProviderTools,
         requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
       });

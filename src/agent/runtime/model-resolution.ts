@@ -369,7 +369,10 @@ export interface ProviderToolSchemaTarget {
  * scope: that is the scope a model built for the run reads its facts from, so
  * tool preselection applies the same provider limits as tool conversion.
  */
-export function resolveProviderToolSchemaTarget(model?: string): ProviderToolSchemaTarget {
+export function resolveProviderToolSchemaTarget(
+  model?: string,
+  options: { catalogSettled?: boolean } = {},
+): ProviderToolSchemaTarget {
   let runtimeModel: string;
   try {
     runtimeModel = resolveRuntimeModel(model);
@@ -377,6 +380,10 @@ export function resolveProviderToolSchemaTarget(model?: string): ProviderToolSch
     return model === undefined ? {} : { model };
   }
   if (!runtimeModel.startsWith("veryfront-cloud/")) return { model: runtimeModel };
+  // Before the run's catalog loads, the surface is a protocol default the
+  // model may still leave: assume the OpenAI wire, whose tool limit is the
+  // strictest any surface applies.
+  if (options.catalogSettled === false) return { model: runtimeModel, wireSurface: "openai" };
   const wireSurface = resolveVeryfrontCloudModelSurface(runtimeModel);
   return wireSurface === undefined ? { model: runtimeModel } : { model: runtimeModel, wireSurface };
 }

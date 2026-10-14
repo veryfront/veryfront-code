@@ -220,6 +220,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   toolLoadingMode: RuntimeToolLoadingMode;
   /** Tool schema target the assembly's eager preselection was capped for. */
   toolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Tool-limit slots eager preselection kept for runtime-appended schemas. */
+  reservedToolSlots?: number;
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
   /** Structured system messages preserved for provider dispatch. */
@@ -269,6 +271,11 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * `taskContext.model` as written.
    */
   toolSchemaTarget?: ProviderToolSchemaTarget;
+  /**
+   * Slots under the tool limit kept for schemas the runtime appends after
+   * preselection, such as the tool-result reader.
+   */
+  reservedToolSlots?: number;
   /**
    * Include runtime-essential tools when `allowedToolNames` is an empty set.
    * Non-empty selectors remain restrictive.
@@ -1157,6 +1164,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
       ...(input.toolSchemaTarget ?? { model: input.taskContext.model }),
+      reservedToolSlots: input.reservedToolSlots,
       requiredToolNames: [...eagerBootstrapToolNames, ...providerVisibleLocalToolNames],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
@@ -1252,6 +1260,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     modelVisibleToolNames,
     toolLoadingMode,
     ...(input.toolSchemaTarget === undefined ? {} : { toolSchemaTarget: input.toolSchemaTarget }),
+    ...(input.reservedToolSlots === undefined
+      ? {}
+      : { reservedToolSlots: input.reservedToolSlots }),
     compatibleRemoteToolNames,
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),
