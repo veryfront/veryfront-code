@@ -661,6 +661,18 @@ function getMergedPropertySchema(
   return distinct.length === 1 ? distinct[0] : { [keyword]: distinct };
 }
 
+function getMatchingPatternSchemas(schema: Record<string, unknown>, name: string): unknown[] {
+  if (!isPlainRecord(schema.patternProperties)) return [];
+  return Object.entries(schema.patternProperties).flatMap(([pattern, patternSchema]) => {
+    try {
+      return new RegExp(pattern, "u").test(name) ? [patternSchema] : [];
+    } catch {
+      // An unparseable pattern may match, so it widens rather than narrows.
+      return [{}];
+    }
+  });
+}
+
 function mergeObjectSchemas(
   schemas: readonly Record<string, unknown>[],
   keyword: ObjectCompositionKeyword,
@@ -676,11 +688,17 @@ function mergeObjectSchemas(
   }
 
   if (keyword === "anyOf") {
-    // An alternative that omits a property still admits any value for it unless
-    // it closes additional properties, so it widens the folded property schema.
+    // An alternative that omits a property still admits a value for it through a
+    // matching pattern, or through `additionalProperties` unless that is closed,
+    // so it widens the folded property schema.
     for (const [name, variants] of mergedProperties) {
       for (const schema of schemas) {
         if (isPlainRecord(schema.properties) && Object.hasOwn(schema.properties, name)) continue;
+        const patterns = getMatchingPatternSchemas(schema, name);
+        if (patterns.length > 0) {
+          variants.push(patterns.length === 1 ? patterns[0] : { allOf: patterns });
+          continue;
+        }
         const additional = schema.additionalProperties;
         if (additional === false) continue;
         variants.push(isPlainRecord(additional) ? additional : {});
@@ -695,8 +713,10 @@ function mergeObjectSchemas(
     ]),
   );
   const required = getMergedRequiredNames(schemas, keyword);
+  // An intersection is closed when any branch is closed; a union only when all are.
+  const isClosed = (schema: Record<string, unknown>) => schema.additionalProperties === false;
   const additionalProperties = schemas.length > 0 &&
-      schemas.every((schema) => schema.additionalProperties === false)
+      (keyword === "allOf" ? schemas.some(isClosed) : schemas.every(isClosed))
     ? false
     : undefined;
   const defs = Object.assign(
@@ -890,22 +910,32 @@ function isRemovedRootReference(ref: string): boolean {
     (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
 }
 
-function hasRemovedRootReference(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasRemovedRootReference);
+// A subschema with a non-fragment `$id` starts its own resource, so its local
+// references resolve against that resource rather than the authored root.
+function startsSchemaResource(value: Record<string, unknown>): boolean {
+  return typeof value.$id === "string" && !value.$id.startsWith("#");
+}
+
+function hasRemovedRootReference(value: unknown, isRoot = true): boolean {
+  if (Array.isArray(value)) return value.some((item) => hasRemovedRootReference(item, false));
   if (!isPlainRecord(value)) return false;
+  if (!isRoot && startsSchemaResource(value)) return false;
   return Object.entries(value).some(([key, item]) => {
     if (key === "$ref" && typeof item === "string") return isRemovedRootReference(item);
     if (LITERAL_SCHEMA_KEYWORDS.has(key)) return false;
     if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainRecord(item)) {
-      return Object.values(item).some(hasRemovedRootReference);
+      return Object.values(item).some((schema) => hasRemovedRootReference(schema, false));
     }
-    return hasRemovedRootReference(item);
+    return hasRemovedRootReference(item, false);
   });
 }
 
-function rewriteSourceRootReferences(value: unknown, prefix: string): unknown {
-  if (Array.isArray(value)) return value.map((item) => rewriteSourceRootReferences(item, prefix));
+function rewriteSourceRootReferences(value: unknown, prefix: string, isRoot = true): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteSourceRootReferences(item, prefix, false));
+  }
   if (!isPlainRecord(value)) return value;
+  if (!isRoot && startsSchemaResource(value)) return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => {
       if (key === "$ref" && typeof item === "string" && (item === "#" || item.startsWith("#/"))) {
@@ -918,11 +948,11 @@ function rewriteSourceRootReferences(value: unknown, prefix: string): unknown {
           Object.fromEntries(
             Object.entries(item).map((
               [name, schema],
-            ) => [name, rewriteSourceRootReferences(schema, prefix)]),
+            ) => [name, rewriteSourceRootReferences(schema, prefix, false)]),
           ),
         ];
       }
-      return [key, rewriteSourceRootReferences(item, prefix)];
+      return [key, rewriteSourceRootReferences(item, prefix, false)];
     }),
   );
 }
@@ -937,7 +967,10 @@ function retainSourceRootReferences(
   let name = "source_root";
   for (let index = 1; Object.hasOwn(definitions, name); index++) name = `source_root_${index}`;
   const prefix = `#/$defs/${name}`;
-  const source = rewriteSourceRootReferences(schema, prefix);
+  // The copy is embedded in the outer resource, so it must not redeclare the
+  // root identity; its references then resolve against the outer document.
+  const { $id: _id, $schema: _schema, ...embedded } = schema;
+  const source = rewriteSourceRootReferences(embedded, prefix);
   const result = rewriteSourceRootReferences(normalized, prefix) as Record<string, unknown>;
   chargeRootNormalizationGrowth(source, budget);
   result.$defs = { ...(isPlainRecord(result.$defs) ? result.$defs : {}), [name]: source };

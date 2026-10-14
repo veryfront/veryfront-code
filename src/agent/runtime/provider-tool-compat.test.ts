@@ -369,6 +369,59 @@ describe("provider-tool-compat", () => {
     );
     assertEquals(Object.hasOwn(literalOnly, "$defs"), false);
   });
+  it("keeps an allOf intersection closed when one branch is closed", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        allOf: [
+          { properties: { a: { type: "string" } }, additionalProperties: false },
+          {},
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.additionalProperties, false);
+  });
+  it("widens an omitted property with a matching pattern schema", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        anyOf: [
+          { properties: { value: { type: "string" } } },
+          { patternProperties: { "^value$": { type: "number" } }, additionalProperties: false },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties?.value, { anyOf: [{ type: "string" }, { type: "number" }] });
+  });
+  it("rebases a retained root identifier and respects nested resources", () => {
+    const nested = { $id: "https://example.com/nested", $ref: "#/anyOf/0" };
+    const result = sanitizeProviderToolSchema(
+      {
+        $id: "https://example.com/tool",
+        type: "object",
+        properties: { child: { $ref: "#" }, nested },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.$id, "https://example.com/tool");
+    const source = (result.$defs as Record<string, Record<string, unknown>>).source_root;
+    assertEquals(Object.hasOwn(source ?? {}, "$id"), false);
+    assertEquals(result.properties?.nested, nested);
+    assertEquals((source?.properties as Record<string, unknown>).nested, nested);
+
+    const nestedOnly = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { nested },
+        anyOf: [{ type: "object" }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(Object.hasOwn(nestedOnly, "$defs"), false);
+  });
   it("snapshots the complete OpenAI schema before removing root keywords", () => {
     let deep: Record<string, unknown> = {};
     for (let index = 0; index < 200_000; index++) deep = { not: deep };
