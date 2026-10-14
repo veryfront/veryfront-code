@@ -8,6 +8,10 @@ import { buildRuntimeTestProcessEnv } from "./runtime-env.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SOURCE_FILES = [
+  "src/platform/compat/react-paths.ts",
+  "src/react/compat/ssr-adapter/server-loader.ts",
+  "src/transforms/esm/http-cache-helpers.ts",
+  "src/transforms/esm/package-registry.ts",
   "src/platform/compat/native-stream-file.ts",
   "src/agent/hosted/executor-allocator-client.ts",
   "src/agent/hosted/executor-node-bootstrap.ts",
@@ -19,6 +23,8 @@ const SOURCE_FILES = [
   "src/security/http/native-request-processing.ts",
 ];
 const TEST_FILES = [
+  "tests/integration/runtime/compat/react-paths.test.ts",
+  "tests/integration/transforms/ssr-local-react.test.ts",
   "tests/integration/semantic-unit-boundary/src/platform/compat/native-stream-file.test.ts",
   "tests/integration/agent/executor-allocator-client.test.ts",
   "tests/integration/agent/executor-node-bootstrap.test.ts",

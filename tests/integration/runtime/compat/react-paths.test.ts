@@ -620,6 +620,35 @@ describe("react-paths", () => {
     }
   });
 
+  it("prepares an empty registry without host React when the adapter owns a prepared graph", async () => {
+    if (!isNode) return;
+    const { ComponentRegistry } = await import("#veryfront/rendering/ssr/component-registry.ts");
+    const { VirtualModuleSystem } = await import("#veryfront/rendering/virtual-module-system.ts");
+    const { createMockAdapter } = await import("#veryfront/platform/adapters/mock.ts");
+    const adapter = createMockAdapter();
+    Reflect.set(adapter, "moduleLoader", {
+      importModule: () => Promise.resolve({ default: { version: "19.2.0" } }),
+    });
+    const registry = new ComponentRegistry(
+      new VirtualModuleSystem(undefined, adapter),
+      3001,
+      adapter,
+    );
+    const original = Reflect.get(Module, "_resolveFilename");
+    Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
+      if (request === "react" || request.startsWith("react/") || request.startsWith("react-dom")) {
+        throw new Error("Host React is unavailable");
+      }
+      return Reflect.apply(original, Module, [request, ...args]);
+    });
+    try {
+      const key = await registry.prepareDependencySnapshot("off");
+      assertEquals(registry.getAllAsComponents(key), {});
+    } finally {
+      Reflect.set(Module, "_resolveFilename", original);
+      clearReactPathsCache();
+    }
+  });
   it("refreshes installed-peer selection in reused page, layout and SSR renderers", async () => {
     if (!isNode) return;
     const { PageRenderer } = await import("#veryfront/rendering/page-renderer.ts");
@@ -830,13 +859,14 @@ describe("react-paths", () => {
     if (!Component) throw new Error("Loaded page component missing");
     const physicalDirectory = fs.realpathSync(directory);
     const original = Reflect.get(Module, "_resolveFilename");
+    let selected = next;
     Reflect.set(Module, "_resolveFilename", (request: string, ...args: unknown[]) => {
       const resolved = Reflect.apply(original, Module, [request, ...args]) as string;
       const parent = args[0] as { filename?: string } | undefined;
       if (
         parent?.filename?.startsWith(directory) || parent?.filename?.startsWith(physicalDirectory)
       ) return resolved;
-      const replacement = next.paths[request];
+      const replacement = selected.paths[request];
       return replacement ? new URL(replacement).pathname : resolved;
     });
     resetReactCache();
@@ -848,6 +878,52 @@ describe("react-paths", () => {
         reactPeers: old,
       });
       assertEquals(result.html, "<strong>7</strong>");
+      const { ResponseBuilder } = await import("#veryfront/security/http/response/builder.ts");
+      const { tryNotFoundFallback, __setReservedComponentLoaderForTests } = await import(
+        "#veryfront/server/handlers/request/ssr/not-found-fallback.ts"
+      );
+      const { tryErrorPageFallback, __setComponentSourceLoaderForTests } = await import(
+        "#veryfront/server/handlers/request/ssr/error-page-fallback.ts"
+      );
+      const { tryLoadReservedInDirs } = await import("#veryfront/rendering/app-reserved.ts");
+      fs.mkdirSync(join(directory, "app"));
+      fs.mkdirSync(join(directory, "pages"));
+      fs.writeFileSync(join(directory, "app", "not-found.tsx"), pageSource);
+      fs.writeFileSync(join(directory, "pages", "500.tsx"), pageSource);
+      const context = {
+        projectDir: directory,
+        adapter,
+        config: { react: { version: "^19.2.0" } },
+        isLocalProject: true,
+        resolvedEnvironment: "preview",
+        securityConfig: null,
+      } as import("#veryfront/server/handlers/types.ts").HandlerContext;
+      const request = new Request("http://localhost/missing");
+      try {
+        selected = old;
+        __setReservedComponentLoaderForTests(async (...args) => {
+          const component = await tryLoadReservedInDirs(...args);
+          selected = next;
+          return component;
+        });
+        const notFound = await tryNotFoundFallback(request, "", context, new ResponseBuilder());
+        assertEquals(notFound?.status, 404);
+        assertEquals((await notFound?.text())?.includes("<strong>7</strong>"), true);
+        selected = old;
+        __setComponentSourceLoaderForTests(async (...args) => {
+          const component = await loadComponentFromSource(...args);
+          selected = next;
+          return component;
+        });
+        const errorPage = await tryErrorPageFallback(request, context, new ResponseBuilder(), {
+          statusCode: 500,
+        });
+        assertEquals(errorPage?.status, 500);
+        assertEquals((await errorPage?.text())?.includes("<strong>7</strong>"), true);
+      } finally {
+        __setReservedComponentLoaderForTests(null);
+        __setComponentSourceLoaderForTests(null);
+      }
     } finally {
       Reflect.set(Module, "_resolveFilename", original);
       resetReactCache();

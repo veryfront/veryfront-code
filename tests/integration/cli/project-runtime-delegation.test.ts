@@ -233,36 +233,47 @@ describe("project runtime delegation", () => {
       await Deno.remove(f.root, { recursive: true });
     }
   });
-  it("refuses a PnP framework without its ESM loader instead of using global peers", async () => {
-    const f = await fixture(true);
-    try {
-      await Deno.writeTextFile(
-        join(f.project, "pnp-fixture.json"),
-        JSON.stringify({ root: join(f.project, "node_modules", "veryfront") }),
-      );
-      await Deno.writeTextFile(
-        join(f.project, ".pnp.cjs"),
-        'const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => {}; exports.resolveToUnqualified = () => root;',
-      );
-      const result = await new Deno.Command("node", {
-        args: [join(f.global, "bin", "veryfront.js"), "dev"],
-        cwd: f.project,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      assertEquals(result.code, 1);
-      assertEquals(new TextDecoder().decode(result.stdout), "");
-      const stderr = new TextDecoder().decode(result.stderr);
-      assertEquals(
-        stderr.trim(),
-        "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
-      );
-      assertEquals(stderr.includes(f.root), false);
-      assertEquals(stderr.includes(" at "), false);
-    } finally {
-      await Deno.remove(f.root, { recursive: true });
-    }
-  });
+  for (const json of [false, true]) {
+    it(`refuses a PnP framework without its ESM loader with structured mode ${json}`, async () => {
+      const f = await fixture(true);
+      try {
+        await Deno.writeTextFile(
+          join(f.project, "pnp-fixture.json"),
+          JSON.stringify({ root: join(f.project, "node_modules", "veryfront") }),
+        );
+        await Deno.writeTextFile(
+          join(f.project, ".pnp.cjs"),
+          'const fs = require("node:fs"); const path = require("node:path"); const root = JSON.parse(fs.readFileSync(path.join(__dirname, "pnp-fixture.json"), "utf8")).root; exports.setup = () => {}; exports.resolveToUnqualified = () => root;',
+        );
+        const result = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), ...(json ? ["deploy", "--json"] : ["dev"])],
+          cwd: f.project,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.code, 1);
+        const stdout = new TextDecoder().decode(result.stdout);
+        const stderr = new TextDecoder().decode(result.stderr);
+        const message =
+          "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI";
+        if (json) {
+          assertEquals(JSON.parse(stdout), {
+            success: false,
+            command: "deploy",
+            error: { code: "RUNTIME_ERROR", slug: "command-failed", message },
+          });
+          assertEquals(stderr, "");
+        } else {
+          assertEquals(stdout, "");
+          assertEquals(stderr.trim(), message);
+        }
+        assertEquals((stdout + stderr).includes(f.root), false);
+        assertEquals((stdout + stderr).includes(" at "), false);
+      } finally {
+        await Deno.remove(f.root, { recursive: true });
+      }
+    });
+  }
 
   it("refuses an escaping project CLI entry without falling back to global code", async () => {
     const f = await fixture(true);

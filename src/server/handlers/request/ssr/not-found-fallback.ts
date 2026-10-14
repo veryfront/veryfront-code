@@ -1,3 +1,5 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
@@ -8,6 +10,7 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
 type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
@@ -29,6 +32,9 @@ export async function tryNotFoundFallback(
   requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   try {
+    const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(ctx.adapter)
+      ? captureLocalReactPeers()
+      : undefined;
     const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       dependencyPinningSource,
@@ -60,6 +66,7 @@ export async function tryNotFoundFallback(
     const dirs = await collectAncestorDirs(searchBase, appRoot);
     const reactVersion = await resolveProjectReactVersion({
       adapter: ctx.adapter,
+      reactPeers,
       projectDir: ctx.projectDir,
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
@@ -102,6 +109,11 @@ export async function tryNotFoundFallback(
       dependencySnapshot.dependencies,
       dependencyPinningSource,
       new URL(req.url).origin,
+      ctx.config?.build?.serverExternalPackages,
+      undefined,
+      undefined,
+      dependencySnapshot.configuredVersions,
+      reactPeers,
     );
 
     if (!NotFoundComp) return null;
@@ -109,7 +121,7 @@ export async function tryNotFoundFallback(
     const { getProjectReact, renderToStringAdapter } = await import(
       "#veryfront/react/compat/ssr-adapter/index.ts"
     );
-    const React = await getProjectReact(reactVersion, ctx.adapter);
+    const React = await getProjectReact(reactVersion, ctx.adapter, reactPeers);
 
     const element = React.createElement(NotFoundComp, {});
     let inner: string;
@@ -121,6 +133,7 @@ export async function tryNotFoundFallback(
             nonce: builder.nonce,
             renderContext,
             reactVersion,
+            reactPeers,
           }, ctx.adapter),
         { nonce: builder.nonce },
       );

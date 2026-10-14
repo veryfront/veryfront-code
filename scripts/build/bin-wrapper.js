@@ -57,6 +57,8 @@ function checkedProjectCli(packageFile, pnpApi) {
   return selected;
 }
 
+let launcherCommand = "cli";
+
 function selectedProjectDirectory() {
   const args = process.argv.slice(2);
   // -d is a directory for CommonArgs.projectDir commands, but debug for dev.
@@ -155,6 +157,7 @@ function selectedProjectDirectory() {
       !args[index + 1].startsWith("-")
     ) index++;
   }
+  launcherCommand = command ?? "cli";
   let project;
   let projectDirectory;
   for (let index = 0; index < args.length && args[index] !== "--"; index++) {
@@ -283,6 +286,19 @@ function prepareProjectLaunch() {
   }
   return { projectCli: resolveProjectCli() };
 }
+function launcherJsonMode() {
+  let enabled = false;
+  for (const arg of process.argv.slice(2)) {
+    if (arg === "--") break;
+    if (arg === "--json" || arg === "-j") enabled = true;
+    else if (arg.startsWith("--json=")) {
+      const value = arg.slice("--json=".length).trim().toLowerCase();
+      enabled = !["false", "0", "no", "off", ""].includes(value);
+    }
+  }
+  return enabled;
+}
+
 let launch;
 try {
   launch = prepareProjectLaunch();
@@ -299,7 +315,13 @@ try {
     typeof error?.message === "string" && messages.has(error.message)
       ? error.message
       : "Project CLI setup failed; verify the project directory and reinstall its dependencies";
-  console.error(message);
+  if (launcherJsonMode()) {
+    console.log(JSON.stringify({
+      success: false,
+      command: launcherCommand,
+      error: { code: "RUNTIME_ERROR", slug: "command-failed", message },
+    }));
+  } else console.error(message);
   process.exit(1);
 }
 if (launch.pnpStartup) {

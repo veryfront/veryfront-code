@@ -1,3 +1,4 @@
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   captureLocalReactPeers,
@@ -229,7 +230,9 @@ export class ComponentRegistry {
     dependencyPinningConfiguredVersions?: CapturedDependencyConfiguration,
     reactPeers?: LocalReactPeerSnapshot,
   ): Promise<string> {
-    reactPeers ??= isNode || isBun ? captureLocalReactPeers() : undefined;
+    const prepared = this.adapter ? getRuntimeModuleLoader(this.adapter) : undefined;
+    if (prepared) reactPeers = undefined;
+    else reactPeers ??= isNode || isBun ? captureLocalReactPeers() : undefined;
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
       dependencyPinningCacheKey,
@@ -246,7 +249,7 @@ export class ComponentRegistry {
     if (serverExternalPackagesIdentity) {
       snapshotKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
     }
-    const runtimeScope = await getSSRReactRuntimeCacheScope(reactPeers);
+    const runtimeScope = prepared ? undefined : await getSSRReactRuntimeCacheScope(reactPeers);
     if (runtimeScope) snapshotKey += `:react-runtime:${runtimeScope}`;
     const sourceGeneration = this.componentSourceGeneration;
     if (
