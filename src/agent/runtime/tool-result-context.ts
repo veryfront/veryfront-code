@@ -7,6 +7,7 @@ import {
   privateTextSlice,
 } from "#veryfront/security/private-text.ts";
 
+const hasOwn = Object.hasOwn;
 const DEFAULT_MAX_INLINE_BYTES = 16_384;
 const DEFAULT_PREVIEW_BYTES = 4_096;
 const DEFAULT_MAX_SECTION_BYTES = 16_384;
@@ -35,6 +36,8 @@ export interface ToolResultDisclosureInput {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly result: unknown;
+  /** Provider-only representation; identity and original access remain bound to result. */
+  readonly modelResult?: unknown;
   readonly isError?: boolean;
 }
 
@@ -384,12 +387,13 @@ export class ToolResultContext {
   }
 
   disclose(input: ToolResultDisclosureInput): ToolResultDisclosure {
-    const serialized = safeSerializedResult(input.result);
+    const modelResult = hasOwn(input, "modelResult") ? input.modelResult : input.result;
+    const serialized = safeSerializedResult(modelResult);
     const length = byteLength(serialized);
     if (length <= this.#limits.maxInlineBytes) {
       return {
         kind: "inline",
-        modelResult: input.result,
+        modelResult,
         originalResult: input.result,
         byteLength: length,
       };
@@ -429,7 +433,8 @@ export class ToolResultContext {
       if (detail === undefined) {
         throw error;
       }
-      const serialized = safeSerializedResult(input.result);
+      const modelResult = hasOwn(input, "modelResult") ? input.modelResult : input.result;
+      const serialized = safeSerializedResult(modelResult);
       const length = byteLength(serialized);
       return {
         kind: "preview",
