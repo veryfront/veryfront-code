@@ -34,8 +34,9 @@ Veryfront Code is the Deno-first framework and runtime package for Veryfront. It
 - Add or update regression tests for the affected behavior, including existing callers and failure
   paths. Demonstrate that a regression test fails without the fix and passes with it.
 - Keep pull requests draft while implementing a feedback batch. Complete the related fixes, run
-  the narrow affected checks through `vf-slot`, and satisfy the required local reviews before
-  pushing the batch and requesting the next GitHub review. Preserve all required review and CI gates.
+  the repository's narrow affected checks (such as `deno task test:file`), and satisfy the required
+  local reviews before pushing the batch and requesting the next GitHub review. Use a local command
+  wrapper when the workspace requires one. Preserve all required review and CI gates.
 - If another review finds the same violated invariant on a sibling path, reassess its ownership
   boundary and complete the caller sweep before requesting another review.
 
