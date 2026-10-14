@@ -20,12 +20,23 @@ export const getContextCompactionEventPayloadSchema = defineSchema((v) =>
     type: v.literal(AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE),
     summary: getContextCompactionSummarySchema(),
     firstKeptEntryId: v.string().min(1),
+    preservedMessageIds: v.array(v.string().min(1)).optional(),
     tokensBefore: v.number().int().nonnegative(),
     tokensAfter: v.number().int().nonnegative(),
     tokenBudget: v.number().int().positive(),
     reserveTokens: v.number().int().nonnegative(),
     reason: v.enum(["context_window", "transport_body"]),
   }).superRefine((event, ctx) => {
+    if (
+      event.preservedMessageIds &&
+      new Set(event.preservedMessageIds).size !== event.preservedMessageIds.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "preservedMessageIds must contain unique identifiers",
+        path: ["preservedMessageIds"],
+      });
+    }
     const usableBudget = event.tokenBudget - event.reserveTokens;
     if (usableBudget <= 0) {
       ctx.addIssue({
@@ -401,14 +412,48 @@ export async function applyContextBudget(
     messages,
     initialTailStartIndex,
   );
-  const tailStartIndex = expandTailForDependencies(
+  let tailStartIndex = expandTailForDependencies(
     messages,
     conversationTailStartIndex,
     options.atomicMessageIds,
   );
-  const messagesToSummarize = messages.slice(0, tailStartIndex);
-  const retainedMessages = messages.slice(tailStartIndex);
-  const firstKeptEntryId = retainedMessages[0]?.id;
+  const latestUserIndex = findLatestUserMessageIndex(messages);
+  let preservedRequest: AgentRuntimeMessage | undefined;
+  const latestUserMessage = messages[latestUserIndex];
+  const requestHasRepeatedSegments = latestUserMessage &&
+    messages.some((message, index) =>
+      index !== latestUserIndex && message.id === latestUserMessage.id
+    );
+  // A long tool loop can belong to one user turn. Keeping that entire turn
+  // makes compaction ineffective; retain its request and a dependency-safe tail.
+  if (
+    (options.minimumRecentTurns ?? 1) === 1 &&
+    !requestHasRepeatedSegments &&
+    getMessageListTokens(messages.slice(tailStartIndex)) >=
+      usableBudget - (options.maxSummaryTokens ?? Math.min(2048, Math.floor(usableBudget / 4)))
+  ) {
+    let tailTokens = 0;
+    let boundedStart = messages.length - 1;
+    for (let index = messages.length - 1; index > latestUserIndex; index -= 1) {
+      tailTokens += getMessageTokens(messages[index]!);
+      boundedStart = index;
+      if (tailTokens >= options.recentTailTokens) break;
+    }
+    const boundedTailStart = expandTailForDependencies(
+      messages,
+      boundedStart,
+      options.atomicMessageIds,
+    );
+    if (boundedTailStart > latestUserIndex && messages[latestUserIndex]?.role === "user") {
+      tailStartIndex = boundedTailStart;
+      preservedRequest = messages[latestUserIndex];
+    }
+  }
+  const messagesToSummarize = messages.slice(0, tailStartIndex)
+    .filter((message) => message !== preservedRequest);
+  const retainedTail = messages.slice(tailStartIndex);
+  const retainedMessages = preservedRequest ? [preservedRequest, ...retainedTail] : retainedTail;
+  const firstKeptEntryId = retainedTail[0]?.id;
 
   if (!firstKeptEntryId) {
     throw new ContextCompactionError("Context compaction could not select a retained tail");
@@ -449,6 +494,7 @@ export async function applyContextBudget(
     type: AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
     summary,
     firstKeptEntryId,
+    ...(preservedRequest ? { preservedMessageIds: [preservedRequest.id] } : {}),
     tokensBefore,
     tokensAfter,
     tokenBudget: options.tokenBudget,

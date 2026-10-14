@@ -6,6 +6,93 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
+
+Deno.test("applyContextBudget compacts a long active turn while preserving its exact user request and tool pairs", async () => {
+  const messages: AgentRuntimeMessage[] = [
+    message("request", "user", "Process ten fixture emails"),
+  ];
+  for (let index = 0; index < 30; index++) {
+    messages.push(toolCallMessage(`call-${index}`, `tool-${index}`));
+    messages.push({
+      ...toolResultMessage(`result-${index}`, `tool-${index}`),
+      parts: [{
+        type: "tool-result",
+        toolCallId: `tool-${index}`,
+        toolName: "search_docs",
+        result: { text: "fixture ".repeat(500) },
+      }],
+    });
+  }
+  const originalMessages = structuredClone(messages);
+  let summarizedIds: string[] = [];
+  let retainedIds: string[] = [];
+  const result = await applyContextBudget(messages, {
+    tokenBudget: 10000,
+    reserveTokens: 1000,
+    recentTailTokens: 1000,
+    maxSummaryTokens: 1000,
+    summaryGenerator: ({ messagesToSummarize, retainedMessages }) => {
+      retainedIds = retainedMessages.map((entry) => entry.id);
+      summarizedIds = messagesToSummarize.map((entry) => entry.id);
+      return { text: "Older fixture stages complete" };
+    },
+  });
+  assertEquals(result.diagnostics.compacted, true);
+  assertEquals(result.diagnostics.tokensAfter <= 9000, true);
+  assertEquals(
+    result.messages.some((entry) =>
+      entry.id === "request" && entry.parts[0]?.type === "text" &&
+      entry.parts[0].text === "Process ten fixture emails"
+    ),
+    true,
+  );
+  assertEquals(result.messages.some((entry) => entry.id === "call-29"), true);
+  assertEquals(result.messages.some((entry) => entry.id === "result-29"), true);
+  assertEquals(messages, originalMessages, "durable source history remains intact");
+  assertEquals(summarizedIds.includes("request"), false);
+  assertEquals(summarizedIds.includes("result-0"), true);
+  assertEquals(result.messages.filter((entry) => entry.id === "request"), [messages[0]]);
+  assertExists(result.eventPayload);
+  assertEquals(result.eventPayload.firstKeptEntryId, "call-29");
+  assertEquals(result.eventPayload.preservedMessageIds, ["request"]);
+  assertEquals(retainedIds, ["request", "call-29", "result-29"]);
+  for (const entry of result.messages) {
+    for (const part of entry.parts) {
+      if (part.type !== "tool-result") continue;
+      assertEquals(
+        result.messages.some((candidate) =>
+          candidate.parts.some((call) =>
+            call.type === "tool-call" && call.toolCallId === part.toolCallId
+          )
+        ),
+        true,
+        "retained results keep their matching calls",
+      );
+    }
+  }
+});
+
+Deno.test("active-turn compaction cannot split atomic segments of the preserved request", async () => {
+  const messages: AgentRuntimeMessage[] = [
+    message("request", "user", "First request segment"),
+    message("request", "assistant", "Protected continuation segment"),
+    message("request", "user", "Latest request segment"),
+  ];
+  for (let index = 0; index < 30; index++) {
+    messages.push(message(`stage-${index}`, "assistant", "fixture ".repeat(1000)));
+  }
+  await assertRejects(
+    () =>
+      applyContextBudget(messages, {
+        tokenBudget: 10000,
+        reserveTokens: 1000,
+        recentTailTokens: 1000,
+        atomicMessageIds: ["request"],
+        summaryGenerator: () => ({ text: "Older steps" }),
+      }),
+    ContextCompactionError,
+  );
+});
 import {
   AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
   applyContextBudget,
@@ -361,4 +448,44 @@ Deno.test("context compaction event schema rejects inconsistent token accounting
   });
 
   assertEquals(result.success, false);
+});
+
+Deno.test("context compaction schema validates preserved request identifiers", () => {
+  const event = {
+    type: AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
+    summary: { text: "Earlier work complete" },
+    firstKeptEntryId: "call-29",
+    preservedMessageIds: ["request"],
+    tokensBefore: 10000,
+    tokensAfter: 1000,
+    tokenBudget: 10000,
+    reserveTokens: 1000,
+    reason: "context_window" as const,
+  };
+  const schema = getContextCompactionEventPayloadSchema();
+  assertEquals(schema.parse(event).preservedMessageIds, ["request"]);
+  for (const preservedMessageIds of [[""], ["request", "request"]]) {
+    assertEquals(schema.safeParse({ ...event, preservedMessageIds }).success, false);
+  }
+});
+
+Deno.test("active-turn compaction rejects ambiguous preserved request identifiers", async () => {
+  const messages: AgentRuntimeMessage[] = [
+    message("request", "user", "Original request"),
+    message("request", "user", "Latest request"),
+    ...Array.from(
+      { length: 30 },
+      (_, index) => message(`stage-${index}`, "assistant", "fixture ".repeat(1000)),
+    ),
+  ];
+  await assertRejects(
+    () =>
+      applyContextBudget(messages, {
+        tokenBudget: 10000,
+        reserveTokens: 1000,
+        recentTailTokens: 1000,
+        summaryGenerator: () => ({ text: "Older steps" }),
+      }),
+    ContextCompactionError,
+  );
 });

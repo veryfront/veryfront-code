@@ -194,6 +194,18 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Hosted context compaction
+
+Hosted agents can compact a long active turn by retaining its exact latest user
+request and a recent tail of messages. Retained tool calls and results stay together.
+Compaction changes the model context without deleting the durable conversation history.
+
+The internal `AGENT_RUN_CONTEXT_COMPACTED` event identifies the contiguous tail with
+`firstKeptEntryId`. Its optional `preservedMessageIds` identifies exact user requests
+retained before that tail. Replay restores those original messages in source order and
+rejects invalid preservation records. Older events keep their existing replay behavior.
+The API must support `preservedMessageIds` before a framework that emits it is deployed.
+
 ## Typed Runs contract SDK
 
 `veryfront/runs/target` publishes the typed SDK for the Runs target contract that
