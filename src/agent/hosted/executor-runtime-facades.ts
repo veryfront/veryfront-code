@@ -113,6 +113,7 @@ export async function createExecutorRuntimeFacades(options: {
           ...(alias ? { ownerAgentId: alias.ownerAgentId, shortName: alias.shortName } : {}),
           title: definition.title,
           description: definition.description,
+          discovery: definition.discovery,
           inputSchemaJson: definition.parameters,
           async execute(args: unknown, context?: ToolExecutionContext) {
             signal.throwIfAborted();

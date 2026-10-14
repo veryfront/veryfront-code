@@ -488,7 +488,11 @@ function readToolDiscoveryField(tool: ToolDefinition): { discovery?: ToolDiscove
 }
 
 function isPlatformInventoryTool(tool: ToolDefinition): boolean {
+  const name = ObjectGetOwnPropertyDescriptor(tool, "name")?.value;
+  if (typeof name !== "string") return false;
+  const identity = parseIntegrationToolIdentity(privateTextToLowerCase(name));
   return hasTrustedPlatformPolicyToolDefinition(tool) &&
+    (!identity || identity.integration === PLATFORM_TOOL_NAMESPACE) &&
     readToolDiscoveryMetadata(tool)?.type !== "integration";
 }
 

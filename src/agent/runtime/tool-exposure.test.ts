@@ -719,7 +719,16 @@ it("platform inventory scope lists only trusted platform tools", () => {
   });
   const projectTool = definition("project_tool", "Project tool");
   const result = listToolExposure({
-    authorized: [platformTool, integrationTool, projectTool],
+    authorized: [
+      platformTool,
+      integrationTool,
+      projectTool,
+      markTrustedPlatformPolicyToolDefinition(definition("github__search", "Search GitHub")),
+      markTrustedPlatformPolicyToolDefinition({
+        ...definition("gmail__read", "Read mail"),
+        discovery: platform("mail", "Mail"),
+      }),
+    ],
     scope: "platform",
   });
   assertEquals(result.matches.map((entry) => entry.name), ["veryfront__list_agents"]);

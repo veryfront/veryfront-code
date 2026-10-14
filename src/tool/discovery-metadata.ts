@@ -1,5 +1,8 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { ToolDiscoveryMetadata } from "./types.ts";
+
+const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 
 /** Read bounded navigation hints without changing executable tool authorization. */
 export function normalizeToolDiscoveryMetadata(value: unknown): ToolDiscoveryMetadata | undefined {
@@ -9,17 +12,19 @@ export function normalizeToolDiscoveryMetadata(value: unknown): ToolDiscoveryMet
     Array.isArray(snapshot.value)
   ) return undefined;
   const record = snapshot.value;
-  if (record.version !== 1 || (record.type !== "platform" && record.type !== "integration")) {
+  const version = getOwnDescriptor(record, "version")?.value;
+  const type = getOwnDescriptor(record, "type")?.value;
+  if (version !== 1 || (type !== "platform" && type !== "integration")) {
     return undefined;
   }
-  const result: ToolDiscoveryMetadata = { version: 1, type: record.type };
+  const result: ToolDiscoveryMetadata = { version: 1, type };
   const navigationKeys = ["domain", "resource", "subgroup", "operation"] as const;
   for (let index = 0; index < navigationKeys.length; index++) {
     const key = navigationKeys[index]!;
-    const entry = record[key];
+    const entry = getOwnDescriptor(record, key)?.value;
     if (entry === undefined) continue;
     if (typeof entry !== "string" || entry.length === 0 || entry.length > 128) return undefined;
-    result[key] = entry;
+    defineOwnDataProperty(result, key, entry, { enumerable: true });
   }
   return result;
 }
