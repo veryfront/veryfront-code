@@ -178,6 +178,15 @@ export function createCanonicalEventsV1Facade(
       if (query.include_descendants !== true) {
         for (const member of page.entries) assertRequestedRunIdentity(member, runId);
       }
+      const ascending = query.sort_order !== "desc";
+      let previous = query.cursor !== undefined ? Number(query.cursor) : query.after_event_id;
+      for (const member of page.entries) {
+        const id = member.metadata.event_id;
+        if (previous !== undefined && (ascending ? id <= previous : id >= previous)) {
+          throw new TypeError("List event IDs must advance in the requested order");
+        }
+        previous = id;
+      }
       return page;
     },
     async get(runId, eventId, options) {

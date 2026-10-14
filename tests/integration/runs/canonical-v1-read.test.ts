@@ -440,3 +440,56 @@ for (const ids of [[42], [41], [43, 43], [43, 42]]) {
     assertEquals(yielded, ids.length === 1 ? [] : [43]);
   });
 }
+
+for (
+  const [query, ids] of [
+    [{}, [43, 42]],
+    [{ sort_order: "asc", after_event_id: 41 }, [43, 42]],
+    [{ sort_order: "asc", cursor: "41" }, [41, 42]],
+    [{ sort_order: "asc", cursor: "41" }, [40]],
+    [{ sort_order: "desc", cursor: "43" }, [43]],
+    [{ sort_order: "desc", cursor: "43" }, [41, 42]],
+    [{}, [42, 42]],
+  ] as const
+) {
+  it(`rejects list positions outside requested cursor ordering: ${JSON.stringify(query)} ${ids}`, async () => {
+    const entries = ids.map((event_id) => ({
+      ...legacy,
+      metadata: { ...legacy.metadata, event_id },
+    }));
+    const facade = createCanonicalEventsV1Facade({
+      async request() {
+        return { entries, next_cursor: String(ids.at(-1)), has_more: true };
+      },
+    });
+    await assertRejects(
+      () => facade.list("run_demo", query),
+      TypeError,
+      "List event IDs must advance in the requested order",
+    );
+  });
+}
+
+it("preserves valid ascending and descending list continuations", async () => {
+  for (
+    const [query, ids] of [
+      [{ cursor: "41", sort_order: "asc" }, [42, 43]],
+      [{ cursor: "43", sort_order: "desc" }, [42, 41]],
+      [{ after_event_id: 41 }, [42, 43]],
+    ] as const
+  ) {
+    const entries = ids.map((event_id) => ({
+      ...legacy,
+      metadata: { ...legacy.metadata, event_id },
+    }));
+    const facade = createCanonicalEventsV1Facade({
+      async request() {
+        return { entries, next_cursor: String(ids.at(-1)), has_more: true };
+      },
+    });
+    assertEquals(
+      (await facade.list("run_demo", query)).entries.map((member) => member.metadata.event_id),
+      [...ids],
+    );
+  }
+});
