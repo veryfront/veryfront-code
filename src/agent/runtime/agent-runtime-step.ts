@@ -299,7 +299,11 @@ export async function prepareAgentRuntimeStep(
   let integrationToolDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
   // Host-controlled startup loads need the authorized catalog even when the
   // model itself cannot call tools; the model still sees no tool schemas.
-  const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools
+  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
+    input.config.bootstrapTools,
+  );
+  const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools ||
+      configuredBootstrapNames.length > 0
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
       includeSkillTools: shouldIncludeSkillTools(input.config, input.agentId),
@@ -397,9 +401,7 @@ export async function prepareAgentRuntimeStep(
     }
     bootstrapToolNames = provenanceBootstrapToolNames;
   }
-  const configuredBootstrapNames = snapshotConfiguredToolBootstrapNames(
-    input.config.bootstrapTools,
-  );
+
   if (configuredBootstrapNames.length > 0) {
     const mergedBootstrap = new IntrinsicSet<string>(bootstrapToolNames);
     const authorizedNativeTools = createProviderNativeToolExposureDefinitions({

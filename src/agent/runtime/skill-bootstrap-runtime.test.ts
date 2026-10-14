@@ -405,3 +405,79 @@ Deno.test("concurrent startup runs sharing one loader each receive the complete 
   ]);
   assertEquals(model.callCount, 2);
 });
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`startup guidance loads for a text-only ${mode} model without exposing tools`, async () => {
+    clearMCPRegistry();
+    const loader = markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+      context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+      skillsDir: "/skills",
+      builtinSkillIds: ["plan"],
+      projectSkillLoader: {
+        loadProjectSkill: async () => null,
+        listProjectSkillReferences: async () => [],
+        loadProjectSkillReference: async () => null,
+      },
+      builtinStore: {
+        readSkill: async () => "# Text-only startup guidance",
+        listReferences: async () => [],
+        readReferenceFile: async () => null,
+      },
+    }));
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Text-only startup guidance");
+      assertEquals(Object.keys(options.tools ?? {}).length, 0);
+      return { text: "Ready" };
+    }], { only: mode });
+    const assistant = agent({
+      id: "text-only-startup",
+      system: "Help",
+      model: model.modelId,
+      bootstrapSkill: "plan",
+      tools: createToolsFromHostDefinitions({ load_skill: loader }),
+      maxSteps: 1,
+      resolveModelTransport: () => ({
+        model: { ...model, runtimeCapabilities: { toolCalling: false } },
+      }),
+    });
+    if (mode === "generate") await assistant.generate({ input: "Go" });
+    else {assertStringIncludes(
+        await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+        "Ready",
+      );}
+    assertEquals(model.callCount, 1);
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`configured bootstrap tools do not break a text-only ${mode} model`, async () => {
+    clearMCPRegistry();
+    const lookup = tool({
+      id: "lookup",
+      description: "Lookup",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => "value",
+    });
+    const model = scriptedModel([(options) => {
+      assertEquals(Object.keys(options.tools ?? {}).length, 0);
+      return { text: "Ready" };
+    }], { only: mode });
+    const assistant = agent({
+      id: "text-bootstrap-tools",
+      system: "Help",
+      model: model.modelId,
+      tools: { lookup },
+      bootstrapTools: ["lookup"],
+      maxSteps: 1,
+      resolveModelTransport: () => ({
+        model: { ...model, runtimeCapabilities: { toolCalling: false } },
+      }),
+    });
+    if (mode === "generate") await assistant.generate({ input: "Go" });
+    else {assertStringIncludes(
+        await (await assistant.stream({ input: "Go" })).toDataStreamResponse().text(),
+        "Ready",
+      );}
+    assertEquals(model.callCount, 1);
+  });
+}
