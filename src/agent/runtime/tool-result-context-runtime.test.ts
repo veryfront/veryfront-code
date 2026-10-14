@@ -862,6 +862,34 @@ describe("agent runtime tool result context integration", () => {
 });
 
 describe("agent runtime tool schema target without model facts", () => {
+  for (const mode of ["generate", "stream"] as const) {
+    it(`uses the request model's tool limits instead of a different prepared target in ${mode}`, async () => {
+      let names: string[] = [];
+      const model = scriptedModel([(options) => {
+        names = toolNamesFromCall(options);
+        return { text: "done" };
+      }], { modelId: "override", provider: "openai", only: mode });
+      const assistant = agent(
+        {
+          model: "veryfront-cloud/google/local-model",
+          system: "Use tools.",
+          skills: [],
+          tools: cappedNoopTools(130),
+          maxSteps: 1,
+          resolveModelTransport: () => ({ model }),
+          __vfToolSchemaTarget: {
+            model: "veryfront-cloud/google/local-model",
+            wireSurface: "google",
+          },
+        } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+      );
+      const request = { input: "Hello.", model: "openai/override" };
+      if (mode === "generate") await assistant.generate(request);
+      else await (await assistant.stream(request)).toDataStreamResponse().text();
+      assertEquals(names.length, 128);
+    });
+  }
+
   it("caps converted tools by the prepared wire surface when the model runtime has no cloud facts", async () => {
     let names: string[] = [];
     const model = scriptedModel([

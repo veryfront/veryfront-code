@@ -1994,16 +1994,18 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
 /**
  * The model and wire surface whose provider tool rules apply this step. A
  * built Veryfront Cloud model's own facts win; a model runtime without them
- * (an executor proxy) uses the target trusted preparation resolved.
+ * (an executor proxy) uses the target trusted preparation resolved only for
+ * the same effective model. Per-request overrides keep their own provider rules.
  */
 function resolveStepToolSchemaOptions(
   config: AgentConfig,
   languageModel: ModelRuntime,
+  effectiveModel: string,
 ): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
   const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
   if (surface !== undefined) return { wireSurface: surface };
   const target = getRuntimeToolSchemaTarget(config);
-  if (target?.model === undefined) return {};
+  if (target?.model === undefined || target.model !== effectiveModel) return {};
   return target.wireSurface === undefined
     ? { toolSchemaModel: target.model }
     : { toolSchemaModel: target.model, wireSurface: target.wireSurface };
@@ -3970,7 +3972,7 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
-          ...resolveStepToolSchemaOptions(this.config, languageModel),
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
@@ -4045,7 +4047,7 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
-          ...resolveStepToolSchemaOptions(this.config, languageModel),
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           providerTools: stepProviderTools,
           requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
         });
@@ -5043,7 +5045,7 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
-        ...resolveStepToolSchemaOptions(this.config, languageModel),
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
@@ -5305,7 +5307,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
-        ...resolveStepToolSchemaOptions(this.config, languageModel),
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         providerTools: stepProviderTools,
         requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
       });
