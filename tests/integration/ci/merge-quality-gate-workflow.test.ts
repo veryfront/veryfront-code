@@ -1466,7 +1466,8 @@ it("binary e2e cancellation stops signal-ignoring descendants and preserves exit
 import os, pathlib, select, signal, subprocess, sys, tempfile, time
 
 step_script = sys.argv[1]
-with tempfile.TemporaryDirectory() as directory:
+temp_parent = "/private/tmp" if sys.platform == "darwin" and pathlib.Path("/private/tmp").is_dir() else None
+with tempfile.TemporaryDirectory(dir=temp_parent) as directory:
     deno = pathlib.Path(directory) / "deno"
     env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
     def fixture(body):

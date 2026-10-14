@@ -1,6 +1,6 @@
 ---
 title: "veryfront/tool"
-description: "Define tools with schema-backed inputs for agents and MCP."
+description: "Define tools with schema-backed inputs for agents and MCP. `toolRegistry` is the local registry. To manage the tool files of a hosted project, use the tools operations of the Veryfront API."
 order: 43
 ---
 

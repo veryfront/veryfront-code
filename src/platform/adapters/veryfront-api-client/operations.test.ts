@@ -1752,6 +1752,90 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
+  describe("style artifact operations", () => {
+    type Sent = { url: string; method: string; body: unknown };
+
+    function recordRequests(): Sent[] {
+      const sent: Sent[] = [];
+      stubJsonFetch((url, init) => {
+        sent.push({
+          url,
+          method: init?.method ?? "GET",
+          body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+        });
+        return { status: "building", build_run_id: "run-1" };
+      });
+      return sent;
+    }
+
+    it("sends get, update and start-build requests under the canonical names", async () => {
+      const sent = recordRequests();
+      const ops = createOps();
+      const input = { branch: "main", styleProfileHash: "profile-1" };
+
+      const got = await ops.getStyleArtifact("my project", input);
+      await ops.updateStyleArtifact("my project", { ...input, status: "failed" });
+      await ops.startStyleArtifactBuild("my project", { ...input, force: true });
+
+      assertEquals(got.status, "building");
+      assertEquals(got.buildRunId, "run-1");
+      assertEquals(sent.map((request) => request.method), ["GET", "PUT", "POST"]);
+      assertEquals(
+        sent[0]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current?style_profile_hash=profile-1&branch=main",
+      );
+      assertEquals(
+        sent[1]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current",
+      );
+      assertEquals(
+        sent[2]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current/builds",
+      );
+    });
+
+    it("keeps the deprecated names as aliases that send the same requests", async () => {
+      const input = { environmentName: "production", styleProfileHash: "profile-1" };
+      const update = { ...input, status: "ready" as const, artifactHash: "hash-1" };
+      const build = { ...input, force: true };
+
+      const canonical = recordRequests();
+      const canonicalOps = createOps();
+      const canonicalResults = [
+        await canonicalOps.getStyleArtifact("project-slug", input),
+        await canonicalOps.updateStyleArtifact("project-slug", update),
+        await canonicalOps.startStyleArtifactBuild("project-slug", build),
+      ];
+      restoreMockFetch();
+
+      const deprecated = recordRequests();
+      const deprecatedOps = createOps();
+      const deprecatedResults = [
+        await deprecatedOps.resolveStyleArtifact("project-slug", input),
+        await deprecatedOps.upsertStyleArtifact("project-slug", update),
+        await deprecatedOps.ensureStyleArtifactBuild("project-slug", build),
+      ];
+
+      assertEquals(deprecated.length, 3);
+      assertEquals(deprecated, canonical);
+      assertEquals(deprecatedResults, canonicalResults);
+    });
+
+    it("passes the abort signal of the deprecated update alias to the request", async () => {
+      recordRequests();
+      const controller = new AbortController();
+      controller.abort();
+
+      await assertRejects(() =>
+        createOps().upsertStyleArtifact(
+          "project-slug",
+          { branch: "main", styleProfileHash: "profile-1" },
+          controller.signal,
+        )
+      );
+    });
+  });
+
   describe("resolveDependencies", () => {
     it("posts specifiers, branch and expected declarations and keeps raw pin keys", async () => {
       let requestedUrl = "";

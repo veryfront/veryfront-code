@@ -1,3 +1,4 @@
+import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
 import {
@@ -9,7 +10,13 @@ import {
 } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { createRemoteMCPToolSource, type RemoteMCPToolSourceConfig } from "#veryfront/tool";
 import type { RemoteToolSource } from "#veryfront/tool";
-import { INGRESS_RUN_TERMINAL_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
+import {
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
+  INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+} from "#veryfront/security/http/ingress-credentials.ts";
+
+const StringSlice = String.prototype.slice;
+const ReflectApply = Reflect.apply;
 
 /**
  * Builds the platform MCP source for one control-plane run. The API-minted
@@ -21,9 +28,37 @@ export function createRunPlatformToolSource(
   config: RemoteMCPToolSourceConfig & { headers: Record<string, string> },
   terminal: { token: string; runId: string } | null,
   createSource: (config: RemoteMCPToolSourceConfig) => RemoteToolSource = createRemoteMCPToolSource,
+  fileWriter: { readonly apiBaseUrl: string; readonly token: string } | null = null,
 ): RemoteToolSource {
   const ordinary = createSource(config);
-  if (!terminal) return ordinary;
+  let mutationSource: RemoteToolSource | null = null;
+  if (fileWriter) {
+    const trustedApi = requireHostPrivateApiHttps(fileWriter.apiBaseUrl);
+    if (
+      ReflectApply(StringSlice, trustedApi, [0, 8]) !== "https://" ||
+      config.endpoint !== `${trustedApi}/mcp`
+    ) {
+      throw new TypeError(
+        "Canonical mutation authority requires the trusted HTTPS API MCP endpoint",
+      );
+    }
+    mutationSource = createSource({
+      ...config,
+      headers: { ...config.headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]: fileWriter.token },
+    });
+  }
+  const retainedMutationSource = mutationSource;
+  const fileSource: RemoteToolSource = retainedMutationSource
+    ? {
+      id: ordinary.id,
+      listTools: (context) => ordinary.listTools(context),
+      executeTool: (name, args, context) =>
+        isCanonicalFileMutationTool(name)
+          ? retainedMutationSource.executeTool(name, args, context)
+          : ordinary.executeTool(name, args, context),
+    }
+    : ordinary;
+  if (!terminal) return fileSource;
   const terminalHeaders = {
     ...config.headers,
     [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: terminal.token,
@@ -56,6 +91,28 @@ export function createRunPlatformToolSource(
       isTerminalRunToolName(name) && context?.runId === terminal.runId &&
         hasCurrentTerminalRunCredentialAuthority(context)
         ? terminalSource.executeTool(name, args, context)
-        : ordinary.executeTool(name, args, context),
+        : fileSource.executeTool(name, args, context),
   };
+}
+
+function isCanonicalFileMutationTool(name: string): boolean {
+  switch (name) {
+    case "create_file":
+    case "update_file":
+    case "move_file":
+    case "delete_file":
+    case "update_project_file_draft":
+    case "delete_project_file_draft":
+    case "publish_project_files":
+    case "veryfront__create_file":
+    case "veryfront__update_file":
+    case "veryfront__move_file":
+    case "veryfront__delete_file":
+    case "veryfront__update_project_file_draft":
+    case "veryfront__delete_project_file_draft":
+    case "veryfront__publish_project_files":
+      return true;
+    default:
+      return false;
+  }
 }

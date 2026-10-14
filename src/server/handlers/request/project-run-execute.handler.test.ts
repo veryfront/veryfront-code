@@ -1,3 +1,7 @@
+import {
+  createProjectRunRuntimeOwnershipProbe,
+  type RuntimeOwnershipProbeReceipt,
+} from "./project-run-runtime-ownership-probe.ts";
 import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { systemTaskDeadlineClock } from "#veryfront/server/handlers/request/task-deadline-clock.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
@@ -67,6 +71,10 @@ import {
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "#veryfront/config/environment-config.ts";
 
 // Provider HTTP fixtures exercise real gateway/model execution, not real model quality.
 const canonicalKnowledgeFixtureReceipt = {
@@ -154,6 +162,7 @@ import {
   createKnowledgeRuntimeProgressBridge,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  type ProjectRunExecuteRequest,
   projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
   uploadEvalReportToProjectFiles,
@@ -195,6 +204,120 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 
 const encoder = new TextEncoder();
+
+Deno.test("uploadEvalReportToProjectFiles uses ordinary runtime API client without retained writer token", async () => {
+  const report: EvalReport = {
+    kind: "eval-report",
+    runId: "run_eval_report_http_without_writer",
+    definitionId: "eval:deep-research",
+    targetKind: "agent",
+    target: "agent:researcher",
+    startedAt: "2026-09-30T10:00:00.000Z",
+    endedAt: "2026-09-30T10:00:01.000Z",
+    summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+    records: [],
+  };
+  const req = new Request(
+    "https://runtime.example.test/api/control-plane/runs/run_eval_report_http_without_writer/execute",
+    {
+      headers: { "x-token": "runtime-token" },
+    },
+  );
+  const request: ProjectRunExecuteRequest = {
+    runId: "run_eval_report_http_without_writer",
+    kind: "task",
+    target: "task:eval",
+    projectId: "proj-1",
+    config: { eval_id: "eval:deep-research" },
+  };
+  let uploads = 0;
+  _setEnvironmentConfigForTesting({ apiBaseUrl: "http://self-hosted-api.example.test:8787" });
+  const path = await withMockFetch((url, init) => {
+    const options = observeFetchRequestInit(init);
+    assertStringIncludes(String(url), "http://self-hosted-api.example.test:8787/");
+    assertEquals(options.method, "PUT");
+    assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), null);
+    uploads++;
+    return Promise.resolve(
+      Response.json({
+        path: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+      }),
+    );
+  }, async () => {
+    try {
+      return await uploadEvalReportToProjectFiles({
+        request,
+        ctx: createCtx("unused-public-key"),
+        req,
+        report,
+        projectReference: "proj-1",
+        reportPath: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+      });
+    } finally {
+      _resetEnvironmentConfig();
+    }
+  });
+  assertEquals(uploads, 1);
+  assertEquals(
+    path,
+    "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+  );
+});
+
+Deno.test("runtime API client parses responses with the reader captured at load", async () => {
+  const report: EvalReport = {
+    kind: "eval-report",
+    runId: "run_eval_report_captured_reader",
+    definitionId: "eval:deep-research",
+    targetKind: "agent",
+    target: "agent:researcher",
+    startedAt: "2026-09-30T10:00:00.000Z",
+    endedAt: "2026-09-30T10:00:01.000Z",
+    summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+    records: [],
+  };
+  const req = new Request(
+    "https://runtime.example.test/api/control-plane/runs/run_eval_report_captured_reader/execute",
+    { headers: { "x-token": "runtime-token" } },
+  );
+  const request: ProjectRunExecuteRequest = {
+    runId: "run_eval_report_captured_reader",
+    kind: "task",
+    target: "task:eval",
+    projectId: "proj-1",
+    config: { eval_id: "eval:deep-research" },
+  };
+  const descriptor = Object.getOwnPropertyDescriptor(Response.prototype, "json")!;
+  let intercepted = 0;
+  _setEnvironmentConfigForTesting({ apiBaseUrl: "http://self-hosted-api.example.test:8787" });
+  // Project code in the same process replaces the reader and fabricates a result.
+  Object.defineProperty(Response.prototype, "json", {
+    ...descriptor,
+    value: function () {
+      intercepted++;
+      return Promise.resolve({ path: "fabricated/by-project-code.json" });
+    },
+  });
+  try {
+    const path = await withMockFetch(
+      () => Promise.resolve(Response.json({ path: "evals/reports/actual.json" })),
+      () =>
+        uploadEvalReportToProjectFiles({
+          request,
+          ctx: createCtx("unused-public-key"),
+          req,
+          report,
+          projectReference: "proj-1",
+          reportPath: "evals/reports/requested.json",
+        }),
+    );
+    assertEquals(path, "evals/reports/actual.json");
+    assertEquals(intercepted, 0);
+  } finally {
+    Object.defineProperty(Response.prototype, "json", descriptor);
+    _resetEnvironmentConfig();
+  }
+});
 
 class SynchronousInMemorySpanExporter implements SpanExporter {
   private finishedSpans: ReadableSpan[] = [];
@@ -2843,8 +2966,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             const headers = new Headers(observeFetchRequestInit(init).headers);
             assertEquals(
               headers.has("X-Veryfront-Run-Event-Token"),
-              knowledgePath.startsWith("knowledge/") &&
-                (url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`)),
+              url.endsWith("/index") || url.includes(`/files/${encodedSourcePath}`),
             );
             assertEquals(
               headers.get("Authorization"),
@@ -5315,6 +5437,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           return await uploadEvalReportToProjectFiles(input);
         },
       }));
+      const eventToken = createProjectRunEventToken({
+        runId: "run_eval_report_http",
+        projectId: "proj-1",
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
+      });
       const signed = await signedRequest(
         "/api/control-plane/runs/run_eval_report_http/execute",
         {
@@ -5324,7 +5451,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           projectId: "proj-1",
           config: { eval_id: "eval:deep-research" },
         },
-        { "x-token": "runtime-token" },
+        { "x-token": "runtime-token", "x-veryfront-run-event-token": eventToken },
       );
       const controller = new AbortController();
       const request = new Request(signed.request, { signal: controller.signal });
@@ -5336,6 +5463,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const options = observeFetchRequestInit(init);
         assertStringIncludes(String(url), "/files/evals%2Freports%2Fdeep-research%2F");
         assertEquals(options.method, "PUT");
+        assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), eventToken);
         signal = options.signal;
         uploads++;
         uploadStarted.resolve();
@@ -6355,6 +6483,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
               });
 
               if (method === "POST" && url.pathname.endsWith("/runs")) {
+                // The signed eval credential authorizes headless project execution,
+                // not a user-owned conversation for the service account's owner.
+                if (
+                  (requestBody?.config as Record<string, unknown>)?.conversation_mode !== "none"
+                ) {
+                  return Response.json({ code: "authorization-denied" }, { status: 403 });
+                }
                 const runId = "77777777-7777-4777-8777-777777777777";
                 return Response.json({
                   id: runId,
@@ -6415,7 +6550,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(createRequest?.body?.request, undefined);
       assertEquals(
         (createRequest?.body?.config as Record<string, unknown>).conversation_mode,
-        "create_new",
+        "none",
       );
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
       assertEquals(agentInput.forwarded_props, {
@@ -16955,6 +17090,7 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     backend: MemoryBackend,
     definition: WorkflowDefinition,
     options: {
+      onPauseProbe?: () => void | Promise<void>;
       statePersistence?: "durable" | "ephemeral";
       now?: () => number;
       onDiscover?: () => void;
@@ -16966,6 +17102,19 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
     } = {},
   ): ProjectRunExecuteHandler {
     return new ProjectRunExecuteHandler(createDeps({
+      ...(options.onPauseProbe
+        ? {
+          createRuntimeOwnershipProbe: () => ({
+            createSession: () => ({
+              beforeExecute: () => Promise.resolve(),
+              afterStopAcknowledged: () => Promise.resolve(),
+              afterPauseAcknowledged: async () => {
+                await options.onPauseProbe?.();
+              },
+            }),
+          }),
+        }
+        : {}),
       findWorkflowById: async () => {
         options.onDiscover?.();
         return {
@@ -17032,6 +17181,48 @@ describe("server/handlers/request/project-run-execute.handler manual pause (#258
   function pauseAckCalls(urls: string[]): string[] {
     return urls.filter((url) => new URL(url).pathname === `/runs/${runId}/pause-ack`);
   }
+
+  for (const status of [200, 403]) {
+    it(`runs the private pause probe only after an actual 200 acknowledgement (${status})`, async () => {
+      const backend = new SharedMemoryBackend();
+      let probes = 0;
+      await withMockFetch(
+        () => Promise.resolve(Response.json({ stop: true }, { status })),
+        async () => {
+          const result = await dispatch(createHandler(backend, threeSteps([]), {
+            onPauseProbe: () => {
+              probes++;
+            },
+          }));
+          assertEquals(result.status, "waiting");
+        },
+      );
+      assertEquals(probes, status === 200 ? 1 : 0);
+    });
+  }
+
+  it("preserves a successful pause acknowledgement when the diagnostic probe throws", async () => {
+    const backend = new SharedMemoryBackend();
+    let probes = 0;
+    let acknowledgements = 0;
+    await withMockFetch(
+      () => {
+        acknowledgements++;
+        return Promise.resolve(Response.json({ stop: true }, { status: 200 }));
+      },
+      async () => {
+        const result = await dispatch(createHandler(backend, threeSteps([]), {
+          onPauseProbe: () => {
+            probes++;
+            throw new Error("diagnostic probe failed");
+          },
+        }));
+        assertEquals(result.status, "waiting");
+      },
+    );
+    assertEquals(acknowledgements, 1);
+    assertEquals(probes, 1);
+  });
 
   it("pauses at a batch boundary and resumes manually under the same run id", async () => {
     const backend = new SharedMemoryBackend();
@@ -18201,5 +18392,166 @@ describe("knowledge ingest observation authority", () => {
       assertEquals(executions, authority === "current" ? 1 : 0);
       assertEquals(cursor > 0, authority === "current");
     });
+  }
+});
+
+describe("runtime ownership actual client problem transport", () => {
+  for (const surface of ["events", "heartbeats"] as const) {
+    for (const authority of [true, false]) {
+      it(`${surface}: actual failed-response body ${authority ? "qualifies signed generation denial" : "rejects unrelated conflict"}`, async () => {
+        const started = Promise.withResolvers<void>();
+        const settled = Promise.withResolvers<void>();
+        const controller = new AbortController();
+        const receipts: RuntimeOwnershipProbeReceipt[] = [];
+        const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+        const runId = "run_ownership_problem_transport";
+        const clock = manualTaskDeadlineClock();
+        let stale = false;
+        let content: string | undefined;
+        let eventPayload: unknown;
+        const handler = new ProjectRunExecuteHandler(
+          createDeps({
+            createRuntimeOwnershipProbe: (nowMs) => ({
+              createSession(input) {
+                return createProjectRunRuntimeOwnershipProbe({
+                  probeId: "stage-problem-transport",
+                  projectId: "proj-1",
+                  environmentId: "env-staging",
+                  expiresAtMs: nowMs + 60_000,
+                  operationTimeoutMs: 1_000,
+                }, (receipt) => receipts.push(receipt)).createSession({
+                  ...input,
+                  ctx: {
+                    ...input.ctx,
+                    environmentId: "env-staging",
+                    environmentName: "staging",
+                    resolvedEnvironment: "preview",
+                  },
+                });
+              },
+            }),
+            executeKnowledgeIngest: async () => {
+              assertEquals(receipts[0]?.status, "ok");
+              started.resolve();
+              await settled.promise;
+              return { success: false, error: "Run cancelled", duration_ms: 1 };
+            },
+          }),
+          clock,
+        );
+        const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+          runId,
+          canonicalRunId,
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "branch-preview",
+        }, {
+          "x-token": "test-runtime-bearer",
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId,
+            projectId: "proj-1",
+            canonicalRunId,
+          }),
+          "x-veryfront-run-stop-token": "opaque-stop-capability",
+        });
+        await withMockFetch(async (url, init) => {
+          const observed = observeFetchRequestInit(init);
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/cancellation-ack")) {
+            stale = true;
+            return Response.json({ acknowledged: true });
+          }
+          if (observed.method === "GET") {
+            if (path.endsWith("/events")) {
+              return Response.json({
+                data: eventPayload === undefined ? [] : [{
+                  event_id: 1,
+                  event_type: "RUNTIME_EVENT_RECORDED",
+                  payload: eventPayload,
+                  created_at: "2026-10-11T05:45:00.000Z",
+                }],
+                page_info: { next: null },
+              });
+            }
+            if (path.startsWith("/runs/")) {
+              return Response.json({
+                id: canonicalRunId,
+                project_id: "proj-1",
+                status: stale ? "cancelled" : "running",
+              });
+            }
+            return content === undefined
+              ? Response.json({}, { status: 404 })
+              : Response.json({ content, version_id: "current-owned-version" });
+          }
+          if (observed.method === "PUT") {
+            if (stale) {
+              return Response.json({
+                status: 403,
+                slug: "authorization-denied",
+                detail: "Run no longer permits canonical source writes",
+              }, { status: 403 });
+            }
+            assertEquals(typeof observed.body, "string");
+            const body = JSON.parse(String(observed.body));
+            content = body.content;
+            return Response.json({ version_id: "current-owned-version" });
+          }
+          if (stale && path.endsWith("/events")) {
+            return Response.json({
+              status: 409,
+              slug: "state-conflict",
+              detail: surface === "events" && !authority
+                ? "The event idempotency key conflicts with existing data"
+                : "Streamed run appends require the current signed executor generation",
+            }, { status: 409 });
+          }
+          if (stale && path.endsWith("/heartbeats")) {
+            return Response.json({
+              status: 409,
+              slug: "state-conflict",
+              detail: surface === "heartbeats" && !authority
+                ? "The event idempotency key conflicts with existing data"
+                : "This execution generation is no longer current; stop execution",
+            }, { status: 409 });
+          }
+          if (stale) {
+            return Response.json({
+              status: 409,
+              slug: "state-conflict",
+              detail: "Parent run no longer accepts child runs",
+            }, { status: 409 });
+          }
+          if (path.endsWith("/events")) {
+            const body = JSON.parse(String(observed.body));
+            eventPayload = body.events[0];
+            return Response.json({ appended_count: 1, latest_event_id: 1, run_id: canonicalRunId });
+          }
+          return Response.json({ run_id: canonicalRunId, expires_at: "2026-10-11T05:46:00.000Z" });
+        }, async () => {
+          const pending = handler.handle(
+            new Request(signed.request, { signal: controller.signal }),
+            createCtx(signed.publicKeyPem),
+          );
+          await started.promise;
+          controller.abort(new Error("Run cancelled"));
+          settled.resolve();
+          await pending;
+        });
+        assertEquals(receipts.length, 2);
+        assertEquals(receipts[1]!.status, authority ? "ok" : "error");
+        if (!authority) {
+          assertEquals(
+            receipts[1]!.reason,
+            surface === "events"
+              ? "stale-event-append-failed-without-expected-rejection"
+              : "stale-heartbeat-failed-without-expected-rejection",
+          );
+        }
+        assertEquals(JSON.stringify(receipts).includes("stop execution"), false);
+      });
+    }
   }
 });
