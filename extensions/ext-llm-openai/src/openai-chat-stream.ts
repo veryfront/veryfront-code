@@ -1,5 +1,8 @@
 import {
   mergeUsage,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
   ProviderRequestError,
   ProviderStreamProtocolError,
   readGatewayBillingMode,
@@ -209,6 +212,47 @@ function isContentFilterAnnotation(choice: Record<string, unknown>): boolean {
     readRecord(choice.content_filter_offsets) !== undefined;
 }
 
+const STREAMED_CONTEXT_LENGTH_PATTERNS = [
+  "context size has been exceeded",
+  "context length exceeded",
+  "maximum context length",
+] as const;
+
+/**
+ * Map a provider error reported inside an HTTP 200 chat stream to a curated
+ * error. Only known codes grant retryability, matching the Responses parser.
+ * The public message is fixed; provider text and the record are never kept.
+ */
+function streamedProviderError(
+  context: OpenAIChatStreamContext,
+  code: unknown,
+  message: string,
+): Error {
+  const options = {
+    provider: context.providerKind ?? "openai",
+    status: 200,
+    message: "Provider reported a failed generation in its response stream",
+    retryable: false,
+  };
+  const normalizedMessage = message.toLowerCase();
+  if (
+    code === "context_length_exceeded" ||
+    STREAMED_CONTEXT_LENGTH_PATTERNS.some((pattern) => normalizedMessage.includes(pattern))
+  ) {
+    // Fixed wording that provider error parsing classifies as a context limit.
+    return new ProviderRequestError({
+      ...options,
+      message: "Provider reported context length exceeded in its response stream",
+    });
+  }
+  if (code === "server_error") return new ProviderOverloadedError({ ...options, retryable: true });
+  if (code === "rate_limit_exceeded") {
+    return new ProviderRateLimitError({ ...options, retryable: true });
+  }
+  if (code === "insufficient_quota") return new ProviderQuotaError(options);
+  return new ProviderRequestError(options);
+}
+
 export async function* streamOpenAICompatibleParts(
   stream: ReadableStream<Uint8Array>,
   context: OpenAIChatStreamContext = {},
@@ -249,17 +293,11 @@ export async function* streamOpenAICompatibleParts(
       throw invalidOpenAIStream(context, "event was not an object");
     }
     // Providers can report a failed generation inside an HTTP 200 SSE stream.
-    // Preserve its cause for curated classification without exposing provider
-    // text in the public error or claiming the model content was malformed.
+    // Classify it here from known codes and fixed wording so the thrown error
+    // never carries the provider record (or its text) as a cause.
     const errorRecord = readRecord(record.error);
     if (errorRecord && typeof errorRecord.message === "string") {
-      throw new ProviderRequestError({
-        provider: context.providerKind ?? "openai",
-        status: 200,
-        message: "Provider reported a failed generation in its response stream",
-        retryable: false,
-        cause: errorRecord,
-      });
+      throw streamedProviderError(context, errorRecord.code, errorRecord.message);
     }
     const usageRecord = readRecord(record.usage);
     usage = mergeOpenAIUsage(usage, record);

@@ -1,7 +1,13 @@
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
-import { ProviderRequestError, ProviderStreamProtocolError } from "veryfront/provider/shared";
+import {
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+  ProviderStreamProtocolError,
+} from "veryfront/provider/shared";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
@@ -45,10 +51,49 @@ describe("ext-llm-openai/openai-chat-stream", () => {
         },
       }))), ProviderRequestError);
     assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assertEquals(Object.hasOwn(error, "cause"), false);
+    assertEquals(Deno.inspect(error).includes("Engine protocol"), false);
     assertEquals(parseProviderError(error), {
       code: "CONTEXT_LENGTH_EXCEEDED",
       message: "Conversation is too long",
     });
+  });
+
+  it("keeps streamed provider error records out of the thrown error cause", async () => {
+    const error = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "echoed secret sk-synthetic", code: "invalid_value" },
+      }))), ProviderRequestError);
+    assertEquals(Object.hasOwn(error, "cause"), false);
+    assertEquals(error.cause, undefined);
+    assertEquals(Deno.inspect(error, { depth: 10 }).includes("sk-synthetic"), false);
+  });
+
+  it("preserves retryability for transient streamed provider error codes", async () => {
+    const rateLimited = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Rate limit reached", code: "rate_limit_exceeded" },
+      }))), ProviderRateLimitError);
+    assertEquals(rateLimited.retryable, true);
+    assertEquals(rateLimited.status, 200);
+
+    const overloaded = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "The server had an error", code: "server_error" },
+      }))), ProviderOverloadedError);
+    assertEquals(overloaded.retryable, true);
+
+    const quota = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Quota exceeded", code: "insufficient_quota" },
+      }))), ProviderQuotaError);
+    assertEquals(quota.retryable, false);
+
+    const terminal = await assertRejects(() =>
+      collectParts(streamFromText(data({
+        error: { message: "Bad request", code: "invalid_value" },
+      }))), ProviderRequestError);
+    assertEquals(terminal.retryable, false);
   });
 
   it("keeps unknown streamed errors private and rejects malformed error envelopes", async () => {
