@@ -420,6 +420,42 @@ describe("Node SSR local React graph", () => {
     );
   });
 
+  it("records supplied and prepared runtime versions in rendering strategy state", async () => {
+    const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
+    const React = await getProjectReact();
+    for (const prepared of [false, true]) {
+      const version = prepared ? "19.2.1" : "16.14.0";
+      const react = { ...React, version };
+      const server = {
+        version,
+        renderToString: () => "runtime-state",
+        renderToStaticMarkup: () => "runtime-state",
+      };
+      const adapter = prepared
+        ? {
+          moduleLoader: {
+            importModule: (reference: { specifier: string }) =>
+              Promise.resolve(reference.specifier === "react" ? { default: react } : server),
+          },
+        } as unknown as RuntimeAdapter
+        : undefined;
+      const renderer = new SSRRenderer(
+        "development",
+        adapter,
+        undefined,
+        undefined,
+        prepared ? { react: { version: "^19.2.0" } } as VeryfrontConfig : undefined,
+      );
+      await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+        ...(prepared ? {} : { reactRuntime: { react, server } }),
+      });
+      assertEquals(renderer.getRenderingStrategy().reactVersion, version);
+      assertEquals(renderer.supportsStreaming(), prepared);
+    }
+  });
+
   it("validates supplied runtimes against authored ranges without selecting host peers", async () => {
     const { SSRRenderer } = await import("#veryfront/rendering/ssr-renderer.ts");
     const React = await getProjectReact();

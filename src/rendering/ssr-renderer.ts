@@ -216,6 +216,7 @@ export class SSRRenderer {
       }
       reactRuntime = { react: runtime.react, server: runtime.server };
       reactVersion = runtime.react.version;
+      this.resolvedReactVersion = reactVersion;
     } else {
       reactVersion = await this.getReactVersion(
         options.dependencyPinningCacheKey,

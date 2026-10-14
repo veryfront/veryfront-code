@@ -97,7 +97,7 @@ function selectedProjectDirectory() {
   if (projectDirectory) return projectDirectory;
   if (command === "dev" || command === "lock") return project ?? process.cwd();
   if (command === "start" || command === undefined) {
-    return projectDirectory ?? project ?? process.cwd();
+    return project ?? process.cwd();
   }
   return process.cwd();
 }
