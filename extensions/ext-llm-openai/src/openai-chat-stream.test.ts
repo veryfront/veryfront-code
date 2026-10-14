@@ -51,6 +51,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
         },
       }))), ProviderRequestError);
     assertEquals(error instanceof ProviderStreamProtocolError, false);
+    assert(error instanceof ProviderRequestError);
     assertEquals(Object.hasOwn(error, "cause"), false);
     assertEquals(Deno.inspect(error).includes("Engine protocol"), false);
     assertEquals(parseProviderError(error), {
@@ -64,6 +65,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       collectParts(streamFromText(data({
         error: { message: "echoed secret sk-synthetic", code: "invalid_value" },
       }))), ProviderRequestError);
+    assert(error instanceof ProviderRequestError);
     assertEquals(Object.hasOwn(error, "cause"), false);
     assertEquals(error.cause, undefined);
     assertEquals(Deno.inspect(error, { depth: 10 }).includes("sk-synthetic"), false);
@@ -74,6 +76,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       collectParts(streamFromText(data({
         error: { message: "Rate limit reached", code: "rate_limit_exceeded" },
       }))), ProviderRateLimitError);
+    assert(rateLimited instanceof ProviderRateLimitError);
     assertEquals(rateLimited.retryable, true);
     assertEquals(rateLimited.status, 200);
 
@@ -81,18 +84,21 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       collectParts(streamFromText(data({
         error: { message: "The server had an error", code: "server_error" },
       }))), ProviderOverloadedError);
+    assert(overloaded instanceof ProviderOverloadedError);
     assertEquals(overloaded.retryable, true);
 
     const quota = await assertRejects(() =>
       collectParts(streamFromText(data({
         error: { message: "Quota exceeded", code: "insufficient_quota" },
       }))), ProviderQuotaError);
+    assert(quota instanceof ProviderQuotaError);
     assertEquals(quota.retryable, false);
 
     const terminal = await assertRejects(() =>
       collectParts(streamFromText(data({
         error: { message: "Bad request", code: "invalid_value" },
       }))), ProviderRequestError);
+    assert(terminal instanceof ProviderRequestError);
     assertEquals(terminal.retryable, false);
   });
 
