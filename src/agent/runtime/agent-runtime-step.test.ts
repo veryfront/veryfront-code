@@ -91,6 +91,19 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolExposurePlan.deferred.map((tool) => tool.name), ["write_state"]);
   });
 
+  it("reports host-merged startup tools for provider capping to retain", async () => {
+    const input = bootstrapStepInput([]);
+    const prepared = await prepareAgentRuntimeStep({
+      ...input,
+      config: {
+        ...input.config,
+        bootstrapTools: undefined,
+        __vfRetainedBootstrapToolNames: ["write_state"],
+      } as AgentConfig,
+    });
+    assertEquals(prepared.configuredBootstrapToolNames, ["write_state"]);
+  });
+
   it("rejects authored bootstrap tools outside the authorized catalog", async () => {
     const error = await assertRejects(
       () => prepareAgentRuntimeStep(bootstrapStepInput(["delete_state"])),

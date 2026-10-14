@@ -782,4 +782,46 @@ describe("startup skill and tool bootstrap", () => {
     await assistant.generate({ input: "Go" });
     assertEquals(model.callCount, 1);
   });
+  for (const retain of [true, false]) {
+    it(`replacement tools ${retain ? "retaining" : "without"} the skill loader ${retain ? "load" : "skip"} the startup skill`, async () => {
+      clearMCPRegistry();
+      skillRegistryInternal.clearAll();
+      registerSkill("eval-plan", {
+        id: "eval-plan",
+        rootPath: "/skills/eval-plan",
+        metadata: { name: "eval-plan", description: "Guidance" },
+        fsAdapter: createSkillTestAdapter({ "/skills/eval-plan/SKILL.md": "# Eval guidance" }),
+      });
+      const model = scriptedModel([(options) => {
+        assertEquals(JSON.stringify(options.prompt).includes("Eval guidance"), retain);
+        return { text: "Ready" };
+      }], { only: "generate" });
+      const lookup = tool({
+        id: "lookup",
+        description: "Lookup",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "value",
+      });
+      const assistant = agent({
+        id: "eval-startup",
+        system: "Help",
+        model: model.modelId,
+        bootstrapSkill: "eval-plan",
+        skills: ["eval-plan"],
+        tools: { load_skill: createLoadSkillTool() },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+      });
+      try {
+        await assistant.generate({
+          input: "Go",
+          tools: { lookup },
+          retainSkillLoaderTools: retain,
+        });
+        assertEquals(model.callCount, 1);
+      } finally {
+        skillRegistryInternal.clearAll();
+      }
+    });
+  }
 });

@@ -2651,3 +2651,36 @@ it("hosted form continuation does not repeat the startup skill load", async () =
     clearModelProviders();
   }
 });
+
+it("hosted runtime config keeps authored bootstrap tools for the runtime capping pass", () => {
+  const runtime = createPreparedHostedRuntimeAgent({
+    options: {
+      projectId: "project",
+      instructions: "Use the assembled hosted catalog.",
+      model: "openai/gpt-4.1",
+      toolLoading: "eager",
+      bootstrapTools: ["sleep"],
+    },
+    taskContext: { projectId: "project", branchId: null },
+    toolAssembly: {
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      runtimeTools: {},
+      remoteToolSources: [],
+      localToolNames: ["sleep"],
+      remoteToolNames: [],
+      providerToolNames: [],
+      availableToolNames: ["sleep"],
+      modelVisibleToolNames: ["sleep"],
+      toolLoadingMode: "eager",
+      compatibleRemoteToolNames: [],
+      systemInstructions: "Use the assembled hosted catalog.",
+    },
+    modelId: "openai/gpt-4.1",
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+  }, {});
+  assertEquals(
+    (runtime.config as { __vfRetainedBootstrapToolNames?: readonly string[] })
+      .__vfRetainedBootstrapToolNames,
+    ["sleep"],
+  );
+});

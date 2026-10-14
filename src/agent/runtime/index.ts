@@ -70,6 +70,7 @@ import {
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
@@ -482,6 +483,9 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const IntrinsicURL = URL;
 const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
+/** Replacement sets that carried the configured skill loader, so startup can still use it. */
+const replacementsRetainingSkillLoader = createPrivateWeakStore<object, true>();
+
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "load_skill",
   "load_skill_reference",
@@ -3489,6 +3493,7 @@ export class AgentRuntime {
     }
 
     const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    let retainedLoader = false;
     for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
       if (tools[toolName]) {
         continue;
@@ -3498,8 +3503,10 @@ export class AgentRuntime {
       });
       if (configuredTool) {
         tools[toolName] = configuredTool;
+        if (isLoadSkillToolName(toolName)) retainedLoader = true;
       }
     }
+    if (retainedLoader) replacementsRetainingSkillLoader.set(tools, true);
     return tools;
   }
 
@@ -4192,8 +4199,10 @@ export class AgentRuntime {
       let maxStepsParsedOutput: MaxStepsOutputParse | undefined;
       // A submitted form continues a turn whose startup already ran, and the
       // post-form skill policy forbids loading or switching skill bodies.
-      let startupSkillLoaded = hasToolReplacements || this.config.bootstrapSkill === undefined ||
-        skillState.hasSubmittedFormInput;
+      // Replacements suppress startup unless they retain the configured loader.
+      let startupSkillLoaded =
+        (hasToolReplacements && replacementsRetainingSkillLoader.get(toolReplacements) !== true) ||
+        this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);

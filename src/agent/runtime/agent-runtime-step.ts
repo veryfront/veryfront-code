@@ -27,6 +27,7 @@ import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.t
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
+  getRuntimeRetainedBootstrapToolNames,
   getRuntimeToolBootstrapNames,
   resolveRuntimeToolLoading,
   snapshotConfiguredToolBootstrapNames,
@@ -485,6 +486,9 @@ export async function prepareAgentRuntimeStep(
     tools: toolExposurePlan.visible,
     toolExposurePlan,
     startupAuthorizedTools,
-    configuredBootstrapToolNames: configuredBootstrapNames,
+    configuredBootstrapToolNames: concatPrivateArrays(
+      configuredBootstrapNames,
+      getRuntimeRetainedBootstrapToolNames(input.config),
+    ),
   };
 }

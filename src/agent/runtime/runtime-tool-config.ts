@@ -119,6 +119,8 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolBootstrapNames?: readonly string[];
   /** Tool schema target trusted preparation resolved from the run's served catalog. */
   __vfToolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Authored startup tools a host already merged; provider capping must retain them. */
+  __vfRetainedBootstrapToolNames?: readonly string[];
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
@@ -217,6 +219,12 @@ export function snapshotConfiguredToolBootstrapNames(value: unknown): readonly s
     }
   }
   return names;
+}
+
+/** Host-merged authored startup tools that provider schema capping must retain. */
+export function getRuntimeRetainedBootstrapToolNames(config: AgentConfig): readonly string[] {
+  return snapshotStringArray((config as RuntimeToolFilterConfig).__vfRetainedBootstrapToolNames) ??
+    [];
 }
 
 export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<string> | undefined {
