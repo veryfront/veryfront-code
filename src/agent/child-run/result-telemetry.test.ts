@@ -65,6 +65,22 @@ describe("child result telemetry budget", () => {
     assertStrictEquals(bounded.output, result.output);
     assertEquals(bounded.toolCalls.length, 0);
   });
+  it("readmits the accepted base when existing omission metadata no longer fits", () => {
+    const parts = Array.from({ length: 5 }, () => "x".repeat(900_000));
+    const base = { output: { parts }, toolCalls: [], toolResults: [] };
+    const excess = JSON.stringify(base).length - (PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES - 5);
+    parts[4] = parts[4]!.slice(excess);
+    const result = { ...base, toolTelemetryOmitted: { calls: 7, results: 2 } };
+    const bounded = boundChildResultTelemetry(result);
+    assertEquals(
+      snapshotBoundedJsonValue(bounded, 1_048_576, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+        .success,
+      true,
+    );
+    assertStrictEquals(bounded.output, result.output);
+    assertEquals(bounded.toolTelemetryOmitted, undefined);
+    assertEquals(result.toolTelemetryOmitted, { calls: 7, results: 2 });
+  });
   it("bounds aggregate nodes and reports omitted trace entries", () => {
     const toolCalls = Array.from({ length: 35_000 }, (_, index) => ({
       toolName: "example",

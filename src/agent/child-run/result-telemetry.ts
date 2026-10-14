@@ -44,6 +44,7 @@ export function boundChildResultTelemetry<T extends ChildResultTelemetry>(
 ): BoundedChildResult<T> {
   if (isAdmitted(result)) return result;
   const base = { ...result, toolCalls: [], toolResults: [] };
+  delete base.toolTelemetryOmitted;
   // Invalid or oversized accepted output never gains provenance by dropping telemetry.
   if (!isAdmitted(base)) return result;
   // Trace identities must be own data; normalization never invokes telemetry accessors.

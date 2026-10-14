@@ -751,7 +751,9 @@ Caller-supplied result shapes never grant platform control authority.
 Child handoffs retain copied tool telemetry when the complete result fits the JSON
 resource limits. If telemetry exceeds those limits, the handoff replaces telemetry
 values with explicit truncation markers. If the trace entries still exceed the
-limits, `toolTelemetryOmitted` reports the number of omitted calls and results.
+limits, `toolTelemetryOmitted` reports the number of omitted calls and results
+when that metadata fits. Otherwise, the handoff retains the admitted response
+without copied telemetry; raw child events retain the full trace.
 The accepted child response and raw child events remain unchanged. An oversized
 accepted response does not gain trusted ownership by dropping telemetry.
 
