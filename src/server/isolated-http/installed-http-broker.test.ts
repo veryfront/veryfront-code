@@ -76,15 +76,15 @@ describe("installed HTTP broker", () => {
     };
     const b = createInstalledHttpBroker(options);
     try {
+      const startedAt = Date.now();
       const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
-      assertEquals(
-        input.session.request.hardDeadlineAt - input.session.request.requestedAt,
-        180_000,
-      );
-      assertEquals(
-        input.session.request.prepareDeadlineAt - input.session.request.requestedAt,
-        30_000,
-      );
+      const finishedAt = Date.now();
+      const { hardDeadlineAt, prepareDeadlineAt } = input.session.request;
+      // Lifetimes start after authorization, which can cross a clock tick.
+      assertEquals(hardDeadlineAt >= startedAt + 180_000, true);
+      assertEquals(hardDeadlineAt <= finishedAt + 180_000, true);
+      assertEquals(prepareDeadlineAt >= startedAt + 30_000, true);
+      assertEquals(prepareDeadlineAt <= finishedAt + 30_000, true);
     } finally {
       await b.shutdown();
     }

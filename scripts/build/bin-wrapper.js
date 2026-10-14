@@ -299,10 +299,7 @@ function launcherJsonMode() {
   return enabled;
 }
 
-let launch;
-try {
-  launch = prepareProjectLaunch();
-} catch (error) {
+function failProjectLaunch(error) {
   const messages = new Set([
     "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
     "Invalid project Veryfront package identity",
@@ -323,6 +320,13 @@ try {
     }));
   } else console.error(message);
   process.exit(1);
+}
+
+let launch;
+try {
+  launch = prepareProjectLaunch();
+} catch (error) {
+  failProjectLaunch(error);
 }
 if (launch.pnpStartup) {
   const { pnpStartup, loader } = launch;
@@ -356,7 +360,11 @@ if (launch.pnpStartup) {
     // Select the whole project framework graph before global polyfills or React
     // imports load. This keeps framework contexts and the renderer on one peer.
     process.argv[1] = projectCli;
-    await import(pathToFileURL(projectCli).href);
+    try {
+      await import(pathToFileURL(projectCli).href);
+    } catch (error) {
+      failProjectLaunch(error);
+    }
   } else {
     await import("../esm/_dnt.polyfills.js");
     if (existsSync(nativeBinary)) {

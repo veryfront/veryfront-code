@@ -1,3 +1,6 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import type { CapturedDependencyConfiguration } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 /**
  * App Route HTML Rendering for Build
@@ -160,8 +163,12 @@ async function renderAppRouteToHTMLWithInternals(
     dependencyPinningDependencies,
     dependencyPinningConfiguredVersions,
   );
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? captureLocalReactPeers()
+    : undefined;
   const snapshotReactVersion = await resolveProjectReactVersion({
     adapter: adapter,
+    reactPeers,
     projectDir,
     config,
     dependencyPinningSource,
@@ -183,7 +190,7 @@ async function renderAppRouteToHTMLWithInternals(
   }
 
   // Use the resolved project version so component and renderer modules share one React instance.
-  const React = await getProjectReact(reactVersion, adapter);
+  const React = await getProjectReact(reactVersion, adapter, reactPeers);
 
   const componentOptions: LoadComponentOptions = {
     projectId: projectDir,
@@ -192,6 +199,7 @@ async function renderAppRouteToHTMLWithInternals(
     moduleServerOrigin,
     contentSourceId,
     reactVersion,
+    reactPeers,
     dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
@@ -279,7 +287,8 @@ async function renderAppRouteToHTMLWithInternals(
   // and without a render context the Head instances never commit, leaving the
   // built page on the framework's placeholder title.
   const { result: htmlInner, head: requestHead } = await runWithHeadCollector(
-    (renderContext) => renderToStringAdapter(element, { reactVersion, renderContext }, adapter),
+    (renderContext) =>
+      renderToStringAdapter(element, { reactVersion, reactPeers, renderContext }, adapter),
   );
   const committedHead = resolveCommittedHeadFromHTML(htmlInner, requestHead);
   const title = committedHead?.title ?? "Veryfront App";

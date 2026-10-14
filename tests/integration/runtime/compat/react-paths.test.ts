@@ -866,9 +866,19 @@ describe("react-paths", () => {
       if (
         parent?.filename?.startsWith(directory) || parent?.filename?.startsWith(physicalDirectory)
       ) return resolved;
+      if (request === "react/package.json" || request === "react-dom/package.json") {
+        return join(
+          selected.roots[request === "react/package.json" ? "react" : "react-dom"]!,
+          "package.json",
+        );
+      }
       const replacement = selected.paths[request];
       return replacement ? new URL(replacement).pathname : resolved;
     });
+    const originalFindPnpApi = Reflect.get(Module, "findPnpApi");
+    Reflect.set(Module, "findPnpApi", () => ({
+      resolveToUnqualified: (name: string) => selected.roots[name],
+    }));
     resetReactCache();
     try {
       const renderer = new SSRRenderer("development");
@@ -924,11 +934,69 @@ describe("react-paths", () => {
         );
         assertEquals(errorPage?.status, 500);
         assertEquals((await errorPage?.text())?.includes("<strong>7</strong>"), true);
+        const { _renderAppRouteToHTMLForTest } = await import(
+          "#veryfront/server/build-app-route-renderer.ts"
+        );
+        const buildPage = join(directory, "app", "page.tsx");
+        fs.writeFileSync(buildPage, pageSource);
+        selected = old;
+        const buildHtml = await runWithCacheDir(directory, () =>
+          _renderAppRouteToHTMLForTest({
+            adapter,
+            projectDir: directory,
+            pageFile: buildPage,
+            routePath: "/",
+            contentSourceId: "peer-build",
+            config: { react: { version: "^19.2.0" } },
+          }, {
+            componentLoader: async (...args) => {
+              const component = await loadComponentFromSource(...args);
+              selected = next;
+              return component;
+            },
+          }));
+        assertEquals(buildHtml.includes("<strong>7</strong>"), true);
+        const { handleActionRequestWithAuthorizationProvider } = await import(
+          "#veryfront/server/services/rsc/endpoints/action-handler.ts"
+        );
+        const { loadModuleFromSource } = await import("#veryfront/modules/react-loader/index.ts");
+        fs.mkdirSync(join(directory, "app", "actions"));
+        fs.writeFileSync(
+          join(directory, "app", "actions", "peer.ts"),
+          'import React from "react"; export default function action() { return React.version; }',
+        );
+        selected = old;
+        const action = await runWithCacheDir(
+          directory,
+          () =>
+            handleActionRequestWithAuthorizationProvider(
+              {
+                req: new Request("http://localhost/_veryfront/rsc/action", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ id: "peer", args: [] }),
+                }),
+                projectDir: directory,
+                adapter,
+                config: { react: { version: "^19.2.0" } },
+              },
+              { authorize: () => true },
+              async (...args) => {
+                assertEquals(args[4]?.reactPeers?.roots.react, old.roots.react);
+                selected = next;
+                return loadModuleFromSource(...args);
+              },
+            ),
+        );
+        assertEquals(action.status, 200);
+        assertEquals(await action.json(), { ok: true, result: old.versions.react });
       } finally {
         __setReservedComponentLoaderForTests(null);
         __setComponentSourceLoaderForTests(null);
       }
     } finally {
+      if (originalFindPnpApi === undefined) Reflect.deleteProperty(Module, "findPnpApi");
+      else Reflect.set(Module, "findPnpApi", originalFindPnpApi);
       Reflect.set(Module, "_resolveFilename", original);
       resetReactCache();
       clearReactPathsCache();

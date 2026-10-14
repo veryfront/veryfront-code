@@ -1,3 +1,6 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 /**
  * Fail-closed Server Action request and extension authorization boundary.
  * @module rsc-endpoints/action-handler
@@ -375,8 +378,12 @@ async function handleActionRequestInner(
     releaseId ??
     (branch ? `branch:${branch}` : undefined) ??
     (mode === "development" ? "preview-main" : "production");
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? captureLocalReactPeers()
+    : undefined;
   const reactVersion = await resolveProjectReactVersion({
     adapter: adapter,
+    reactPeers,
     projectDir,
     dependencyPinningSource: dependencySource,
     config,
@@ -391,6 +398,7 @@ async function handleActionRequestInner(
     dev: mode === "development",
     mode: mode === "development" ? "preview" : "production",
     reactVersion,
+    reactPeers,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
     dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,

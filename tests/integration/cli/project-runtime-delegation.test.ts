@@ -233,6 +233,39 @@ describe("project runtime delegation", () => {
       await Deno.remove(f.root, { recursive: true });
     }
   });
+  for (const source of ['import "./missing.js";', "export const = invalid;"]) {
+    it(`sanitizes delegated CLI load failures in JSON mode: ${source}`, async () => {
+      const f = await fixture(true);
+      try {
+        await Deno.writeTextFile(
+          join(f.project, "node_modules", "veryfront", "bin", "veryfront.js"),
+          source,
+        );
+        const result = await new Deno.Command("node", {
+          args: [join(f.global, "bin", "veryfront.js"), "deploy", "--json"],
+          cwd: f.project,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.code, 1);
+        const stdout = new TextDecoder().decode(result.stdout);
+        assertEquals(JSON.parse(stdout), {
+          success: false,
+          command: "deploy",
+          error: {
+            code: "RUNTIME_ERROR",
+            slug: "command-failed",
+            message:
+              "Project CLI setup failed; verify the project directory and reinstall its dependencies",
+          },
+        });
+        assertEquals(new TextDecoder().decode(result.stderr), "");
+        assertEquals(stdout.includes(f.root), false);
+      } finally {
+        await Deno.remove(f.root, { recursive: true });
+      }
+    });
+  }
   for (const json of [false, true]) {
     it(`refuses a PnP framework without its ESM loader with structured mode ${json}`, async () => {
       const f = await fixture(true);
