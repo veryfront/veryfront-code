@@ -44,10 +44,10 @@ redirect test live under `tests/integration/semantic-unit-boundary/src/runs/targ
 
 ### Canonical-v1 compatible event reads
 
-Select `runs.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Register the schema validator described in `veryfront/events` before decoding these values.
+Select `sdk.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Register the schema validator described in `veryfront/events` before decoding these values.
 
 ```ts
-const page = await runs.canonicalEventsV1.list("<RUN_ID>", {
+const page = await sdk.canonicalEventsV1.list("<RUN_ID>", {
   limit: 20,
   sort_order: "asc",
 });
@@ -55,9 +55,9 @@ for (const member of page.entries) {
   if (member.kind === "canonical") console.log(member.event.type);
   else console.log(member.reason, member.legacy.event_type);
 }
-const sameRecord = await runs.canonicalEventsV1.get("<RUN_ID>", "42");
-const supported = await runs.canonicalEventsV1.discover();
-for await (const member of runs.canonicalEventsV1.stream("<RUN_ID>", "42")) {
+const sameRecord = await sdk.canonicalEventsV1.get("<RUN_ID>", "42");
+const supported = await sdk.canonicalEventsV1.discover();
+for await (const member of sdk.canonicalEventsV1.stream("<RUN_ID>", "42")) {
   // Only persisted members have a durable resume position.
   if (member.kind !== "transient") console.log(member.metadata.event_id);
 }
