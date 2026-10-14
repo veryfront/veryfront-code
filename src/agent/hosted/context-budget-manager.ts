@@ -20,7 +20,7 @@ export const getContextCompactionEventPayloadSchema = defineSchema((v) =>
     type: v.literal(AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE),
     summary: getContextCompactionSummarySchema(),
     firstKeptEntryId: v.string().min(1),
-    preservedMessageIds: v.array(v.string().min(1)).optional(),
+    preservedMessageIds: v.array(v.string().min(1)).max(1).optional(),
     tokensBefore: v.number().int().nonnegative(),
     tokensAfter: v.number().int().nonnegative(),
     tokenBudget: v.number().int().positive(),

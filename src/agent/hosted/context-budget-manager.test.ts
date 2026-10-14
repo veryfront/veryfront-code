@@ -650,7 +650,8 @@ Deno.test("context compaction schema validates preserved request identifiers", (
   };
   const schema = getContextCompactionEventPayloadSchema();
   assertEquals(schema.parse(event).preservedMessageIds, ["request"]);
-  for (const preservedMessageIds of [[""], ["request", "request"]]) {
+  assertEquals(schema.parse({ ...event, preservedMessageIds: [] }).preservedMessageIds, []);
+  for (const preservedMessageIds of [[""], ["request", "request"], ["request", "another-user"]]) {
     assertEquals(schema.safeParse({ ...event, preservedMessageIds }).success, false);
   }
 });
