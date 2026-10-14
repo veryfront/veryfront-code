@@ -695,8 +695,8 @@ interface SourceListingStart {
   dataGeneration: number;
   /** Order of this read among listings and reserved data fetches. */
   readSequence: number;
-  /** Source and request authority that own this listing's absence proof. */
-  recoveryScope: string;
+  /** Source and request authority; unscoped external listings cannot certify absence. */
+  recoveryScope?: string;
 }
 
 function toSnapshotProjectPath(file: SourceSnapshotFile): string | undefined {
