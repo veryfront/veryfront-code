@@ -300,3 +300,39 @@ it("decodes HTTP errors when a conforming transport omits its optional signal", 
   });
   await assertRejects(() => facade.get("run_demo", "42"), CanonicalEventsV1Error);
 });
+
+it("rejects invalid UTF-8 instead of yielding altered event history", async () => {
+  const text = `event: legacy\nid: 42\ndata: ${JSON.stringify(legacy)}\n\n`;
+  const bytes = new TextEncoder().encode(text);
+  const marker = new TextEncoder().encode("CUSTOM");
+  const at = bytes.findIndex((_byte, index) =>
+    marker.every((value, offset) => bytes[index + offset] === value)
+  );
+  if (at < 0) throw new Error("Expected fixture text marker");
+  bytes[at] = 0xff;
+  const facade = createCanonicalEventsV1Facade({
+    async request() {
+      return new Response(bytes);
+    },
+  });
+  await assertRejects(async () => {
+    for await (const _member of facade.stream("run_demo")) {
+      throw new Error("Malformed UTF-8 must never yield a member");
+    }
+  }, TypeError);
+});
+
+it("stops buffered canonical stream delivery after cancellation", async () => {
+  const controller = new AbortController();
+  const frame = `event: legacy\nid: 42\ndata: ${JSON.stringify(legacy)}\n\n`;
+  const facade = createCanonicalEventsV1Facade({
+    async request() {
+      return new Response(frame + frame);
+    },
+  });
+  const iterator = facade.stream("run_demo", "0", { signal: controller.signal })
+    [Symbol.asyncIterator]();
+  assertEquals((await iterator.next()).value?.kind, "legacy");
+  controller.abort(new DOMException("Stopped", "AbortError"));
+  await assertRejects(() => iterator.next(), DOMException);
+});

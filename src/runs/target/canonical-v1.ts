@@ -226,7 +226,7 @@ async function* readCanonicalMembers(
   body: NonNullable<Response["body"]>,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamMemberV1> {
-  const reader = body.pipeThrough(new TextDecoderStream(), { signal })
+  const reader = body.pipeThrough(new TextDecoderStream("utf-8", { fatal: true }), { signal })
     .getReader();
   let buffer = "";
   let pendingCR = false;
@@ -246,12 +246,14 @@ async function* readCanonicalMembers(
       buffer += normalizeNewlines(text);
       let end: number;
       while ((end = buffer.indexOf("\n\n")) >= 0) {
+        signal?.throwIfAborted();
         const frame = buffer.slice(0, end);
         if (frame.length > MAX_SSE_FRAME_CHARS) {
           throw new TypeError("canonical-v1 SSE frame is too large");
         }
         buffer = buffer.slice(end + 2);
         const member = await decodeCanonicalSseFrame(frame);
+        signal?.throwIfAborted();
         if (member !== undefined) yield member;
       }
       if (buffer.length > MAX_SSE_FRAME_CHARS) {
