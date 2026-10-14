@@ -1017,6 +1017,35 @@ describe("agent/hosted-chat-request", () => {
     ], "tool_call id must be unique");
   });
 
+  it("rejects closing and reusing a provider tool id in the same native replay message", async () => {
+    const invocation = {
+      ...createRuntimeInvocation(),
+      messages: [
+        { id: "call-1", role: "assistant", parts: [rawReplayToolCallPart] },
+        { id: "mixed", role: "assistant", parts: [rawReplayToolResultPart, rawReplayToolCallPart] },
+        { id: "result-2", role: "tool", parts: [rawReplayToolResultPart] },
+      ],
+    };
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "fixture" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+    assertEquals(parsed instanceof Response, true);
+    if (parsed instanceof Response) {
+      assertEquals(parsed.status, 400);
+      assertStringIncludes(await parsed.text(), "tool_call id must be unique");
+    }
+  });
+
   it("rejects duplicate replay tool-call ids", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([

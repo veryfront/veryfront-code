@@ -178,7 +178,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
       const knownToolNames = new Map<string, string>();
       const knownToolResultIds = new Set<string>();
-      const toolCallMessageIndices = new Map<string, number>();
+      const toolResultMessageIndices = new Map<string, number>();
       const openToolCalls = new Map<string, OpenHostedToolCall>();
       // Count of openToolCalls entries originating from the current message that
       // have not seen later non-result content. When every open entry is in that
@@ -200,7 +200,8 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         if (
           knownToolNames.has(toolCallId) &&
           (!knownToolResultIds.has(toolCallId) ||
-            toolCallMessageIndices.get(toolCallId) === options.messageIndex)
+            (toolResultMessageIndices.get(toolCallId) ?? options.messageIndex) >=
+              options.messageIndex)
         ) {
           ctx.addIssue({
             code: "custom",
@@ -212,7 +213,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
         knownToolNames.set(toolCallId, toolName);
         knownToolResultIds.delete(toolCallId);
-        toolCallMessageIndices.set(toolCallId, options.messageIndex);
+        toolResultMessageIndices.delete(toolCallId);
         openToolCalls.set(toolCallId, {
           toolName,
           path,
@@ -365,6 +366,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           freshOpenToolCallCount -= 1;
         }
         openToolCalls.delete(toolCallId);
+        toolResultMessageIndices.set(toolCallId, currentMessageIndex);
         if (toolName && toolName !== openToolCall.toolName) {
           ctx.addIssue({
             code: "custom",
