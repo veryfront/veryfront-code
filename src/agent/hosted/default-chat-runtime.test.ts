@@ -63,6 +63,7 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import { agentRegistry, getAgent } from "../composition/index.ts";
+import { createRuntimeLoadSkillTool } from "../runtime/load-skill-tool.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -2581,4 +2582,72 @@ it("preselects eager hosted tools under the strictest limit when only a stale ca
 
   assertExists(capturedContext);
   assertEquals(capturedContext.availableToolNames?.length, 128);
+});
+
+it("hosted form continuation does not repeat the startup skill load", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let loaderReads = 0;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/form-continuation",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream() {
+      modelCallCount += 1;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project",
+        authToken: "token",
+        instructions: "Continue after the form.",
+        model: "test/form-continuation",
+        bootstrapSkill: "plan",
+        availableSkillIds: ["plan"],
+        submittedFormInputResult: { values: { topic: "FAQ" }, inputRequestId: "input-1" },
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({
+        load_skill: markTrustedHostToolProvenance(createRuntimeLoadSkillTool({
+          context: { authToken: "fixture-token", availableSkillIds: ["plan"] },
+          skillsDir: "/skills",
+          builtinSkillIds: ["plan"],
+          projectSkillLoader: {
+            loadProjectSkill: async () => null,
+            listProjectSkillReferences: async () => [],
+            loadProjectSkillReference: async () => null,
+          },
+          builtinStore: {
+            readSkill: async () => {
+              loaderReads += 1;
+              return "# Plan guidance";
+            },
+            listReferences: async () => [],
+            readReferenceFile: async () => null,
+          },
+        })),
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+      const result = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      for await (const _chunk of result.toUIMessageStream()) {
+        // Consume the continuation turn.
+      }
+    });
+
+    assertEquals(modelCallCount, 1);
+    assertEquals(loaderReads, 0);
+    await runtime.cleanup();
+  } finally {
+    clearModelProviders();
+  }
 });

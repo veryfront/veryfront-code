@@ -95,7 +95,6 @@ import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import {
   appendProjectDefinitionBootstrap,
   type HostedProjectDefinitionBootstrapPolicy,
-  isProjectDefinitionBootstrapEnabled,
   projectDefinitionSelection,
   readHostedProjectDefinitionBootstrap,
 } from "./project-definition-bootstrap.ts";
@@ -207,9 +206,14 @@ export type CreateDefaultHostedChatRuntimeOptions = {
   hostToolPolicy?: HostedHostToolPolicy;
   /**
    * Experimental deployment-owned policy for a bounded project definition
-   * index. Ignored unless the experimental environment switch is enabled.
+   * index. Ignored unless `projectDefinitionBootstrapEnabled` is true.
    */
   projectDefinitionBootstrap?: HostedProjectDefinitionBootstrapPolicy;
+  /**
+   * Experimental switch captured from the service environment at bootstrap
+   * (VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP="1"). Default off.
+   */
+  projectDefinitionBootstrapEnabled?: boolean;
   projectDefinitionBootstrapSignal?: AbortSignal;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
@@ -409,7 +413,10 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     ...(input.options.toolLoading !== undefined ? { toolLoading: input.options.toolLoading } : {}),
     // Authored startup tools are already merged into the bootstrap names above.
-    ...(input.options.bootstrapSkill !== undefined
+    // A form continuation resumes a turn whose startup load is already in
+    // history, and its tool assembly withholds every skill loader.
+    ...(input.options.bootstrapSkill !== undefined &&
+        input.taskContext.submittedFormInputResult === undefined
       ? { bootstrapSkill: input.options.bootstrapSkill }
       : {}),
     ...(input.options.toolResultContext !== undefined
@@ -699,7 +706,7 @@ export async function createDefaultHostedChatRuntime(
           toolAssembly.trustedPlatformRemoteToolNames?.includes(lookupToolName) === true &&
           toolAssembly.availableToolNames.includes(lookupToolName);
         const definitionIndex = input.projectDefinitionBootstrap &&
-            isProjectDefinitionBootstrapEnabled() && selection && lookupToolGranted &&
+            input.projectDefinitionBootstrapEnabled === true && selection && lookupToolGranted &&
             taskContext.projectId && taskContext.agentId
           ? await readHostedProjectDefinitionBootstrap({
             policy: input.projectDefinitionBootstrap,
