@@ -136,41 +136,6 @@ function isUserMessage(message: AgentRuntimeMessage): boolean {
   return message.role === "user";
 }
 
-function getToolCallIds(message: AgentRuntimeMessage): string[] {
-  return message.parts.flatMap((part) =>
-    "toolCallId" in part && typeof part.toolCallId === "string" &&
-      part.type !== "tool-result"
-      ? [part.toolCallId]
-      : []
-  );
-}
-
-function getToolResultIds(message: AgentRuntimeMessage): string[] {
-  return message.parts.flatMap((part) =>
-    part.type === "tool-result" && typeof part.toolCallId === "string" ? [part.toolCallId] : []
-  );
-}
-
-function collectToolCallIds(messages: readonly AgentRuntimeMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const message of messages) {
-    for (const id of getToolCallIds(message)) {
-      ids.add(id);
-    }
-  }
-  return ids;
-}
-
-function collectToolResultIds(messages: readonly AgentRuntimeMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const message of messages) {
-    for (const id of getToolResultIds(message)) {
-      ids.add(id);
-    }
-  }
-  return ids;
-}
-
 function findLatestUserMessageIndex(messages: readonly AgentRuntimeMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -219,30 +184,39 @@ function expandTailForToolPairs(
   messages: readonly AgentRuntimeMessage[],
   initialStartIndex: number,
 ): number {
+  const pendingCalls = new Map<string, number[]>();
+  const pairs: { callIndexes: number[]; resultIndex: number }[] = [];
+  for (const [index, message] of messages.entries()) {
+    for (const part of message.parts) {
+      if (!("toolCallId" in part) || typeof part.toolCallId !== "string") continue;
+      if (part.type === "tool-result") {
+        const callIndexes = pendingCalls.get(part.toolCallId);
+        if (callIndexes) {
+          pairs.push({ callIndexes, resultIndex: index });
+          pendingCalls.delete(part.toolCallId);
+        }
+      } else {
+        const callIndexes = pendingCalls.get(part.toolCallId) ?? [];
+        callIndexes.push(index);
+        pendingCalls.set(part.toolCallId, callIndexes);
+      }
+    }
+  }
+
   let startIndex = initialStartIndex;
-  let changed = true;
-
-  while (changed) {
-    changed = false;
-    const tail = messages.slice(startIndex);
-    const tailCallIds = collectToolCallIds(tail);
-    const tailResultIds = collectToolResultIds(tail);
-
-    for (let index = startIndex - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (!message) {
-        continue;
-      }
-
-      const messageCallIds = getToolCallIds(message);
-      const messageResultIds = getToolResultIds(message);
-      const tailNeedsCall = messageCallIds.some((id) => tailResultIds.has(id));
-      const tailNeedsResult = messageResultIds.some((id) => tailCallIds.has(id));
-
-      if (tailNeedsCall || tailNeedsResult) {
-        startIndex = index;
-        changed = true;
-      }
+  // Consume results in reverse order so moving the boundary includes earlier dependencies.
+  // A completed provider identifier can be reused without linking unrelated calls.
+  for (let index = pairs.length - 1; index >= 0; index--) {
+    const pair = pairs[index];
+    if (!pair || pair.resultIndex < startIndex) continue;
+    if (pair.callIndexes.length > 1) {
+      throw new ContextCompactionError("Retained tool identifier has overlapping pending calls");
+    }
+    startIndex = Math.min(startIndex, pair.callIndexes[0] ?? pair.resultIndex);
+  }
+  for (const callIndexes of pendingCalls.values()) {
+    if (callIndexes.length > 1 && callIndexes.some((index) => index >= startIndex)) {
+      throw new ContextCompactionError("Retained tool identifier has overlapping pending calls");
     }
   }
 

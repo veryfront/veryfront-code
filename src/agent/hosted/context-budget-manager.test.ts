@@ -127,6 +127,78 @@ Deno.test("applyContextBudget compacts a long active turn while preserving its e
   }
 });
 
+Deno.test("active-turn compaction treats completed tool identifier reuse as separate pairs", async () => {
+  const messages: AgentRuntimeMessage[] = [message("request", "user", "Keep this exact request")];
+  for (let index = 0; index < 30; index++) {
+    messages.push(toolCallMessage(`call-${index}`, "reused-tool-id"));
+    const result = toolResultMessage(`result-${index}`, "reused-tool-id");
+    result.parts.push({ type: "text", text: "fixture ".repeat(500) });
+    messages.push(result);
+  }
+  const result = await applyContextBudget(messages, {
+    tokenBudget: 10000,
+    reserveTokens: 1000,
+    recentTailTokens: 1000,
+    maxSummaryTokens: 1000,
+    summaryGenerator: () => ({ text: "Completed older stages" }),
+  });
+  assertEquals(result.diagnostics.compacted, true);
+  assertEquals(
+    result.messages.filter((entry) => messages.some((original) => original.id === entry.id)).map((
+      entry,
+    ) => entry.id),
+    ["request", "call-29", "result-29"],
+  );
+});
+
+Deno.test("compaction closes dependencies of interleaved tool results", async () => {
+  const lastResult = toolResultMessage("result-b", "tool-b");
+  lastResult.parts.push({ type: "text", text: "fixture ".repeat(100) });
+  const messages = [
+    message("request", "user", "Keep this exact request"),
+    message("older-stage", "assistant", "fixture ".repeat(5000)),
+    toolCallMessage("call-a", "tool-a"),
+    toolCallMessage("call-b", "tool-b"),
+    toolResultMessage("result-a", "tool-a"),
+    lastResult,
+  ];
+  const result = await applyContextBudget(messages, {
+    tokenBudget: 2000,
+    reserveTokens: 500,
+    recentTailTokens: 100,
+    maxSummaryTokens: 100,
+    summaryGenerator: () => ({ text: "Summary" }),
+  });
+  assertEquals(result.eventPayload?.firstKeptEntryId, "call-a");
+  assertEquals(
+    result.messages.filter((entry) => messages.some((original) => original.id === entry.id)).map((
+      entry,
+    ) => entry.id),
+    ["request", "call-a", "call-b", "result-a", "result-b"],
+  );
+});
+
+Deno.test("compaction rejects overlapping pending calls with the same identifier", async () => {
+  const messages = [
+    message("request", "user", "fixture ".repeat(5000)),
+    toolCallMessage("call-a", "ambiguous-tool"),
+    toolCallMessage("call-b", "ambiguous-tool"),
+    toolResultMessage("result", "ambiguous-tool"),
+  ];
+  await assertRejects(
+    () =>
+      applyContextBudget(messages, {
+        tokenBudget: 2000,
+        reserveTokens: 500,
+        recentTailTokens: 100,
+        maxSummaryTokens: 100,
+        summaryGenerator: () => ({ text: "Summary" }),
+      }),
+    ContextCompactionError,
+    "overlapping pending calls",
+  );
+});
+
 Deno.test("active-turn compaction cannot split atomic segments of the preserved request", async () => {
   const messages: AgentRuntimeMessage[] = [
     message("request", "user", "First request segment"),
