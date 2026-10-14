@@ -3,7 +3,7 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
-type LoaderProvenance = { shape: "flat" | "operation"; execute: object };
+type LoaderProvenance = { shape: "flat" | "operation"; execute: Tool["execute"] };
 const startup = createPrivateAsyncLocalStorage<LoaderProvenance>();
 const loaders = createPrivateWeakStore<object, LoaderProvenance>();
 const descriptor = Object.getOwnPropertyDescriptor;
@@ -66,6 +66,6 @@ export function runWithFrameworkSkillBootstrap<T>(value: unknown, operation: () 
 }
 
 /** Ordinary calls remain compact while startup receives the complete authorized root. */
-export function isFrameworkSkillBootstrapExecution(execute: object): boolean {
+export function isFrameworkSkillBootstrapExecution(execute: Tool["execute"]): boolean {
   return startup.getStore()?.execute === execute;
 }
