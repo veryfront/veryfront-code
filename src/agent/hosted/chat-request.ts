@@ -178,6 +178,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
       const knownToolNames = new Map<string, string>();
       const knownToolResultIds = new Set<string>();
+      const toolCallMessageIndices = new Map<string, number>();
       const openToolCalls = new Map<string, OpenHostedToolCall>();
       // Count of openToolCalls entries originating from the current message that
       // have not seen later non-result content. When every open entry is in that
@@ -194,7 +195,13 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         options: { messageIndex: number; requiresResult?: boolean },
       ): boolean => {
         rejectOpenToolCallsBeforeNewCall(options.messageIndex);
-        if (knownToolNames.has(toolCallId)) {
+        // Reused provider IDs identify a new occurrence only after the previous
+        // occurrence closed. Same-message reuse is ambiguous to UI normalization.
+        if (
+          knownToolNames.has(toolCallId) &&
+          (!knownToolResultIds.has(toolCallId) ||
+            toolCallMessageIndices.get(toolCallId) === options.messageIndex)
+        ) {
           ctx.addIssue({
             code: "custom",
             message: "tool_call id must be unique",
@@ -204,6 +211,8 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         knownToolNames.set(toolCallId, toolName);
+        knownToolResultIds.delete(toolCallId);
+        toolCallMessageIndices.set(toolCallId, options.messageIndex);
         openToolCalls.set(toolCallId, {
           toolName,
           path,
