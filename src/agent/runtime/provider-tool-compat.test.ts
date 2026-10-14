@@ -64,6 +64,28 @@ function containsKey(value: unknown, key: string): boolean {
 }
 
 describe("provider-tool-compat", () => {
+  it("keeps required names declared before properties", () => {
+    const schema = {
+      type: "object",
+      required: ["search", "bad key"],
+      properties: {
+        search: {
+          type: "object",
+          required: ["query", "bad key"],
+          properties: { query: { type: "string" }, "bad key": { type: "string" } },
+        },
+        "bad key": { type: "string" },
+      },
+    } as never;
+    const sanitized = sanitizeProviderToolSchema(schema, { model: "anthropic/claude-haiku-4-5" });
+    assertEquals(sanitized.required, ["search"]);
+    assertEquals(Object.keys(sanitized.properties as Record<string, unknown>), ["search"]);
+    assertEquals(
+      (sanitized.properties as Record<string, { required?: string[] }>).search?.required,
+      ["query"],
+    );
+  });
+
   it("leaves non-sanitizing provider schemas untouched", () => {
     const schema = {
       type: "object",
