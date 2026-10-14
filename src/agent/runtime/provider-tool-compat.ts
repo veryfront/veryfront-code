@@ -924,24 +924,46 @@ function isRemovedRootReference(ref: string): boolean {
     (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token);
 }
 
-// A subschema with a non-fragment `$id` starts its own resource, so its local
-// references resolve against that resource rather than the authored root.
-function startsSchemaResource(value: Record<string, unknown>): boolean {
-  return typeof value.$id === "string" && !value.$id.startsWith("#");
-}
-
-/** Whether a schema references a root keyword that folding removes. */
-function hasRemovedRootReference(value: unknown, isRoot = true): boolean {
-  if (Array.isArray(value)) return value.some((item) => hasRemovedRootReference(item, false));
+/** Whether any schema node (outside literal values) satisfies `test`. */
+function someSchemaNode(value: unknown, test: (node: Record<string, unknown>) => boolean): boolean {
+  if (Array.isArray(value)) return value.some((item) => someSchemaNode(item, test));
   if (!isPlainRecord(value)) return false;
-  if (!isRoot && startsSchemaResource(value)) return false;
+  if (test(value)) return true;
   return Object.entries(value).some(([key, item]) => {
-    if (key === "$ref" && typeof item === "string") return isRemovedRootReference(item);
     if (LITERAL_SCHEMA_KEYWORDS.has(key)) return false;
     if (SCHEMA_MAP_KEYWORDS.has(key) && isPlainRecord(item)) {
-      return Object.values(item).some((schema) => hasRemovedRootReference(schema, false));
+      return Object.values(item).some((schema) => someSchemaNode(schema, test));
     }
-    return hasRemovedRootReference(item, false);
+    return someSchemaNode(item, test);
+  });
+}
+
+/**
+ * A reference stays valid after folding only when it is the bare root or a
+ * plain local pointer outside the removed keywords. Anchor, absolute, relative,
+ * and dynamic references may target removed branches.
+ */
+function hasUnsafeReference(value: unknown): boolean {
+  return someSchemaNode(value, (node) =>
+    (typeof node.$ref === "string" && node.$ref !== "#" &&
+      (!node.$ref.startsWith("#/") || isRemovedRootReference(node.$ref))) ||
+    Object.hasOwn(node, "$dynamicRef") || Object.hasOwn(node, "$recursiveRef"));
+}
+
+const RESOURCE_KEYWORDS = ["$anchor", "$dynamicAnchor", "$id", "$recursiveAnchor"] as const;
+
+/** Whether a schema declares an identifier or anchor that folding could move. */
+function hasResourceMarker(value: unknown): boolean {
+  return someSchemaNode(value, (node) => RESOURCE_KEYWORDS.some((key) => Object.hasOwn(node, key)));
+}
+
+function defineDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  // Define rather than assign, so a `__proto__` name stays an own property.
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
   });
 }
 
@@ -958,7 +980,7 @@ function createPermissiveOpenAIRoot(
   const base: Record<string, unknown> = keepOwnConstraints ? { ...own } : {};
   if (!keepOwnConstraints) {
     for (const key of ["$comment", "description", "title"]) {
-      if (Object.hasOwn(own, key)) base[key] = own[key];
+      if (Object.hasOwn(own, key)) defineDataProperty(base, key, own[key]);
     }
   }
   const properties: Record<string, unknown> = {};
@@ -969,11 +991,13 @@ function createPermissiveOpenAIRoot(
   for (const declared of declarations) {
     if (!isPlainRecord(declared)) continue;
     for (const name of Object.keys(declared)) {
-      if (!Object.hasOwn(properties, name)) properties[name] = {};
+      if (!Object.hasOwn(properties, name)) defineDataProperty(properties, name, {});
     }
   }
   if (keepOwnConstraints && isPlainRecord(own.properties)) {
-    Object.assign(properties, own.properties);
+    for (const [name, schema] of Object.entries(own.properties)) {
+      defineDataProperty(properties, name, schema);
+    }
   }
   const required = getSchemaRequiredNames(own);
   delete base.properties;
@@ -991,8 +1015,9 @@ function createPermissiveOpenAIRoot(
  * `allOf`, `not`, or `enum` (`invalid_function_parameters`). The replacement
  * root must admit every value the authored schema admits; runtime validation
  * still enforces the authored schema. Root compositions are folded only when
- * every branch is a simple object shape and nothing references a removed
- * keyword. Otherwise the root falls back to an open object that keeps the
+ * every branch is a simple object shape, no identifier or anchor is declared,
+ * and every reference is the bare root or a plain local pointer outside the
+ * removed keywords. Otherwise the root falls back to an open object that keeps the
  * self-contained root constraints and admits every named property. Nested
  * schemas are left as they are, and a schema without these root keywords is
  * returned by identity.
@@ -1020,9 +1045,12 @@ function sanitizeOpenAISchemaRoot(schema: JsonSchema): JsonSchema {
   } = accepted;
   const compositions = getRootCompositions(allOf, anyOf, oneOf);
   const branches = compositions.flatMap(([items]) => items);
-  const keepOwnConstraints = !hasRemovedRootReference(own);
+  const keepOwnConstraints = !hasUnsafeReference(own);
   const foldable = keepOwnConstraints &&
-    branches.every((branch) => isSimpleObjectBranch(branch) && !hasRemovedRootReference(branch));
+    !hasResourceMarker(own) &&
+    branches.every((branch) =>
+      isSimpleObjectBranch(branch) && !hasUnsafeReference(branch) && !hasResourceMarker(branch)
+    );
   if (!foldable) {
     return createPermissiveOpenAIRoot(own, branches, keepOwnConstraints) as JsonSchema;
   }

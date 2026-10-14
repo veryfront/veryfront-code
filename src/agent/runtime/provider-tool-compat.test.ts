@@ -410,19 +410,49 @@ describe("provider-tool-compat", () => {
     );
     assertEquals(constrained, { type: "object" } as never);
   });
-  it("keeps the root identifier and nested resources as authored", () => {
-    const nested = { $id: "https://example.com/nested", $ref: "#/anyOf/0" };
-    const result = sanitizeProviderToolSchema(
+  it("falls back for references that are not plain local pointers", () => {
+    const anchored = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { alias: { $ref: "#variant" } },
+        anyOf: [{ $anchor: "variant", properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(anchored, { type: "object", properties: { alias: {}, value: {} } } as never);
+
+    const absolute = sanitizeProviderToolSchema(
       {
         $id: "https://example.com/tool",
         type: "object",
-        properties: { nested },
+        properties: { alias: { $ref: "https://example.com/tool#/anyOf/0" } },
         anyOf: [{ properties: { value: { type: "string" } } }],
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(result.$id, "https://example.com/tool");
-    assertEquals(result.properties, { nested, value: { type: "string" } });
+    assertEquals(absolute, { type: "object", properties: { alias: {}, value: {} } } as never);
+
+    const nested = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { nested: { $id: "https://example.com/nested", $ref: "#/$defs/item" } },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(nested.properties?.value, {});
+  });
+  it("keeps a __proto__ property declaration in the fallback root", () => {
+    const schema = JSON.parse(
+      '{"type":"object","additionalProperties":false,' +
+        '"properties":{"__proto__":{"type":"string"}},"anyOf":[{"minProperties":1}]}',
+    );
+    const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
+    const properties = result.properties as Record<string, unknown>;
+    assertEquals(Object.hasOwn(properties, "__proto__"), true);
+    assertEquals(Object.getOwnPropertyDescriptor(properties, "__proto__")?.value, {
+      type: "string",
+    });
   });
   it("snapshots the complete OpenAI schema before removing root keywords", () => {
     let deep: Record<string, unknown> = {};
