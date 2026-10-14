@@ -94,7 +94,7 @@ describe("content analysis package boundary", () => {
         denied: {
           env: await isDenied(() => Deno.env.get("CONTENT_ANALYSIS_TEST")),
           read: await isDenied(() => Deno.readTextFile(${JSON.stringify(analysisUrl)})),
-          net: await isDenied(() => fetch("http://127.0.0.1:9/")),
+          net: await isDenied(() => fetch("http://127.0.0.1:49152/")),
           run: await isDenied(() => new Deno.Command(Deno.execPath()).output()),
           ffi: await isDenied(() => Deno.dlopen("missing", {})),
         },
