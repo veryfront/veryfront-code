@@ -887,7 +887,7 @@ Deno.test("completed child replay removes root hint prose and retains its guidan
               childRunId: "child",
               summary: {},
               rootResponseHint: { instruction: childHint.instruction },
-              ...(typeof output === "string" ? { text: "child response" } : { output }),
+              output,
             },
           },
         );

@@ -1589,7 +1589,7 @@ describe("canonical child replay with root response hints", () => {
               childRunId: "child",
               summary: {},
               rootResponseHint: { instruction: childHint.instruction },
-              ...(typeof output === "string" ? { text: "child response" } : { output }),
+              output,
             },
           });
         }

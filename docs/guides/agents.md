@@ -209,7 +209,8 @@ child response text once while preserving summary metadata and the original
 durable result envelope.
 Both chat replay and text-generation requests use this normalization, including
 JSON-encoded persisted child results. A completed child with accepted structured
-`output` sends that value and lifecycle metadata to the provider. Its original
+`output` sends that value and lifecycle metadata to the provider, including JSON
+scalars and `null`. Its original
 prose stays in durable history, so intermediate trace descriptions cannot
 conflict with the accepted result. Completed child results keep root response
 hint instructions and metadata while omitting their suggested prose when accepted

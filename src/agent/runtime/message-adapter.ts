@@ -452,8 +452,7 @@ function hasCompletedChildResult(value: unknown): boolean {
 }
 
 function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && hasCompletedChildResult(value) && hasOwn(value, "output") &&
-    value.output !== null && typeof value.output === "object";
+  return isRecord(value) && hasCompletedChildResult(value) && hasOwn(value, "output");
 }
 
 function hasAcceptedChildResultText(value: unknown): value is Record<string, unknown> {

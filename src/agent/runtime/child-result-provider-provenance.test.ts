@@ -153,3 +153,20 @@ for (const mode of ["generate", "stream"] as const) {
     });
   }
 }
+
+Deno.test("accepted scalar child outputs replace conflicting prose on both provider seams", () => {
+  for (const output of ["trace prose", 42, true, null]) {
+    const original = { ...childResult(), output };
+    for (
+      const recorded of [original, { type: "json", value: original }, JSON.stringify(original)]
+    ) {
+      const message = resultMessage(false);
+      const part = message.parts[0] as ToolResultPart;
+      part.result = recorded;
+      markTrustedPlatformPolicyToolResultPart(part);
+      const before = JSON.stringify(message);
+      assertProjection(message, { ...acceptedOutput(), output });
+      assertEquals(JSON.stringify(message), before);
+    }
+  }
+});
