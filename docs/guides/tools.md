@@ -80,6 +80,41 @@ Canonical calls use the legacy wire name after project and access checks.
 Runtime
 dispatch reuses the source selected during authorization for that call.
 
+## Code-owned platform dependencies
+
+A project tool can call a platform operation from its implementation without
+exposing that operation to the model. Declare the exact canonical operations in
+`delegatedPlatformTools`:
+
+```ts
+import { tool } from "veryfront/tool";
+
+export default tool({
+  id: "save-note",
+  description: "Save the prepared note",
+  delegatedPlatformTools: ["veryfront__create_file"],
+  execute: async (_input, context) => {
+    if (!context?.executePlatformTool) throw new Error("Hosted tool authority is required");
+    return await context.executePlatformTool("veryfront__create_file", {
+      project_reference: context.projectId,
+      path: "notes/prepared.txt",
+      content: "Prepared note",
+    });
+  },
+});
+```
+
+Veryfront resolves declarations from selected project tool source and seals the
+map for the admitted run. Explicit platform denials still apply. Each wrapper
+can call only its own declared operations while that invocation remains active.
+A copied callback, another run, or a settled invocation cannot reuse authority.
+The API still verifies project access, integration bindings and operation policy.
+This contract applies to API-dispatched project agent runs and their
+control-plane-dispatched children. Generic local `agentAsTool` execution and
+default hosted forks do not establish this capability. Child runs receive their
+own declarations; they do not inherit the parent's map. The declaration and
+callback never contain authentication tokens.
+
 ## Try a tool directly
 
 Agents usually invoke tools, but direct execution is useful for testing and for API routes that expose a specific action:

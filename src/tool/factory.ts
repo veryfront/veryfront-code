@@ -219,6 +219,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
       config.allowUnknownSchema ?? false,
     )
     : undefined;
+  const delegatedPlatformTools = config.delegatedPlatformTools
+    ? [...config.delegatedPlatformTools]
+    : undefined;
   const delegatedIntegrationTools = config.delegatedIntegrationTools
     ? [...config.delegatedIntegrationTools]
     : undefined;
@@ -229,6 +232,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     type: "function" as const,
     description: config.description,
     ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
+    ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
     outputSchema: outputSchema as Schema<TOutput> | undefined,
@@ -258,6 +262,8 @@ export function tool<TInput = unknown, TOutput = unknown>(
 
 /** Configuration used by dynamic tool. */
 export interface DynamicToolConfig {
+  /** Platform dependency requests, never authorization by themselves. */
+  delegatedPlatformTools?: readonly string[];
   id?: string;
   description: string;
   inputSchema: unknown;
@@ -290,9 +296,14 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   }
   const mcp = snapshotMcpConfig(config.mcp, id);
 
+  const delegatedPlatformTools = config.delegatedPlatformTools
+    ? [...config.delegatedPlatformTools]
+    : undefined;
+
   const createdTool: Tool<unknown, unknown> = {
     id,
     type: "dynamic" as const,
+    ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
     description: config.description,
     inputSchema: inputSchema as Schema<unknown>,
     inputSchemaJson,

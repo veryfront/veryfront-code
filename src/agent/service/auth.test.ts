@@ -2,6 +2,7 @@ import {
   assert,
   assertEquals,
   assertInstanceOf,
+  assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -9,12 +10,21 @@ import apiRunEventWriterContract from "../../../tests/fixtures/contracts/api-run
   type: "json",
 };
 import {
+  capturePlatformDependencySource,
   createHostedServiceAuth,
   getHostedServiceTokenFromRequest,
+  getVerifiedPlatformToolDependencies,
   HostedServiceAuthError,
   type HostedServiceAuthFetch,
   type HostedServiceJwtVerifier,
+  registerPlatformDependencyOwner,
+  revokePlatformDependencyOwner,
+  runWithPlatformDependencyOwner,
+  runWithVerifiedPlatformToolDependencies,
 } from "./auth.ts";
+import { dynamicTool, type ToolExecutionContext } from "#veryfront/tool";
+import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 
 type JwtFixture = {
   token: string;
@@ -439,6 +449,209 @@ describe("agent/agent-service-auth", () => {
       { verified: true, integrationTools: ["outlook__list_emails"] },
       "a verified token returns the grant carried in its signed payload",
     );
+  });
+
+  it("binds wrapper grants to verified writer identity and does not brand clones", async () => {
+    const platformToolDependencies = [{
+      toolId: "intake",
+      platformTools: ["outlook__upload_attachment"],
+    }];
+    const fixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      agentId: "ingestion-agent",
+      platformToolDependencies,
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const scope = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      agentId: "ingestion-agent",
+    };
+    const verification = await auth.verifyRunEventAppendToken({ token: fixture.token, ...scope });
+    assertEquals(
+      getVerifiedPlatformToolDependencies(verification, scope),
+      platformToolDependencies,
+    );
+    assertEquals(getVerifiedPlatformToolDependencies({ ...verification }, scope), undefined);
+    assertEquals(
+      getVerifiedPlatformToolDependencies(verification, { ...scope, runId: "run_other" }),
+      undefined,
+    );
+    assertEquals(
+      getVerifiedPlatformToolDependencies(verification, { ...scope, agentId: "other-agent" }),
+      undefined,
+    );
+    assertEquals(
+      await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        ...scope,
+        agentId: "other-agent",
+      }),
+      { verified: false },
+    );
+  });
+
+  it("executes only the signed wrapper dependency during its exact active invocation", async () => {
+    const platformToolDependencies = [{
+      toolId: "intake",
+      platformTools: ["outlook__upload_attachment"],
+    }];
+    const fixture = await createRs256JwtFixture({
+      ...apiRunEventWriterContract.payload,
+      agentId: "ingestion-agent",
+      platformToolDependencies,
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const scope = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      agentId: "ingestion-agent",
+    };
+    const verification = await auth.verifyRunEventAppendToken({ token: fixture.token, ...scope });
+    let effects = 0;
+    let saved: ToolExecutionContext["executePlatformTool"];
+    const source = markTrustedPlatformSource({
+      id: "platform",
+      listTools: async () => [{
+        name: "outlook__upload_attachment",
+        description: "Upload",
+        parameters: { type: "object" as const, properties: {} },
+      }],
+      executeTool: async () => {
+        effects++;
+        return { uploaded: true };
+      },
+    });
+    const intake = dynamicTool({
+      id: "intake",
+      description: "Intake",
+      inputSchema: {},
+      delegatedPlatformTools: ["outlook__upload_attachment"],
+      execute: async (_, context) => {
+        saved = context?.executePlatformTool;
+        if (context?.runId === scope.runId && !context.abortSignal) {
+          assertStrictEquals(context, scope);
+        }
+        // A live callback copied into another wrapper must fail while its owner
+        // is still executing, not merely because its owner already settled.
+        await assertRejects(() =>
+          executeConfiguredTool("other", {}, { other }, context, [], [source])
+        );
+        return await saved!("outlook__upload_attachment", {});
+      },
+    });
+    const other = dynamicTool({
+      id: "other",
+      description: "Other",
+      inputSchema: {},
+      delegatedPlatformTools: ["outlook__upload_attachment"],
+      execute: async () => await saved!("outlook__upload_attachment", {}),
+    });
+    await assertRejects(() => executeConfiguredTool("intake", {}, { intake }, scope, [], [source]));
+    assertEquals(effects, 0);
+    await runWithVerifiedPlatformToolDependencies(verification, scope, async () => {
+      assertEquals(await executeConfiguredTool("intake", {}, { intake }, scope, [], [source]), {
+        uploaded: true,
+      });
+      await assertRejects(() => executeConfiguredTool("other", {}, { other }, scope, [], [source]));
+      await assertRejects(() => saved!("outlook__upload_attachment", {}));
+      const borrower = dynamicTool({
+        id: "other",
+        description: "Other",
+        inputSchema: {},
+        delegatedPlatformTools: ["outlook__upload_attachment"],
+        execute: async (_, context) =>
+          await context!.executePlatformTool!("outlook__upload_attachment", {}),
+      });
+      const originalFind = Array.prototype.find;
+      const admittedMap = getVerifiedPlatformToolDependencies(verification, scope)!;
+      Object.defineProperty(Array.prototype, "find", {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown, ...arguments_: unknown[]) {
+          return this === admittedMap
+            ? admittedMap[0]
+            : Reflect.apply(originalFind, this, arguments_);
+        },
+      });
+      try {
+        await assertRejects(() =>
+          executeConfiguredTool("other", {}, { other: borrower }, scope, [], [source])
+        );
+      } finally {
+        Object.defineProperty(Array.prototype, "find", {
+          value: originalFind,
+          configurable: true,
+          writable: true,
+        });
+      }
+      await assertRejects(() =>
+        executeConfiguredTool("intake", {}, { intake }, { ...scope, runId: "run_other" }, [], [
+          source,
+        ])
+      );
+      await assertRejects(() =>
+        executeConfiguredTool(
+          "intake",
+          {},
+          { intake },
+          { ...scope, abortSignal: AbortSignal.abort() },
+          [],
+          [source],
+        )
+      );
+    });
+    await assertRejects(() =>
+      runWithVerifiedPlatformToolDependencies(
+        { ...verification },
+        scope,
+        async () => executeConfiguredTool("intake", {}, { intake }, scope, [], [source]),
+      )
+    );
+    assertEquals(effects, 1);
+    // The actual host execution object holds authority across stream pulls.
+    // Hidden sources do not have to enter the model-facing source list.
+    const owner = {};
+    registerPlatformDependencyOwner(owner, verification, scope);
+    capturePlatformDependencySource(owner, source);
+    await assertRejects(async () =>
+      await runWithPlatformDependencyOwner(
+        { ...owner },
+        async () => executeConfiguredTool("intake", {}, { intake }, scope, [], []),
+      )
+    );
+    assertEquals(effects, 1);
+    await runWithPlatformDependencyOwner(owner, async () => {
+      assertEquals(await executeConfiguredTool("intake", {}, { intake }, scope, [], []), {
+        uploaded: true,
+      });
+    });
+    assertEquals(effects, 2);
+    revokePlatformDependencyOwner(owner);
+    await assertRejects(async () =>
+      await runWithPlatformDependencyOwner(
+        owner,
+        async () => executeConfiguredTool("intake", {}, { intake }, scope, [], []),
+      )
+    );
+    await assertRejects(() => saved!("outlook__upload_attachment", {}));
+    assertEquals(effects, 2);
   });
 
   it("drops a non-array integration tool grant claim", async () => {

@@ -1,3 +1,7 @@
+import {
+  revokePlatformDependencyOwner,
+  runWithPlatformDependencyOwner,
+} from "#veryfront/agent/service/auth.ts";
 import { bindHostedAgentPauseLifetime } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import {
   invalidateHostedAgentPauseSettlement,
@@ -1331,6 +1335,7 @@ export async function createRuntimeAgentStreamResponse(
       deps.sessionManager.cancelRun(input.runId);
     });
   } catch (error) {
+    revokePlatformDependencyOwner(input);
     deps.sessionManager.failRun(input.runId);
     throw error;
   }
@@ -1619,32 +1624,36 @@ export async function createRuntimeAgentStreamResponse(
       input.serverResolvedTrustedHostedHistoryMessageIds,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    const candidateRuntimeStream = await runWithMandatoryRunEventSink(
-      modelCallContextRelay.sink,
+    const candidateRuntimeStream = await runWithPlatformDependencyOwner(
+      input,
       () =>
-        runtimeDispatch.kind === "override"
-          ? runtimeDispatch.runtime.stream(
-            runtimeMessages,
-            runtimeContext,
-            {
-              ...runtimeStreamCallbacks,
-              onStreamCompletion: (completion) => {
-                producerCompletion = completion;
-              },
-            },
-            undefined,
-            maxOutputTokens,
-            abortSignal,
-          )
-          : streamWithAgentRuntimeDispatch(
-            runtimeDispatch.runtime,
-            runtimeMessages,
-            runtimeContext,
-            runtimeStreamCallbacks,
-            undefined,
-            maxOutputTokens,
-            abortSignal,
-          ),
+        runWithMandatoryRunEventSink(
+          modelCallContextRelay.sink,
+          () =>
+            runtimeDispatch.kind === "override"
+              ? runtimeDispatch.runtime.stream(
+                runtimeMessages,
+                runtimeContext,
+                {
+                  ...runtimeStreamCallbacks,
+                  onStreamCompletion: (completion) => {
+                    producerCompletion = completion;
+                  },
+                },
+                undefined,
+                maxOutputTokens,
+                abortSignal,
+              )
+              : streamWithAgentRuntimeDispatch(
+                runtimeDispatch.runtime,
+                runtimeMessages,
+                runtimeContext,
+                runtimeStreamCallbacks,
+                undefined,
+                maxOutputTokens,
+                abortSignal,
+              ),
+        ),
     );
     if (candidateRuntimeStream.locked) {
       throw new TypeError("Internal agent runtime returned a locked stream");
@@ -1656,6 +1665,7 @@ export async function createRuntimeAgentStreamResponse(
       agentId: agent.id,
     });
   } catch (error) {
+    revokePlatformDependencyOwner(input);
     deps.sessionManager.failRun(input.runId);
     await closeSandbox().then(() => {
       if (producerCompletion) {
@@ -1778,6 +1788,7 @@ export async function createRuntimeAgentStreamResponse(
           };
 
           const abortHandler = () => {
+            revokePlatformDependencyOwner(input);
             if (aborted) {
               return;
             }
@@ -1893,9 +1904,13 @@ export async function createRuntimeAgentStreamResponse(
               // A runtime that dispatches later model calls from its pull()
               // rather than from a continuation of stream() needs the sink in
               // scope on the read that triggers the pull.
-              const { done, value } = await runWithMandatoryRunEventSink(
-                modelCallContextRelay.sink,
-                () => reader.read(),
+              const { done, value } = await runWithPlatformDependencyOwner(
+                input,
+                () =>
+                  runWithMandatoryRunEventSink(
+                    modelCallContextRelay.sink,
+                    () => reader.read(),
+                  ),
               );
               throwIfAborted();
 
@@ -2074,6 +2089,7 @@ export async function createRuntimeAgentStreamResponse(
               });
             }
           } finally {
+            revokePlatformDependencyOwner(input);
             stopHeartbeat?.();
             stopHeartbeat = undefined;
             abortSignal.removeEventListener("abort", abortHandler);
@@ -2161,6 +2177,7 @@ export async function createRuntimeAgentStreamResponse(
       });
     },
     cancel() {
+      revokePlatformDependencyOwner(input);
       if (manualPause) {
         invalidateHostedAgentPauseSettlement(
           manualPause,

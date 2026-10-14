@@ -24,6 +24,9 @@ export interface ToolConfig<TInput = any, TOutput = any> {
    */
   delegatedIntegrationTools?: readonly string[];
 
+  /** Platform operations requested by this wrapper; declarations do not grant authority. */
+  delegatedPlatformTools?: readonly string[];
+
   /**
    * Input schema produced via `defineSchema((v) => …)` (or any
    * `SchemaValidator`-backed builder), or a raw JSON Schema object for
@@ -89,6 +92,8 @@ export interface ToolExecutionContext {
   projectSlug?: string;
   /** Request-scoped Veryfront auth token for project-local platform API tools */
   authToken?: string;
+  /** Invoke an admitted platform dependency without exposing its host credential. */
+  executePlatformTool?: (name: string, input: Record<string, unknown>) => Promise<unknown>;
   /** Runtime-owned Veryfront API base URL for project-local platform API tools */
   apiUrl?: string;
   /** Whether the tool should read production release-backed project content */
@@ -170,6 +175,9 @@ export interface Tool<TInput = any, TOutput = any> {
 
   /** Native integration tools this local wrapper may call through the platform. */
   delegatedIntegrationTools?: readonly string[];
+
+  /** Platform operations requested by this wrapper; declarations do not grant authority. */
+  delegatedPlatformTools?: readonly string[];
 
   /** Input schema produced by `defineSchema` (or any SchemaValidator-backed builder). */
   inputSchema: Schema<TInput>;
