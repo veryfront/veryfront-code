@@ -178,6 +178,21 @@ describe("CodeQL public analysis", () => {
     }
   });
 
+  it("installs Node before extracting TypeScript on a minimal public runner", async () => {
+    const steps = (await workflow("ci-public-pool.yml")).jobs.codeql.steps!;
+    const setupIndex = steps.findIndex((step) =>
+      String(step.uses).startsWith("actions/setup-node@")
+    );
+    const initIndex = steps.findIndex((step) => String(step.uses).includes("codeql-action/init@"));
+    assert(
+      setupIndex >= 0 && setupIndex < initIndex,
+      "Node must be on PATH before CodeQL initialization and extraction",
+    );
+    assertEquals(steps[setupIndex].with, { "node-version": "24", "package-manager-cache": false });
+    assertEquals(steps[setupIndex]["timeout-minutes"], 3);
+    assertEquals(steps[setupIndex]["continue-on-error"], undefined);
+  });
+
   it("runs the same queries without giving the pool an upload token", async () => {
     const pool = await workflow("ci-public-pool.yml");
     const scan = pool.jobs.codeql;
