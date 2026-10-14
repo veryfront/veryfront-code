@@ -801,7 +801,7 @@ describe("private observation authority and sizing", () => {
 });
 
 describe("runtime model-call private intrinsics", () => {
-  it("refuses exact capture controls after project code replaces array helpers", async () => {
+  it("refuses unsupported capture controls and receipts after project code replaces array helpers", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
@@ -889,7 +889,9 @@ describe("runtime model-call private intrinsics", () => {
               }),
           ),
         DurableRunEventPersistenceError,
-        "assistant.providerMetadata",
+        // The continuation is allowed, but this sink wrongly returns an exact
+        // receipt for its context-only event. Patched helpers cannot hide it.
+        "Model call capture receipt was returned without an active writer scope",
       );
     } finally {
       Array.prototype.filter = arrayFilter;
