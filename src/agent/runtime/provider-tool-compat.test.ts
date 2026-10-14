@@ -249,10 +249,10 @@ describe("provider-tool-compat", () => {
       } as never,
       { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget },
     );
-    assertEquals(
-      (normalized.properties?.value as { description?: string }).description,
-      description,
-    );
+    // `other` omits `value`, so the folded property also admits any value.
+    const value = normalized.properties?.value as { anyOf: { description?: string }[] };
+    assertEquals(value.anyOf[0]?.description, description);
+    assertEquals(value.anyOf[1], {});
     assertEquals(budget.remainingNodes, 200_000);
     assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
   });
@@ -303,6 +303,57 @@ describe("provider-tool-compat", () => {
     );
     assertEquals(Object.keys(result.properties ?? {}).sort(), ["extra", "value"]);
     assertEquals(result.required?.slice().sort(), ["extra", "value"]);
+  });
+  it("retains the authored root for bare recursive references", () => {
+    const schema = {
+      type: "object",
+      properties: { child: { $ref: "#" } },
+      anyOf: [
+        { properties: { kind: { const: "a" } }, required: ["kind"] },
+        { properties: { kind: { const: "b" } }, required: ["kind"] },
+      ],
+    };
+    const result = sanitizeProviderToolSchema(schema as never, { model: "openai/gpt-5.4" });
+    const child = result.properties?.child as { $ref: string };
+    assertEquals(child.$ref.startsWith("#/$defs/"), true);
+    const name = child.$ref.slice("#/$defs/".length);
+    const retained = (result.$defs as Record<string, { anyOf?: unknown[] }>)[name];
+    assertEquals(retained?.anyOf?.length, 2);
+  });
+  it("snapshots the complete OpenAI schema before removing root keywords", () => {
+    let deep: Record<string, unknown> = {};
+    for (let index = 0; index < 200_000; index++) deep = { not: deep };
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", anyOf: [{ type: "object" }], not: deep } as never,
+          { model: "openai/gpt-5.4" },
+        ),
+      TypeError,
+      "bounded JSON data",
+    );
+  });
+  it("leaves a property unconstrained when an alternative omits it", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        anyOf: [{ properties: { value: { type: "string" } } }, {}],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties?.value, { anyOf: [{ type: "string" }, {}] });
+
+    const closed = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        oneOf: [
+          { properties: { value: { type: "string" } } },
+          { properties: { other: { type: "number" } }, additionalProperties: false },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(closed.properties?.value, { type: "string" });
   });
   it("folds root combinators out of OpenAI tool schemas", () => {
     const nested = {

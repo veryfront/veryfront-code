@@ -651,13 +651,14 @@ function getMergedPropertySchema(
   schemas: readonly unknown[],
   keyword: ObjectCompositionKeyword,
 ): unknown {
-  if (schemas.length === 1) return schemas[0];
-  const [first, ...rest] = schemas;
-  const serializedFirst = privateJsonStringify(first);
-  if (rest.every((schema) => privateJsonStringify(schema) === serializedFirst)) {
-    return first;
-  }
-  return { [keyword]: schemas };
+  const seen = new Set<string>();
+  const distinct = schemas.filter((schema) => {
+    const serialized = privateJsonStringify(schema);
+    if (seen.has(serialized)) return false;
+    seen.add(serialized);
+    return true;
+  });
+  return distinct.length === 1 ? distinct[0] : { [keyword]: distinct };
 }
 
 function mergeObjectSchemas(
@@ -671,6 +672,19 @@ function mergeObjectSchemas(
       const variants = mergedProperties.get(name) ?? [];
       variants.push(propertySchema);
       mergedProperties.set(name, variants);
+    }
+  }
+
+  if (keyword === "anyOf") {
+    // An alternative that omits a property still admits any value for it unless
+    // it closes additional properties, so it widens the folded property schema.
+    for (const [name, variants] of mergedProperties) {
+      for (const schema of schemas) {
+        if (isPlainRecord(schema.properties) && Object.hasOwn(schema.properties, name)) continue;
+        const additional = schema.additionalProperties;
+        if (additional === false) continue;
+        variants.push(isPlainRecord(additional) ? additional : {});
+      }
     }
   }
 
@@ -852,6 +866,8 @@ function hasRemovedRootReference(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasRemovedRootReference);
   if (!isPlainRecord(value)) return false;
   if (typeof value.$ref === "string") {
+    // A bare `#` names the authored root, which folding replaces.
+    if (value.$ref === "#") return true;
     const token = value.$ref.startsWith("#/") ? value.$ref.slice(2).split("/")[0] : undefined;
     if (token && (OPENAI_UNSUPPORTED_ROOT_SCHEMA_KEYS as readonly string[]).includes(token)) {
       return true;
@@ -902,8 +918,12 @@ function sanitizeOpenAISchemaRoot(
   ) {
     return schema;
   }
+  // Admit the complete schema before removing keys, so the reference scan below
+  // never walks data outside the bounded JSON contract.
+  const accepted = snapshotJsonSchemaObject(schema);
+  if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
   const budget = createRootNormalizationBudget(shared);
-  const { not: _not, enum: _enum, ...root } = schema;
+  const { not: _not, enum: _enum, ...root } = accepted;
   const normalized = normalizeObjectSchemaRoot(
     root,
     root,
@@ -911,7 +931,7 @@ function sanitizeOpenAISchemaRoot(
     budget,
   );
   const { not: _resolvedNot, enum: _resolvedEnum, ...normalizedRoot } = normalized;
-  return retainSourceRootReferences(schema, normalizedRoot, budget) as JsonSchema;
+  return retainSourceRootReferences(accepted, normalizedRoot, budget) as JsonSchema;
 }
 
 /**
