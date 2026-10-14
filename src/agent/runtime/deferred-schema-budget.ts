@@ -18,6 +18,8 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   const awaitingFirstUse = new Set<string>();
   // A newer search step supersedes schemas the model already skipped once.
   let modelStepSinceSearch = false;
+  // Whether the latest search reported its matches, even an empty list.
+  let latestSearchMatchesKnown = false;
   for (const message of messages) {
     if (message.role === "user") {
       // A newer user turn ends the previous tool opportunity, so its
@@ -38,6 +40,7 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
           ) {
             if (modelStepSinceSearch) awaitingFirstUse.clear();
             modelStepSinceSearch = false;
+            latestSearchMatchesKnown = true;
             for (const match of result.matches) {
               if (
                 match && typeof match === "object" && match.status === "loaded" &&
@@ -50,6 +53,7 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
         pending.set(part.toolCallId, part.toolName);
         names.add(part.toolName);
         awaitingFirstUse.delete(part.toolName);
+        if (part.toolName === TOOL_SEARCH_TOOL_NAME) latestSearchMatchesKnown = false;
       }
     }
     if (names.size > 0) {
@@ -59,7 +63,12 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
   }
   const protectedNames = new Set([...latestCallNames, ...pending.values(), ...awaitingFirstUse]);
   // A schema returned by tool_search has not yet had a chance to be called.
-  if (latestCallNames.has(TOOL_SEARCH_TOOL_NAME) && awaitingFirstUse.size === 0) {
+  // When the search result is unreadable, protect the newest loaded schema; a
+  // known empty result loaded nothing, so no older schema needs protection.
+  if (
+    latestCallNames.has(TOOL_SEARCH_TOOL_NAME) && awaitingFirstUse.size === 0 &&
+    !latestSearchMatchesKnown
+  ) {
     const loaded = [...plan.loadedToolNames];
     const newest = loaded[loaded.length - 1];
     if (newest !== undefined) protectedNames.add(newest);

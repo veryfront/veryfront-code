@@ -330,3 +330,36 @@ it("protects schemas from parallel searches in the same new model decision", () 
   });
   assertEquals(fitted.evictedNames, []);
 });
+
+it("does not protect a stale schema after a search that loaded nothing", () => {
+  const state = createToolExposureState(["create_agent"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("load_skill"), definition("create_agent", 6_000)],
+    mode: "deferred",
+    state,
+    bootstrapToolNames: new Set(["load_skill"]),
+  });
+  const inspect = (candidate: typeof plan) => ({
+    fits: !candidate.visible.some((tool) => tool.name === "create_agent"),
+    outputExceeded: false,
+    estimatedInputTokens: candidate.visible.some((tool) => tool.name === "create_agent")
+      ? 13_250
+      : 11_500,
+  });
+  const searchMiss: Message[] = [{
+    id: "miss-call",
+    role: "assistant",
+    parts: [{ type: "tool-call", toolCallId: "miss", toolName: "tool_search", args: {} }],
+  }, {
+    id: "miss-result",
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: "miss",
+      toolName: "tool_search",
+      result: { matches: [] },
+    }],
+  }];
+  const fitted = fitDeferredToolSchemasToBudget({ plan, sourceMessages: searchMiss, inspect });
+  assertEquals(fitted.evictedNames, ["create_agent"]);
+});
