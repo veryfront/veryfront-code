@@ -82,6 +82,11 @@ function cursor(value: string, zero = false): void {
     throw new TypeError("Invalid canonical-v1 cursor");
   }
 }
+function assertRequestedRunIdentity(member: RunReadMemberV1 | StreamMemberV1, runId: string): void {
+  const returnedRunId = member.kind === "transient" ? member.event.runid : member.metadata.run_id;
+  if (returnedRunId !== runId) throw new TypeError("canonical-v1 run identity mismatch");
+}
+
 export function createCanonicalEventsV1Facade(
   transport: VeryfrontApiTransport<unknown>,
 ): CanonicalEventsV1Facade {
@@ -167,7 +172,13 @@ export function createCanonicalEventsV1Facade(
         if (Array.isArray(value)) { for (const item of value) params.append(key, item); }
         else if (value !== undefined) params.set(key, String(value));
       }
-      return await parseRunReadPageV1(await request(`${path(runId, "events")}&${params}`, options));
+      const page = await parseRunReadPageV1(
+        await request(`${path(runId, "events")}&${params}`, options),
+      );
+      if (query.include_descendants !== true) {
+        for (const member of page.entries) assertRequestedRunIdentity(member, runId);
+      }
+      return page;
     },
     async get(runId, eventId, options) {
       cursor(eventId);
@@ -177,9 +188,7 @@ export function createCanonicalEventsV1Facade(
       if (String(member.metadata.event_id) !== eventId) {
         throw new TypeError("canonical-v1 event identity mismatch");
       }
-      if (member.metadata.run_id !== runId) {
-        throw new TypeError("canonical-v1 run identity mismatch");
-      }
+      assertRequestedRunIdentity(member, runId);
       return member;
     },
     async discover(options) {
@@ -193,7 +202,10 @@ export function createCanonicalEventsV1Facade(
       if (!(response instanceof Response) || !response.body) {
         throw new TypeError("canonical-v1 stream has no response body");
       }
-      yield* readCanonicalMembers(response.body, options.signal);
+      for await (const member of readCanonicalMembers(response.body, options.signal)) {
+        assertRequestedRunIdentity(member, runId);
+        yield member;
+      }
     },
   };
 }

@@ -97,6 +97,42 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
       });
     }
   });
+  it("scopes list and durable stream members to the requested run", async () => {
+    for (const member of [canonical, legacy]) {
+      await fixture(
+        () => Response.json({ entries: [member], next_cursor: null, has_more: false }),
+        async (sdk) => {
+          for (const query of [{}, { include_descendants: false }]) {
+            await assertRejects(
+              () => sdk.canonicalEventsV1.list("run_other", query),
+              TypeError,
+              "run identity mismatch",
+            );
+          }
+          const descendants = await sdk.canonicalEventsV1.list("run_other", {
+            include_descendants: true,
+          });
+          assertEquals(descendants.entries.length, 1);
+        },
+      );
+      const eventName = member.kind === "legacy" ? "legacy" : canonical.event.type;
+      await fixture(
+        () =>
+          new Response(
+            `event: ${eventName}\nid: ${member.metadata.event_id}\ndata: ${
+              JSON.stringify(member)
+            }\n\n`,
+          ),
+        async (sdk) => {
+          await assertRejects(
+            () => sdk.canonicalEventsV1.stream("run_other")[Symbol.asyncIterator]().next(),
+            TypeError,
+            "run identity mismatch",
+          );
+        },
+      );
+    }
+  });
   it("uses global discovery and exposes structured pre-open errors", async () => {
     await fixture((request) => {
       const url = new URL(request.url);
@@ -197,6 +233,16 @@ describe("canonical-v1 real HTTP and SSE reads", () => {
         const members = [];
         for await (const member of sdk.canonicalEventsV1.stream("run_demo")) members.push(member);
         assertEquals(members.map((member) => member.kind), ["transient"]);
+      },
+    );
+    await fixture(
+      () => new Response(`event: ${transient.event.type}\ndata: ${JSON.stringify(transient)}\n\n`),
+      async (sdk) => {
+        await assertRejects(
+          () => sdk.canonicalEventsV1.stream("run_other")[Symbol.asyncIterator]().next(),
+          TypeError,
+          "run identity mismatch",
+        );
       },
     );
     await fixture(
