@@ -244,13 +244,13 @@ import {
 
 #### Functions
 
-| Name                    | Description | Source                                                                                            |
-| ----------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
-| `parseEventDiscoveryV1` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/parser.ts) |
-| `parseEventErrorV1`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/parser.ts) |
-| `parseRunReadMemberV1`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/parser.ts) |
-| `parseRunReadPageV1`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/parser.ts) |
-| `parseStreamMemberV1`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/parser.ts) |
+| Name                    | Description                                                        | Source                                                                                           |
+| ----------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `parseEventDiscoveryV1` | Validate the canonical event discovery contract.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseEventErrorV1`     | Validate a content-free canonical protocol error.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseRunReadMemberV1`  | Validate one canonical or authorized legacy history member.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseRunReadPageV1`    | Validate a canonical history page without dropping legacy members. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseStreamMemberV1`   | Validate a durable or transient canonical stream member.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
 
 #### Types
 

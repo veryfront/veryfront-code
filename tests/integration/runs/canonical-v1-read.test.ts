@@ -336,3 +336,15 @@ it("stops buffered canonical stream delivery after cancellation", async () => {
   controller.abort(new DOMException("Stopped", "AbortError"));
   await assertRejects(() => iterator.next(), DOMException);
 });
+
+it("rejects invalid UTF-8 in structured HTTP errors", async () => {
+  const bytes = new TextEncoder().encode('{"code":"UNAVAILABLE","message":"invalid"}');
+  bytes[bytes.indexOf(105)] = 0xff;
+  const facade = createCanonicalEventsV1Facade({
+    async request(_path, init) {
+      if (!init?.onResponse) throw new Error("Missing response decoder");
+      return init.onResponse(new Response(bytes, { status: 503 }), init, "https://api.example");
+    },
+  });
+  await assertRejects(() => facade.list("run_demo"), TypeError);
+});

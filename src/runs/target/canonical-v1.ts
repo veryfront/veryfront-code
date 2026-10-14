@@ -110,7 +110,7 @@ export function createCanonicalEventsV1Facade(
           };
           signal.addEventListener("abort", abort, { once: true });
           if (signal.aborted) abort();
-          const decoder = new TextDecoder();
+          const decoder = new TextDecoder("utf-8", { fatal: true });
           let text = "";
           let bytes = 0;
           try {
