@@ -1,5 +1,5 @@
 import { estimateTokens } from "../../chat/message-prep.ts";
-import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
+import { AGENT_CONTEXT_WINDOW_EXCEEDED, CONFIG_INVALID } from "#veryfront/errors";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
@@ -138,6 +138,21 @@ export type ProviderRequestBudgetInput = FinalRequestBudgetInput & {
   providerOptions?: unknown;
 };
 
+/**
+ * A wire output limit, usually a native provider control, must be a positive
+ * integer: a zero, negative or fractional value would shrink the reserved
+ * output and admit input that cannot fit, and the provider rejects it anyway.
+ */
+function wireOutputTokens(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw CONFIG_INVALID.create({
+      detail: `Provider output limit must be a positive integer, received ${String(value)}`,
+    });
+  }
+  return value;
+}
+
 function resolveEffectiveBudget(
   input: ProviderRequestBudgetInput,
 ): { budget: FinalRequestBudgetInput; nativeOutputTokens?: number } {
@@ -154,7 +169,8 @@ function resolveEffectiveBudget(
   const low = probe(1);
   const high = probe(2);
   const responseFormat = low?.responseFormat ?? budget.responseFormat;
-  const lowOutput = low?.maxOutputTokens;
+  const lowOutput = wireOutputTokens(low?.maxOutputTokens);
+  wireOutputTokens(high?.maxOutputTokens);
   if (lowOutput !== undefined && lowOutput === high?.maxOutputTokens) {
     // A native output limit is the wire value, so it is reserved in full.
     return {
@@ -174,7 +190,7 @@ function resolveEffectiveBudget(
   // Implicit requests can later be lowered to fit the window, so they still
   // reserve the full additive budget at those lower, unclamped values.
   const explicitOutput = budget.explicitOutputTokens === true
-    ? probe(budget.requestedOutputTokens)?.maxOutputTokens
+    ? wireOutputTokens(probe(budget.requestedOutputTokens)?.maxOutputTokens)
     : undefined;
   const additionalOutputTokens = explicitOutput === undefined
     ? Math.max(budget.additionalOutputTokens ?? 0, derivedAdditional)

@@ -457,7 +457,7 @@ describe("final model request budget", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
-    for (const override of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const override of [0, 0.5, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       it(`treats an invalid output override ${override} as implicit and caps it (${mode})`, async () => {
         const model = servedModel(mode, 4096, [{ text: "acknowledged" }], 32);
         const runtime = new AgentRuntime("invalid-output-override", {
@@ -524,6 +524,78 @@ describe("final model request budget", () => {
     assertEquals(model.callCount, 0);
     assertEquals(checkpoints, []);
   });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`keeps loaded schemas when provider-request validation rejects a fitted request (${mode})`, async () => {
+      const { registerTurnProviderRequestValidator } = await import(
+        "../middleware/turn-validation.ts"
+      );
+      const largeTool = tool({
+        id: "large_tool",
+        description: "Inspect a saved object.",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            payload: v.string().describe(`Schema guidance ${"detail ".repeat(1_200)}`),
+          })
+        )(),
+        execute: () => ({ ok: true }),
+      });
+      const history: Message[] = [
+        {
+          id: "old-call",
+          role: "assistant",
+          parts: [{ type: "tool-call", toolCallId: "old", toolName: "large_tool", args: {} }],
+        },
+        {
+          id: "old-result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "old",
+            toolName: "large_tool",
+            result: { ok: true },
+          }],
+        },
+        { id: "user", role: "user", parts: [{ type: "text", text: "Answer now" }] },
+      ];
+      const checkpoints: unknown[] = [];
+      let validations = 0;
+      const model = servedModel(mode, 1_500, [{ text: "unexpected" }]);
+      const runtime = agent(
+        {
+          id: `budget-eviction-validator-${mode}`,
+          model: model.modelId,
+          system: "Answer using the latest result.",
+          maxSteps: 1,
+          skills: false,
+          tools: { large_tool: largeTool },
+          toolLoading: "deferred",
+          __vfToolExposureCheckpoint: { version: 2, loadedToolNames: ["large_tool"] },
+          __vfToolExposureCheckpointPersistenceRequired: true,
+          __vfPersistToolExposureCheckpoint: (value: unknown) => {
+            checkpoints.push(value);
+          },
+          middleware: [async (context, next) => {
+            registerTurnProviderRequestValidator(context, () => {
+              validations++;
+              return Promise.reject(new Error("provider request rejected"));
+            });
+            return await next();
+          }],
+          resolveModelTransport: () => ({ model }),
+        } as AgentConfig & RuntimeToolFilterConfig,
+      );
+      if (mode === "generate") {
+        await assertRejects(() => runtime.generate({ input: history }), Error);
+      } else {
+        await (await runtime.stream({ messages: history })).toDataStreamResponse().text()
+          .catch(() => undefined);
+      }
+      assertEquals(validations, 1);
+      assertEquals(model.callCount, 0);
+      assertEquals(checkpoints, []);
+    });
+  }
 
   for (const mode of ["generate", "stream"] as const) {
     it(`evicts an older deferred schema, checkpoints it, and allows reactivation (${mode})`, async () => {
@@ -1356,6 +1428,35 @@ describe("invoke_agent child request budget", () => {
       requestedOutputTokens: 64_000,
     });
     assertEquals(result.maxOutputTokens, 1_000);
+  });
+
+  it("rejects a non-positive or fractional native output limit instead of budgeting it", () => {
+    const cases = [
+      { model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, key: "max_tokens" },
+      {
+        model: { provider: "openai", modelId: "gpt-4.1", openAITransport: "responses" },
+        key: "max_output_tokens",
+      },
+    ] as const;
+    for (const { model, key } of cases) {
+      for (const value of [0, -500_000, 1.5]) {
+        const provider = model.provider;
+        assertThrows(
+          () =>
+            enforceProviderRequestBudget({
+              model,
+              providerOptions: { [provider]: { [key]: value } },
+              system: "ok",
+              // Over the window by itself: a negative reserve must not admit it.
+              messages: [{ role: "user", content: "x".repeat(900_000) }],
+              limit: { context: 200_000, output: 64_000 },
+              requestedOutputTokens: 4_096,
+            }),
+          VeryfrontError,
+          "positive integer",
+        );
+      }
+    }
   });
 
   it("resolves a managed proxy's surface from its run scope's received catalog", async () => {

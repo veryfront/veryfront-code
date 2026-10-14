@@ -2363,11 +2363,20 @@ async function fitRuntimeStepRequestToServedBudget(input: {
   modelMessages: Message[];
   plan: ToolExposurePlan;
   servedLimit: ServedRequestLimit | undefined;
+  /**
+   * Apply and checkpoint schema evictions. Call only once the request has
+   * passed final enforcement and provider-request validation, so a rejected
+   * turn keeps its previously loaded tools for a corrected retry.
+   */
+  commitToolExposure: () => Promise<void>;
 }> {
   const servedLimit = readServedModelLimit(input.languageModel, input.model);
   let modelMessages = input.modelMessages;
   let plan = input.plan;
-  if (servedLimit?.context === undefined) return { modelMessages, plan, servedLimit };
+  let commitToolExposure = async () => {};
+  if (servedLimit?.context === undefined) {
+    return { modelMessages, plan, servedLimit, commitToolExposure };
+  }
   const inspect = (messages: Message[], candidatePlan: ToolExposurePlan) => {
     const request = input.assembleRequest(messages, candidatePlan);
     // Inspect the effective wire request, so native provider controls decide
@@ -2404,18 +2413,20 @@ async function fitRuntimeStepRequestToServedBudget(input: {
     // Keep loaded schemas when the request still cannot fit: final enforcement
     // rejects it, and a smaller retry must not lose previously loaded tools.
     if (fitted.evictedNames.length > 0 && inspect(modelMessages, plan).fits) {
-      input.toolExposureState.loadedToolNames.clear();
-      for (const name of fitted.plan.loadedToolNames) {
-        input.toolExposureState.loadedToolNames.add(name);
-      }
-      await persistToolExposureCheckpointBeforeContinuation({
-        checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, input.toolExposureState),
-        persist: input.persistToolExposureCheckpoint,
-        required: input.requireToolExposureCheckpointPersistence,
-      });
+      commitToolExposure = async () => {
+        input.toolExposureState.loadedToolNames.clear();
+        for (const name of fitted.plan.loadedToolNames) {
+          input.toolExposureState.loadedToolNames.add(name);
+        }
+        await persistToolExposureCheckpointBeforeContinuation({
+          checkpoint: createToolExposureCheckpoint(fitted.plan.authorized, input.toolExposureState),
+          persist: input.persistToolExposureCheckpoint,
+          required: input.requireToolExposureCheckpointPersistence,
+        });
+      };
     }
   }
-  return { modelMessages, plan, servedLimit };
+  return { modelMessages, plan, servedLimit, commitToolExposure };
 }
 
 function shouldHandleToolResultRead(input: {
@@ -3167,12 +3178,13 @@ export function streamWithAgentRuntimeDispatch(
 }
 
 /**
- * Whether a caller's output-token override is honored. Invalid overrides
- * (zero, negative, NaN, infinite) fall back to the configured default and are
- * therefore not an explicit output request.
+ * Whether a caller's output-token override is honored. The override is floored
+ * to whole tokens, so invalid overrides (below one after flooring, NaN,
+ * infinite) fall back to the configured default and are therefore not an
+ * explicit output request.
  */
 function isMaxOutputTokensOverride(value: number | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
+  return typeof value === "number" && Number.isFinite(value) && value >= 1;
 }
 
 /** Implement agent runtime. */
@@ -4616,6 +4628,7 @@ export class AgentRuntime {
             providerSystemPrompt,
             modelMessages,
           );
+          await fittedRequest.commitToolExposure();
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
@@ -5968,6 +5981,7 @@ export class AgentRuntime {
         providerSystemPrompt,
         modelMessages,
       );
+      await fittedRequest.commitToolExposure();
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
       const streamSource = createRuntimeStreamSource((streamSignal) =>

@@ -586,6 +586,44 @@ it("amortizes the reader schema over multiple historical references", () => {
   assertStrictEquals(projected[2], latest);
 });
 
+it("amortizes the reader schema across several results in one historical message", () => {
+  const first = "first result ".repeat(200);
+  const second = "second result ".repeat(200);
+  const batch: Message = {
+    id: "batch",
+    role: "tool",
+    parts: [
+      { type: "tool-result", toolCallId: "first", toolName: "read_data", result: first },
+      { type: "tool-result", toolCallId: "second", toolName: "read_data", result: second },
+    ],
+  };
+  const latest = toolMessage("latest", "read_data", "latest");
+  const source = [batch, latest];
+  const context = createToolResultContext({ limits: { previewBytes: 64 } });
+  const inspect = (messages: Message[]) => {
+    const references =
+      messages[0]!.parts.filter((part) =>
+        part.type === "tool-result" && typeof (part as ToolResultPart).result === "object"
+      ).length;
+    const estimate = 1_000 - references * 400 + (context.size > 0 ? 600 : 0);
+    return { fits: estimate <= 850, outputExceeded: false, estimatedInputTokens: estimate };
+  };
+  const projected = projectHistoricalToolResultsForBudget({
+    sourceMessages: source,
+    modelMessages: source,
+    context,
+    inspect,
+  });
+  assertEquals(inspect(projected).fits, true);
+  assertEquals(context.size, 2);
+  const originals = [first, second];
+  for (const index of [0, 1]) {
+    const reference = (projected[0]!.parts[index] as ToolResultPart).result as { ref: string };
+    assertStrictEquals(context.getOriginalResult(reference.ref), originals[index]);
+  }
+  assertStrictEquals(projected[1], latest);
+});
+
 it("rolls back an unamortized reader and frees its slot for a later useful result", () => {
   for (const includeLarge of [false, true]) {
     const moderate = toolMessage("moderate", "read_data", "moderate result ".repeat(150));
