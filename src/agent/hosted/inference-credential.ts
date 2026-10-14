@@ -150,7 +150,37 @@ export function readHostedChildModelStreamTimeouts(
   target: HostedInferenceAuthorityOwner,
 ): ModelStreamTimeouts | undefined {
   const timeouts = inheritedModelStreamTimeouts.get(target);
-  return timeouts ? { ...timeouts } : undefined;
+  return timeouts &&
+      (timeouts.firstProgressTimeoutMs !== undefined ||
+        timeouts.semanticIdleTimeoutMs !== undefined)
+    ? { ...timeouts }
+    : undefined;
+}
+
+/**
+ * @internal Keep only inherited budgets that expire before a child's own stream
+ * watchdog. A longer budget would never fire there, so the child keeps its
+ * framework defaults for that field instead.
+ */
+export function restrictHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  watchdogIdleTimeoutMs: number,
+): void {
+  const timeouts = inheritedModelStreamTimeouts.get(target);
+  if (!timeouts) return;
+  const first = timeouts.firstProgressTimeoutMs;
+  const idle = timeouts.semanticIdleTimeoutMs;
+  inheritedModelStreamTimeouts.set(
+    target,
+    ObjectFreeze({
+      ...(first !== undefined && first < watchdogIdleTimeoutMs
+        ? { firstProgressTimeoutMs: first }
+        : {}),
+      ...(idle !== undefined && idle < watchdogIdleTimeoutMs
+        ? { semanticIdleTimeoutMs: idle }
+        : {}),
+    }),
+  );
 }
 
 function inheritHostedChildModelStreamTimeouts(
