@@ -23,6 +23,14 @@ import {
   type ExecutorModelDispatch,
 } from "./executor-model-bridge.ts";
 import { createHostedExecutorModelBroker as createHostedBroker } from "./executor-model-dispatch.ts";
+import {
+  bindManagedToolResultFence,
+  createManagedToolResultFence,
+} from "./managed-tool-result-fence.ts";
+import {
+  bindToolResultSequence,
+  runWithToolResultSequence,
+} from "#veryfront/runtime/tool-result-sequence.ts";
 
 function assertModelCallContextEvent(
   event: AgentRunEvent | undefined,
@@ -134,6 +142,138 @@ function scope(signal = new AbortController().signal, scopeBinding = binding) {
     },
   };
 }
+
+describe("managed model result ordering", () => {
+  it("lets the trusted remote model facade carry the host session without provider-option leakage", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () =>
+        model((options) => {
+          assertEquals("privateToolResultSequence" in options, false);
+          seen.push("provider");
+        }),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const remote = await proxy(channels);
+      await runWithToolResultSequence(
+        sessionId,
+        () =>
+          remote.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          }),
+      );
+      assertEquals(seen, ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", "provider"]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("rejects missing and foreign positions before model context or provider dispatch", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () => model(() => seen.push("provider")),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const input = {
+        modelId,
+        options: {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+        },
+      };
+      await assertRejects(() => channels.caller.request("model.generate", input));
+      await assertRejects(() =>
+        channels.caller.request("model.generate", {
+          ...input,
+          privateToolResultSequence: { sessionId: crypto.randomUUID(), ordinal: 0 },
+        })
+      );
+      assertEquals(seen, []);
+      await channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 0 },
+      });
+      assertEquals(seen, ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", "provider"]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("holds the next provider call until the prior streamed result is durably acknowledged", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () => model(() => seen.push("provider")),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const input = {
+        modelId,
+        options: {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+        },
+      };
+      await channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 0 },
+      });
+      const next = channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 1 },
+      });
+      await Promise.resolve();
+      assertEquals(seen.filter((event) => event === "provider").length, 1);
+      const result = {
+        type: "tool-output-available" as const,
+        toolCallId: "call-1",
+        output: { ok: true },
+      };
+      bindToolResultSequence(result, { sessionId, ordinal: 1 });
+      seen.push("durable-result");
+      fence.resultPersisted(result);
+      await next;
+      assertEquals(seen, [
+        "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        "provider",
+        "durable-result",
+        "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        "provider",
+      ]);
+    } finally {
+      await channels.close();
+    }
+  });
+});
 
 async function proxy(channels: ReturnType<typeof pair>) {
   const resolver = await createExecutorModelRuntimeResolver({

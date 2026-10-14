@@ -1,4 +1,5 @@
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { withRuntimeStreamOwnership } from "#veryfront/runtime/runtime-stream-ownership.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   observeAdmittedAgentToolCalls,
@@ -3466,9 +3467,11 @@ export class AgentRuntime {
   }
 
   #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
-    return withRuntimeTurnLineage(
-      this,
-      () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
+    return withRuntimeStreamOwnership(() =>
+      withRuntimeTurnLineage(
+        this,
+        () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
+      )
     );
   }
 

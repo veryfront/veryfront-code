@@ -2,6 +2,11 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
+  acknowledgeMirroredToolResult,
+  disposeToolResultMirrorBarrier,
+  enableToolResultMirrorBarrier,
+} from "#veryfront/runtime/tool-result-mirror-barrier.ts";
+import {
   getToolCallOccurrence,
   isObservedToolResultStart,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
@@ -50,6 +55,8 @@ export interface ConversationRunChunkMirror {
   flush(options?: {
     abortSignal?: AbortSignal;
     throwOnTimeoutRetry?: boolean;
+    /** Wait through scheduled retries. Requires a caller-owned abort signal. */
+    waitForRetries?: boolean;
   }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
@@ -265,7 +272,7 @@ export function createConversationRunChunkMirror(
     ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),
   });
 
-  return {
+  const result: ConversationRunChunkMirror = {
     timing,
     takeModelCallCaptureReceipt(modelCallId) {
       return queueController.takeModelCallCaptureReceipt?.(modelCallId);
@@ -321,6 +328,11 @@ export function createConversationRunChunkMirror(
       } else {
         mirror.enqueue(events);
       }
+      for (const event of events) {
+        if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
+          acknowledgeMirroredToolResult(result, event.toolCallId);
+        }
+      }
     },
     async appendEvents(events) {
       if (mirror.getSnapshot().disabled || events.length === 0) {
@@ -347,9 +359,12 @@ export function createConversationRunChunkMirror(
       return mirror.getSnapshot();
     },
     dispose() {
+      disposeToolResultMirrorBarrier(result);
       mirror.dispose();
     },
   };
+  if (input.runtimeObservations) enableToolResultMirrorBarrier(result);
+  return result;
 }
 
 function createHostedChunkMirrorRetryMetadata(input: {

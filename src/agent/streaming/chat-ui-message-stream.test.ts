@@ -8,6 +8,10 @@ import {
   createChatUiMessageStreamFromDataStream,
 } from "./chat-ui-message-stream.ts";
 import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  getToolResultSequence,
+  isSyntheticToolResultRecovery,
+} from "#veryfront/runtime/tool-result-sequence.ts";
 
 const encoder = new TextEncoder();
 
@@ -33,6 +37,44 @@ async function collectChunks(
 }
 
 describe("createChatUiMessageStreamFromDataStream", () => {
+  it("preserves trusted terminal positions while keeping preliminary output provisional", async () => {
+    const sessionId = crypto.randomUUID();
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream({
+        stream: createSseStream([
+          { type: "message-start", messageId: "framework-message" },
+          { type: "tool-input-start", toolCallId: "invalid", toolName: "reader" },
+          {
+            type: "tool-input-error",
+            toolCallId: "invalid",
+            errorText: "Invalid arguments",
+            privateToolResultSequence: { sessionId, ordinal: 1 },
+          },
+          {
+            type: "tool-output-available",
+            toolCallId: "progress",
+            output: { progress: 1 },
+            preliminary: true,
+          },
+          {
+            type: "tool-output-denied",
+            toolCallId: "denied",
+            privateToolResultSequence: { sessionId, ordinal: 2 },
+          },
+          { type: "message-finish" },
+        ]),
+      }, { privateToolResultSequences: true }),
+    );
+    const invalid = chunks.find((chunk) => chunk.type === "tool-input-error");
+    const progress = chunks.find((chunk) => chunk.type === "tool-output-available");
+    const denied = chunks.find((chunk) => chunk.type === "tool-output-denied");
+    assertEquals(getToolResultSequence(invalid!), { sessionId, ordinal: 1 });
+    assertEquals(progress && "preliminary" in progress ? progress.preliminary : undefined, true);
+    assertEquals(getToolResultSequence(progress!), undefined);
+    assertEquals(getToolResultSequence(denied!), { sessionId, ordinal: 2 });
+    assertEquals(JSON.stringify(chunks).includes("privateToolResultSequence"), false);
+  });
+
   it("strips and rebinds trusted runtime observations to exact public chunks", async () => {
     const stepId = "11111111-1111-4111-8111-111111111111";
     const messageSpanId = "22222222-2222-4222-8222-222222222222";
@@ -791,6 +833,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       },
       { type: "finish", finishReason: "stop" },
     ]);
+    assertEquals(isSyntheticToolResultRecovery(chunks[2]!), true);
   });
 
   it("includes data parts in the final response message", async () => {

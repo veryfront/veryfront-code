@@ -182,6 +182,7 @@ export const getExecutorAgentStreamInputSchema = defineSchema((v) => {
     preparedRuntimeHandle: getExecutorPreparedRuntimeHandleSchema(),
     toolCallAdmissions: v.literal(true).optional(),
     runtimeObservations: v.literal(true).optional(),
+    privateToolResultSessionId: v.string().uuid().optional(),
     messages: v.array(
       v.object({
         id: v.string(),
@@ -190,7 +191,10 @@ export const getExecutorAgentStreamInputSchema = defineSchema((v) => {
         timestamp: v.number(),
       }).strict(),
     ).max(10_000),
-  }).strict();
+  }).strict().refine(
+    (input) => !input.privateToolResultSessionId || input.runtimeObservations === true,
+    "Managed result sessions require runtime observations",
+  );
 });
 
 export function parseExecutorAgentData<T>(schema: Schema<T>, input: unknown): T {

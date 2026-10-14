@@ -63,6 +63,8 @@ import { isToolResultPart } from "#veryfront/agent/runtime/tool-result-part.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { AgentRuntimeMessage } from "#veryfront/agent/runtime/message-adapter.ts";
+import { bindToolResultSequence } from "#veryfront/runtime/tool-result-sequence.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
@@ -276,6 +278,8 @@ function fixture(
             calls.push("stream");
             streamInputs.push(value);
             await options.onStream?.({ peer: peer!, value, installed: installed! });
+            const sequenced = value && typeof value === "object" && !Array.isArray(value) &&
+              value.runtimeObservations === true;
             if (!options.skipModelRequest) {
               await peer!.request("model.generate", {
                 modelId,
@@ -283,6 +287,14 @@ function fixture(
                   prompt: [],
                   maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens,
                 },
+                ...(sequenced && typeof value.privateToolResultSessionId === "string"
+                  ? {
+                    privateToolResultSequence: {
+                      sessionId: value.privateToolResultSessionId,
+                      ordinal: 0,
+                    },
+                  }
+                  : {}),
               });
             }
             executionAllowed = true;
@@ -664,6 +676,129 @@ describe("managed executor broker", () => {
       'Read the load_skill result for "review"',
     );
   });
+  it("accepts historical tool results in the first model context without waiting for a new output chunk", async () => {
+    const { persistence, bodies } = observationPersistence();
+    persistence.bindSessionOwnedWork((operation) => operation());
+    try {
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: "11111111-1111-4111-8111-111111111112",
+        messages: [{
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "historical-call",
+            toolName: "reader",
+            output: { type: "json", value: { old: true } },
+          }],
+        }],
+      });
+      assertEquals(bodies.length, 1);
+      assertEquals(
+        Array.isArray(bodies[0]?.events) &&
+          bodies[0].events.some((event) =>
+            typeof event === "object" && event !== null && "type" in event &&
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+          ),
+        true,
+      );
+    } finally {
+      await persistence.cleanup();
+    }
+  });
+
+  it("queues a tool result before the next model call that contains it when the model RPC overtakes streamed output", async () => {
+    const { persistence, bodies } = observationPersistence();
+    persistence.bindSessionOwnedWork((operation) => operation());
+    const toolCallId = "previous-tool-result";
+    const fence = getManagedToolResultFence(persistence.modelRunEventSink);
+    assert(fence);
+    const sequence = { sessionId: fence.beginSession(), ordinal: 1 };
+    try {
+      await fence.waitBeforeContext(
+        { sessionId: sequence.sessionId, ordinal: 0 },
+        new AbortController().signal,
+        Date.now() + 1_000,
+      );
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: "11111111-1111-4111-8111-111111111112",
+        messages: [{ role: "user", content: [{ type: "text", text: "Read the local note" }] }],
+      });
+      await persistence.output.write({ type: "tool-input-start", toolCallId, toolName: "reader" });
+      await persistence.output.write({
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "reader",
+        input: { note: "local" },
+      });
+      // The executor can request the next model call while its preceding UI
+      // result is still waiting in the streamed output channel.
+      const capture = fence.waitBeforeContext(
+        sequence,
+        new AbortController().signal,
+        Date.now() + 1_000,
+      ).then(() =>
+        persistence.modelRunEventSink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          modelCallId: "22222222-2222-4222-8222-222222222222",
+          messages: [
+            {
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId,
+                toolName: "reader",
+                input: { note: "local" },
+              }],
+            },
+            {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId,
+                toolName: "reader",
+                output: { type: "json", value: { ok: true } },
+              }],
+            },
+          ],
+        })
+      );
+      const result = {
+        type: "tool-output-available",
+        toolCallId,
+        output: { ok: true },
+      } as const;
+      bindToolResultSequence(result, sequence);
+      const write = persistence.output.write(result);
+      await Promise.all([capture, write]);
+
+      const eventTypes = bodies.flatMap((body) =>
+        Array.isArray(body.events)
+          ? body.events.flatMap((event) =>
+            typeof event === "object" && event !== null && "type" in event &&
+              typeof event.type === "string"
+              ? [event.type]
+              : []
+          )
+          : []
+      );
+      assertEquals(eventTypes.includes("TOOL_CALL_RESULT"), true);
+      assertEquals(
+        eventTypes.filter((type) => type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+        2,
+      );
+      assertEquals(
+        eventTypes.indexOf("TOOL_CALL_RESULT") <
+          eventTypes.lastIndexOf("AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"),
+        true,
+        "the prior tool result must precede the model context in the durable event stream",
+      );
+    } finally {
+      await persistence.cleanup();
+    }
+  });
+
   it("enables the producer from an exact runtime-observation persistence sink", async () => {
     const stepId = "22222222-2222-4222-8222-222222222222";
     const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });

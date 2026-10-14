@@ -34,6 +34,10 @@ import {
 } from "../../runtime/model-call-context.ts";
 import { agentLogger } from "#veryfront/utils";
 import {
+  bindToolResultMirrorBarrier,
+  waitForQueuedToolResults,
+} from "#veryfront/runtime/tool-result-mirror-barrier.ts";
+import {
   type AgentRunModelCallCaptureReceipt,
   getModelCallCaptureReceiptSchema,
 } from "#veryfront/runtime/model-call-capture-receipt.ts";
@@ -433,7 +437,7 @@ export function createDurableRunEventSink(input: {
   timeoutMs?: number;
   timing?: AgentRunEventTimingOptions;
 }): AgentRunEventSink {
-  return createTimedAgentRunEventSink(async (event) => {
+  const sink = createTimedAgentRunEventSink(async (event) => {
     let oversize: ResolvedRunEvent["oversize"];
     let captureReceipt: AgentRunModelCallCaptureReceipt | undefined;
     try {
@@ -446,6 +450,9 @@ export function createDurableRunEventSink(input: {
           abortSignal: input.abortSignal,
           timeoutMs: input.timeoutMs ?? DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS,
           operation: async (abortSignal) => {
+            if (isModelCallContextEvent(event)) {
+              await waitForQueuedToolResults(input.mirror, event.messages, abortSignal);
+            }
             const snapshot = input.mirror.getSnapshot();
             assertEnabled(snapshot);
             if (!isDrained(snapshot)) {
@@ -453,6 +460,7 @@ export function createDurableRunEventSink(input: {
                 await input.mirror.flush({
                   abortSignal,
                   throwOnTimeoutRetry: true,
+                  waitForRetries: true,
                 }),
               );
             }
@@ -462,6 +470,7 @@ export function createDurableRunEventSink(input: {
               await input.mirror.flush({
                 abortSignal,
                 throwOnTimeoutRetry: true,
+                waitForRetries: true,
               }),
             );
             assertDrained(input.mirror.getSnapshot());
@@ -507,4 +516,6 @@ export function createDurableRunEventSink(input: {
     }
     return captureReceipt;
   }, input.timing ?? input.mirror.timing);
+  bindToolResultMirrorBarrier(sink, input.mirror);
+  return sink;
 }

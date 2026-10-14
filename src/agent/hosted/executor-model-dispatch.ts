@@ -27,6 +27,7 @@ import { executorModelJson, parseExecutorModelData } from "./executor-model-sche
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
 import { executorModelFailure } from "./executor-model-errors.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 import type { ExecutorSkillObservation } from "./executor-skill-observation.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
@@ -169,7 +170,16 @@ export function createHostedExecutorModelBroker(
     throw new TypeError("Hosted model capture receipts require a project scope");
   }
   const captureEnabled = input.modelCallCaptureReceipts === true;
+  const resultFence = getManagedToolResultFence(sink);
   return createScopedHostedModelBroker(input, async (request, context) => {
+    // The output stream is drained independently of model RPCs. Wait before
+    // entering its shared persistence queue, or the result would deadlock
+    // behind this context append.
+    await resultFence?.waitBeforeContext(
+      request.privateToolResultSequence,
+      context.signal,
+      context.deadline,
+    );
     const acknowledgement = await acknowledgePersistence(
       () => sink(createContextEvent(request, captureEnabled)),
       context.signal,
