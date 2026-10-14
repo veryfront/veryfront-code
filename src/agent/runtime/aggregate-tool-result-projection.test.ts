@@ -298,3 +298,70 @@ describe("aggregate tool result projection", () => {
     );
   });
 });
+
+it("shrinks an already retained historical skill reference preview without changing its ref", () => {
+  const value = { skillId: "plan", file: "references/large.md", content: "x".repeat(20_000) };
+  const old = toolMessage("old-reference", "load_skill", value);
+  const latest = toolMessage("latest-reference", "read_data", "latest");
+  const context = createToolResultContext({ limits: { maxInlineBytes: 8192, previewBytes: 4096 } });
+  const retained = context.discloseReference({
+    toolCallId: "old-reference",
+    toolName: "load_skill",
+    result: value,
+  });
+  const modelMessages: Message[] = [{
+    ...old,
+    parts: [{
+      type: "tool-result",
+      toolCallId: "old-reference",
+      toolName: "load_skill",
+      result: retained.modelResult,
+    }],
+  }, latest];
+  const inspect = (messages: Message[]) =>
+    inspectFinalRequestBudget({
+      system: "Help",
+      messages,
+      limit: { context: 1000, output: 32 },
+      requestedOutputTokens: 32,
+    });
+  assertEquals(inspect(modelMessages).fits, false);
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: [old, latest],
+    modelMessages,
+    context,
+    inspect,
+  });
+  assertEquals(inspect(fitted).fits, true);
+  const reference = result(fitted[0]!) as { ref: string; previewBytes: number };
+  assertEquals(reference.ref, retained.modelResult.ref);
+  assertEquals(reference.previewBytes < 4096, true);
+  assertStrictEquals(context.getOriginalResult(reference.ref), value);
+  assertEquals(context.size, 1);
+});
+
+it("does not turn preview-only model fallbacks into retrievable references", () => {
+  const original = toolMessage("preview", "read_data", "original".repeat(1000));
+  const latest = toolMessage("latest", "read_data", "latest");
+  const preview = { type: "tool_result_preview", preview: "preview only" };
+  const model: Message[] = [{
+    ...original,
+    parts: [{ type: "tool-result", toolCallId: "preview", toolName: "read_data", result: preview }],
+  }, latest];
+  const context = createToolResultContext();
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: [original, latest],
+    modelMessages: model,
+    context,
+    inspect: (messages) => {
+      const value = result(messages[0]!) as { type?: string };
+      return {
+        fits: value.type === "tool_result_reference",
+        outputExceeded: false,
+        estimatedInputTokens: value.type === "tool_result_reference" ? 100 : 1000,
+      };
+    },
+  });
+  assertStrictEquals(result(fitted[0]!), preview);
+  assertEquals(context.size, 0);
+});

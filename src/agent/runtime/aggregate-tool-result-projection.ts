@@ -1,4 +1,4 @@
-import { getToolResultError } from "#veryfront/tool/result.ts";
+import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import { slicePrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { privateTextStartsWith } from "#veryfront/security/private-text.ts";
 import type { Message, ToolResultPart } from "../types.ts";
@@ -83,9 +83,15 @@ export function projectHistoricalToolResultsForBudget(input: {
       if (!modelMessage || part.type !== "tool-result" || !("result" in part)) continue;
       if (!hasOwn(modelMessage.parts, partIndex)) continue;
       const modelPart = modelMessage.parts[partIndex] as ToolResultPart;
-      // An existing reference is already compact. Never turn a preview-only
-      // fallback into an apparently retrievable reference.
-      if (modelPart.result !== part.result) continue;
+      // Existing exact references can use a smaller preview. Preview-only or
+      // unrelated model projections must never become retrievable references.
+      if (modelPart.result !== part.result) {
+        const ref = readToolResultOwnDataProperty(modelPart.result, "ref");
+        if (
+          readToolResultOwnDataProperty(modelPart.result, "type") !== "tool_result_reference" ||
+          typeof ref !== "string" || input.context.getOriginalResult(ref) !== part.result
+        ) continue;
+      }
       if (isProtectedToolResult(part)) continue;
       const currentEstimate = budget.estimatedInputTokens;
       if (currentEstimate === null) return projected;

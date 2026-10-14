@@ -213,3 +213,81 @@ it("stops protecting a searched schema once a newer search step supersedes it", 
   assertEquals(fitted.evictedNames, ["stale"]);
   assertEquals(fitted.plan.visible.some((tool) => tool.name === "fresh"), true);
 });
+
+it("evicts an unused schema from an older search batch while protecting the latest batch", () => {
+  const state = createToolExposureState(["old", "latest"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("old", 6000), definition("latest", 6000)],
+    mode: "deferred",
+    state,
+  });
+  const search = (
+    id: string,
+    name: string,
+  ): Message[] => [{
+    id: id + "-call",
+    role: "assistant",
+    parts: [{ type: "tool-call", toolCallId: id, toolName: "tool_search", args: {} }],
+  }, {
+    id: id + "-result",
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: id,
+      toolName: "tool_search",
+      result: { matches: [{ name, status: "loaded" }] },
+    }],
+  }];
+  const fitted = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: [...search("first", "old"), ...search("second", "latest")],
+    inspect: (candidate) => ({
+      fits: !candidate.visible.some((tool) => tool.name === "old"),
+      outputExceeded: false,
+      estimatedInputTokens: candidate.visible.some((tool) => tool.name === "old") ? 15000 : 10000,
+    }),
+  });
+  assertEquals(fitted.evictedNames, ["old"]);
+  assertEquals(fitted.plan.visible.some((tool) => tool.name === "latest"), true);
+});
+
+it("protects schemas from parallel searches in the same new model decision", () => {
+  const state = createToolExposureState(["first", "second"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("first", 6000), definition("second", 6000)],
+    mode: "deferred",
+    state,
+  });
+  const messages: Message[] = [
+    {
+      id: "parallel",
+      role: "assistant",
+      parts: ["first", "second"].map((name) => ({
+        type: "tool-call",
+        toolCallId: name,
+        toolName: "tool_search",
+        args: {},
+      })),
+    },
+    ...["first", "second"].map((name): Message => ({
+      id: name,
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: name,
+        toolName: "tool_search",
+        result: { matches: [{ name, status: "loaded" }] },
+      }],
+    })),
+  ];
+  const fitted = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: messages,
+    inspect: (candidate) => ({
+      fits: false,
+      outputExceeded: false,
+      estimatedInputTokens: candidate.visible.length * 1000,
+    }),
+  });
+  assertEquals(fitted.evictedNames, []);
+});
