@@ -166,8 +166,8 @@ export function forgetVerifiedSource(sourceKey: string): void {
 /**
  * Attach verified contents to a metadata-only listing. Returns undefined when
  * any listed file has no checksum or no verified content, so the caller lists
- * contents from the API instead of serving a partial snapshot. `size` follows
- * the complete listing, which reports the content length.
+ * contents from the API instead of serving a partial snapshot. Preserve the
+ * credential-authorized listing size; UTF-16 content length is not byte size.
  */
 export function assembleSourceListing<T extends SourceListingFile>(
   sourceKey: string,
@@ -184,7 +184,10 @@ export function assembleSourceListing<T extends SourceListingFile>(
     }
     touch(checksum, content);
     IntrinsicReflectApply(ArrayPrototypePush, assembled, [
-      IntrinsicObjectAssign({}, file, { content, size: content.length }),
+      IntrinsicObjectAssign({}, file, {
+        content,
+        size: file.size ?? IntrinsicReflectApply(encodeText, textEncoder, [content]).byteLength,
+      }),
     ]);
   }
   return assembled;

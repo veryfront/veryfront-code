@@ -140,10 +140,10 @@ describe("hosted HTTP executor broker", () => {
     }
   });
 
-  it("releases a failed response body as canceled", async () => {
+  it("keeps the executor after a response body fails", async () => {
     let source: ReadableStreamDefaultController<Uint8Array> | undefined;
-    const f = fixture(() =>
-      new Response(
+    const f = fixture((request) =>
+      new URL(request.url).pathname === "/api/next" ? new Response("next") : new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
             source = controller;
@@ -156,49 +156,52 @@ describe("hosted HTTP executor broker", () => {
       const response = await broker.fetch(new Request("https://app.example/api/stream"), f.input);
       source!.error(new Error("Synthetic response failure"));
       await assertRejects(() => response.text());
-      await f.releaseEntered.promise;
-      assertEquals(f.calls.includes("release:canceled"), true);
+      const next = await broker.fetch(new Request("https://app.example/api/next"), f.input);
+      assertEquals(await next.text(), "next");
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
       await broker.settled;
     }
   });
 
-  it("releases an abandoned response as canceled without requiring request abort", async () => {
-    const f = fixture(() => new Response(new ReadableStream<Uint8Array>({})));
+  it("keeps the executor after a response is abandoned without request abort", async () => {
+    const f = fixture((request) =>
+      new URL(request.url).pathname === "/api/next"
+        ? new Response("next")
+        : new Response(new ReadableStream<Uint8Array>({}))
+    );
     const broker = createHostedHttpBroker({ maxActive: 1 });
     try {
       const request = new Request("https://app.example/api/stream");
       const response = await broker.fetch(request, f.input);
       await response.body!.cancel();
-      await f.releaseEntered.promise;
       assertEquals(request.signal.aborted, false);
-      assertEquals(f.calls.includes("release:canceled"), true);
+      const next = await broker.fetch(new Request("https://app.example/api/next"), f.input);
+      assertEquals(await next.text(), "next");
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
       await broker.settled;
     }
   });
 
-  it("returns an execution error while allocation cleanup is still pending", async () => {
+  it("returns each execution error and keeps the executor", async () => {
     const f = fixture(() => {
       throw new Error("synthetic application failure");
     });
-    f.holdRelease();
     const broker = createHostedHttpBroker({ maxActive: 1 });
-    let rejected = false;
-    const pending = broker.fetch(new Request("https://app.example/api/fail"), f.input);
-    const failed = assertRejects(() => pending, Error, "operation-failed").then(() => {
-      rejected = true;
-    });
     try {
-      await f.releaseEntered.promise;
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      assertEquals(rejected, true);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await assertRejects(
+          () => broker.fetch(new Request("https://app.example/api/fail"), f.input),
+          Error,
+          "operation-failed",
+        );
+      }
       assertEquals(broker.active, 1);
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
-      f.releaseAllowed.resolve();
-      await failed;
       await broker.shutdown();
       await broker.settled;
     }
@@ -234,7 +237,7 @@ describe("hosted HTTP executor broker", () => {
     }
   });
 
-  it("streams a request through the admitted installation and releases on completion", async () => {
+  it("streams a request through the installed executor and releases it on shutdown", async () => {
     const f = fixture((request) => {
       assertEquals(request.headers.get("x-token"), null);
       return new Response(request.body, { status: 201 });
@@ -252,12 +255,12 @@ describe("hosted HTTP executor broker", () => {
       );
       assertEquals(response.status, 201);
       assertEquals(new Uint8Array(await response.arrayBuffer()), bytes);
-      await f.releaseEntered.promise;
-      assertEquals(f.calls, ["allocate", "install", "release:completed"]);
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
       await broker.settled;
     }
+    assertEquals(f.calls, ["allocate", "install", "release:canceled"]);
   });
 
   it("rejects mismatched project or release authority before allocation", async () => {
@@ -283,7 +286,7 @@ describe("hosted HTTP executor broker", () => {
     }
   });
 
-  it("retains pool admission through body consumption and allocation retirement", async () => {
+  it("retains admission until shutdown retires the allocation", async () => {
     const f = fixture(() => new Response("complete"));
     f.holdRelease();
     const broker = createHostedHttpBroker({ maxActive: 1 });
@@ -292,14 +295,18 @@ describe("hosted HTTP executor broker", () => {
       assertEquals(broker.active, 1);
       assertEquals(f.calls, ["allocate", "install"]);
       assertEquals(await response.text(), "complete");
-      await f.releaseEntered.promise;
       assertEquals(broker.active, 1);
+      const other = fixture(() => new Response("other"), undefined, "project-b");
       await assertRejects(
-        () => broker.fetch(new Request("https://app.example/api/data"), f.input),
+        () => broker.fetch(new Request("https://b.example/api/data"), other.input),
         Error,
         "capacity",
       );
+      const stopping = broker.shutdown();
+      await f.releaseEntered.promise;
+      assertEquals(broker.active, 1);
       f.releaseAllowed.resolve();
+      await stopping;
       await broker.shutdown();
       await broker.settled;
       assertEquals(broker.active, 0);
@@ -309,7 +316,7 @@ describe("hosted HTTP executor broker", () => {
     }
   });
 
-  it("cancels a pending application response and retires its allocation", async () => {
+  it("cancels a pending application response and keeps its allocation", async () => {
     const entered = Promise.withResolvers<void>();
     const f = fixture(async (request) => {
       entered.resolve();
@@ -330,8 +337,7 @@ describe("hosted HTTP executor broker", () => {
       await entered.promise;
       controller.abort();
       await rejected;
-      await f.releaseEntered.promise;
-      assertEquals(f.calls.includes("release:canceled"), true);
+      assertEquals(f.calls, ["allocate", "install"]);
     } finally {
       await broker.shutdown();
       await broker.settled;
