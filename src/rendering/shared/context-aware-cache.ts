@@ -46,10 +46,20 @@ export class ContextAwareCacheCoordinator {
   private ttlMs: number | undefined;
   private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
+  private readonly maxTrackedVariants: number;
+  // Exact keys are needed when a store cannot enumerate runtime/pinning variants.
+  // Bound bookkeeping; at capacity caching is skipped until an entry expires or is cleared.
+  private readonly variants = new Map<string, {
+    slugKey: string;
+    expiresAt?: number;
+    settled: boolean;
+    write: Promise<void>;
+  }>();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
+    this.maxTrackedVariants = options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -207,18 +217,45 @@ export class ContextAwareCacheCoordinator {
     const cachedResult = this.cloneResult(result);
     const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
     cachedResult.html = sealedHtml.html;
-    await this.store.set(cacheKey, {
-      result: cachedResult,
-      ...(sealedHtml.placeholder === undefined
-        ? {}
-        : { htmlNoncePlaceholder: sealedHtml.placeholder }),
-      nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
-      storedAt: now,
-      expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-      staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
-        ? now + this.ttlMs + this.staleMs
-        : undefined,
+    for (const [key, variant] of this.variants) {
+      if (variant.settled && variant.expiresAt !== undefined && variant.expiresAt <= now) {
+        this.variants.delete(key);
+      }
+    }
+    if (!this.variants.has(cacheKey) && this.variants.size >= this.maxTrackedVariants) return;
+    const previous = this.variants.get(cacheKey);
+    const write = Promise.resolve().then(async () => {
+      await previous?.write;
+      await this.store.set(cacheKey, {
+        result: cachedResult,
+        ...(sealedHtml.placeholder === undefined
+          ? {}
+          : { htmlNoncePlaceholder: sealedHtml.placeholder }),
+        nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
+        storedAt: now,
+        expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+        staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
+          ? now + this.ttlMs + this.staleMs
+          : undefined,
+      });
     });
+    const variant = {
+      slugKey: createCacheKey(ctx, `page:${slug}`),
+      expiresAt: this.ttlMs ? now + this.ttlMs + this.staleMs : undefined,
+      settled: false,
+      write,
+    };
+    this.variants.set(cacheKey, variant);
+    try {
+      await write;
+      variant.settled = true;
+    } catch (error) {
+      if (this.variants.get(cacheKey) === variant) {
+        if (previous?.settled) this.variants.set(cacheKey, previous);
+        else this.variants.delete(cacheKey);
+      }
+      throw error;
+    }
 
     logger.debug("Cached result", {
       slug,
@@ -230,6 +267,7 @@ export class ContextAwareCacheCoordinator {
 
   async clearForContext(ctx: RenderContext): Promise<void> {
     const startTime = Date.now();
+    await this.clearTrackedVariants((key) => key.startsWith(`${ctx.cachePrefix}:`));
 
     if (!this.store.deleteByPrefix) {
       logger.warn("Store does not support prefix deletion", {
@@ -257,6 +295,7 @@ export class ContextAwareCacheCoordinator {
   async clearForProject(projectId: string): Promise<void> {
     const startTime = Date.now();
     const prefix = `${projectId}:`;
+    await this.clearTrackedVariants((key) => key.startsWith(prefix));
 
     if (!this.store.deleteByPrefix) {
       logger.warn("Store does not support prefix deletion", { projectId });
@@ -275,8 +314,10 @@ export class ContextAwareCacheCoordinator {
   }
 
   async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
+    const slugKey = createCacheKey(ctx, `page:${slug}`);
+    await this.clearTrackedVariants((_key, trackedSlug) => trackedSlug === slugKey);
     if (this.store.deleteByPrefix) {
-      const prefix = createCacheKey(ctx, `page:${slug}`);
+      const prefix = slugKey;
       await this.store.deleteByPrefix(prefix);
       logger.debug("Cleared slug from cache by prefix", {
         slug,
@@ -301,13 +342,27 @@ export class ContextAwareCacheCoordinator {
     });
   }
 
+  private async clearTrackedVariants(
+    matches: (key: string, slugKey: string) => boolean,
+  ): Promise<void> {
+    const variants = [...this.variants].filter(([key, variant]) => matches(key, variant.slugKey));
+    // Wait for writes admitted before invalidation so they cannot repopulate cleared entries.
+    await Promise.all(variants.map(([, variant]) => variant.write));
+    for (const [key, variant] of variants) {
+      await this.store.delete(key);
+      if (this.variants.get(key) === variant) this.variants.delete(key);
+    }
+  }
+
   async clearAll(): Promise<void> {
     await this.store.clear();
+    this.variants.clear();
     logger.debug("Cleared all cached data");
   }
 
   async destroy(): Promise<void> {
     await this.store.destroy();
+    this.variants.clear();
   }
 
   getStats(): { size: number } {
