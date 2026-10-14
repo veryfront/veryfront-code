@@ -1,6 +1,7 @@
 import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   bindHostedTerminalRun,
+  hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalCanonicalRunId,
 } from "./terminal-credential.ts";
@@ -727,6 +728,10 @@ export async function prepareHostedChatExecution<
       apiUrl: input.apiUrl.toString(),
       runId: input.request.durableRootRun.runId,
       canonicalRunId: hostedTerminalCanonicalRunId(input.request),
+      acceptedChildEvidence: (projectId, signal) =>
+        hostedAcceptedChildEvidence(input.request, projectId, signal, {
+          apiUrl: input.apiUrl.toString(),
+        }),
       inheritedAdmitter: hostedInheritedRunAdmitter(input.request, {
         apiUrl: input.apiUrl.toString(),
       }),
@@ -860,6 +865,15 @@ export async function prepareHostedChatExecution<
   }
   const creationOptions = {
     ...runtimePreparation.creationOptions,
+    ...(input.request.serverResolvedRootRunId
+      ? { rootRunId: input.request.serverResolvedRootRunId }
+      : {}),
+    ...(input.request.serverResolvedTaskInput
+      ? {
+        taskInput: input.request.serverResolvedTaskInput,
+        rootRunId: input.request.serverResolvedTaskInput.rootRunId,
+      }
+      : {}),
     ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
   };
   registerHostedAgentPauseCreationOptions(

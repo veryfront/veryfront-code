@@ -1,4 +1,5 @@
 import {
+  type HostedAcceptedTaskInputReceipt,
   type HostedRunEventWriterCapability,
   inheritedChildAdmitter,
 } from "./child-run-event-writer-token.ts";
@@ -19,6 +20,7 @@ export interface HostedChildConversationBodyInput {
 /** Input payload for bootstrap hosted child run. */
 export interface BootstrapHostedChildRunInput extends HostedChildConversationBodyInput {
   runEventWriterCapability?: HostedRunEventWriterCapability;
+  acceptedTaskInputReceipt?: HostedAcceptedTaskInputReceipt;
   authToken: string;
   apiUrl: string;
   runProjectId?: string | null;
@@ -69,6 +71,7 @@ export async function bootstrapHostedChildRun(
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     parentRunId: input.parentRunId,
+    acceptedTaskInputReceipt: input.acceptedTaskInputReceipt,
     agentId: input.agentId,
     projectId: input.runProjectId ?? input.ensureProjectId ?? null,
   });

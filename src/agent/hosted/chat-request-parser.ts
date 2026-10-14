@@ -1,3 +1,9 @@
+import { authorizeHostedTaskInput } from "./task-input.ts";
+import {
+  encodeHostedTaskInput,
+  type HostedTaskInput,
+  resolveHostedTaskInput,
+} from "./task-input.ts";
 import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
@@ -155,6 +161,9 @@ export type ParsedHostedChatRequest = {
   authToken: string;
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
+  /** Accepted input checked against signed host scope before application I/O. */
+  serverResolvedTaskInput?: HostedTaskInput;
+  serverResolvedRootRunId?: string;
   /**
    * Provider-native replay state resolved by the server outside forwardedProps
    * so large opaque provider blocks do not consume the public forwardedProps budget.
@@ -453,6 +462,7 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+    verifyRunEventAppendToken,
   );
   registerHostedAgentPauseCredential(
     verifiedRequest,
@@ -465,6 +475,8 @@ function stripUnverifiedServerResolvedRequestState(
   parsedRequest: ParsedHostedChatRequest,
 ): ParsedHostedChatRequest {
   const {
+    serverResolvedTaskInput: _serverResolvedTaskInput,
+    serverResolvedRootRunId: _serverResolvedRootRunId,
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
     serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
@@ -887,6 +899,51 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
+  // Verify any typed binding before project/source discovery. Body fields never
+  // supply authority: the root and digest must come from the signed verifier.
+  const writerToken = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
+  const writerVerification = writerToken && options.verifyRunEventAppendToken
+    ? toRunEventAppendTokenResult(
+      await options.verifyRunEventAppendToken({
+        token: writerToken,
+        projectId: invocation.data.run.project.projectId,
+        runId: invocation.data.run.runId,
+      }),
+    )
+    : undefined;
+  let verifiedTaskInput: HostedTaskInput | undefined;
+  let signedTaskInputSha256: unknown;
+  let signedTaskInputRootRunId: unknown;
+  try {
+    signedTaskInputSha256 = writerVerification &&
+      readOwnDataProperty(writerVerification, "taskInputSha256", "Writer verification", false);
+    signedTaskInputRootRunId = writerVerification &&
+      readOwnDataProperty(writerVerification, "taskInputRootRunId", "Writer verification", false);
+    if (
+      invocation.data.taskInput !== undefined || signedTaskInputSha256 !== undefined ||
+      signedTaskInputRootRunId !== undefined
+    ) {
+      if (
+        !writerVerification?.verified || typeof signedTaskInputSha256 !== "string" ||
+        typeof signedTaskInputRootRunId !== "string"
+      ) throw new Error("Missing typed input proof");
+      verifiedTaskInput = resolveHostedTaskInput(invocation.data.taskInput, {
+        projectId: invocation.data.run.project.projectId,
+        rootRunId: signedTaskInputRootRunId,
+        runId: invocation.data.run.runId,
+      });
+      if (
+        !verifiedTaskInput ||
+        await computeHash(encodeHostedTaskInput(verifiedTaskInput)) !== signedTaskInputSha256
+      ) throw new Error("Invalid typed input proof");
+    }
+  } catch {
+    return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
+  }
+  if (writerToken && !writerVerification?.verified) {
+    return Response.json({ errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" }, { status: 403 });
+  }
+
   const chatRequest = hostedChatRequestSchema.safeParse(
     buildHostedChatRequestInputFromRuntimeAgentInvocation(invocation.data),
   );
@@ -922,7 +979,13 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   const verifiedRequest = await withVerifiedRunEventAppendToken(
     request,
     parsedRequest,
-    options.verifyRunEventAppendToken,
+    writerVerification
+      ? (input) =>
+        input.token === writerToken && input.projectId === invocation.data.run.project.projectId &&
+          input.runId === invocation.data.run.runId
+          ? Promise.resolve(writerVerification)
+          : options.verifyRunEventAppendToken?.(input) ?? Promise.resolve({ verified: false })
+      : options.verifyRunEventAppendToken,
     true,
     {
       runtimeTargetKind: chatRequest.data.context.runtimeTargetKind,
@@ -931,6 +994,18 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   );
   if (verifiedRequest instanceof Response) {
     return verifiedRequest;
+  }
+
+  if (verifiedTaskInput) {
+    verifiedRequest.serverResolvedTaskInput = authorizeHostedTaskInput(verifiedTaskInput);
+  }
+  if (writerVerification?.verified && writerVerification.rootRunId !== undefined) {
+    if (
+      typeof writerVerification.rootRunId !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(writerVerification.rootRunId) ||
+      (verifiedTaskInput && verifiedTaskInput.rootRunId !== writerVerification.rootRunId)
+    ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
+    verifiedRequest.serverResolvedRootRunId = writerVerification.rootRunId;
   }
 
   // Request-scoped agent definitions may only come from the trusted control plane.

@@ -46,8 +46,8 @@ function expectedCategory(type: string): RunEventCategory {
 
 describe("run event catalog", () => {
   it("exposes complete, unique metadata through the public entrypoint", () => {
-    assertEquals(RUN_EVENT_CATALOG.length, 57);
-    assertEquals(new Set(RUN_EVENT_CATALOG.map((event) => event.type)).size, 57);
+    assertEquals(RUN_EVENT_CATALOG.length, 59);
+    assertEquals(new Set(RUN_EVENT_CATALOG.map((event) => event.type)).size, 59);
     assertEquals(
       RUN_EVENT_CATALOG.map((event) => event.type).sort(),
       [...RUN_EVENT_TYPES].sort(),
@@ -132,7 +132,7 @@ describe("run event catalog", () => {
     }
     assertEquals(RUN_EVENT_CATALOG.filter((event) => event.category === "ag-ui").length, 24);
     assertEquals(RUN_EVENT_CATALOG.filter((event) => event.category === "extensions").length, 13);
-    assertEquals(RUN_EVENT_CATALOG.filter((event) => event.category === "system").length, 20);
+    assertEquals(RUN_EVENT_CATALOG.filter((event) => event.category === "system").length, 22);
   });
 
   it("files model usage with extensions and the model kind, not as a system row", () => {

@@ -969,3 +969,43 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.error.errorCode, "SERVER_ERROR");
   });
 });
+
+describe("native accepted task input signed claims", () => {
+  it("verifies paired proof and rejects missing/malformed pairs without widening grants", async () => {
+    for (
+      const fields of [
+        { taskInputSha256: "a".repeat(64), taskInputRootRunId: "run_root" },
+        { taskInputSha256: "a".repeat(64) },
+        { taskInputRootRunId: "run_root" },
+        { taskInputSha256: "A".repeat(64), taskInputRootRunId: "run_root" },
+        { taskInputSha256: "a".repeat(64), taskInputRootRunId: "invalid root" },
+      ]
+    ) {
+      const fixture = await createRs256JwtFixture({
+        ...apiRunEventWriterContract.payload,
+        ...fields,
+        integrationTools: ["outlook__move_email"],
+      });
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      const result = await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: apiRunEventWriterContract.payload.projectId,
+        runId: apiRunEventWriterContract.payload.runId,
+      });
+      assertEquals(
+        result,
+        fields.taskInputSha256 === "a".repeat(64) && fields.taskInputRootRunId === "run_root"
+          ? { verified: true, ...fields, integrationTools: ["outlook__move_email"] }
+          : { verified: false },
+      );
+    }
+  });
+});

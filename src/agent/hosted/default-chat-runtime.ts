@@ -1,3 +1,4 @@
+import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
@@ -137,6 +138,8 @@ export type DefaultHostedChatRuntimeCreationOptions =
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   projectId: string;
   projectSlug?: string;
@@ -221,6 +224,8 @@ function createDefaultTaskContext(
   return {
     authToken: input.options.authToken,
     runId: input.options.runId,
+    rootRunId: input.options.rootRunId,
+    taskInput: resolveHostedTaskInput(input.options.taskInput, input.options),
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     projectSlug: input.options.projectSlug,
@@ -592,6 +597,8 @@ export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
+  const taskInput = resolveHostedTaskInput(input.options.taskInput, input.options);
+  input = { ...input, options: { ...input.options, taskInput } };
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
@@ -666,6 +673,8 @@ export async function createDefaultHostedChatRuntime(
             runtimeAgent,
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,
+            rootRunId: input.options.rootRunId,
+            taskInput,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,

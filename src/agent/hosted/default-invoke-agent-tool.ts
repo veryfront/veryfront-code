@@ -1,3 +1,5 @@
+import { hostedInheritedRootRunId, hostedInheritedTaskInput } from "./terminal-credential.ts";
+import type { HostedTaskInput } from "./task-input.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
 import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
@@ -100,7 +102,11 @@ export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   clientProfile?: RuntimeClientProfile | null;
   model?: string;
   conversationId?: string;
+  runId?: string;
+  agentId?: string;
   parentRunId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   parentMessageId?: string;
   veryfrontInvocationContext?: HostedChildInvocationContext;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void> | void;
@@ -325,12 +331,27 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
+  // A fork receives only its own admitted binding; a parent's binding cannot
+  // leak through the otherwise shared project execution context.
+  const taskInput = durableChildRun && options.context.projectId
+    ? hostedInheritedTaskInput(durableChildRun, options.context.projectId)
+    : undefined;
+  const childContext = {
+    ...options.context,
+    runId: durableChildRun?.childRunId,
+    agentId: childAgentId,
+    taskInput,
+    rootRunId: durableChildRun && options.context.projectId
+      ? hostedInheritedRootRunId(durableChildRun, options.context.projectId) ?? taskInput?.rootRunId
+      : undefined,
+  };
+
   const globalTools = withPlatformHostToolAliases(
     {
       sleep: markTrustedHostToolProvenance(sleepTool),
     },
     options.buildGlobalTools?.(
-      options.context,
+      childContext,
       childAgentId,
       childConfig,
       durableChildRun,
@@ -896,6 +917,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         runProjectId: targetProjectId,
         parentConversationId: options.context.conversationId,
         parentRunId: options.context.parentRunId,
+        rootRunId: options.context.rootRunId,
         parentMessageId: options.context.parentMessageId,
         trustedInvocationContext: options.context.veryfrontInvocationContext,
         getProjectId: () => options.context.projectId,

@@ -1,3 +1,13 @@
+import { hostedAcceptedChildEvidenceFromCapability } from "./child-run-event-writer-token.ts";
+import {
+  getHostedChildTaskInputResolver,
+  withHostedChildTaskInputResolver,
+} from "./accepted-child-input-scope.ts";
+import { ACCEPTED_TASK_INPUT_EVENT_TYPE } from "./accepted-task-input.ts";
+import {
+  type HostedAcceptedTaskInputReceipt,
+  persistHostedAcceptedTaskInput,
+} from "./child-run-event-writer-token.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   hostedInheritedEventWriter,
@@ -528,6 +538,8 @@ export type ExecuteHostedDurableChildForkInput<
   apiUrl: string;
   /** Opaque exact-parent authority used only to mint this invocation's child writer. */
   runEventWriterCapability?: HostedRunEventWriterCapability;
+  acceptedTaskInputReceipt?: HostedAcceptedTaskInputReceipt;
+  rootRunId?: string;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
     toolCallId: string;
@@ -678,6 +690,7 @@ async function bootstrapHostedDurableChildFork<
     const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;
     const run = await bootstrapChildRun({
       runEventWriterCapability: input.runEventWriterCapability,
+      acceptedTaskInputReceipt: input.acceptedTaskInputReceipt,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       ensureProjectId: input.getProjectId() ?? undefined,
@@ -865,6 +878,43 @@ export async function executeHostedDurableChildFork<
 ): Promise<TResult> {
   const runEventWriterCapability = input.runEventWriterCapability ??
     getActiveHostedRunEventWriterCapability();
+  const resolver = getHostedChildTaskInputResolver();
+  if (resolver) {
+    const projectId = input.getProjectId();
+    if (!projectId || !input.parentRunId) {
+      throw new Error("Accepted child input requires parent project scope");
+    }
+    const accepted = await resolver(Object.freeze({
+      projectId,
+      rootRunId: input.rootRunId,
+      parentRunId: input.parentRunId,
+      targetAgentId: input.childAgentId,
+      toolCallId: input.executionOptions.toolCallId,
+      evidence: hostedAcceptedChildEvidenceFromCapability(
+        runEventWriterCapability,
+        input.parentRunId,
+        projectId,
+        input.executionOptions.abortSignal,
+      ),
+    }));
+    if (accepted) {
+      input = {
+        ...input,
+        acceptedTaskInputReceipt: await persistHostedAcceptedTaskInput({
+          capability: runEventWriterCapability,
+          parentRunId: input.parentRunId,
+          event: {
+            ...accepted,
+            type: ACCEPTED_TASK_INPUT_EVENT_TYPE,
+            version: 1,
+            targetAgentId: input.childAgentId,
+          },
+          abortSignal: input.executionOptions.abortSignal,
+        }),
+      };
+    }
+  }
+
   return runInheritedChildExecutionOnce(
     runEventWriterCapability,
     `${input.parentRunId}:${input.executionOptions.toolCallId}`,
@@ -872,7 +922,12 @@ export async function executeHostedDurableChildFork<
       runWithHostedRunEventWriterCapability(
         undefined,
         () =>
-          executeHostedDurableChildForkWithCapability(input, runEventWriterCapability, onAdmitted),
+          withHostedChildTaskInputResolver(undefined, () =>
+            executeHostedDurableChildForkWithCapability(
+              input,
+              runEventWriterCapability,
+              onAdmitted,
+            )),
       ),
   );
 }

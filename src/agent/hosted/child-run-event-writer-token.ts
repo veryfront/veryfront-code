@@ -1,3 +1,9 @@
+import type { HostedAcceptedChildEvidence } from "./accepted-child-evidence.ts";
+import {
+  type HostedAcceptedTaskInputEvent,
+  snapshotHostedAcceptedTaskInputEvent,
+} from "./accepted-task-input.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
@@ -42,6 +48,7 @@ const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
 type InheritedRunAdmitter = (toolCallId: string, prompt: string) => (
   input: Omit<Parameters<typeof createConversationAgentRun>[0], "conversationId"> & {
     conversationId?: string;
+    acceptedTaskInputReceipt?: HostedAcceptedTaskInputReceipt;
   },
 ) => Promise<ConversationRunProjection>;
 
@@ -195,6 +202,7 @@ type CapabilityState = {
   parentToolStartBarrier?: ReturnType<typeof createParentToolStartBarrier>;
   inheritedExecution?: boolean;
   inheritedAdmitter?: InheritedRunAdmitter;
+  acceptedChildEvidence?: (projectId: string, signal?: AbortSignal) => HostedAcceptedChildEvidence;
   apiUrl: string;
   resolveApiUrl: VeryfrontApiRequestUrlResolver;
   runId: string;
@@ -547,6 +555,7 @@ export function createHostedRunEventWriterCapability(input: {
   /** Canonical routing UUID supplied by trusted dispatch. */
   canonicalRunId?: string;
   inheritedAdmitter?: InheritedRunAdmitter;
+  acceptedChildEvidence?: (projectId: string, signal?: AbortSignal) => HostedAcceptedChildEvidence;
   /** Exact-run append credential obtained from trusted ingress. */
   runEventAppendToken: string;
   /** Bounded child-capability exchange timeout. */
@@ -566,6 +575,7 @@ export function createHostedRunEventWriterCapability(input: {
     runId: input.runId,
     canonicalRunId: input.canonicalRunId,
     inheritedAdmitter: input.inheritedAdmitter,
+    acceptedChildEvidence: input.acceptedChildEvidence,
     runEventAppendToken: input.runEventAppendToken,
     timeoutMs: input.timeoutMs ?? DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS,
     fetch: input.fetch ? snapshotFetch(input.fetch) : capturedFetch,
@@ -758,4 +768,86 @@ export function hostedRunIsInherited(
 ): boolean {
   const state = capability ? getWeakMapValue(capabilityState, capability) : undefined;
   return state?.runId === runId && state.inheritedExecution === true;
+}
+
+/** Opaque receipt returned only after the exact-parent runtime event is durable. */
+export type HostedAcceptedTaskInputReceipt = { readonly __acceptedTaskInputReceipt: never };
+const acceptedTaskInputReceipts = new NativeWeakMap<
+  object,
+  { parentRunId: string; canonicalParentRunId: string; eventId: number; targetAgentId: string }
+>();
+export async function persistHostedAcceptedTaskInput(
+  input: {
+    capability?: HostedRunEventWriterCapability;
+    parentRunId: string;
+    event: HostedAcceptedTaskInputEvent;
+    abortSignal?: AbortSignal;
+  },
+): Promise<HostedAcceptedTaskInputReceipt> {
+  const capability = input.capability ?? getActiveHostedRunEventWriterCapability();
+  const state = capability && getWeakMapValue(capabilityState, capability);
+  if (
+    !state || state.runId !== input.parentRunId || !state.canonicalRunId ||
+    !isRunUuid(state.canonicalRunId)
+  ) throw new Error("Accepted task input requires exact-parent hosted authority");
+  const event = snapshotHostedAcceptedTaskInputEvent(input.event);
+  const signal = input.abortSignal
+    ? AbortSignal.any([input.abortSignal, AbortSignal.timeout(state.timeoutMs)])
+    : AbortSignal.timeout(state.timeoutMs);
+  const response = await state.fetch(
+    state.resolveApiUrl(`/runs/${encodeURIComponent(state.canonicalRunId)}/events`),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${state.runEventAppendToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: privateJsonStringify({ events: [event] }),
+      redirect: "error",
+      signal,
+    },
+  );
+  if (!response.ok) throw new Error(`Accepted task input persistence failed (${response.status})`);
+  const responseBody = await readResponseTextPrefix(response, 4096, signal);
+  if (responseBody.truncated) throw new Error("Accepted input persistence receipt exceeds budget");
+  const body = privateJsonParse(responseBody.text);
+  const eventId = ownValue(body, "latest_event_id");
+  if (
+    ownValue(body, "run_id") !== state.canonicalRunId || ownValue(body, "appended_count") !== 1 ||
+    typeof eventId !== "number" || !Number.isSafeInteger(eventId) || eventId <= 0
+  ) throw new Error("Invalid accepted task input persistence receipt");
+  const receipt = objectCreate(null) as HostedAcceptedTaskInputReceipt;
+  setWeakMapValue(acceptedTaskInputReceipts, receipt, {
+    parentRunId: state.runId,
+    canonicalParentRunId: state.canonicalRunId,
+    eventId,
+    targetAgentId: event.targetAgentId,
+  });
+  return objectFreeze(receipt);
+}
+export function hostedAcceptedTaskInputReference(
+  receipt: HostedAcceptedTaskInputReceipt | undefined,
+  parentRunId: string,
+  targetAgentId: string,
+): { event_id: number } | undefined {
+  if (receipt === undefined) return undefined;
+  const state = getWeakMapValue(acceptedTaskInputReceipts, receipt);
+  if (!state || state.parentRunId !== parentRunId || state.targetAgentId !== targetAgentId) {
+    throw new Error("Unverified accepted task input receipt");
+  }
+  return objectFreeze({ event_id: state.eventId });
+}
+
+export function hostedAcceptedChildEvidenceFromCapability(
+  capability: HostedRunEventWriterCapability | undefined,
+  parentRunId: string,
+  projectId: string,
+  signal?: AbortSignal,
+): HostedAcceptedChildEvidence {
+  const state = capability && getWeakMapValue(capabilityState, capability);
+  if (!state || state.runId !== parentRunId || !state.acceptedChildEvidence) {
+    throw new Error("Accepted child readers require parent writer authority");
+  }
+  return state.acceptedChildEvidence(projectId, signal);
 }

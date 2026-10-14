@@ -79,6 +79,9 @@ export type HostedServiceRunEventAppendTokenResult = {
   resumeToolCallSha256?: string;
   /** SHA-256 of the run's latest tool exposure checkpoint, carried by the signed token. */
   toolExposureCheckpointSha256?: string;
+  rootRunId?: string;
+  taskInputSha256?: string;
+  taskInputRootRunId?: string;
 };
 
 /**
@@ -742,9 +745,37 @@ export function createHostedServiceAuth(
         ) {
           return { verified: false };
         }
+        const rootRunId = readOwnDataProperty(payload, "rootRunId", "Writer claims", false);
+        if (
+          rootRunId !== undefined &&
+          (typeof rootRunId !== "string" ||
+            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) === null)
+        ) return { verified: false };
+        const taskInputSha256 = readOwnDataProperty(
+          payload,
+          "taskInputSha256",
+          "Writer claims",
+          false,
+        );
+        const taskInputRootRunId = readOwnDataProperty(
+          payload,
+          "taskInputRootRunId",
+          "Writer claims",
+          false,
+        );
+        if (taskInputSha256 !== undefined || taskInputRootRunId !== undefined) {
+          if (
+            typeof taskInputSha256 !== "string" ||
+            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [taskInputSha256]) === null ||
+            typeof taskInputRootRunId !== "string" ||
+            ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [taskInputRootRunId]) === null
+          ) return { verified: false };
+        }
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         return {
           verified: true,
+          ...(rootRunId !== undefined ? { rootRunId } : {}),
+          ...(taskInputSha256 !== undefined ? { taskInputSha256, taskInputRootRunId } : {}),
           ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
