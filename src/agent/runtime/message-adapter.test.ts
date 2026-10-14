@@ -936,3 +936,77 @@ Deno.test("projection preserves a root suggestion when no accepted child output 
     }
   }
 });
+
+Deno.test("child projection omits accessor execution and bounds cyclic output", () => {
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    let reads = 0;
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      text: "diagnostic prose",
+      summary: { text: "diagnostic prose" },
+    };
+    Object.defineProperty(child, "output", {
+      enumerable: true,
+      get() {
+        reads++;
+        return { directory: "getter-owned" };
+      },
+    });
+    const part = createToolResultPart({ toolName, toolCallId: "call", output: child });
+    assertEquals(reads, 0);
+    assertEquals(part.output, {
+      type: "json",
+      value: {
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        text: "diagnostic prose",
+        output: "[Accessor omitted]",
+        summary: {},
+      },
+    });
+    assertEquals(reads, 0);
+    const receipt: Record<string, unknown> = { directory: "accepted" };
+    receipt.self = receipt;
+    assertEquals(
+      createToolResultPart({
+        toolName,
+        toolCallId: "call",
+        output: { ok: true, status: "completed", childRunId: "child", output: receipt },
+      }).output,
+      {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          output: { directory: "accepted", self: "[Circular]" },
+        },
+      },
+    );
+  }
+});
+
+Deno.test("child projection never mutates an inherited root suggestion", () => {
+  const hint = { instruction: "guidance", suggestedText: "original suggestion" };
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "rootResponseHint");
+  Object.defineProperty(Object.prototype, "rootResponseHint", { value: hint, configurable: true });
+  try {
+    for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+      const child = {
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        output: { directory: "accepted" },
+      };
+      const projected = createToolResultPart({ toolName, toolCallId: "call", output: child });
+      assertEquals(Object.hasOwn(projected.output.value as object, "rootResponseHint"), false);
+      assertEquals(hint.suggestedText, "original suggestion");
+    }
+  } finally {
+    if (previous) Object.defineProperty(Object.prototype, "rootResponseHint", previous);
+    else Reflect.deleteProperty(Object.prototype, "rootResponseHint");
+  }
+});

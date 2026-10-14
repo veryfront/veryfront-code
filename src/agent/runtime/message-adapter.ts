@@ -7,6 +7,7 @@ import {
   pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import { normalizeConversationPlatformToolName } from "../platform-tool-names.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -476,8 +477,9 @@ function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
 }
 
 function hasCompletedChildResult(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && value.ok === true && value.status === "completed" &&
-    typeof value.childRunId === "string";
+  return isRecord(value) && hasOwn(value, "ok") && value.ok === true &&
+    hasOwn(value, "status") && value.status === "completed" &&
+    hasOwn(value, "childRunId") && typeof value.childRunId === "string";
 }
 
 function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
@@ -487,8 +489,9 @@ function hasCompletedStructuredChildOutput(value: unknown): value is Record<stri
 
 function hasCompletedChildResultText(value: unknown): value is Record<string, unknown> {
   return hasCompletedChildResult(value) &&
-    ((typeof value.text === "string" && value.text.length > 0) ||
-      (isRecord(value.summary) && typeof value.summary.text === "string" &&
+    ((hasOwn(value, "text") && typeof value.text === "string" && value.text.length > 0) ||
+      (hasOwn(value, "summary") && isRecord(value.summary) &&
+        hasOwn(value.summary, "text") && typeof value.summary.text === "string" &&
         value.summary.text.length > 0));
 }
 
@@ -497,13 +500,16 @@ export function createProviderToolResultOutput(part: {
   toolName: string;
   output: unknown;
 }): { type: "json"; value: JsonValue } {
-  const output = toToolResultOutput(part.output);
-  let value = output.value;
   const isChildResult = normalizeConversationPlatformToolName(part.toolName) === "invoke_agent";
+  const output = isChildResult
+    ? { type: "json" as const, value: toChatJsonValue(part.output) }
+    : toToolResultOutput(part.output);
+  let value = output.value;
   if (isChildResult) {
     let candidate: unknown = value;
     if (
-      isRecord(candidate) && (candidate.type === "json" || candidate.type === "text") &&
+      isRecord(candidate) && hasOwn(candidate, "type") &&
+      (candidate.type === "json" || candidate.type === "text") &&
       hasOwn(candidate, "value")
     ) {
       candidate = candidate.value;
@@ -517,12 +523,15 @@ export function createProviderToolResultOutput(part: {
     }
     if (
       hasCompletedStructuredChildOutput(candidate) ||
-      (hasCompletedChildResultText(candidate) && isRecord(candidate.rootResponseHint)) ||
-      (isRecord(candidate) && typeof candidate.childRunId === "string" &&
-        typeof candidate.text === "string" && isRecord(candidate.summary) &&
+      (hasCompletedChildResultText(candidate) && hasOwn(candidate, "rootResponseHint") &&
+        isRecord(candidate.rootResponseHint)) ||
+      (isRecord(candidate) && hasOwn(candidate, "childRunId") &&
+        typeof candidate.childRunId === "string" && hasOwn(candidate, "text") &&
+        typeof candidate.text === "string" && hasOwn(candidate, "summary") &&
+        isRecord(candidate.summary) && hasOwn(candidate.summary, "text") &&
         candidate.summary.text === candidate.text)
     ) {
-      value = toJsonValue(candidate);
+      value = toChatJsonValue(candidate);
       output.value = value;
     }
   }
@@ -531,7 +540,7 @@ export function createProviderToolResultOutput(part: {
   if (
     isChildResult &&
     (hasCompletedStructuredChildOutput(value) || hasCompletedChildResultText(value)) &&
-    isRecord(value.rootResponseHint)
+    hasOwn(value, "rootResponseHint") && isRecord(value.rootResponseHint)
   ) {
     delete value.rootResponseHint.suggestedText;
   }
@@ -539,19 +548,21 @@ export function createProviderToolResultOutput(part: {
   // other intermediate results, so keep it in durable history, not the handoff.
   if (isChildResult && hasCompletedStructuredChildOutput(value)) {
     delete value.text;
-    if (isRecord(value.summary)) delete value.summary.text;
+    if (hasOwn(value, "summary") && isRecord(value.summary)) delete value.summary.text;
     return output;
   }
   // The durable child envelope keeps both fields for compatibility. Providers
   // need the text once, alongside the remaining summary metadata.
   if (
     isChildResult && isRecord(value) &&
-    typeof value.childRunId === "string" && typeof value.text === "string" &&
-    isRecord(value.summary) && value.summary.text === value.text
+    hasOwn(value, "childRunId") && typeof value.childRunId === "string" &&
+    hasOwn(value, "text") && typeof value.text === "string" &&
+    hasOwn(value, "summary") && isRecord(value.summary) && hasOwn(value.summary, "text") &&
+    value.summary.text === value.text
   ) {
     delete value.summary.text;
     if (
-      typeof value.output === "string" && value.output.length > 0 &&
+      hasOwn(value, "output") && typeof value.output === "string" && value.output.length > 0 &&
       privateTextEndsWith(value.text, value.output)
     ) {
       delete value.output;

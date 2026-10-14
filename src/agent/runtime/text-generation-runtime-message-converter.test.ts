@@ -1610,3 +1610,53 @@ Deno.test("provider requests omit rewritten completed-child hints while preservi
   }
   assertEquals(child.rootResponseHint?.suggestedText, hint.suggestedText);
 });
+
+Deno.test("text-generation child projection is data-only and cycle bounded", () => {
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    let reads = 0;
+    const child = { ok: true, status: "completed", childRunId: "child", text: "diagnostic prose" };
+    Object.defineProperty(child, "output", {
+      enumerable: true,
+      get() {
+        reads++;
+        return { directory: "getter-owned" };
+      },
+    });
+    const cyclic: Record<string, unknown> = { directory: "accepted" };
+    cyclic.self = cyclic;
+    for (
+      const result of [child, {
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        output: cyclic,
+      }]
+    ) {
+      const converted = convertToTextGenerationRuntimeMessages([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+        } as Message,
+      ]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: result === child
+          ? {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            text: "diagnostic prose",
+            output: "[Accessor omitted]",
+          }
+          : {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            output: { directory: "accepted", self: "[Circular]" },
+          },
+      });
+      assertEquals(reads, 0);
+    }
+  }
+});
