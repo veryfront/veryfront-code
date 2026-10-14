@@ -123,7 +123,7 @@ describe("provider-tool-compat", () => {
     );
   });
 
-  it("bounds fan-out references while folding OpenAI roots", () => {
+  it("bounds fan-out references while folding Anthropic roots", () => {
     const defs: Record<string, unknown> = {
       level14: { type: "object", properties: { value: { type: "string" } } },
     };
@@ -136,13 +136,13 @@ describe("provider-tool-compat", () => {
       () =>
         sanitizeProviderToolSchema(
           { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
-          { model: "openai/gpt-5.4" },
+          { model: "anthropic/claude-opus-4-6" },
         ),
       TypeError,
       "root normalization budget",
     );
   });
-  it("bounds reference depth while folding OpenAI roots", () => {
+  it("bounds reference depth while folding Anthropic roots", () => {
     const defs: Record<string, unknown> = {
       level80: { type: "object", properties: { value: { type: "string" } } },
     };
@@ -153,13 +153,13 @@ describe("provider-tool-compat", () => {
       () =>
         sanitizeProviderToolSchema(
           { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
-          { model: "openai/gpt-5.4" },
+          { model: "anthropic/claude-opus-4-6" },
         ),
       TypeError,
       "root normalization budget",
     );
   });
-  it("bounds encoded bytes introduced by references while folding OpenAI roots", () => {
+  it("bounds encoded bytes introduced by references while folding Anthropic roots", () => {
     assertThrows(
       () =>
         sanitizeProviderToolSchema(
@@ -168,7 +168,7 @@ describe("provider-tool-compat", () => {
             $defs: { large: { type: "object", description: "\u0000".repeat(90_000) } },
             allOf: [{ $ref: "#/$defs/large" }],
           } as never,
-          { model: "openai/gpt-5.4" },
+          { model: "anthropic/claude-opus-4-6" },
         ),
       TypeError,
       "root normalization budget",
@@ -191,7 +191,7 @@ describe("provider-tool-compat", () => {
       $defs: { input: { properties: { value: { type: "string" } } } },
       allOf: [{ $ref: "#/$defs/input" }],
     } as never;
-    const options = { model: "openai/gpt-5.4", rootExpansionBudget: budget };
+    const options = { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget };
     assertEquals(sanitizeProviderToolSchema(schema, options).type, "object");
     assertThrows(
       () => {
@@ -201,24 +201,16 @@ describe("provider-tool-compat", () => {
       "root normalization budget",
     );
   });
-  it("removes unsupported root keywords restored by a reference", () => {
+  it("keeps a root reference as authored while folding", () => {
     const schema = {
       type: "object",
       $ref: "#/$defs/input",
       allOf: [],
-      $defs: {
-        input: {
-          type: "object",
-          enum: [{ mode: "a" }],
-          not: { required: ["legacy"] },
-          properties: { mode: { type: "string", enum: ["a", "b"] } },
-        },
-      },
+      $defs: { input: { type: "object", properties: { mode: { type: "string" } } } },
     } as never;
     const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
-    assertEquals(Object.hasOwn(result, "not"), false);
-    assertEquals(Object.hasOwn(result, "enum"), false);
-    assertEquals(result.properties?.mode, { type: "string", enum: ["a", "b"] });
+    assertEquals(result.$ref, "#/$defs/input");
+    assertEquals(Object.hasOwn(result, "allOf"), false);
   });
   it("accepts large unchanged Anthropic schemas without spending expansion allowance", () => {
     for (const length of [260_000, 1024 * 1024]) {
@@ -244,15 +236,13 @@ describe("provider-tool-compat", () => {
       {
         type: "object",
         anyOf: [{ properties: { value: { type: "string", description } } }, {
-          properties: { other: { type: "number" } },
+          properties: { value: { type: "number" }, other: { type: "number" } },
         }],
       } as never,
       { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget },
     );
-    // `other` omits `value`, so the folded property also admits any value.
     const value = normalized.properties?.value as { anyOf: { description?: string }[] };
     assertEquals(value.anyOf[0]?.description, description);
-    assertEquals(value.anyOf[1], {});
     assertEquals(budget.remainingNodes, 200_000);
     assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
   });
@@ -274,22 +264,23 @@ describe("provider-tool-compat", () => {
     assertEquals(budget.remainingNodes, 200_000);
     assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
   });
-  it("preserves references into removed root compositions", () => {
+  it("falls back to a permissive root for references into removed compositions", () => {
     const result = sanitizeProviderToolSchema(
       {
         type: "object",
         allOf: [{ properties: { value: { type: "string" } } }],
         properties: { alias: { $ref: "#/allOf/0/properties/value" } },
+        required: ["alias"],
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    const alias = result.properties?.alias as { $ref: string };
-    const tokens = alias.$ref.slice(2).split("/");
-    let referenced: unknown = result;
-    for (const token of tokens) referenced = Reflect.get(referenced as object, token);
-    assertEquals(referenced, { type: "string" });
+    assertEquals(result, {
+      type: "object",
+      properties: { alias: {}, value: {} },
+      required: ["alias"],
+    } as never);
   });
-  it("retains both referenced and sibling root compositions", () => {
+  it("folds sibling root compositions beside a root reference", () => {
     const result = sanitizeProviderToolSchema(
       {
         type: "object",
@@ -301,24 +292,25 @@ describe("provider-tool-compat", () => {
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(Object.keys(result.properties ?? {}).sort(), ["extra", "value"]);
-    assertEquals(result.required?.slice().sort(), ["extra", "value"]);
+    assertEquals(result.$ref, "#/$defs/input");
+    assertEquals(result.properties, { extra: { type: "number" } });
+    assertEquals(result.required, ["extra"]);
   });
-  it("retains the authored root for bare recursive references", () => {
-    const schema = {
-      type: "object",
-      properties: { child: { $ref: "#" } },
-      anyOf: [
-        { properties: { kind: { const: "a" } }, required: ["kind"] },
-        { properties: { kind: { const: "b" } }, required: ["kind"] },
-      ],
-    };
-    const result = sanitizeProviderToolSchema(schema as never, { model: "openai/gpt-5.4" });
-    const child = result.properties?.child as { $ref: string };
-    assertEquals(child.$ref.startsWith("#/$defs/"), true);
-    const name = child.$ref.slice("#/$defs/".length);
-    const retained = (result.$defs as Record<string, { anyOf?: unknown[] }>)[name];
-    assertEquals(retained?.anyOf?.length, 2);
+  it("keeps bare root references pointing at the widened root", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { child: { $ref: "#" } },
+        anyOf: [
+          { properties: { kind: { const: "a" } }, required: ["kind"] },
+          { properties: { kind: { const: "b" } }, required: ["kind"] },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties?.child, { $ref: "#" });
+    assertEquals(result.properties?.kind, { anyOf: [{ const: "a" }, { const: "b" }] });
+    assertEquals(Object.hasOwn(result, "$defs"), false);
   });
   it("keeps root definitions bound when a folded branch reuses their names", () => {
     for (const model of ["openai/gpt-5.4", "anthropic/claude-opus-4-6"]) {
@@ -338,89 +330,115 @@ describe("provider-tool-compat", () => {
     }
   });
   it("leaves literal values that look like references unchanged", () => {
+    const payload = {
+      const: { $ref: "#/anyOf/0" },
+      default: { $ref: "#/anyOf/0" },
+      examples: [{ $ref: "#/anyOf/0" }],
+      enum: [{ $ref: "#/anyOf/0" }],
+    };
     const result = sanitizeProviderToolSchema(
       {
         type: "object",
-        properties: {
-          payload: { const: { $ref: "#" }, default: { $ref: "#" }, examples: [{ $ref: "#" }] },
-          const: { $ref: "#/anyOf/0/properties/value" },
-        },
+        properties: { payload },
         anyOf: [{ properties: { value: { type: "string" } } }],
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    const payload = result.properties?.payload as Record<string, unknown>;
-    assertEquals(payload.const, { $ref: "#" });
-    assertEquals(payload.default, { $ref: "#" });
-    assertEquals(payload.examples, [{ $ref: "#" }]);
-    const alias = (result.properties?.const as { $ref: string }).$ref;
-    assertEquals(alias.startsWith("#/$defs/source_root/"), true);
-    const source = (result.$defs as Record<string, { properties: Record<string, unknown> }>)
-      .source_root;
-    assertEquals((source?.properties.payload as Record<string, unknown>).const, { $ref: "#" });
-
-    const literalOnly = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: { payload: { enum: [{ $ref: "#/anyOf/0" }] } },
-        anyOf: [{ type: "object" }],
-      } as never,
-      { model: "openai/gpt-5.4" },
-    );
-    assertEquals(Object.hasOwn(literalOnly, "$defs"), false);
+    assertEquals(result.properties, { payload, value: { type: "string" } });
   });
-  it("keeps an allOf intersection closed when one branch is closed", () => {
+  it("never narrows an allOf intersection with a closed branch", () => {
     const result = sanitizeProviderToolSchema(
       {
         type: "object",
         allOf: [
           { properties: { a: { type: "string" } }, additionalProperties: false },
-          {},
+          { properties: { b: { type: "number" } } },
         ],
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(result.additionalProperties, false);
+    assertEquals(result, {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "number" } },
+    } as never);
   });
-  it("widens an omitted property with a matching pattern schema", () => {
-    const result = sanitizeProviderToolSchema(
+  it("falls back to a permissive root for branches with pattern properties", () => {
+    const originalTest = RegExp.prototype.test;
+    const originalExec = RegExp.prototype.exec;
+    let executed = false;
+    RegExp.prototype.test = function (this: RegExp, input: string) {
+      executed = true;
+      return originalTest.call(this, input);
+    };
+    RegExp.prototype.exec = function (this: RegExp, input: string) {
+      executed = true;
+      return originalExec.call(this, input);
+    };
+    try {
+      for (
+        const branch of [
+          { patternProperties: { "^(a+)+$": { type: "number" } }, additionalProperties: false },
+          {
+            properties: { value: { type: "string" } },
+            patternProperties: { "^value$": { maxLength: 1 } },
+          },
+        ]
+      ) {
+        executed = false;
+        const result = sanitizeProviderToolSchema(
+          {
+            type: "object",
+            anyOf: [{ properties: { value: { type: "string" } } }, branch],
+          } as never,
+          { model: "openai/gpt-5.4" },
+        );
+        assertEquals(executed, false);
+        assertEquals(result, { type: "object", properties: { value: {} } } as never);
+      }
+    } finally {
+      RegExp.prototype.test = originalTest;
+      RegExp.prototype.exec = originalExec;
+    }
+  });
+  it("falls back to a permissive root for branch resources and object constraints", () => {
+    const branchResource = sanitizeProviderToolSchema(
       {
         type: "object",
-        anyOf: [
-          { properties: { value: { type: "string" } } },
-          { patternProperties: { "^value$": { type: "number" } }, additionalProperties: false },
-        ],
+        $defs: { item: { type: "string" } },
+        properties: { root: { $ref: "#/$defs/item" } },
+        allOf: [{
+          $id: "https://example.com/branch",
+          $defs: { item: { type: "number" } },
+          properties: { value: { $ref: "#/$defs/item" } },
+        }],
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(result.properties?.value, { anyOf: [{ type: "string" }, { type: "number" }] });
+    assertEquals(branchResource, {
+      type: "object",
+      $defs: { item: { type: "string" } },
+      properties: { root: { $ref: "#/$defs/item" }, value: {} },
+    } as never);
+
+    const constrained = sanitizeProviderToolSchema(
+      { type: "object", allOf: [{ minProperties: 1 }] } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(constrained, { type: "object" } as never);
   });
-  it("rebases a retained root identifier and respects nested resources", () => {
+  it("keeps the root identifier and nested resources as authored", () => {
     const nested = { $id: "https://example.com/nested", $ref: "#/anyOf/0" };
     const result = sanitizeProviderToolSchema(
       {
         $id: "https://example.com/tool",
         type: "object",
-        properties: { child: { $ref: "#" }, nested },
+        properties: { nested },
         anyOf: [{ properties: { value: { type: "string" } } }],
       } as never,
       { model: "openai/gpt-5.4" },
     );
     assertEquals(result.$id, "https://example.com/tool");
-    const source = (result.$defs as Record<string, Record<string, unknown>>).source_root;
-    assertEquals(Object.hasOwn(source ?? {}, "$id"), false);
-    assertEquals(result.properties?.nested, nested);
-    assertEquals((source?.properties as Record<string, unknown>).nested, nested);
-
-    const nestedOnly = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: { nested },
-        anyOf: [{ type: "object" }],
-      } as never,
-      { model: "openai/gpt-5.4" },
-    );
-    assertEquals(Object.hasOwn(nestedOnly, "$defs"), false);
+    assertEquals(result.properties, { nested, value: { type: "string" } });
   });
   it("snapshots the complete OpenAI schema before removing root keywords", () => {
     let deep: Record<string, unknown> = {};
@@ -443,7 +461,7 @@ describe("provider-tool-compat", () => {
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(result.properties?.value, { anyOf: [{ type: "string" }, {}] });
+    assertEquals(result.properties?.value, {});
 
     const closed = sanitizeProviderToolSchema(
       {
@@ -455,7 +473,19 @@ describe("provider-tool-compat", () => {
       } as never,
       { model: "openai/gpt-5.4" },
     );
-    assertEquals(closed.properties?.value, { type: "string" });
+    assertEquals(closed.properties, { value: { type: "string" }, other: {} });
+  });
+  it("folds many disjoint alternatives in linear space", () => {
+    const branches = Array.from({ length: 3_000 }, (_, index) => ({
+      properties: { [`field${index}`]: { type: "string" } },
+    }));
+    const result = sanitizeProviderToolSchema(
+      { type: "object", anyOf: branches } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    const properties = Object.values(result.properties ?? {});
+    assertEquals(properties.length, 3_000);
+    assertEquals(properties.every((schema) => countNodes(schema) === 1), true);
   });
   it("folds root combinators out of OpenAI tool schemas", () => {
     const nested = {
