@@ -7,6 +7,61 @@ import {
 } from "#veryfront/testing/assert.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 
+import {
+  AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
+  applyContextBudget,
+  ContextCompactionError,
+  getContextCompactionEventPayloadSchema,
+} from "./context-budget-manager.ts";
+
+function message(
+  id: string,
+  role: AgentRuntimeMessage["role"],
+  text: string,
+  timestamp = 1,
+): AgentRuntimeMessage {
+  return {
+    id,
+    role,
+    parts: [{ type: "text", text }],
+    timestamp,
+  };
+}
+
+function isTextPart(part: unknown): part is { type: "text"; text: string } {
+  return typeof part === "object" && part !== null &&
+    "type" in part && part.type === "text" &&
+    "text" in part && typeof part.text === "string";
+}
+
+function toolCallMessage(id: string, toolCallId: string): AgentRuntimeMessage {
+  return {
+    id,
+    role: "assistant",
+    parts: [{
+      type: "tool-call",
+      toolCallId,
+      toolName: "search_docs",
+      args: { query: "context compaction" },
+    }],
+    timestamp: 1,
+  };
+}
+
+function toolResultMessage(id: string, toolCallId: string): AgentRuntimeMessage {
+  return {
+    id,
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId,
+      toolName: "search_docs",
+      result: { ok: true },
+    }],
+    timestamp: 1,
+  };
+}
+
 Deno.test("applyContextBudget compacts a long active turn while preserving its exact user request and tool pairs", async () => {
   const messages: AgentRuntimeMessage[] = [
     message("request", "user", "Process ten fixture emails"),
@@ -93,60 +148,6 @@ Deno.test("active-turn compaction cannot split atomic segments of the preserved 
     ContextCompactionError,
   );
 });
-import {
-  AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE,
-  applyContextBudget,
-  ContextCompactionError,
-  getContextCompactionEventPayloadSchema,
-} from "./context-budget-manager.ts";
-
-function message(
-  id: string,
-  role: AgentRuntimeMessage["role"],
-  text: string,
-  timestamp = 1,
-): AgentRuntimeMessage {
-  return {
-    id,
-    role,
-    parts: [{ type: "text", text }],
-    timestamp,
-  };
-}
-
-function isTextPart(part: unknown): part is { type: "text"; text: string } {
-  return typeof part === "object" && part !== null &&
-    "type" in part && part.type === "text" &&
-    "text" in part && typeof part.text === "string";
-}
-
-function toolCallMessage(id: string, toolCallId: string): AgentRuntimeMessage {
-  return {
-    id,
-    role: "assistant",
-    parts: [{
-      type: "tool-call",
-      toolCallId,
-      toolName: "search_docs",
-      args: { query: "context compaction" },
-    }],
-    timestamp: 1,
-  };
-}
-
-function toolResultMessage(id: string, toolCallId: string): AgentRuntimeMessage {
-  return {
-    id,
-    role: "tool",
-    parts: [{
-      type: "tool-result",
-      toolCallId,
-      toolName: "search_docs",
-      result: { ok: true },
-    }],
-    timestamp: 1,
-  };
-}
 
 Deno.test("applyContextBudget returns unchanged messages when under budget", async () => {
   const messages = [
