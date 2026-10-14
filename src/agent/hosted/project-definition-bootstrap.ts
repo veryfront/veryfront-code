@@ -2,6 +2,7 @@ import type { AgentSystem } from "../types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
+import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 
 /**
  * Experimental, default-off switch. The deployment policy below is consulted
@@ -116,9 +117,11 @@ export async function readHostedProjectDefinitionBootstrap(input: {
         signal,
       )
     ) return null;
+    // The resolver keeps a configured base path such as `/v1`.
     const url = new URL(
-      `/projects/${encodeURIComponent(input.projectId)}/definitions`,
-      input.apiUrl,
+      createVeryfrontApiRequestUrlResolver(input.apiUrl)(
+        `/projects/${encodeURIComponent(input.projectId)}/definitions`,
+      ),
     );
     url.searchParams.set(
       "source_target_kind",

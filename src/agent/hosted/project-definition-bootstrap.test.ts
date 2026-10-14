@@ -335,6 +335,18 @@ describe("project definition bootstrap", () => {
     assertEquals(urls[1]?.searchParams.get("target_environment_id"), "env-1");
     assertEquals(urls[1]?.searchParams.has("target_branch_id"), false);
     assertEquals(urls[1]?.searchParams.get("limit"), "20");
+    const prefixed: URL[] = [];
+    await readHostedProjectDefinitionBootstrap({
+      ...base,
+      apiUrl: "http://localhost:4000/v1",
+      selection: envSelection,
+      fetch: (url: URL | RequestInfo) => {
+        prefixed.push(new URL(String(url)));
+        return Promise.resolve(Response.json({}));
+      },
+    });
+    assertEquals(prefixed[0]?.pathname, "/v1/projects/project%201/definitions");
+    assertEquals(prefixed[0]?.searchParams.get("target_environment_id"), "env-1");
     assertEquals(
       await readHostedProjectDefinitionBootstrap({
         ...base,
