@@ -36,7 +36,7 @@
     {
       "id": "mongodb-atlas__list_projects",
       "name": "List Projects",
-      "description": "List Atlas projects (groups) the service account can access",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -82,7 +82,7 @@
     {
       "id": "mongodb-atlas__list_clusters",
       "name": "List Clusters",
-      "description": "List clusters in an Atlas project",
+      "description": "List clusters",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -136,7 +136,7 @@
     {
       "id": "mongodb-atlas__get_cluster",
       "name": "Get Cluster",
-      "description": "Get details of a cluster, including state and connection strings",
+      "description": "Get cluster",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -167,7 +167,7 @@
     {
       "id": "mongodb-atlas__list_database_users",
       "name": "List Database Users",
-      "description": "List database users configured in an Atlas project",
+      "description": "List database users",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

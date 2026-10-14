@@ -8,6 +8,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "../../../scripts/ci/registry-release-integrity.ts";
 import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
+import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
@@ -142,7 +143,7 @@ async function readJobs(): Promise<YamlRecord> {
     parse(await Deno.readTextFile(WORKFLOW_PATH)),
     "CI workflow",
   );
-  return asRecord(workflow.jobs, "CI workflow jobs");
+  return await inlinePublicPoolJobs(workflow);
 }
 
 async function canonicalPublisherBody(): Promise<string> {
@@ -251,6 +252,10 @@ async function runReleaseScript({
   failedUploadAttempts = 0,
   uploadFailureStatus = 1,
   failedPublishAttempts = 0,
+  publishedAssetsDir = "",
+  publishedPrerelease = true,
+  releaseMode = "--prerelease",
+  latestReleaseTag = "",
 }: {
   stateDir: string;
   asset: string;
@@ -260,6 +265,10 @@ async function runReleaseScript({
   failedUploadAttempts?: number;
   uploadFailureStatus?: UploadFailureStatus;
   failedPublishAttempts?: number;
+  publishedAssetsDir?: string;
+  publishedPrerelease?: boolean;
+  releaseMode?: "--prerelease" | "--latest";
+  latestReleaseTag?: string;
 }): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
   const uploadCount = `${stateDir}/upload-count`;
@@ -279,12 +288,44 @@ async function runReleaseScript({
         "shift",
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
+        '  if [ "$1" = "api" ] && [ "$2" = "repos/veryfront/veryfront/releases/latest" ]; then',
+        '    [ -n "$LATEST_RELEASE_TAG" ] || return 1',
+        '    printf "%s\\n" "$LATEST_RELEASE_TAG"',
+        "    return 0",
+        "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
+        '    if [[ "$*" == *"--json assets"* ]]; then',
+        "      local remote_asset",
+        '      for remote_asset in "$PUBLISHED_ASSETS_DIR"/*; do',
+        '        [ -f "$remote_asset" ] || continue',
+        '        printf "%s\\n" "${remote_asset##*/}"',
+        "      done",
+        "      return 0",
+        "    fi",
+        '    if [[ "$*" == *"--json isPrerelease"* ]]; then',
+        '      printf "%s\\n" "$PUBLISHED_PRERELEASE"',
+        "      return 0",
+        "    fi",
         '    case "$(cat "$RELEASE_STATE")" in',
         "      missing) return 1 ;;",
         '      draft) printf "true\\n" ;;',
         '      published) printf "false\\n" ;;',
         "    esac",
+        "    return 0",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "download" ]; then',
+        "    shift 3",
+        '    local pattern="" output=""',
+        '    while [ "$#" -gt 0 ]; do',
+        '      case "$1" in',
+        "        --repo) shift 2 ;;",
+        '        --pattern) pattern="$2"; shift 2 ;;',
+        '        --output) output="$2"; shift 2 ;;',
+        "        *) return 1 ;;",
+        "      esac",
+        "    done",
+        '    [ -f "$PUBLISHED_ASSETS_DIR/$pattern" ] || return 1',
+        '    cp "$PUBLISHED_ASSETS_DIR/$pattern" "$output"',
         "    return 0",
         "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "create" ]; then',
@@ -329,7 +370,7 @@ async function runReleaseScript({
         '  --tag "v1.2.3-rc.4" \\',
         '  --title "v1.2.3-rc.4" \\',
         '  --notes "Install notes" \\',
-        "  --prerelease \\",
+        '  "$RELEASE_MODE" \\',
         "  -- \\",
         '  "$@"',
       ].join("\n"),
@@ -347,6 +388,10 @@ async function runReleaseScript({
       FAILED_UPLOAD_ATTEMPTS: String(failedUploadAttempts),
       UPLOAD_FAILURE_STATUS: String(uploadFailureStatus),
       FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
+      PUBLISHED_ASSETS_DIR: publishedAssetsDir,
+      PUBLISHED_PRERELEASE: String(publishedPrerelease),
+      RELEASE_MODE: releaseMode,
+      LATEST_RELEASE_TAG: latestReleaseTag,
     },
     stdout: "piped",
     stderr: "piped",
@@ -612,9 +657,12 @@ printf '%064d  %s\n' 0 "$1"
 
       assertEquals(output.code, 1);
       assertEquals(
-        ghCalls.filter((call) => call.startsWith("release view ")).length,
-        1,
-        "a published-release conflict must fail without retries",
+        ghCalls.filter((call) => call.startsWith("release view ")),
+        [
+          "release view v1.2.3-rc.4 --repo veryfront/veryfront --json isDraft --jq .isDraft",
+          "release view v1.2.3-rc.4 --repo veryfront/veryfront --json assets --jq .assets[].name",
+        ],
+        "a published-release conflict must perform only identity reads without retries",
       );
       assertEquals(
         decoder.decode(output.stderr).includes("Retrying"),
@@ -2234,4 +2282,196 @@ describe("RC publication alongside the reused main Sonar scan", () => {
       assertEquals(output.code, result === "success" ? 0 : 1);
     }
   });
+});
+
+describe("canonical public RC material verification", () => {
+  const assets = [
+    "veryfront-linux-x64",
+    "veryfront-linux-arm64",
+    "veryfront-proxy-linux-x64",
+    "veryfront-proxy-linux-arm64",
+  ];
+  for (const failure of ["", ...assets, "mismatched-bytes"]) {
+    it(`blocks RC consumption for ${failure || "no missing or mismatched assets"}`, async () => {
+      const jobs = await readJobs();
+      const uploader = asRecord(jobs["publish-public-release"], "public release job");
+      const verify = namedStep(uploader, "Verify canonical public Linux assets");
+      const allSteps = steps(uploader, "public release job");
+      assert(
+        allSteps.indexOf(verify) > allSteps.indexOf(namedStep(uploader, "Create GitHub releases")),
+      );
+      assertEquals(asRecord(verify.env, "asset verification environment").GH_TOKEN, undefined);
+      await withTempDir(async (directory) => {
+        await Deno.mkdir(`${directory}/public-release-assets`);
+        for (const asset of assets) {
+          await Deno.writeTextFile(`${directory}/public-release-assets/${asset}`, asset);
+        }
+        const result = await new Deno.Command("bash", {
+          cwd: directory,
+          args: [
+            "-euo",
+            "pipefail",
+            "-c",
+            [
+              "curl() {",
+              "  local destination='' url='' ",
+              '  while [ "$#" -gt 0 ]; do case "$1" in --output) destination="$2"; shift 2;; https://*) url="$1"; shift;; *) shift;; esac; done',
+              '  local asset="${url##*/}"',
+              '  [ "$FAILURE" != "$asset" ] || return 22',
+              '  cp "public-release-assets/$asset" "$destination"',
+              '  if [ "$FAILURE" = mismatched-bytes ]; then printf bad > "$destination"; fi',
+              "}",
+              String(verify.run),
+            ].join("\n"),
+          ],
+          env: { VERSION: "0.1.0-rc.1", FAILURE: failure, RUNNER_TEMP: directory },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(result.success, failure === "", decoder.decode(result.stderr));
+      });
+    });
+  }
+});
+
+describe("immutable public release recovery", () => {
+  for (const state of ["matching", "missing", "mismatched", "wrong-mode", "extra"] as const) {
+    it(`reverifies ${state} existing publication without mutation`, async () => {
+      await withTempDir(async (stateDir) => {
+        const asset = `${stateDir}/veryfront-linux-x64`;
+        const metadata = `${stateDir}/release-metadata.json`;
+        const publishedAssetsDir = `${stateDir}/published`;
+        await Deno.mkdir(publishedAssetsDir);
+        await Deno.writeTextFile(asset, "qualified binary");
+        await Deno.writeTextFile(metadata, '{"sourceCommit":"qualified-source"}');
+        await Deno.copyFile(asset, `${publishedAssetsDir}/veryfront-linux-x64`);
+        if (state !== "missing") {
+          await Deno.writeTextFile(
+            `${publishedAssetsDir}/release-metadata.json`,
+            state === "mismatched"
+              ? '{"sourceCommit":"other-source"}'
+              : '{"sourceCommit":"qualified-source"}',
+          );
+        }
+        if (state === "extra") {
+          await Deno.writeTextFile(
+            `${publishedAssetsDir}/unexpected-executable`,
+            "unqualified binary",
+          );
+        }
+        const output = await runReleaseScript({
+          stateDir,
+          asset,
+          extraAssets: [metadata],
+          initialReleaseState: "published",
+          publishedAssetsDir,
+          publishedPrerelease: state !== "wrong-mode",
+        });
+        assertEquals(output.code, state === "matching" ? 0 : 1, decoder.decode(output.stderr));
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim().split("\n");
+        assertEquals(
+          calls.filter((call) => /^release (create|upload|edit|delete) /.test(call)),
+          [],
+        );
+        assertEquals(decoder.decode(output.stderr).includes("Retrying"), false);
+        assertEquals(await Deno.readTextFile(`${stateDir}/release-state`), "published");
+      });
+    });
+  }
+});
+
+describe("immutable latest release recovery", () => {
+  for (
+    const [latestReleaseTag, expectedCode] of [
+      ["v1.2.3-rc.4", 0],
+      ["v1.2.2", 1],
+      ["", 1],
+    ] as const
+  ) {
+    it(`adopts an identical stable release only when latest is ${latestReleaseTag || "unreadable"}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const asset = `${stateDir}/veryfront-linux-x64`;
+        const publishedAssetsDir = `${stateDir}/published`;
+        await Deno.mkdir(publishedAssetsDir);
+        await Deno.writeTextFile(asset, "qualified binary");
+        await Deno.copyFile(asset, `${publishedAssetsDir}/veryfront-linux-x64`);
+        const output = await runReleaseScript({
+          stateDir,
+          asset,
+          initialReleaseState: "published",
+          publishedAssetsDir,
+          publishedPrerelease: false,
+          releaseMode: "--latest",
+          latestReleaseTag,
+        });
+        assertEquals(output.code, expectedCode, decoder.decode(output.stderr));
+        const calls = (await Deno.readTextFile(`${stateDir}/gh.log`)).trim().split("\n");
+        assert(
+          calls.includes("api repos/veryfront/veryfront/releases/latest --jq .tag_name"),
+          "a stable rerun must read the repository's latest release before adopting",
+        );
+        assertEquals(
+          calls.filter((call) => /^release (create|upload|edit|delete) /.test(call)),
+          [],
+        );
+        assertEquals(decoder.decode(output.stderr).includes("Retrying"), false);
+      });
+    });
+  }
+});
+
+it("diagnoses failed RC publishing without building or executing installed packages", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const diagnostic = namedStep(registry, "Diagnose failed RC publish");
+  assertEquals(diagnostic.if, "${{ needs.prerelease.result != 'success' }}");
+  for (const name of ["Build registry validation image", "Validate exact registry release"]) {
+    assertEquals(namedStep(registry, name).if, "${{ needs.prerelease.result == 'success' }}");
+  }
+  for (
+    const required of [
+      "diagnoseRegistryPackages",
+      "--user 1000:1000",
+      "--read-only",
+      "--cap-drop ALL",
+      "--security-opt no-new-privileges=true",
+      "--network=bridge",
+      "target=/source,readonly",
+      "runtimePackages",
+      "npm?.publish === false",
+    ]
+  ) {
+    assertStringIncludes(String(diagnostic.run), required);
+  }
+  assertEquals(String(diagnostic.run).includes("docker build"), false);
+  assertEquals(String(diagnostic.run).includes("npm install"), false);
+  assertEquals(
+    asRecord(diagnostic.env, "diagnostic env").RC_VERSION,
+    "${{ needs.prerelease.outputs.version }}",
+  );
+});
+
+it("reports failed RC diagnostics as a formatted failure without a stack trace", async () => {
+  const jobs = await readJobs();
+  const registry = asRecord(jobs["registry-validation-rc"], "RC registry job");
+  const run = String(namedStep(registry, "Diagnose failed RC publish").run);
+  const start = run.indexOf("-e '") + "-e '".length;
+  const script = run.slice(start, run.lastIndexOf("'"));
+  // Without RC_VERSION the inline entrypoint fails before any registry lookup.
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
+      script,
+    ],
+    cwd: fromFileUrl(new URL("../../../", import.meta.url)),
+    env: { RC_VERSION: "" },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = decoder.decode(output.stderr);
+  assertEquals(output.code, 1, stderr);
+  assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration].");
+  assertEquals(/^\s+at /m.test(stderr), false, stderr);
+  assertEquals(stderr.includes("registry-release-integrity.ts"), false, stderr);
 });

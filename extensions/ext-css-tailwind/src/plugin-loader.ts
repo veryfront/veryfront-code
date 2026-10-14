@@ -1,6 +1,7 @@
 /** Static plugin loading owned entirely by ext-css-tailwind. */
 
 import forms from "@tailwindcss/forms";
+// @deno-types="../vendor/typography.d.ts"
 import typography from "@tailwindcss/typography";
 import daisyui from "daisyui";
 import scrollbarHide from "tailwind-scrollbar-hide";

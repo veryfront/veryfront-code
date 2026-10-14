@@ -49,7 +49,7 @@ export type IntegrationClientConnection = IntegrationJsonObject & {
   status: "connected" | "expired" | "disconnected";
 };
 
-/** The OAuth status response, with the requested scope recorded by the client. */
+/** The legacy OAuth status shape, with the requested scope recorded by the client. */
 export type IntegrationConnectionStatus = IntegrationJsonObject & {
   connected: boolean;
   integration: string;
@@ -60,6 +60,50 @@ export type IntegrationConnectionStatus = IntegrationJsonObject & {
   connectionId?: string;
   connectionGenerationId?: string;
 };
+
+/** Options for `createConnectSession`. */
+export interface CreateConnectSessionOptions {
+  /** Connection owner: `user` for your own connection, `project` for the shared one. */
+  readonly scope: "user" | "project";
+  /** Absolute URI the browser returns to after consent. */
+  readonly redirectUri: string;
+  readonly abortSignal?: AbortSignal;
+}
+
+/** Options for `getConnectionStatus` and `deleteConnection`. */
+export interface ConnectionRequestOptions {
+  readonly abortSignal?: AbortSignal;
+}
+
+/**
+ * One-time link that starts provider consent. `connectUrl` and `sessionToken` are
+ * accessible but excluded from default serialization.
+ */
+export interface ConnectSession {
+  readonly sessionToken: string;
+  /** Open in a browser before `expiresAt`. */
+  readonly connectUrl: string;
+  /** UTC time (RFC 3339) after which `connectUrl` no longer starts consent. */
+  readonly expiresAt: string;
+}
+
+/** Whether an integration is connected for one owner. Not connected is a result, not an error. */
+export interface ConnectionStatus {
+  readonly integration: string;
+  readonly scope: "user" | "project";
+  readonly connected: boolean;
+  /** ID of the current connection; `null` when `connected` is false. */
+  readonly connectionId: string | null;
+  /** Generation of the current connection; `null` when `connected` is false. */
+  readonly connectionGenerationId: string | null;
+}
+
+/** A deleted connection. `providerRevoked` is false when the provider did not confirm revocation. */
+export interface ConnectionDeletion {
+  readonly id: string;
+  readonly status: "deleted";
+  readonly providerRevoked: boolean;
+}
 
 /** Native tool envelope, including multimedia, resources and extension metadata. */
 export type IntegrationToolResult = IntegrationJsonObject & {
@@ -157,11 +201,21 @@ export type IntegrationConnectionWaitOutcome =
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
-  /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
+  /** Read fresh selected-tool metadata. This neither runs a tool nor verifies provider access. */
+  checkReadiness(
+    toolName: string,
+    options?: IntegrationSelectionOptions,
+  ): Promise<IntegrationSelectedReadiness>;
+  /** @deprecated Use `checkReadiness`. */
   readiness(
     toolName: string,
     options?: IntegrationSelectionOptions,
   ): Promise<IntegrationSelectedReadiness>;
+  /** Traverse the integration catalog. */
+  listIntegrations(
+    options?: { search?: string; sortOrder?: "asc" | "desc" },
+  ): AsyncIterable<IntegrationCatalogEntry>;
+  /** @deprecated Use `listIntegrations`. */
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },
   ): AsyncIterable<IntegrationCatalogEntry>;
@@ -182,17 +236,47 @@ export interface IntegrationClient {
     integration: string,
     options?: IntegrationConnectOptions,
   ): Promise<IntegrationConnectOutcome>;
-  /** Read OAuth connectivity for an explicit scope, not executable readiness. */
+  /**
+   * Read OAuth connectivity for an explicit scope, not executable readiness.
+   *
+   * @deprecated Use `getConnectionStatus`. `status()` reads the same route and returns the
+   * legacy response shape.
+   */
   status(
     integration: string,
     scope: "user" | "project",
     options?: { abortSignal?: AbortSignal },
   ): Promise<IntegrationConnectionStatus>;
+  /** Create a one-time link that connects an OAuth integration to the project. */
+  createConnectSession(
+    name: string,
+    options: CreateConnectSessionOptions,
+  ): Promise<ConnectSession>;
+  /** Read whether an integration is connected for an explicit scope, not executable readiness. */
+  getConnectionStatus(
+    name: string,
+    scope: "user" | "project",
+    options?: ConnectionRequestOptions,
+  ): Promise<ConnectionStatus>;
+  /** Delete one connection's stored credentials and ask the provider to revoke them. */
+  deleteConnection(
+    name: string,
+    connectionId: string,
+    scope: "user" | "project",
+    options?: ConnectionRequestOptions,
+  ): Promise<ConnectionDeletion>;
   /** Poll status and connections until a new connection generation is observed or time runs out. */
   waitForConnection(
     integration: string,
     options: IntegrationConnectionWaitOptions,
   ): Promise<IntegrationConnectionWaitOutcome>;
+  /** Run one integration tool by its `integration__tool_id` name. Runs are never replayed. */
+  runTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    options?: IntegrationCallOptions,
+  ): Promise<IntegrationCallOutcome>;
+  /** @deprecated Use `runTool`. */
   call(
     toolName: string,
     args: Record<string, unknown>,

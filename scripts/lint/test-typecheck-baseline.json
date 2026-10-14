@@ -1,6 +1,5 @@
 [
   "cli/app/state.test.ts",
-  "cli/commands/knowledge/command.test.ts",
   "cli/commands/lint/handler.test.ts",
   "cli/commands/merge/command.test.ts",
   "cli/commands/test/handler.test.ts",

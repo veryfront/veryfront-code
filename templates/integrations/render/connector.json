@@ -28,7 +28,7 @@
     {
       "id": "render__list_services",
       "name": "List Services",
-      "description": "List services owned by the authenticated user or team",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -84,7 +84,7 @@
     {
       "id": "render__get_service",
       "name": "Get Service",
-      "description": "Get a service by ID",
+      "description": "Get service",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -102,7 +102,7 @@
     {
       "id": "render__list_deploys",
       "name": "List Deploys",
-      "description": "List deploys for a service",
+      "description": "List deploys",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -154,7 +154,7 @@
     {
       "id": "render__trigger_deploy",
       "name": "Trigger Deploy",
-      "description": "Trigger a new deploy for a service",
+      "description": "Trigger deploy",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -187,7 +187,7 @@
     {
       "id": "render__list_env_vars",
       "name": "List Environment Variables",
-      "description": "List all environment variables for a service",
+      "description": "List environment variables",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

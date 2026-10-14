@@ -1,3 +1,4 @@
+import { inheritToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import {
   appendPrivateArray,
   concatPrivateArrays,
@@ -236,12 +237,14 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
       };
 
     case "tool-result":
-      return {
+      return inheritToolResultSource<
+        Extract<AgentRuntimeMessage["parts"][number], { type: "tool-result" }>
+      >(part, {
         type: "tool-result",
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         result: "output" in part ? part.output : null,
-      };
+      });
 
     case "image":
     case "file":

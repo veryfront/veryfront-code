@@ -44,7 +44,7 @@
     {
       "id": "pagerduty__list_incidents",
       "name": "List Incidents",
-      "description": "List PagerDuty incidents with optional status, service, and time filters",
+      "description": "List incidents",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -139,7 +139,7 @@
     {
       "id": "pagerduty__get_incident",
       "name": "Get Incident",
-      "description": "Get a PagerDuty incident by ID or incident number",
+      "description": "Get incident",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "pagerduty__create_incident",
       "name": "Create Incident",
-      "description": "Manually trigger a new incident on a service",
+      "description": "Create incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -183,7 +183,7 @@
     {
       "id": "pagerduty__manage_incident",
       "name": "Manage Incident",
-      "description": "Acknowledge, resolve, reassign, or escalate an incident",
+      "description": "Manage incident",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -215,7 +215,7 @@
     {
       "id": "pagerduty__list_services",
       "name": "List Services",
-      "description": "List PagerDuty services",
+      "description": "List services",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -283,7 +283,7 @@
     {
       "id": "pagerduty__list_oncalls",
       "name": "List On-Calls",
-      "description": "List on-call entries for schedules, escalation policies, and users",
+      "description": "List on calls",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

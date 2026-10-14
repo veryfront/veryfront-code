@@ -55,6 +55,34 @@ describe("projectKnowledge", () => {
     clearEmbeddingProviders();
   });
 
+  it("keeps the original document readable when frontmatter is malformed", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      const content = "---\ntype: [unfinished\n---\n\n# Original body\n[Related](related.md)\n";
+      await writeTextFile(join(projectDir, "knowledge", "malformed.md"), content);
+      const knowledge = projectKnowledge({ projectDir, model: "test/demo" });
+      const result = await knowledge.lookup({
+        query: "malformed",
+        lookup_target: { path: "knowledge/malformed.md" },
+      });
+      assertEquals(result.data.length, 1);
+      assertEquals(result.data[0]?.content, content);
+    });
+  });
+
+  it("returns an explicitly requested empty document as empty content", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(join(projectDir, "knowledge", "empty.md"), "");
+      const result = await projectKnowledge({ projectDir, model: "test/demo" }).lookup({
+        query: "empty",
+        lookup_target: { path: "knowledge/empty.md" },
+      });
+      assertEquals(result.data.length, 1);
+      assertEquals(result.data[0]?.content, "");
+    });
+  });
+
   it("retrieves source-controlled project knowledge with default paths", async () => {
     registerTestEmbeddingProvider();
 
@@ -102,6 +130,27 @@ describe("projectKnowledge", () => {
       assertEquals(result, { query: "", matches: [], context: "" });
       assertEquals(await exists(join(projectDir, "data", "knowledge-index.json")), false);
     });
+  });
+
+  it("rejects caller-supplied semantic document scopes", async () => {
+    const knowledge = projectKnowledge({ model: "test/demo" });
+
+    await assertRejects(
+      () =>
+        knowledge.retrieve("policy", {
+          documentScope: {
+            version: 1,
+            path_flavor: "posix",
+            include_all: false,
+            includes: ["knowledge/public/**"],
+            excludes: [],
+            content_dir: "knowledge",
+            resolved_content_dir: "/repo/knowledge",
+          },
+        } as never),
+      Error,
+      "per-call documentScope is not supported",
+    );
   });
 
   it("applies retrieve maxQueryChars overrides to the RAG query once", async () => {
@@ -551,9 +600,12 @@ describe("projectKnowledge", () => {
       const knowledge = projectKnowledge({ projectDir });
       const capped = await knowledge.lookup({ query: "zxqv yjkp", limit: 100 });
       const floored = await knowledge.lookup({ query: "zxqv yjkp", limit: 0 });
+      const defaulted = await knowledge.lookup({ query: "zxqv yjkp" });
 
       assertEquals(capped.returned, 12, "lookup limits are capped at MAX_LOOKUP_LIMIT");
       assertEquals(floored.returned, 1, "a non-positive limit clamps up to one entry");
+      // Hosted search_knowledge defaults to 6; the local helper keeps 8 until that gap is decided.
+      assertEquals(defaulted.returned, 8, "an omitted limit returns the local default of 8");
       assertEquals(
         typeof floored.page_info.next,
         "string",
@@ -1309,9 +1361,9 @@ describe("projectKnowledge", () => {
       "/projects/acme/files",
       "a non-production request reads the branch files endpoint",
     );
-    assertStringIncludes(
-      requestedUrls[0] ?? "",
-      "branch=feature-x",
+    assertEquals(
+      new URL(requestedUrls[0] ?? "", "https://api.example.test").searchParams.get("ref"),
+      "branch:feature-x",
       "a non-production request reads the requested branch",
     );
   });

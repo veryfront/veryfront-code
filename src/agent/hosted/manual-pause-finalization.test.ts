@@ -11,6 +11,7 @@ import {
   recordHostedAgentPauseCleanup,
 } from "./manual-pause-settlement.ts";
 import { finalizeHostedDetached, finalizeHostedResponse } from "./stream-finalization.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 
 describe("hosted manual pause finalization", () => {
   for (const mode of ["response", "detached"] as const) {
@@ -83,8 +84,21 @@ describe("hosted manual pause finalization", () => {
             recordHostedAgentPauseCleanup(capability, true);
           },
         };
-        if (mode === "response") await finalizeHostedResponse(options);
-        else await finalizeHostedDetached({ ...options, mirroredDurableOutput: true });
+        const entries: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => entries.push(entry));
+        try {
+          if (mode === "response") await finalizeHostedResponse(options);
+          else await finalizeHostedDetached({ ...options, mirroredDurableOutput: true });
+        } finally {
+          unsubscribe();
+        }
+        assertEquals(
+          entries.filter((entry) =>
+            entry.level === "info" &&
+            entry.message === "Agent run stopped at a pause boundary; leaving it nonterminal"
+          ).length,
+          1,
+        );
         assertEquals(terminals, 0);
         assertEquals(flushes, 1);
         assertEquals(cleanups, 1);

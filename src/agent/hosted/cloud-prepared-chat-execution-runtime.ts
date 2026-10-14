@@ -101,7 +101,7 @@ export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
           // `invoke_agent` delegates to a sub-agent and can outlast the idle
           // timeout; the shared watchdog no longer defaults this product-specific
           // exemption, so pass it explicitly for hosted runs.
-          longRunningToolNames: ["invoke_agent"],
+          longRunningToolNames: ["invoke_agent", "veryfront__invoke_agent"],
           longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
           setTimeoutFn: globalThis.setTimeout,
           clearTimeoutFn: globalThis.clearTimeout,

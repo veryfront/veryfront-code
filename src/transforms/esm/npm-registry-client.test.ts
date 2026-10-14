@@ -1,3 +1,4 @@
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -5,6 +6,11 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
@@ -151,7 +157,13 @@ describe("npm-registry-client dependency contracts", () => {
     // write-back must still authenticate instead of silently skipping.
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    const originalUrl = getHostEnv("VERYFRONT_API_URL");
+    const originalEgress = getHostEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
+    // Only Deno provides a test overlay for API configuration captured at boot.
+    const apiBaseUrl = isDeno ? "http://127.0.0.1:4000/api" : "https://api.example.test/api";
+    setEnv("VERYFRONT_API_BASE_URL", apiBaseUrl);
+    setEnv("VERYFRONT_API_URL", apiBaseUrl);
+    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     setEnv("VERYFRONT_API_TOKEN", "");
     refreshEnvironmentConfig();
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
@@ -178,6 +190,8 @@ describe("npm-registry-client dependency contracts", () => {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      setEnv("VERYFRONT_API_URL", originalUrl ?? "");
+      setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", originalEgress ?? "");
       refreshEnvironmentConfig();
     }
   });
@@ -348,6 +362,51 @@ describe("npm-registry-client dependency contracts", () => {
       refreshEnvironmentConfig();
     }
   });
+
+  for (
+    const failure of [
+      {
+        name: "a 404 from an API without the endpoint",
+        respond: () => Promise.resolve(new Response("{}", { status: 404 })),
+        message: "Dependency resolution write-back returned non-OK status",
+        context: { status: 404 },
+      },
+      {
+        name: "a network failure",
+        respond: () => Promise.reject(new TypeError("connection refused")),
+        message: "Dependency resolution write-back failed",
+        context: { code: "TypeError" },
+      },
+    ]
+  ) {
+    it(`warns about ${failure.name}`, async () => {
+      const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+      const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+      setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
+      refreshEnvironmentConfig();
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        await withMockFetch(failure.respond, async () => {
+          schedulePlatformDependencyResolution("project-ref", "zod", "^3", MAIN_SCHEDULE);
+          await _pendingResolutions();
+        });
+
+        const entry = entries.find((candidate) => candidate.message === failure.message);
+        assertEquals(entry?.level, "warn");
+        for (const [key, value] of Object.entries(failure.context)) {
+          assertEquals(entry?.context?.[key], value);
+        }
+      } finally {
+        __resetLogRecordEmitterForTests();
+        setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+        setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+        refreshEnvironmentConfig();
+      }
+    });
+  }
 
   it("coalesces ranges and undeclared bare names in one project batch", async () => {
     const requests: Array<{ projectId: string; specifiers: string[] }> = [];

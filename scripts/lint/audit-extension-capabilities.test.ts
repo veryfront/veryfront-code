@@ -648,12 +648,11 @@ describe("auditExtensionCapabilities", () => {
     );
   });
 
-  it("requires the scoped PurgeCSS platform and color discovery capability", () => {
+  it("requires the scoped PurgeCSS color discovery capability", () => {
     const manifestPath = "extensions/ext-css-purgecss/deno.json";
     const exactCapabilities = [{
       type: "env:read",
       keys: [
-        "__MINIMATCH_TESTING_PLATFORM__",
         "NO_COLOR",
         "FORCE_COLOR",
         "TERM",
@@ -679,7 +678,7 @@ describe("auditExtensionCapabilities", () => {
     ]);
 
     assertEquals(issues.map((issue) => issue.message), [
-      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform and color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM","__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received []',
+      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received []',
     ]);
   });
 
@@ -688,11 +687,27 @@ describe("auditExtensionCapabilities", () => {
     for (
       const capabilities of [
         [{ type: "env:read" }],
+        [{
+          type: "env:read",
+          keys: [
+            "__MINIMATCH_TESTING_PLATFORM__",
+            "NO_COLOR",
+            "FORCE_COLOR",
+            "TERM",
+            "CI",
+          ],
+        }, { type: "system:read", apis: ["cpus"] }],
+        [
+          { type: "env:read", keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"] },
+          {
+            type: "system:read",
+            apis: ["hostname"],
+          },
+        ],
         [
           {
             type: "env:read",
             keys: [
-              "__MINIMATCH_TESTING_PLATFORM__",
               "NO_COLOR",
               "FORCE_COLOR",
               "TERM",
@@ -714,11 +729,25 @@ describe("auditExtensionCapabilities", () => {
       assertEquals(issues.length, 1);
       assertEquals(
         issues[0]?.message.startsWith(
-          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS platform and color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM","__MINIMATCH_TESTING_PLATFORM__"],"type":"env:read"}]; received ',
+          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS color discovery" must declare exactly [{"keys":["CI","FORCE_COLOR","NO_COLOR","TERM"],"type":"env:read"}]; received ',
         ),
         true,
       );
     }
+  });
+
+  it("rejects an unscoped PurgeCSS system capability in both declarations", () => {
+    const capabilities = [
+      { type: "env:read", keys: ["NO_COLOR", "FORCE_COLOR", "TERM", "CI"] },
+      { type: "system:read" },
+    ];
+    const issues = auditExtensionCapabilities([input({
+      manifestPath: "extensions/ext-css-purgecss/deno.json",
+      manifestCapabilities: capabilities,
+      factoryCapabilities: capabilities,
+    })]);
+    assertEquals(issues.length, 2);
+    assertEquals(issues.every((issue) => issue.message.includes("apis")), true);
   });
 
   it("requires MLflow export capabilities and forbids the exporter-id env key", () => {

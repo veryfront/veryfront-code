@@ -3,7 +3,12 @@ import type { AgentCallCacheTtl } from "#veryfront/agent/runtime/call-context.ts
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import { buildAgentCallContext } from "../runtime/call-context.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import { CANONICAL_LOAD_SKILL_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
+
+const apply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
 
 /** Input payload for create Veryfront Cloud runtime system messages. */
 export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
@@ -15,7 +20,21 @@ export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   environmentContext?: string;
   /** Prompt-cache TTL for the static (Layer 0) message. Default `"5m"`. */
   cacheTtl?: AgentCallCacheTtl;
+  /** Exposed platform skill loader used by bounded inventory discovery. */
+  skillLoaderToolName?: RuntimeSkillLoaderToolName;
 };
+
+/** Resolve the model-visible hosted skill loader spelling from exposed tools. */
+export function resolveHostedRuntimeSkillLoaderToolName(
+  availableToolNames?: readonly string[],
+): RuntimeSkillLoaderToolName | undefined {
+  if (availableToolNames === undefined) return undefined;
+  if (apply(arrayIncludes, availableToolNames, [CANONICAL_LOAD_SKILL_TOOL_ID])) {
+    return CANONICAL_LOAD_SKILL_TOOL_ID;
+  }
+  if (apply(arrayIncludes, availableToolNames, [LOAD_SKILL_TOOL_ID])) return LOAD_SKILL_TOOL_ID;
+  return undefined;
+}
 
 /** Create Veryfront Cloud runtime system messages. */
 export function createVeryfrontCloudRuntimeSystemMessages(
@@ -37,6 +56,9 @@ export function createVeryfrontCloudRuntimeSystemMessages(
       }
       : {}),
     ...(input.skills === undefined ? {} : { skills: input.skills }),
+    ...(input.skillLoaderToolName === undefined
+      ? {}
+      : { skillLoaderToolName: input.skillLoaderToolName }),
     ...(input.environmentContext === undefined
       ? {}
       : { environmentContext: input.environmentContext }),
@@ -60,10 +82,17 @@ export function buildVeryfrontCloudRuntimeInstructions(
   input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
   options?: BuildVeryfrontCloudRuntimeInstructionsOptions,
 ): ChatSystemMessage[] {
+  const skillLoaderToolName = input.availableToolNames === undefined
+    ? input.skillLoaderToolName
+    : resolveHostedRuntimeSkillLoaderToolName(input.availableToolNames);
+  const skills = input.availableToolNames !== undefined && skillLoaderToolName === undefined
+    ? []
+    : input.skills;
   return createVeryfrontCloudRuntimeSystemMessages({
     agent: input.agentConfig,
     instructions: input.instructions || undefined,
-    skills: input.skills,
+    skills,
+    skillLoaderToolName,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,

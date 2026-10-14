@@ -83,7 +83,8 @@ describe("platform/runtime-request-context", () => {
                 await assertRejects(
                   () => rejected.getProject(),
                   Error,
-                  apiBaseUrl.startsWith("https:")
+                  apiBaseUrl === "https://caller.example" ||
+                    apiBaseUrl === "http://veryfront-api:80"
                     ? "Host-private credentials require the host API origin"
                     : "Host-private credentials require an HTTPS API endpoint",
                 );

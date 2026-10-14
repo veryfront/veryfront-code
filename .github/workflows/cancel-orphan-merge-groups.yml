@@ -1,0 +1,117 @@
+name: Cancel orphan merge-group runs
+
+on:
+  delete: {}
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_run:
+    workflows: [CI/CD]
+    types: [requested]
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: cancel-orphan-merge-groups
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: ${{ (github.event_name == 'schedule') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'delete' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'gh-readonly-queue/main/')) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      # Default-branch events execute trusted workflow logic, never queued code.
+      # No checkout or repository scripts with the cancellation token.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 0
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = `${owner}/${repo}`;
+            const { data: workflow } = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: "cicd.yml" });
+            if (workflow.path !== ".github/workflows/cicd.yml") return;
+            const { data: refs } = await github.rest.git.listMatchingRefs({ owner, repo, ref: "heads/gh-readonly-queue/main/" });
+            const live = new Set(refs.map((ref) => ref.ref));
+            // Every not-yet-completed status; live groups are still protected by the ref checks.
+            const statuses = ["requested", "waiting", "pending", "queued", "in_progress"];
+            const active = (run) => Number.isSafeInteger(run.id) && run.id > 0 &&
+              run.event === "merge_group" && statuses.includes(run.status) &&
+              run.workflow_id === workflow.id && run.repository?.full_name === repository &&
+              run.head_repository?.full_name === repository && /^[0-9a-f]{40}$/.test(run.head_sha ?? "") &&
+              /^gh-readonly-queue\/main\/pr-[1-9][0-9]*-[0-9a-f]{40}$/.test(run.head_branch ?? "");
+            const seen = new Set();
+            const failures = [];
+            for (const status of statuses) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner, repo, workflow_id: "cicd.yml", event: "merge_group", status, per_page: 100,
+              });
+              for (const run of runs) {
+                if (!active(run) || live.has(`refs/heads/${run.head_branch}`) || seen.has(run.id)) continue;
+                seen.add(run.id);
+                // Check each run independently: an error skips only that run, never cancels it.
+                try {
+                  const { data: latest } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+                  if (!active(latest) || latest.id !== run.id || latest.head_sha !== run.head_sha ||
+                      latest.head_branch !== run.head_branch || latest.run_attempt !== run.run_attempt) continue;
+                  // Landed groups also delete their queue ref; main may still reuse their run.
+                  // Only a queue commit that is not on main is an orphan. API errors fail closed.
+                  const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: `main...${run.head_sha}`,
+                  });
+                  if (!["ahead", "diverged"].includes(comparison.status)) continue;
+                  // A stale snapshot is never sufficient: only an authoritative 404 permits cancellation.
+                  try {
+                    await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                    continue;
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                  }
+                  // Landing can occur during the first ref lookup; confirm main again after the 404.
+                  const { data: finalComparison } = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: `main...${run.head_sha}`,
+                  });
+                  if (!["ahead", "diverged"].includes(finalComparison.status)) continue;
+                  // The comparison awaited an API call: recheck the ref immediately before cancelling.
+                  try {
+                    await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                    continue;
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                  }
+                  // Landing advances main before its queue ref is deleted, so after this 404 a landed
+                  // group is already on main. Ancestry is therefore the last check before cancelling.
+                  const { data: landedCheck } = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: `main...${run.head_sha}`,
+                  });
+                  if (!["ahead", "diverged"].includes(landedCheck.status)) continue;
+                  // Recreation during that comparison is caught here. A queue entry created after this
+                  // lookup gets a new merge-group commit and its own run, so it cannot make this run live.
+                  try {
+                    await github.rest.git.getRef({ owner, repo, ref: `heads/${run.head_branch}` });
+                    continue;
+                  } catch (error) {
+                    if (error.status !== 404) throw error;
+                  }
+                  try {
+                    // Graceful cancellation retains always() aggregators, even after their queue ref is gone.
+                    // These ignored gates must stop too; live groups never reach this endpoint.
+                    await github.rest.actions.forceCancelWorkflowRun({ owner, repo, run_id: run.id });
+                  } catch (error) {
+                    if (error.status !== 409) throw error;
+                    const { data: final } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id });
+                    if (final.status !== "completed") throw error;
+                    continue;
+                  }
+                  core.info(`Force-cancelled orphan merge-group run ${run.id} (${run.head_branch}); sweeper ${context.runId}: ${context.serverUrl}/${repository}/actions/runs/${context.runId}`);
+                } catch (error) {
+                  failures.push(`run ${run.id}: ${error.message}`);
+                }
+              }
+            }
+            if (failures.length > 0) {
+              throw new Error(`Orphan sweep failed for ${failures.length} run(s): ${failures.join("; ")}`);
+            }

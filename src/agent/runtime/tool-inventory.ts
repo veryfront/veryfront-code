@@ -21,6 +21,8 @@ const RUNTIME_TOOL_INVENTORY_FOOTER =
   `Only treat the tools listed above as actually available in this run.
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.`;
+const RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE =
+  "No tools are available in this run. Tool discovery and tool execution are unavailable. Do not fabricate tool calls, tool results, or tool_search calls. If the user requests an action that requires a tool, explain that the action is unavailable.";
 const RUNTIME_TOOL_SEARCH_GUIDANCE =
   "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.";
 
@@ -38,10 +40,16 @@ export interface DeferredToolSummary {
 }
 
 function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
+  if (toolNames.length === 0) {
+    return `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE}`;
+  }
   return somePrivateArray(toolNames, (name) => name === "tool_search")
     ? `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`
     : RUNTIME_TOOL_INVENTORY_FOOTER;
 }
+
+const RUNTIME_EMPTY_TOOL_INVENTORY_FOOTER =
+  `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_EMPTY_TOOL_INVENTORY_GUIDANCE}`;
 
 /**
  * Render the deferred catalog.
@@ -112,6 +120,7 @@ function removeFlattenedRuntimeToolInventory(instructions: string): string {
   // the terminator. Missing it here would leave the previous inventory in place
   // and append a second one on the next step.
   const terminatesInventory = privateTextEndsWith(inventory, RUNTIME_TOOL_INVENTORY_FOOTER) ||
+    privateTextEndsWith(inventory, RUNTIME_EMPTY_TOOL_INVENTORY_FOOTER) ||
     privateTextEndsWith(
       inventory,
       `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`,

@@ -165,6 +165,7 @@ it("compiled CLI embeds every runtime-resolved sibling module", async () => {
     runtimeResolvedIncludes.sort(),
     [
       "extensions/ext-document-kreuzberg/src/native-extraction-process.ts",
+      "extensions/ext-document-kreuzberg/src/node-native-extraction-process.ts",
       "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
       "extensions/ext-react-ssr/src/worker-renderer.ts",
     ],
@@ -548,6 +549,9 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
       'memory_limit="${PROXY_MEMORY_LIMIT:-1536m}"',
       'attempts="${PROXY_MEMORY_ATTEMPTS:-3}"',
       'container_platform="${PROXY_MEMORY_PLATFORM:-}"',
+      'container_image="${PROXY_MEMORY_IMAGE:-mirror.gcr.io/library/debian:trixie-slim}"',
+      'fallback_image="docker.io/library/debian:trixie-slim"',
+      "falling back to $fallback_image",
       '--memory "$memory_limit"',
       "{{.State.OOMKilled}}",
       '"/_proxy/health"',

@@ -4,6 +4,7 @@ import {
   ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
 } from "veryfront/provider/shared";
 import {
   addAnthropicUsage,
@@ -1256,7 +1257,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
 
     await assertRejects(
       () => collectParts(streamFromText(malformedToolStream)),
-      ProviderRequestError,
+      ProviderStreamProtocolError,
       "tool call arguments were not valid JSON object text",
     );
   });

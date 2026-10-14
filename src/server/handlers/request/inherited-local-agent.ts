@@ -160,11 +160,13 @@ export async function runInheritedLocalAgent(
               async (onAdmitted) => {
                 const name = startedTools.get(toolCallId);
                 const input = toolInputs.get(toolCallId);
-                const declaredTarget = name === "invoke_agent" && typeof input === "string"
-                  ? input
-                  : name?.startsWith("agent_")
-                  ? name.slice(6)
-                  : undefined;
+                const declaredTarget =
+                  (name === "invoke_agent" || name === "veryfront__invoke_agent") &&
+                    typeof input === "string"
+                    ? input
+                    : name?.startsWith("agent_")
+                    ? name.slice(6)
+                    : undefined;
                 if (name !== invocation.toolName || declaredTarget !== invocation.agentId) {
                   throw ORCHESTRATION_ERROR.create({
                     detail: "Local child has no matching admitted tool invocation",

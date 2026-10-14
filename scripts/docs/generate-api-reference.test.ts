@@ -238,6 +238,12 @@ describe("generate-api-reference", () => {
       );
       await assertGeneratedReferenceIsFormatted(outputDir);
 
+      const sandboxReference = await Deno.readTextFile(`${outputDir}/veryfront/sandbox.md`);
+      const sandboxOptionsTable = sandboxReference.split("### `SandboxOptions`")[1]?.split("### ")[0] ?? "";
+      assertStringIncludes(sandboxOptionsTable, "apiUrl");
+      assertStringIncludes(sandboxOptionsTable, "authToken");
+      assertStringIncludes(sandboxOptionsTable, "projectReference");
+
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
       );
@@ -534,6 +540,11 @@ describe("generate-api-reference", () => {
       assertStringIncludes(
         cliReference,
         "### AI & Automation",
+      );
+      // whoami checks an API key against /projects; /me is session-only.
+      assertStringIncludes(
+        cliReference,
+        "`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions.",
       );
 
       for await (const entry of Deno.readDir(`${outputDir}/veryfront`)) {

@@ -120,6 +120,106 @@ describe("Filesystem Compat", () => {
     });
   });
 
+  describe("stream cancellation", () => {
+    it("exposes atomic stream writes as an own sealed filesystem capability", () => {
+      const fs = createFileSystem();
+      const descriptor = Object.getOwnPropertyDescriptor(fs, "writeFileStreamAtomic");
+      assertExists(descriptor);
+      assertEquals(typeof descriptor.value, "function");
+      assertEquals(descriptor.configurable, false);
+      assertEquals(descriptor.enumerable, true);
+      assertEquals(descriptor.writable, false);
+    });
+
+    it("keeps POSIX backslashes inside target filenames out of temporary basenames", async () => {
+      if (Deno.build.os === "windows") return;
+      const fs = createFileSystem();
+      const dir = await fs.makeTempDir({ prefix: "vf-stream-backslash-" });
+      try {
+        const fileName = `${"a".repeat(230)}\\file.txt`;
+        const target = `${dir}/${fileName}`;
+        await fs.writeFileStreamAtomic!(target, new Response("private report").body!);
+        assertEquals(await fs.readTextFile(target), "private report");
+      } finally {
+        await fs.remove(dir, { recursive: true });
+      }
+    });
+
+    it("writes ordered stream chunks and refuses to overwrite an existing file", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "exclusive-stream.bin");
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2]));
+          controller.enqueue(new Uint8Array([3, 4, 5]));
+          controller.close();
+        },
+      });
+      assertEquals(await fs.writeFileStream(target, source), 5);
+      assertEquals([...await fs.readFile(target)], [1, 2, 3, 4, 5]);
+      await assertRejects(() => fs.writeFileStream!(target, new ReadableStream()), Error);
+      assertEquals([...await fs.readFile(target)], [1, 2, 3, 4, 5]);
+    });
+
+    it("removes an incomplete stream file when its source fails", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "failed-stream.bin");
+      const source = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("download source failed"));
+        },
+      });
+      await assertRejects(
+        () => fs.writeFileStream!(target, source),
+        Error,
+        "download source failed",
+      );
+      assertEquals(await fs.exists(target), false);
+    });
+
+    it("waits for asynchronous source cancellation before settling", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.writeFileStream);
+      const target = join(testDir, "cancelled-stream.bin");
+      const controller = new AbortController();
+      let releaseCancellation!: () => void;
+      let startedRead!: () => void;
+      const reading = new Promise<void>((resolve) => {
+        startedRead = resolve;
+      });
+      const cancellation = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      const source = new ReadableStream<Uint8Array>({
+        pull() {
+          startedRead();
+        },
+        cancel() {
+          return cancellation;
+        },
+      });
+      let settled = false;
+      const writing = fs.writeFileStream(target, source, controller.signal);
+      const rejection = assertRejects(() => writing, Error);
+      void writing.then(() => {
+        settled = true;
+      }, () => {
+        settled = true;
+      });
+      await reading;
+      controller.abort(new Error("cancel download"));
+      // Drain the async file cleanup too, so an early settlement is observable.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const settledBeforeCleanup = settled;
+      releaseCancellation();
+      await rejection;
+      assertEquals(settledBeforeCleanup, false);
+      assertEquals(await fs.exists(target), false);
+    });
+  });
+
   describe("writeFile / readFile", () => {
     it("should write and read binary files", async () => {
       const filePath = join(testDir, "test-binary.bin");

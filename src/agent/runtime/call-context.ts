@@ -59,6 +59,7 @@ import {
   buildRuntimeAuthorizedSkillIdsPromptBlock,
   buildRuntimeAvailableSkillsPromptBlock,
   RUNTIME_GENERATED_SKILL_CATALOG_MARKER,
+  type RuntimeSkillLoaderToolName,
 } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { flattenSystemInstructions } from "./tool-inventory.ts";
@@ -101,6 +102,8 @@ export type BuildAgentCallContextInput = {
   extraBlocks?: readonly string[];
   /** Skills the agent may load during the call. */
   skills?: readonly RuntimeSkillDefinition[];
+  /** Exposed platform skill loader used by bounded inventory discovery. */
+  skillLoaderToolName?: RuntimeSkillLoaderToolName;
   /** Host-supplied environment facts. */
   environmentContext?: string;
   /**
@@ -780,8 +783,8 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
       pushPrivateArray(
         dynamicParts,
         hasAuthoredSkillCatalog
-          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
-          : buildRuntimeAvailableSkillsPromptBlock(input.skills),
+          ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills, input.skillLoaderToolName)
+          : buildRuntimeAvailableSkillsPromptBlock(input.skills, input.skillLoaderToolName),
       );
     }
   }

@@ -38,6 +38,33 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-chat-request-builder", () => {
+  it("rejects accessor provider buckets before reading OpenAI Chat options", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return { max_tokens: 777 };
+      },
+    });
+
+    const error = captureThrownError(() =>
+      buildOpenAIChatRequest(
+        "gpt-4o",
+        "openai",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          providerOptions,
+        },
+        false,
+        createWarningCollector(),
+      )
+    );
+
+    assertEquals(error.message, 'Provider options for "openai" must be a data property');
+    assertEquals(getterCalls, 0);
+  });
+
   it("sets default reasoning effort for GPT-5.5 chat requests", () => {
     const warnings = createWarningCollector();
 

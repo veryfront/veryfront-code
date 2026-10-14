@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -72,6 +72,8 @@ it("admits one inherited child with the parent's capability and binds exact-chil
     agentId: "agent",
     projectId: parentId,
   });
+  assertExists(calls[0]);
+  assertEquals(calls[0].headers.get("Accept"), "application/vnd.veryfront.inherited-run+json");
   const resolverFactory = hostedInheritedInferenceModelResolver;
   assertEquals(typeof resolverFactory, "function");
   const resolver = resolverFactory(run)!;
@@ -176,6 +178,7 @@ for (
     const admit = hostedInheritedRunAdmitter(request, {
       apiUrl: "https://api.example.test",
       fetch: (input, init) => {
+        assert(init && "headers" in init, "fetch must receive request options");
         calls++;
         if (calls === 1) {
           return Promise.resolve(
@@ -202,7 +205,10 @@ for (
           );
         }
         assertEquals(String(input), `https://api.example.test/runs/${childId}/heartbeats`);
-        assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer child-renewal");
+        assertEquals(
+          new Headers(init && "headers" in init ? init.headers : undefined).get("Authorization"),
+          "Bearer child-renewal",
+        );
         if (hangs) return new Promise<Response>(() => {});
         if (mode === "retry-expired") return Promise.resolve(Response.json({}, { status: 503 }));
         return Promise.resolve(Response.json({ detail: "generation fenced" }, { status: 403 }));

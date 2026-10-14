@@ -11,6 +11,14 @@ const CODEX_REVIEW_SUMMARY_MARKER =
   "<!-- codex-pull-request-review-summary -->";
 const CODEX_REVIEW_SUMMARY_ROW =
   /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
+const CODEX_SECURITY_SUMMARY_METADATA =
+  /^<!-- codex-security-review:v1 (\{[^\r\n]{1,4096}\}) -->$/;
+const CODEX_SECURITY_SUMMARY_ROW = new RegExp(
+  CODEX_REVIEW_SUMMARY_ROW.source.replace("📝", "🔒").replace(
+    "Code Review",
+    "Security Review",
+  ),
+);
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 // The review bot bills the code review and the optional security review against
@@ -161,12 +169,110 @@ function isPinnedCodexReaction(user) {
     (user?.type === "Bot" || user?.type === "User");
 }
 
+function parseCompletedSecurityReviewDisplay(lines) {
+  const metadataMatch = CODEX_SECURITY_SUMMARY_METADATA.exec(lines[1]);
+  if (!metadataMatch) return undefined;
+  let metadata;
+  try {
+    metadata = JSON.parse(metadataMatch[1]);
+  } catch {
+    return undefined;
+  }
+  const keys = [
+    "blockingSeverityThreshold",
+    "headSha",
+    "mergeGateEnabled",
+    "pullRequestNumber",
+    "repository",
+    "status",
+  ];
+  if (
+    !metadata || typeof metadata !== "object" || Array.isArray(metadata) ||
+    Object.keys(metadata).length !== keys.length ||
+    !keys.every((key) => Object.hasOwn(metadata, key)) ||
+    !["P0", "P1", "P2", "P3"].includes(metadata.blockingSeverityThreshold) ||
+    typeof metadata.headSha !== "string" || !FULL_SHA.test(metadata.headSha) ||
+    typeof metadata.mergeGateEnabled !== "boolean" ||
+    !Number.isSafeInteger(metadata.pullRequestNumber) ||
+    metadata.pullRequestNumber < 1 ||
+    typeof metadata.repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(metadata.repository) ||
+    metadata.status !== "completed"
+  ) return undefined;
+  lines[1] = "";
+  // Accept either display order within the same two-row table. The explicit
+  // labels identify each role; extra, missing or duplicate rows still fail closed.
+  const summaryRows = lines.slice(8, 10);
+  const codeRowLine = summaryRows.find((line) =>
+    CODEX_REVIEW_SUMMARY_ROW.test(line)
+  );
+  const securityRowLine = summaryRows.find((line) =>
+    CODEX_SECURITY_SUMMARY_ROW.test(line)
+  );
+  if (!codeRowLine || !securityRowLine) return undefined;
+  const securityRow = CODEX_SECURITY_SUMMARY_ROW.exec(securityRowLine);
+  if (
+    !securityRow || securityRow[1] !== securityRow[2] ||
+    securityRow[4].trim().length === 0 ||
+    !metadata.headSha.toLowerCase().startsWith(securityRow[3].toLowerCase())
+  ) return undefined;
+  lines.splice(8, 2, codeRowLine);
+  return { row: securityRow, headSha: metadata.headSha };
+}
+
+function parseSummaryCompletionDatetime(value) {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+      .exec(value);
+  if (!match) return Number.NaN;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]) {
+    return Number.NaN;
+  }
+  return Date.parse(value);
+}
+
+function hasInvalidSummaryCompletionTime(
+  completedAt,
+  updatedAt,
+  updatedAtIsWholeSecond,
+) {
+  return !Number.isFinite(completedAt) ||
+    (completedAt > updatedAt &&
+      (!updatedAtIsWholeSecond || completedAt >= updatedAt + 1000));
+}
+
 function parseCompletedCodexSummary(comment) {
   if (
     !isPinnedBot(comment?.user, CODEX_LOGIN) ||
     typeof comment?.body !== "string"
   ) return undefined;
   const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
+  // The connector now includes its separate security-review display in this
+  // comment. It is never code-review proof: retain the exact Code Review row,
+  // head resolution, pinned identity, epoch and later reaction requirements.
+  let securityDisplay;
+  if (lines[1]?.startsWith("<!-- codex-security-review:")) {
+    securityDisplay = parseCompletedSecurityReviewDisplay(lines);
+    if (!securityDisplay) return undefined;
+  }
   const expectedPrefix = [
     CODEX_REVIEW_SUMMARY_MARKER,
     "",
@@ -186,19 +292,42 @@ function parseCompletedCodexSummary(comment) {
   if (!row || row[1] !== row[2] || row[4].trim().length === 0) {
     return undefined;
   }
-  const completedAt = Date.parse(row[1]);
+  const completedAt = parseSummaryCompletionDatetime(row[1]);
   const createdAt = Date.parse(comment?.created_at ?? "");
   const updatedAtText = comment?.updated_at ?? "";
   const updatedAt = Date.parse(updatedAtText);
-  const updatedAtIsWholeSecond =
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(updatedAtText);
+  const updatedAtIsWholeSecond = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(
+    updatedAtText,
+  );
+  const securityRow = securityDisplay?.row;
+  const securityCompletedAt = securityRow
+    ? parseSummaryCompletionDatetime(securityRow[1])
+    : undefined;
   if (
-    !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
-    !Number.isFinite(updatedAt) || createdAt > updatedAt ||
-    (completedAt > updatedAt &&
-      (!updatedAtIsWholeSecond || completedAt >= updatedAt + 1000))
+    securityCompletedAt !== undefined &&
+    (securityCompletedAt < createdAt ||
+      securityRow[3] !== row[3] ||
+      hasInvalidSummaryCompletionTime(
+        securityCompletedAt,
+        updatedAt,
+        updatedAtIsWholeSecond,
+      ))
   ) return undefined;
-  return { shortRef: row[3], completedAt, updatedAt };
+  if (
+    !Number.isFinite(createdAt) || !Number.isFinite(updatedAt) ||
+    createdAt > updatedAt ||
+    hasInvalidSummaryCompletionTime(
+      completedAt,
+      updatedAt,
+      updatedAtIsWholeSecond,
+    )
+  ) return undefined;
+  return {
+    shortRef: row[3],
+    completedAt,
+    updatedAt,
+    securityHead: securityDisplay?.headSha,
+  };
 }
 
 async function resolvedCompletedCodexSummary(
@@ -210,6 +339,8 @@ async function resolvedCompletedCodexSummary(
   const summary = parseCompletedCodexSummary(comment);
   if (
     !summary ||
+    (summary.securityHead !== undefined &&
+      summary.securityHead.toLowerCase() !== headSha.toLowerCase()) ||
     (boundary !== undefined &&
       (summary.completedAt <= boundary.time ||
         summary.updatedAt <= boundary.time)) ||
@@ -337,8 +468,9 @@ function parseBase36Identity(value) {
 
 function parseCompactRunBoundReviewRequestKey(requestKey) {
   if (typeof requestKey !== "string") return undefined;
-  const match = /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
-    .exec(requestKey);
+  const match =
+    /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
+      .exec(requestKey);
   if (!match) return undefined;
   const epochTime = parseBase36Identity(match[3]);
   const eventId = match[4] === undefined
@@ -357,8 +489,9 @@ function parseCompactRunBoundReviewRequestKey(requestKey) {
 
 function parseLegacyRunBoundReviewRequestKey(requestKey) {
   if (typeof requestKey !== "string") return undefined;
-  const match = /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
-    .exec(requestKey);
+  const match =
+    /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
+      .exec(requestKey);
   if (!match) return undefined;
   const epochTime = Number(match[3]);
   const eventId = match[4] === undefined ? undefined : Number(match[4]);
@@ -411,7 +544,9 @@ function durableReviewRequestKey(
         latestEpoch.id > 0
       ? latestEpoch.id.toString(36)
       : BigInt(reviewEpochRunKey).toString(36);
-    return `${requestKey}-r-${compactRunKey}-t-${notBefore.toString(36)}${eventIdentity}`;
+    return `${requestKey}-r-${compactRunKey}-t-${
+      notBefore.toString(36)
+    }${eventIdentity}`;
   }
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
@@ -672,7 +807,7 @@ function latestPendingReviewStatus(statuses, pullNumber) {
   const status = latestReviewGateStatusForPull(statuses, pullNumber);
   if (
     status?.state === "pending" &&
-      isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
   ) return status;
   if (!isTrustedOperationalReviewFailure(status, pullNumber)) return undefined;
   const descriptionPrefix = `PR#${pullNumber} `;
@@ -800,6 +935,11 @@ function commentFollowsHeadCommit(timeline, commentId, headSha) {
   return headIndex >= 0 && commentIndex > headIndex;
 }
 
+/** @param {number} pullNumber */
+function draftReviewStatusDescription(pullNumber) {
+  return `PR#${pullNumber} draft waits for review`;
+}
+
 function reviewFailureDescription(pullNumber, kind, retryPending = false) {
   const detail = REVIEW_FAILURE_DETAILS.get(kind) ??
     "review status unavailable";
@@ -830,7 +970,9 @@ function reviewPropagationRetryDescription(
   const epoch = kind === "unavailable" || kind === "request-unavailable"
     ? `; epoch:${reviewEpochToken(requestKey)}`
     : "";
-  return `${reviewFailureDescription(pullNumber, kind)}${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
+  return `${
+    reviewFailureDescription(pullNumber, kind)
+  }${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
 }
 
 function reviewPropagationRetryEpoch(description, pullNumber) {
@@ -914,19 +1056,23 @@ function latestTerminalReviewStatus(
     ) continue;
     if (boundary !== undefined) {
       if (status.description === rateLimited) {
-        if (!terminalStatusHasBoundaryProof(
-          status,
-          comments,
+        if (
+          !terminalStatusHasBoundaryProof(
+            status,
+            comments,
+            boundary,
+            timeline,
+            headSha,
+          )
+        ) continue;
+      } else if (
+        !pendingHistoryHasBoundaryProof(
+          statuses,
+          pullNumber,
           boundary,
-          timeline,
-          headSha,
-        )) continue;
-      } else if (!pendingHistoryHasBoundaryProof(
-        statuses,
-        pullNumber,
-        boundary,
-        status,
-      )) continue;
+          status,
+        )
+      ) continue;
     }
     return status;
   }
@@ -943,7 +1089,7 @@ function canReusePendingStatus(
   const description = typeof status.description === "string"
     ? status.description
     : "";
-  if (isDraft) return description === `PR#${pullNumber} draft waits for review`;
+  if (isDraft) return description === draftReviewStatusDescription(pullNumber);
   return description.startsWith(`PR#${pullNumber} waits for review `) ||
     description.startsWith(`PR#${pullNumber} reset base:`);
 }
@@ -1594,7 +1740,8 @@ export async function publishAutomatedReviewStatus({
       reviewRequestKey = effectiveReviewResetKey ??
         runBoundRequest?.requestKey ??
         reviewRequestKeyFromBoundary(reviewBoundary);
-      reviewRequestEpochTime = runBoundRequest?.epochTime;
+      reviewRequestEpochTime = parseRunBoundReviewRequestKey(reviewRequestKey)
+        ?.epochTime;
       const evidenceBoundary = runBoundRequest === undefined
         ? reviewBoundary
         : { time: runBoundRequest.createdAt, kind: "status" };
@@ -1711,7 +1858,9 @@ export async function publishAutomatedReviewStatus({
             existingPropagationRetryStatus &&
             existingPropagationRetryKind !== "request-unavailable"
           ) {
-            failure = new Error("Automated review queue propagation is pending");
+            failure = new Error(
+              "Automated review queue propagation is pending",
+            );
             failureKind = existingPropagationRetryKind;
             failureUrl = typeof existingPropagationRetryStatus.target_url ===
                 "string"
@@ -1846,7 +1995,7 @@ export async function publishAutomatedReviewStatus({
       baseBinding,
       effectiveReviewResetKey,
     );
-  } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
+  } else if (isDraft) description = draftReviewStatusDescription(pullNumber);
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
   }
@@ -2031,7 +2180,8 @@ function reviewTimeoutContext(pull, pullNumber) {
       typeof context?.description !== "string"
     ) return false;
     if (context.state === "PENDING") {
-      return context.description.startsWith(descriptionPrefix);
+      return context.description.startsWith(descriptionPrefix) &&
+        context.description !== draftReviewStatusDescription(pullNumber);
     }
     return context.state === "FAILURE" &&
       (context.description ===
@@ -2252,7 +2402,9 @@ async function finalizeReviewFailureStatus({
   targetUrl,
 }) {
   const description = failureKind === "unavailable"
-    ? `${reviewFailureDescription(pullNumber, failureKind)}${REVIEW_RETRY_FINALIZED_SUFFIX}`
+    ? `${
+      reviewFailureDescription(pullNumber, failureKind)
+    }${REVIEW_RETRY_FINALIZED_SUFFIX}`
     : reviewFailureDescription(pullNumber, failureKind);
   const response = await github.rest.repos.createCommitStatus({
     owner,
@@ -2343,7 +2495,9 @@ export async function publishReviewPropagationRetryStatus({
   });
   const statusId = response?.data?.id;
   if (!isPositiveStatusId(statusId)) {
-    throw new TypeError("Review propagation retry status identity is malformed");
+    throw new TypeError(
+      "Review propagation retry status identity is malformed",
+    );
   }
   return { description, statusId };
 }
@@ -2571,9 +2725,8 @@ async function reconcileTimedOutReviewQueue({
     await preserveQueueRetry();
     throw error;
   }
-  const queueFailures = queueResults.filter((entry) =>
-    entry?.state === "failure"
-  ).length;
+  const queueFailures =
+    queueResults.filter((entry) => entry?.state === "failure").length;
   if (result.state === "success" && queueFailures > 0) {
     await preserveQueueRetry();
     throw new Error(
@@ -2818,9 +2971,7 @@ export function selectMergeGroupFailureStatusBoundary({
       publisherStatusId !== undefined
     ? publisherStatusId
     : targetStatusId;
-  return Number.isSafeInteger(statusId) && statusId >= 0
-    ? statusId
-    : undefined;
+  return Number.isSafeInteger(statusId) && statusId >= 0 ? statusId : undefined;
 }
 
 /** Preserve a trusted merge-group success written after one run's boundary. */
@@ -3542,13 +3693,11 @@ async function revalidateAutomatedReviewRequest({
         ...common,
         login,
         pullAuthor: refreshed?.data?.user?.login,
-    }),
+      }),
     latestReviewResetTime(statuses, pullNumber, baseBinding),
     parseRunBoundReviewRequestKey(effectiveRequestKey) !== undefined,
   );
-  return review
-    ? { requested: false, marker, reason: "reviewed" }
-    : undefined;
+  return review ? { requested: false, marker, reason: "reviewed" } : undefined;
 }
 
 /**

@@ -151,9 +151,32 @@ export function parseFilesDeleteArgs(
   }) as SafeParseResult<FilesDeleteOptions>;
 }
 
-export function buildRemoteFileUrl(projectSlug: string, remotePath: string): string {
+type RemoteFileWriteDestination = { branch?: string; branchId?: string };
+function assertValidWriteBranch(branch: string | undefined): void {
+  if (branch === undefined) return;
+  if (!branch || branch.trim() !== branch) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Knowledge output branch must be non-empty and have no surrounding whitespace",
+    });
+  }
+}
+
+export function buildRemoteFileUrl(
+  projectSlug: string,
+  remotePath: string,
+  destination?: RemoteFileWriteDestination,
+): string {
   const normalizedPath = normalizeProjectFilePath(remotePath);
-  return `/projects/${projectSlug}/files/${encodeURIComponent(normalizedPath)}`;
+  const url = `/projects/${projectSlug}/files/${encodeURIComponent(normalizedPath)}`;
+  assertValidWriteBranch(destination?.branch);
+  assertValidWriteBranch(destination?.branchId);
+  if (destination?.branch !== undefined) {
+    return `${url}?${new URLSearchParams({ ref: `branch:${destination.branch}` })}`;
+  }
+  if (destination?.branchId !== undefined) {
+    return `${url}?${new URLSearchParams({ branch_id: destination.branchId })}`;
+  }
+  return url;
 }
 
 export async function listRemoteFiles(
@@ -174,22 +197,38 @@ export async function getRemoteFile(
   return getFileContent(client, projectSlug, normalizeProjectFilePath(remotePath), MAIN_SOURCE);
 }
 
+export interface PublishedFileReceipt {
+  path: string;
+  file_id?: string;
+  version_id?: string;
+  checksum?: string;
+}
+
 export async function putRemoteFileFromLocal(
   client: ApiClient,
   projectSlug: string,
   remotePath: string,
   localPath: string,
   signal?: AbortSignal,
-): Promise<{ path: string }> {
+  destination?: RemoteFileWriteDestination,
+  metadata?: Record<string, unknown>,
+): Promise<PublishedFileReceipt> {
+  const destinationUrl = buildRemoteFileUrl(projectSlug, remotePath, destination);
   const fs = createFileSystem();
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
   signal?.throwIfAborted();
-  const result = await client.put<{ path: string }>(buildRemoteFileUrl(projectSlug, remotePath), {
+  const result = await client.put<PublishedFileReceipt>(destinationUrl, {
     content,
+    ...(metadata ? { metadata } : {}),
   }, signal ? { signal, retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
-  return { path: result.path ?? normalizeProjectFilePath(remotePath) };
+  return {
+    path: result.path ?? normalizeProjectFilePath(remotePath),
+    ...(result.file_id ? { file_id: result.file_id } : {}),
+    ...(result.version_id ? { version_id: result.version_id } : {}),
+    ...(result.checksum ? { checksum: result.checksum } : {}),
+  };
 }
 
 export async function deleteRemoteFile(

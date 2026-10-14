@@ -1,10 +1,12 @@
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 
 /** Context for hosted child fork instructions. */
 export type HostedChildForkInstructionsContext = {
   projectId?: string | null;
   branchId?: string | null;
   availableSkillIds?: readonly string[];
+  skillLoaderToolName?: RuntimeSkillLoaderToolName;
 };
 
 /** Shared hosted child fork instructions base value. */
@@ -63,11 +65,19 @@ export const HOSTED_CHILD_FORK_INSTRUCTIONS_BASE =
 - If an MCP tool returns "Project not found", use the project_reference from <project_context>.
 - Do NOT guess project references, branch IDs, or skill names.`;
 
+function renderHostedChildForkInstructionsBase(skillLoaderToolName: RuntimeSkillLoaderToolName) {
+  return HOSTED_CHILD_FORK_INSTRUCTIONS_BASE.replaceAll(
+    "`load_skill`",
+    `\`${skillLoaderToolName}\``,
+  );
+}
+
 /** Builds hosted child fork instructions. */
 export function buildHostedChildForkInstructions(
   context: HostedChildForkInstructionsContext = {},
 ): string {
-  const sections: string[] = [HOSTED_CHILD_FORK_INSTRUCTIONS_BASE];
+  const skillLoaderToolName = context.skillLoaderToolName ?? "load_skill";
+  const sections: string[] = [renderHostedChildForkInstructionsBase(skillLoaderToolName)];
   const projectId = context.projectId ?? "";
 
   if (projectId) {
@@ -79,8 +89,8 @@ export function buildHostedChildForkInstructions(
 project_reference: "${projectId}"
 ${branchLine}
 
-Use project_reference only for tools whose schema requires project_reference. Some MCP tools use different identifiers; for example sandbox command tools use the sandbox session id returned by create_sandbox_session, and create_sandbox_session uses project_reference when billing/project scope is needed.
-IMPORTANT: Also pass branch_id to file tools to ensure edits go to the correct branch.
+Use project_reference when a tool schema requires it or the operation selects a billing project. Sandbox creation selects a billing project: pass project_reference to create_sandbox, or an environment_id that identifies the project. Sandbox command and file tools use the sandbox_id returned by create_sandbox. Do not add project_reference or branch_id to those sandbox operations.
+IMPORTANT: Pass branch_id to project source file tools that support it to ensure edits go to the correct branch.
 Do NOT guess or invent project references, always use the values above.
 </project_context>`);
   }
@@ -89,7 +99,7 @@ Do NOT guess or invent project references, always use the values above.
     const ids = [...context.availableSkillIds].sort(compareStrings).join(", ");
     sections.push(`
 ## Available Skills
-Use load_skill to load instructions. Available: ${ids}`);
+Use ${skillLoaderToolName} to load instructions. Available: ${ids}`);
   }
 
   return sections.join("\n");

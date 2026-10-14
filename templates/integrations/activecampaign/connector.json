@@ -29,7 +29,7 @@
     {
       "id": "activecampaign__list_contacts",
       "name": "List Contacts",
-      "description": "List or search contacts in ActiveCampaign",
+      "description": "List contacts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -86,7 +86,7 @@
     {
       "id": "activecampaign__get_contact",
       "name": "Get Contact",
-      "description": "Get details of an ActiveCampaign contact",
+      "description": "Get contact",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -110,7 +110,7 @@
     {
       "id": "activecampaign__create_contact",
       "name": "Create Contact",
-      "description": "Create a new contact in ActiveCampaign",
+      "description": "Create contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -138,7 +138,7 @@
     {
       "id": "activecampaign__update_contact",
       "name": "Update Contact",
-      "description": "Update an existing ActiveCampaign contact",
+      "description": "Update contact",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -172,7 +172,7 @@
     {
       "id": "activecampaign__list_deals",
       "name": "List Deals",
-      "description": "List deals in ActiveCampaign",
+      "description": "List deals",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -207,7 +207,7 @@
     {
       "id": "activecampaign__create_deal",
       "name": "Create Deal",
-      "description": "Create a new deal in ActiveCampaign",
+      "description": "Create deal",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -235,7 +235,7 @@
     {
       "id": "activecampaign__list_accounts",
       "name": "List Accounts",
-      "description": "List accounts (companies) in ActiveCampaign",
+      "description": "List accounts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

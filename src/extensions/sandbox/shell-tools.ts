@@ -29,7 +29,7 @@ export type SandboxShellToolSet = Record<string, SandboxShellToolDefinition>;
 /** Public API contract for sandbox shell client. */
 export type SandboxShellClient = {
   ensure?: () => Promise<void> | void;
-  executeCommand: (command: string, options?: unknown) => Promise<unknown>;
+  runCommand: (command: string, options?: unknown) => Promise<unknown>;
   readFile?: (path: string) => Promise<unknown> | unknown;
   writeFiles?: (files: unknown[]) => Promise<unknown> | unknown;
 };

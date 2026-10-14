@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
-description: "Declare and register prompts exposable over MCP."
-order: 26
+description: "Declare and register prompts exposable over MCP. `promptRegistry` is the local registry. To manage the prompts of a hosted project, use the prompts operations of the Veryfront API."
+order: 27
 ---
 
 ## Import

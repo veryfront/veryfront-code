@@ -1,7 +1,8 @@
 import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, resolve } from "#veryfront/compat/path/index.ts";
+import { tmpdir } from "node:os";
 import {
   captureBrowserDiagnostics,
   findHydrationOrCspFailures,
@@ -14,8 +15,73 @@ import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
   join(E2E_BINARY_DIR, `veryfront-e2e-bin-${Deno.pid}`);
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+// `deno test --parallel` runs each file in its own isolate inside one process, so
+// sibling files share Deno.pid and BINARY_PATH but not module state. A lock
+// serializes them around the compile, and a record names the process instance
+// that compiled the binary, so every later file of that process reuses it,
+// whether the files run side by side or one after another. Isolates cannot tell
+// which of them exits last, so the binary outlives the process and the next
+// run removes binaries whose process has exited. The lock and records live in a
+// private per-user temp directory rather than beside the binary, which
+// VERYFRONT_BINARY may place in a read-only directory. The lock is never
+// removed: unlinking a lock file while another isolate waits on it would let a
+// third take a second lock.
+const COORDINATION_DIR = join(
+  tmpdir(),
+  `veryfront-compiled-binary-e2e-${Deno.uid() ?? "user"}`,
+);
+const BINARY_LOCK_PATH = join(COORDINATION_DIR, "compile.lock");
+const BINARY_RECORD_SUFFIX = ".binary.json";
+// Records outlive the process and are read from other checkouts, so they hold
+// the binary path resolved against this process's working directory.
+const RECORDED_BINARY_PATH = resolve(BINARY_PATH);
 
+/**
+ * The e2e:binary suite runs this many shard files side by side. The hosted CI
+ * runner has 4 vCPUs, and every test spawns a compiled server (and some a
+ * Chromium page), so three shards leave headroom for those child processes.
+ */
+export const COMPILED_BINARY_E2E_SHARD_COUNT = 3;
+
+/** Shared by every compiled-binary e2e suite: each test drives a spawned server. */
+export const COMPILED_BINARY_E2E_OPTIONS = {
+  sanitizeOps: false,
+  sanitizeResources: false,
+  timeout: 600_000,
+};
+
+let selectedShard: number | undefined;
 let binaryTestCacheRoot: string | undefined;
+
+/**
+ * Select the 1-based shard this test file runs. Call it before importing
+ * compiled-binary-e2e.suite.ts, whose `it` then registers only every
+ * COMPILED_BINARY_E2E_SHARD_COUNT-th test, starting at this shard.
+ */
+export function selectCompiledBinaryE2EShard(shard: number): void {
+  if (!Number.isInteger(shard) || shard < 1 || shard > COMPILED_BINARY_E2E_SHARD_COUNT) {
+    throw new Error(`Shard must be 1..${COMPILED_BINARY_E2E_SHARD_COUNT}, got ${shard}`);
+  }
+  if (selectedShard !== undefined) throw new Error("A compiled-binary e2e shard is already set");
+  selectedShard = shard - 1;
+}
+
+/**
+ * Wrap `it` so a shard file registers its round-robin share of the tests, in
+ * declaration order, and every test lands in exactly one shard. With no shard
+ * selected, as when the test file runs directly, every test is registered.
+ */
+export function shardCompiledBinaryE2ETests<Args extends unknown[]>(
+  register: (...args: Args) => void,
+): (...args: Args) => void {
+  let declared = 0;
+  return (...args: Args) => {
+    const index = declared++;
+    if (selectedShard === undefined || index % COMPILED_BINARY_E2E_SHARD_COUNT === selectedShard) {
+      register(...args);
+    }
+  };
+}
 
 export function stripReactSSRMarkers(html: string): string {
   return html.replaceAll("<!-- -->", "");
@@ -31,12 +97,22 @@ export function getDirectiveSources(csp: string, directiveName: string): string[
   return directive.split(/\s+/).slice(1);
 }
 
-/** Get an available port using OS-assigned port 0. */
+/**
+ * Get an available port using OS-assigned port 0. A shard keeps only ports in
+ * its own residue class, so two shards running side by side never pick the
+ * same released port and poll each other's server for readiness.
+ */
 async function getAvailablePort(): Promise<number> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
+  while (true) {
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const { port } = listener.addr as Deno.NetAddr;
+    listener.close();
+    if (
+      selectedShard === undefined || port % COMPILED_BINARY_E2E_SHARD_COUNT === selectedShard
+    ) {
+      return port;
+    }
+  }
 }
 
 export interface TestServer {
@@ -54,7 +130,165 @@ export interface BrowserPageSession {
   diagnostics: BrowserDiagnostics;
 }
 
-export async function ensureBinaryCompiled(): Promise<void> {
+let binaryCompiled: Promise<void> | undefined;
+
+/** Create the coordination directory, refusing one another user could write to. */
+async function ensureCoordinationDir(): Promise<void> {
+  try {
+    await Deno.mkdir(COORDINATION_DIR, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+  }
+  const info = await Deno.lstat(COORDINATION_DIR);
+  const uid = Deno.uid();
+  if (
+    !info.isDirectory || (uid !== null && info.uid !== uid) ||
+    (info.mode !== null && (info.mode & 0o077) !== 0)
+  ) {
+    throw new Error(`Refusing shared coordination directory: ${COORDINATION_DIR}`);
+  }
+}
+
+/**
+ * Identify a process instance, not just its pid, since a pid can be reused.
+ * Linux reads the start time from /proc, other hosts from `ps`. Returns null
+ * when the process does not exist and undefined when neither source exists.
+ */
+async function readProcessIdentity(pid: number): Promise<string | null | undefined> {
+  try {
+    const stat = await Deno.readTextFile(`/proc/${pid}/stat`);
+    // Field 22 is the start time; fields restart after the parenthesized name.
+    const startedAt = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    if (startedAt) return `${pid} ${startedAt}`;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound && await exists("/proc/self/stat")) return null;
+  }
+  try {
+    const result = await new Deno.Command("ps", {
+      args: ["-o", "lstart=", "-p", String(pid)],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const startedAt = new TextDecoder().decode(result.stdout).trim();
+    return result.success && startedAt ? `${pid} ${startedAt}` : null;
+  } catch {
+    return undefined;
+  }
+}
+
+interface BinaryRecord {
+  /** pid and start time, or the pid alone when no start time is readable. */
+  process: string;
+  /** VERYFRONT_BINARY_E2E_RUN_ID of the invocation, when the suite runner set one. */
+  run?: string;
+  binaryPath: string;
+}
+
+async function readBinaryRecord(path: string): Promise<Partial<BinaryRecord> | undefined> {
+  try {
+    return JSON.parse(await Deno.readTextFile(path));
+  } catch {
+    return undefined;
+  }
+}
+
+/** A record whose process liveness cannot be read is presumed exited after this long. */
+const UNVERIFIABLE_RECORD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Remove default per-pid binaries compiled by test processes that have exited,
+ * except this process's BINARY_PATH, which compileBinary checks against the
+ * source hash.
+ * Where liveness cannot be read (no /proc and no ps), a record counts as exited
+ * once it is older than any test run, so binaries stay bounded there too.
+ */
+async function removeBinariesOfExitedProcesses(): Promise<void> {
+  for await (const entry of Deno.readDir(COORDINATION_DIR)) {
+    if (!entry.isFile || !entry.name.endsWith(BINARY_RECORD_SUFFIX)) continue;
+    const recordPath = join(COORDINATION_DIR, entry.name);
+    const record = await readBinaryRecord(recordPath);
+    const pid = Number.parseInt(record?.process ?? "", 10);
+    if (Number.isInteger(pid)) {
+      const current = await readProcessIdentity(pid);
+      if (current === record?.process) continue;
+      if (current === undefined) {
+        const { mtime } = await Deno.stat(recordPath);
+        if (!mtime || Date.now() - mtime.getTime() < UNVERIFIABLE_RECORD_MAX_AGE_MS) continue;
+      }
+    }
+    // Only the default per-pid binary is private to its run. A VERYFRONT_BINARY
+    // path may be shared with other helpers, so it is left in place.
+    const ownsBinary = Number.isInteger(pid) && record?.binaryPath?.endsWith(
+      join(".veryfront", "e2e", `veryfront-e2e-bin-${pid}`),
+    );
+    if (ownsBinary && record?.binaryPath && record.binaryPath !== RECORDED_BINARY_PATH) {
+      for (const path of [record.binaryPath, `${record.binaryPath}.srcHash`]) {
+        await Deno.remove(path).catch(() => {});
+      }
+    }
+    await Deno.remove(recordPath).catch(() => {});
+  }
+}
+
+/**
+ * Compile the binary at most once per test process, shared by every suite in
+ * every test file of that process. The first file to get here compiles it
+ * (honouring VERYFRONT_BINARY_FRESH and the source hash); later files of the
+ * same process reuse that binary.
+ */
+export function ensureBinaryCompiled(): Promise<void> {
+  binaryCompiled ??= acquireBinary();
+  return binaryCompiled;
+}
+
+/**
+ * Without a start time the record is keyed by pid alone and may be left by an
+ * earlier process, so reuse then also requires the binary to match the source.
+ */
+async function isBinaryHashCurrent(): Promise<boolean> {
+  try {
+    return (await Deno.readTextFile(BINARY_HASH_PATH)).trim() === await computeSourceHash();
+  } catch {
+    return false;
+  }
+}
+
+async function acquireBinary(): Promise<void> {
+  await ensureCoordinationDir();
+  // The e2e:binary runner gives every invocation a run id that all its files
+  // share. Without one, the process start time identifies the invocation.
+  const run = Deno.env.get("VERYFRONT_BINARY_E2E_RUN_ID") || undefined;
+  const startedIdentity = await readProcessIdentity(Deno.pid);
+  // A pid-only record cannot tell this run from an earlier one with the same
+  // pid, so it cannot prove the binary was compiled fresh for this run.
+  if (!run && !startedIdentity && Deno.env.get("VERYFRONT_BINARY_FRESH") === "1") {
+    throw new Error(
+      "VERYFRONT_BINARY_FRESH=1 needs the e2e:binary runner, /proc or ps to identify the run",
+    );
+  }
+  const processIdentity = startedIdentity ?? String(Deno.pid);
+  const recordPath = join(COORDINATION_DIR, `${Deno.pid}${BINARY_RECORD_SUFFIX}`);
+  using lock = await Deno.open(BINARY_LOCK_PATH, { create: true, write: true });
+  await lock.lock(true);
+  await removeBinariesOfExitedProcesses();
+  const record = await readBinaryRecord(recordPath);
+  const sameRun = run
+    ? record?.run === run
+    : record?.process === processIdentity && (startedIdentity || await isBinaryHashCurrent());
+  if (sameRun && record?.binaryPath === RECORDED_BINARY_PATH && await exists(BINARY_PATH)) {
+    console.log("✅ Using the binary compiled for this test run:", BINARY_PATH);
+    return;
+  }
+  await compileBinary();
+  const compiled: BinaryRecord = {
+    process: processIdentity,
+    ...(run ? { run } : {}),
+    binaryPath: RECORDED_BINARY_PATH,
+  };
+  await Deno.writeTextFile(recordPath, `${JSON.stringify(compiled)}\n`);
+}
+
+async function compileBinary(): Promise<void> {
   const forceFresh = Deno.env.get("VERYFRONT_BINARY_FRESH") === "1";
   const binaryExists = await exists(BINARY_PATH);
   const currentHash = await computeSourceHash();
@@ -125,9 +359,13 @@ function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
   })();
 }
 
+/** A fresh cache per server, so servers running side by side never share cache state. */
 async function getBinaryTestCacheDir(nodeEnv: string): Promise<string> {
   binaryTestCacheRoot ??= await Deno.makeTempDir({ prefix: "vf-e2e-binary-cache-" });
-  return join(binaryTestCacheRoot, nodeEnv === "production" ? "production" : "development");
+  return await Deno.makeTempDir({
+    dir: binaryTestCacheRoot,
+    prefix: nodeEnv === "production" ? "production-" : "development-",
+  });
 }
 
 export async function cleanupBinaryTestCache(): Promise<void> {
@@ -146,8 +384,9 @@ async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
       await resp.text();
       if (resp.status === 200) return;
     } catch {
-      await new Promise((r) => setTimeout(r, 500));
+      // Not listening yet.
     }
+    await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error(`Server failed to start on port ${port}`);
 }
@@ -204,9 +443,6 @@ async function startBinaryServer(
       );
     }
 
-    // Give the server a moment to stabilize after first request
-    await new Promise((r) => setTimeout(r, 500));
-
     return {
       process,
       port,
@@ -218,7 +454,6 @@ async function startBinaryServer(
         } catch {
           // already dead
         }
-        await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
       },
     };
   }

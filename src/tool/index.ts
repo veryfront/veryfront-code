@@ -1,5 +1,7 @@
 /**
- * Define tools with schema-backed inputs for agents and MCP.
+ * Define tools with schema-backed inputs for agents and MCP. `toolRegistry` is
+ * the local registry. To manage the tool files of a hosted project, use the
+ * tools operations of the Veryfront API.
  *
  * @module tool
  *

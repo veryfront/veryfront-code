@@ -20,10 +20,12 @@ import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-
 import {
   createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
+  executeRemoteIntegrationTool,
   getConnector,
   getConnectorNames,
   getIcon,
   listConnectors,
+  runRemoteIntegrationTool,
   SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
 } from "./index.ts";
 
@@ -31,6 +33,11 @@ describe("integrations/index", () => {
   afterEach(() => {
     deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
     deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+  });
+
+  it("exports runRemoteIntegrationTool and keeps executeRemoteIntegrationTool as its alias", () => {
+    assertEquals(typeof runRemoteIntegrationTool, "function");
+    assertStrictEquals(executeRemoteIntegrationTool, runRemoteIntegrationTool);
   });
 
   it("exposes default-visible connector data through lookup helpers", () => {

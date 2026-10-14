@@ -3191,31 +3191,41 @@ describe("scheduled prune bound", () => {
   });
 
   it("retains overflow work after a transient persistence failure", async () => {
-    const directory = `${persistedTestPrefix}retry-write`;
-    const path = await getPersistedJsxCachePruneRequestPath(directory);
-    const localFs = getLocalFs();
-    const originalWrite = localFs.writeTextFile.bind(localFs);
-    let failed = false;
+    const cacheRoot = await makeTempDir({ prefix: "vf-jsx-prune-retry-" });
     try {
-      localFs.writeTextFile = (target, content) => {
-        if (target === path && !failed) {
-          failed = true;
-          return Promise.reject(new Error("temporary write failure"));
+      await runWithCacheDir(cacheRoot, async () => {
+        const directory = `${persistedTestPrefix}retry-write`;
+        const path = await getPersistedJsxCachePruneRequestPath(directory);
+        const localFs = getLocalFs();
+        const originalWrite = localFs.writeTextFile.bind(localFs);
+        let failed = false;
+        try {
+          localFs.writeTextFile = (target, content) => {
+            if (target === path && !failed) {
+              failed = true;
+              return Promise.reject(new Error("temporary write failure"));
+            }
+            return originalWrite(target, content);
+          };
+          for (let index = 0; index < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES * 2; index++) {
+            ensureJsxCacheSweepArmed(`${persistedTestPrefix}retry-filler-${index}`);
+          }
+          ensureJsxCacheSweepArmed(directory);
+          for (let attempt = 0; attempt < 250; attempt++) {
+            if (await hasPersistedJsxCachePrune(directory)) break;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          assertEquals(failed, true);
+          assertEquals(await hasPersistedJsxCachePrune(directory), true);
+        } finally {
+          localFs.writeTextFile = originalWrite;
         }
-        return originalWrite(target, content);
-      };
-      for (let index = 0; index < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES * 2; index++) {
-        ensureJsxCacheSweepArmed(`${persistedTestPrefix}retry-filler-${index}`);
-      }
-      ensureJsxCacheSweepArmed(directory);
-      for (let attempt = 0; attempt < 250; attempt++) {
-        if (await hasPersistedJsxCachePrune(directory)) break;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      assertEquals(failed, true);
-      assertEquals(await hasPersistedJsxCachePrune(directory), true);
+      });
     } finally {
-      localFs.writeTextFile = originalWrite;
+      cancelScheduledJsxCachePrunes();
+      await waitForJsxCacheMaintenance();
+      cancelScheduledJsxCachePrunes();
+      await remove(cacheRoot, { recursive: true });
     }
   });
 

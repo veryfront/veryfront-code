@@ -1,9 +1,4 @@
-import {
-  jsonValuesEqual,
-  readProviderOptions,
-  readRecord,
-  unwrapToolInputSchema,
-} from "veryfront/provider/shared";
+import { jsonValuesEqual, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
 import type {
   ModelRuntimeCallOptions,
   ModelRuntimePromptMessage,
@@ -20,6 +15,13 @@ import {
   readGooglePartDataField,
 } from "./google-content-parts.ts";
 import { readGoogleRawAssistantReplay } from "./google-thought-signatures.ts";
+
+const arrayIsArray = Array.isArray;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   requestLabels?: Record<string, string>;
@@ -65,6 +67,81 @@ type GoogleCompatibleRequest = {
   generationConfig?: Record<string, unknown>;
   [key: string]: unknown;
 };
+
+function defineGoogleProviderOption(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  objectDefineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+function mergeGoogleProviderOptions(
+  target: GoogleCompatibleRequest,
+  providerOptions: Record<string, unknown>,
+): void {
+  const optionNames = objectKeys(providerOptions);
+  for (let index = 0; index < optionNames.length; index++) {
+    const optionName = optionNames[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(providerOptions, optionName);
+    if (!descriptor || !descriptor.enumerable || !objectHasOwn(descriptor, "value")) continue;
+    defineGoogleProviderOption(target, optionName, descriptor.value);
+  }
+}
+
+function readGoogleProviderOptions(
+  providerOptions: Record<string, unknown> | undefined,
+  ...providerNames: string[]
+): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  if (!providerOptions) return output;
+
+  for (let providerIndex = 0; providerIndex < providerNames.length; providerIndex++) {
+    const providerName = providerNames[providerIndex]!;
+    let bucketDescriptor: PropertyDescriptor | undefined;
+    try {
+      bucketDescriptor = objectGetOwnPropertyDescriptor(providerOptions, providerName);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be read`);
+    }
+    if (!bucketDescriptor) continue;
+    if (!objectHasOwn(bucketDescriptor, "value")) {
+      throw new TypeError(`Provider options for "${providerName}" must be a data property`);
+    }
+    const bucket = bucketDescriptor.value;
+    if (!bucket || typeof bucket !== "object" || arrayIsArray(bucket)) continue;
+
+    let keys: string[];
+    try {
+      keys = objectKeys(bucket);
+    } catch {
+      throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+    }
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const optionName = keys[keyIndex]!;
+      let optionDescriptor: PropertyDescriptor | undefined;
+      try {
+        optionDescriptor = objectGetOwnPropertyDescriptor(bucket, optionName);
+      } catch {
+        throw new TypeError(`Provider options for "${providerName}" could not be enumerated`);
+      }
+      if (
+        !optionDescriptor || !optionDescriptor.enumerable ||
+        !objectHasOwn(optionDescriptor, "value")
+      ) {
+        continue;
+      }
+      defineGoogleProviderOption(output, optionName, optionDescriptor.value);
+    }
+  }
+
+  return output;
+}
 
 type CanonicalProviderCall = {
   id: string;
@@ -550,14 +627,14 @@ function rejectUnknownKeys(
   allowedKeys: ReadonlySet<string>,
   subject: string,
 ): void {
-  if (Object.keys(record).some((key) => !allowedKeys.has(key))) {
+  if (objectKeys(record).some((key) => !allowedKeys.has(key))) {
     throw new TypeError(`${subject} contained an unsupported field`);
   }
 }
 
 function readEmptyGoogleToolObject(value: unknown, subject: string): Record<string, never> {
   const record = readRecord(value);
-  if (!record || Object.keys(record).length > 0) {
+  if (!record || objectKeys(record).length > 0) {
     throw new TypeError(`${subject} must be an empty object`);
   }
   return {};
@@ -841,7 +918,7 @@ function resolveGoogleThinkingConfig(
 ): Record<string, unknown> | undefined {
   if (
     option?.budgetTokens !== undefined &&
-    (!Number.isSafeInteger(option.budgetTokens) || option.budgetTokens < 0)
+    (!numberIsSafeInteger(option.budgetTokens) || option.budgetTokens < 0)
   ) {
     throw new TypeError(
       "Google reasoning budgetTokens must be a non-negative safe integer",
@@ -909,7 +986,7 @@ function buildGoogleGenerationConfig(
     ...buildGoogleStructuredOutputConfig(options.responseFormat),
   };
 
-  return Object.keys(config).length > 0 ? config : undefined;
+  return objectKeys(config).length > 0 ? config : undefined;
 }
 
 export function buildGoogleGenerateContentRequest(
@@ -938,7 +1015,7 @@ export function buildGoogleGenerateContentRequest(
   const generationConfig = buildGoogleGenerationConfig(options);
   const tools = toGoogleTools(options.tools);
   const toolConfig = normalizeGoogleToolChoice(options.toolChoice);
-  const labels = options.requestLabels && Object.keys(options.requestLabels).length > 0
+  const labels = options.requestLabels && objectKeys(options.requestLabels).length > 0
     ? options.requestLabels
     : typeof options.userId === "string" && options.userId.length > 0
     ? { user_id: options.userId }
@@ -958,11 +1035,14 @@ export function buildGoogleGenerateContentRequest(
       : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
+  mergeGoogleProviderOptions(
+    body,
+    readGoogleProviderOptions(options.providerOptions, "google", providerName),
+  );
   // Provider options replace `generationConfig` wholesale, so re-pin the
   // runtime-owned structured-output keys the caller asked for.
   const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
-  if (Object.keys(structuredOutput).length > 0) {
+  if (objectKeys(structuredOutput).length > 0) {
     const generationConfig = { ...(readRecord(body.generationConfig) ?? {}) };
     if ("responseJsonSchema" in structuredOutput) {
       delete generationConfig.responseSchema;

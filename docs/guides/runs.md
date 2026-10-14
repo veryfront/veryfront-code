@@ -318,6 +318,13 @@ for (const entry of events.data) {
 A working setup ends with `status: "completed"` and an event log whose entries
 describe the run.
 
+When a Task or Workflow consumes a nested agent stream that fails, the owned
+run keeps the failure as a `RUNTIME_EVENT_RECORDED` event with
+`runtime: "veryfront"` and `kind: "agent_error"`. Its value retains the streamed
+error message, code when present, and timing. This observation does not terminate
+the parent run: the Task or Workflow can handle the failure and complete with its
+own result.
+
 ## Runs target CLI reference
 
 Use `veryfront project runs <command>` with an API that serves the Runs 0.8.8
@@ -411,6 +418,17 @@ veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <REQUEST_KEY>
 veryfront project runs fail --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"error":{"code":"TASK_FAILED","message":"Task failed"}}'
 ```
+
+To run a webhook manually, use `create` with `source.type` set to `webhook`.
+The body requires `project_id`, `source.id` with the webhook ID, and `input`
+with the payload as a JSON value:
+
+```sh
+veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
+  --body '{"project_id":"<PROJECT_ID>","source":{"type":"webhook","id":"<WEBHOOK_ID>"},"input":{}}'
+```
+
+See [Webhooks](https://veryfront.com/docs/cloud/webhooks) for webhooks and webhook events.
 
 Use `--ndjson` on a paginated list command to receive items as they arrive:
 

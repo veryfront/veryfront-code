@@ -246,6 +246,7 @@ export function hostedInheritedRunAdmitter(
         "Content-Type": "application/json",
         "Idempotency-Key": `inherited:${await computeHash(`${parentId}:${toolCallId}`)}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
+        Accept: "application/vnd.veryfront.inherited-run+json",
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
       },
       body: JSON.stringify({
@@ -261,10 +262,67 @@ export function hostedInheritedRunAdmitter(
     return acceptInheritedRunAdmission(response, {
       projectId: parent.projectId,
       conversationId: input.conversationId,
+      parentRunId: parentId,
+      agentId: input.agentId,
       apiUrl: transport.apiUrl,
       fetch: send,
     });
   };
+}
+
+/** Private execution transport does not grant ordinary child resource reads. */
+async function normalizeInheritedExecutionResponse(
+  response: Response,
+  binding: { projectId: string; parentRunId?: string; agentId?: string; conversationId?: string },
+): Promise<Response> {
+  if (
+    response.headers.get("Content-Type")?.split(";")[0]?.trim() !==
+      "application/vnd.veryfront.inherited-run+json"
+  ) return response;
+  const mismatch = () => new Error("Inherited child resource binding mismatch");
+  let value;
+  let route: { id: string; generation: string };
+  try {
+    value = await response.clone().json();
+    const token = response.headers.get(RUN_TERMINAL_TOKEN_HEADER) ?? "";
+    route = terminalRoute(token, terminalRoutingRunId(token));
+  } catch {
+    throw mismatch();
+  }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const terminal = ["completed", "failed", "cancelled"].includes(value?.status);
+  if (
+    value?.version !== 1 || !response.ok ||
+    !response.headers.get("Cache-Control")?.includes("no-store") ||
+    !binding.parentRunId || !binding.agentId || value.parentRunId !== binding.parentRunId ||
+    value.projectId !== binding.projectId || value.agentId !== binding.agentId ||
+    value.canonicalRunId !== route.id || value.dispatchNonce !== route.generation ||
+    ![value.canonicalRunId, value.parentRunId, value.conversationId, value.outputMessageId].every((
+      id,
+    ) => typeof id === "string" && uuid.test(id)) ||
+    (binding.conversationId !== undefined && value.conversationId !== binding.conversationId) ||
+    !["pending", "running", "waiting", "completed", "failed", "cancelled"].includes(value.status) ||
+    (terminal && !Object.hasOwn(value, "output")) ||
+    (value.error != null &&
+      (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
+  ) throw mismatch();
+  const headers = new Headers(response.headers);
+  headers.set("Content-Type", "application/json");
+  headers.delete("Content-Length");
+  headers.delete("Content-Encoding");
+  return new Response(
+    JSON.stringify({
+      id: value.canonicalRunId,
+      parent_run_id: value.parentRunId,
+      project_id: value.projectId,
+      target: { type: "agent", id: value.agentId },
+      status: value.status,
+      conversation_id: value.conversationId,
+      output_message_id: value.outputMessageId,
+      ...(terminal ? { output: value.output, ...(value.error ? { error: value.error } : {}) } : {}),
+    }),
+    { status: response.status, headers },
+  );
 }
 
 export type InheritedRunResult = { readonly terminalReceipt: InheritedTerminalReceipt };
@@ -280,6 +338,7 @@ export async function acceptWorkflowInheritedRunAdmission(
     fetch: typeof globalThis.fetch;
   },
 ): Promise<ConversationRunProjection | InheritedRunResult> {
+  response = await normalizeInheritedExecutionResponse(response, binding);
   const row = await response.clone().json();
   if (row?.status !== "completed" && row?.status !== "failed" && row?.status !== "cancelled") {
     return await acceptInheritedRunAdmission(response, binding);
@@ -311,10 +370,13 @@ export async function acceptInheritedRunAdmission(
   binding: {
     projectId: string;
     conversationId?: string;
+    parentRunId?: string;
+    agentId?: string;
     apiUrl: string;
     fetch: typeof globalThis.fetch;
   },
 ): Promise<ConversationRunProjection> {
+  response = await normalizeInheritedExecutionResponse(response, binding);
   if (!response.ok) throw new Error(`Inherited child admission failed (${response.status})`);
   if (!response.headers.get("Cache-Control")?.includes("no-store")) {
     throw new Error("Inherited child credentials require no-store");

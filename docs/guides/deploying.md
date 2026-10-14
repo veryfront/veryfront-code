@@ -71,6 +71,12 @@ and the immediate compatibility fix in
 
 ## Push a preview
 
+Preview requests use one source generation for configuration and rendering. If
+source changes during a GET or HEAD request, the runtime retries up to twice
+before project middleware executes. Framework-owned OPTIONS preflight requests
+use the same guard. Continued changes return 503; missing snapshot capabilities
+are not retried.
+
 ```bash
 npx veryfront@latest push
 ```

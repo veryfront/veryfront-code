@@ -23,10 +23,15 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getEffectiveRequestHost, getEffectiveRequestOrigin } from "../utils/request-host.ts";
+import {
+  getClassificationRequestHost,
+  getEffectiveRequestHost,
+  getEffectiveRequestOrigin,
+} from "../utils/request-host.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { installedProjectDomain, type InstalledProjectHttpBinding } from "./installed-project.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
@@ -72,6 +77,7 @@ export interface PreparedProjectRequest {
   requestContext: ProjectRequestContext;
   proxyTrust: {
     proxyTrusted: boolean | undefined;
+    forwardedHeadersTrusted: boolean;
     identityHeadersTrusted: boolean;
   };
   loggerFacts: RequestContextFacts;
@@ -138,6 +144,7 @@ export interface ProjectRuntimeContextResolution {
 
 interface RequestContextFacts {
   domain: string;
+  environment: string | undefined;
   projectSlug: string | undefined;
   projectId: string | undefined;
   releaseId: string | undefined;
@@ -184,8 +191,14 @@ export async function prepareProjectRequest(
         token: undefined,
       },
       requestContext: { slug: binding.projectSlug, branch: null, mode: "production", token: "" },
-      proxyTrust: { proxyTrusted: false, identityHeadersTrusted: false },
+      proxyTrust: {
+        proxyTrusted: false,
+        forwardedHeadersTrusted: false,
+        identityHeadersTrusted: false,
+      },
       loggerFacts: {
+        // Installed identity comes from host configuration, never request headers.
+        environment: "production",
         domain: url.hostname,
         projectSlug: binding.projectSlug,
         projectId: binding.projectId,
@@ -209,22 +222,28 @@ export async function prepareProjectRequest(
   // the request may authorize canonical cache and secret-fetch identity.
   // Standalone runtimes retain their existing direct-header contract.
   const identityHeadersTrusted = !isProxyMode || proxyTrusted === true;
-  const headers = extractRequestHeaders(req, url, proxyTrusted, identityHeadersTrusted);
+  const forwardedHeadersTrusted = proxyTrusted ??
+    (getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1");
+  const headers = extractRequestHeaders(req, url, forwardedHeadersTrusted, identityHeadersTrusted);
   const requestContext = createRequestContext(req, {
-    proxyTrusted,
+    proxyTrusted: forwardedHeadersTrusted,
     allowHostTokenFallback: !isProxyMode,
   });
 
-  const hostHeader = req.headers.get("host") ?? url.host;
+  const hostHeader = getEffectiveRequestHost(req, url, forwardedHeadersTrusted);
   const domain = hostHeader.replace(/:\d+$/, "");
 
   return {
     url,
     headers,
     requestContext,
-    proxyTrust: { proxyTrusted, identityHeadersTrusted },
+    proxyTrust: { proxyTrusted, forwardedHeadersTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
+      // Standalone defaults can change during runtime resolution.
+      environment: isProxyMode && identityHeadersTrusted
+        ? parseProxyEnvironment(headers.environment ?? null) ?? requestContext.mode
+        : undefined,
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,
       releaseId: headers.releaseId,
@@ -368,7 +387,8 @@ export async function resolveProjectRuntimeContext(
 
   const trustProxyHeaders = input.proxyTrust.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  const host = getEffectiveRequestHost(
+  // Classification only: the environment is derived from the normalized host.
+  const host = getClassificationRequestHost(
     input.req,
     input.url,
     trustProxyHeaders,

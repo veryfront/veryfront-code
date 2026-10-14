@@ -1,68 +1,74 @@
 ---
 title: "Sandbox"
-description: "Run isolated commands and file operations in ephemeral sandbox sessions."
+description: "Run commands and manage files in isolated workspaces."
 order: 36
 ---
 
-A sandbox is a short-lived, isolated workspace for executing commands and file operations away from your app process. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
+A sandbox is an isolated workspace for commands and files. Private always-on sandboxes retain workspace files across runtime restarts. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
 
-The sandbox client talks to an authenticated sandbox session API. You need either Veryfront Cloud credentials or your own compatible backing service for `/sandbox-sessions`.
+The sandbox client talks to an authenticated sandbox API. You need either Veryfront Cloud credentials or your own compatible backing service for `/sandboxes`.
 
 ## Prerequisites
 
-- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`) or a self-hosted
-  `/sandbox-sessions` API and matching `VERYFRONT_API_URL`.
+- A reachable `/sandboxes` API and credentials for that API.
+- Outside a scoped Veryfront Cloud request, set both `VERYFRONT_API_URL` and
+  `VERYFRONT_API_TOKEN`, or pass `apiUrl` and `authToken` explicitly.
 - A reachable network from the process that calls `Sandbox.create()`.
 
-## Create a sandbox session
+## Create a sandbox
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
 self-hosted apps, CI, and other runtimes outside a Veryfront-hosted request,
-provide credentials explicitly. Set `VERYFRONT_API_TOKEN`, and set
-`VERYFRONT_API_URL` when you need a non-default API endpoint.
+set both the API URL and credentials. The client has no default API URL:
 
-Inside a Veryfront-hosted request, the client can use request-scoped
-credentials automatically. In that path, you do not need to set
-`VERYFRONT_API_TOKEN` separately for the request.
+```bash
+export VERYFRONT_API_URL="<API_URL>"
+export VERYFRONT_API_TOKEN="<TOKEN>"
+```
+
+Inside a scoped Veryfront Cloud request, the client uses the request’s API URL
+and credentials. You do not need separate environment values for that request.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const sandbox = await Sandbox.create();
+const sandbox = await Sandbox.create({ projectReference: "<PROJECT_ID>" });
 ```
 
-Verify the session with a command before doing longer work:
+Verify the sandbox with a command before doing longer work:
 
 ```ts
-const result = await sandbox.executeCommand("pwd");
+const result = await sandbox.runCommand("pwd");
 console.log(result.exitCode);
 console.log(result.stdout);
 ```
 
-You can also reconnect to an existing session:
+You can also reconnect to an existing sandbox:
 
 ```ts
-const sandbox = await Sandbox.get(sessionId);
+const sandbox = await Sandbox.get(sandboxId);
 ```
 
-If you already know both the sandbox session ID and its runtime endpoint, attach without doing a reconnect lookup:
+If you already know both the sandbox ID and its runtime endpoint, attach without doing a reconnect lookup:
 
 ```ts
 const sandbox = Sandbox.attach({
-  id: sessionId,
+  id: sandboxId,
   endpoint: sandboxEndpoint,
 });
 ```
 
-If you want to defer session creation until the first command or file operation, use the lazy client:
+To defer sandbox creation until the first command or file operation, use the lazy client:
 
 ```ts
 const sandbox = Sandbox.createLazy({
-  projectId: "proj_123",
+  projectReference: "<PROJECT_ID>",
 });
 ```
 
-If your project context can change over time, prefer `getProjectId()` so lazy exec and async run calls inherit the latest project reference automatically:
+For custom runtime routing, `resolveRuntimeEndpoint` receives `{ endpoint, sandboxId }` and returns the runtime URL. Supply an explicit `authToken`; custom routing does not use stored login credentials.
+
+Use `getProjectId()` when the billing project is selected at runtime. It is read when the sandbox is created:
 
 ```ts
 const sandbox = Sandbox.createLazy({
@@ -73,28 +79,27 @@ const sandbox = Sandbox.createLazy({
 To override the resolved credentials, pass `authToken` explicitly. This can be a
 JWT or a Studio-generated API key.
 
-For project-scoped billing or isolation, pass `projectId` when creating the
-session.
+Pass `projectReference` when creating a sandbox to select its billing project.
 
 ```ts
 const sandbox = await Sandbox.create({
-  projectId: "proj_123",
+  projectReference: "<PROJECT_ID>",
 });
 ```
 
-## Execute commands
+## Run commands
 
 Buffered execution:
 
 ```ts
-const result = await sandbox.executeCommand("ls -la");
+const result = await sandbox.runCommand("ls -la");
 console.log(result.stdout, result.stderr, result.exitCode);
 ```
 
 Streaming execution:
 
 ```ts
-for await (const event of sandbox.executeStream("npm test")) {
+for await (const event of sandbox.streamCommand("npm test")) {
   if (event.type === "stdout") process.stdout.write(event.data ?? "");
   if (event.type === "stderr") process.stderr.write(event.data ?? "");
   if (event.type === "exit") console.log("exit:", event.exitCode);
@@ -115,8 +120,8 @@ console.log(content);
 ## Lifecycle best practices
 
 - Always call `await sandbox.close()` in `finally` blocks.
-- Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a session every run.
-- Use `sandbox.heartbeat()` during long-running sessions to avoid idle timeouts.
+- Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a sandbox every run.
+- Use `sandbox.heartbeat()` during long operations to avoid idle timeouts.
 - Persist `sandbox.id` only when you need reconnect semantics.
 - Keep auth tokens and API keys server-side only. Do not expose them to browsers.
 
@@ -125,10 +130,10 @@ console.log(content);
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const sandbox = await Sandbox.create();
+const sandbox = await Sandbox.create({ projectReference: "<PROJECT_ID>" });
 
 try {
-  const result = await sandbox.executeCommand("echo 'ready'");
+  const result = await sandbox.runCommand("echo 'ready'");
   console.log(result.stdout);
 } finally {
   await sandbox.close();
@@ -140,10 +145,129 @@ try {
 Run the example above in a Node script with the env vars set. A working
 sandbox:
 
-- Prints `ready` to stdout from `executeCommand`.
+- Prints `ready` to stdout from `runCommand`.
 - Returns `exitCode: 0` from the command result.
-- Releases its session on `sandbox.close()` without an error.
+- Deletes its temporary sandbox on `sandbox.close()`.
 
-If `Sandbox.create()` throws a `401`, double-check the API token. If the
-session never closes, look in the cloud dashboard for the lingering session
-id and close it manually.
+If `Sandbox.create()` throws a `401`, double-check the API token. If cleanup fails, find the sandbox by ID in Studio and delete it.
+
+## Use a private always-on workspace
+
+Private access requires creator-owned credentials. Always-on workspaces use the
+project's existing entitlement, capacity and billing rules.
+
+```ts
+import { Sandbox } from "veryfront/sandbox";
+
+const sandbox = await Sandbox.create({
+  projectReference: "<PROJECT_ID>",
+  accessScope: "private",
+  ttlMode: "always_on",
+});
+
+await sandbox.runCommand("mkdir -p /workspace/repository");
+await sandbox.close();
+```
+
+Closing a persistent or always-on client keeps the workspace by default, including
+persistent workspaces with timed cleanup. A lazy client deletes a newly created
+temporary workspace on close by default. Set `deleteOnClose: false` to retain it.
+For a lazy client, set `deleteOnClose: true` to delete a persistent or always-on
+workspace on close.
+The explicit flag also applies when storage metadata is missing or unknown;
+without an override, cleanup requires confirmed ephemeral storage and a returned temporary lifetime. Missing or invalid lifetime metadata retains the workspace.
+Files and user-installed tools
+under `/workspace` survive runtime replacement. Running processes and changes
+outside `/workspace` do not persist. Use `sandbox.delete()` to delete the
+sandbox and its workspace files.
+
+If an always-on lifetime update fails or its response is lost, `close()` preserves the workspace. Confirm its policy before changing it back to temporary cleanup or deleting it.
+
+Supplied creation selectors and project list filters must be non-empty. Omit an optional selector instead of passing an empty configuration value. Each requested file write requires a matching receipt, including repeated paths.
+
+`Sandbox.list()` returns access, storage and lifetime metadata. Storage and
+lifetime are separate policies. Changing cleanup does not migrate temporary
+files to persistent storage.
+
+The SDK uses `/sandboxes`. Command IDs come from `command_id`; command
+collections use `data` and `page_info`. Per-file write failures are reported
+even when the HTTP request succeeds.
+
+## Inspect and manage a workspace
+
+```ts
+const capabilities = await Sandbox.capabilities();
+console.log(capabilities.limits.maxCommandTimeoutSeconds);
+
+const sandbox = await Sandbox.get("<SANDBOX_ID>");
+const readiness = await sandbox.checkReadiness();
+console.log(readiness.ok, readiness.reason);
+
+const files = await sandbox.listFiles({ path: "/workspace", limit: 20 });
+console.log(files.data);
+if (files.pageInfo.next) {
+  const nextPage = await sandbox.listFiles({
+    path: "/workspace",
+    cursor: files.pageInfo.next,
+  });
+  console.log(nextPage.data);
+}
+
+const environment = await sandbox.getEnvironment();
+console.log(Object.keys(environment.env));
+
+await sandbox.updateLifetime({ ttlMode: "duration", ttlHours: 4 });
+await sandbox.close();
+```
+
+`checkHealth()` and `checkReadiness()` do not record activity. `heartbeat()`
+records activity but does not extend fixed expiry. `getEnvironment()` returns
+redacted values. A creation response must explicitly identify ephemeral storage before automatic
+cleanup can delete its workspace. Missing or incompatible storage metadata
+makes `close()` detach and preserve the workspace. Closing a client obtained
+through `get()` or `attach()` leaves the sandbox available. Use `delete()` when you intend to remove it.
+
+A retained always-on workspace is not replaced automatically after a missing,
+inaccessible or unhealthy runtime response. Its ID stays available on the
+client so you can inspect it or reconnect with renewed credentials. Create a
+new workspace explicitly when you intend to replace it.
+
+## Migrate from the previous sandbox SDK
+
+Deploy the canonical `/sandboxes` API before upgrading SDK consumers. This
+SDK requires that API contract, including the validated camelCase workspace
+metadata and command responses described in this guide. The API and SDK do
+not negotiate versions. A missing route or an incompatible response fails
+with a request or response-validation error.
+
+Before publishing the SDK, verify `sandbox.checkReadiness()`, `Sandbox.capabilities()` and
+`sandbox.runCommand("pwd")` against the deployed API in the target environment. Verify
+that `close()` preserves a persistent workspace by reconnecting with `Sandbox.get(id)`.
+Keep the release blocked until these checks pass.
+
+Update callers to these names. This release removes the old names without aliases.
+
+| Previous name                         | Current name         |
+| ------------------------------------- | -------------------- |
+| `executeCommand()`                    | `runCommand()`       |
+| `executeStream()`                     | `streamCommand()`    |
+| `ExecOptions`                         | `CommandOptions`     |
+| `ExecResult`                          | `CommandResult`      |
+| `ExecStreamEvent`                     | `CommandStreamEvent` |
+| `SandboxSession`                      | `SandboxDetails`     |
+| Creation option `projectId`           | `projectReference`   |
+| Command option `timeout_seconds`      | `timeoutSeconds`     |
+| Runtime resolver argument `sessionId` | `sandboxId`          |
+
+`createProjectScopedExecOptions()` is removed. Set `projectReference` when
+creating the sandbox; commands use the sandbox scope and do not accept a
+per-command project reference. Replace legacy JavaScript options explicitly,
+because an unrecognized option does not configure the command timeout.
+
+`SandboxDetails` uses camelCase metadata fields, including `shortId`,
+`createdAt`, `workspaceStorage` and `ttlMode`. Command IDs remain opaque strings.
+
+Review cleanup calls when upgrading. `close()` detaches from existing and
+persistent workspaces. Use `delete()` when you intend to remove the sandbox and
+its files. Remove old server contracts only after every caller and runtime
+image uses the canonical API.

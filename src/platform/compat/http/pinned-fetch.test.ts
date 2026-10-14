@@ -200,8 +200,8 @@ describe("fetchWithPinnedAddresses", () => {
     let runtimeSent: Record<string, string | string[] | undefined> = {};
     const server = createServer((request, response) => {
       runtimeSent = request.headers;
-      response.writeHead(204);
-      response.end();
+      response.writeHead(200);
+      response.end("header fixture");
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -213,11 +213,13 @@ describe("fetchWithPinnedAddresses", () => {
       if (!address || typeof address === "string") {
         throw new Error("Test server did not expose a TCP address");
       }
-      await fetch(`http://127.0.0.1:${address.port}/baseline`, {
+      const response = await fetch(`http://127.0.0.1:${address.port}/baseline`, {
         method: "POST",
         body: '{"hello":"world"}',
         headers: { "content-type": "application/json" },
       });
+
+      assertEquals(await response.text(), "header fixture");
 
       const defaulted = applyRuntimeDefaultRequestHeaders(
         new Headers({ "content-type": "application/json" }),
@@ -252,8 +254,8 @@ describe("fetchWithPinnedAddresses", () => {
     const seen = new Map<string, Record<string, string | string[] | undefined>>();
     const server = createServer((request, response) => {
       seen.set(request.url ?? "", request.headers);
-      response.writeHead(204);
-      response.end();
+      response.writeHead(200);
+      response.end("header fixture");
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -266,7 +268,8 @@ describe("fetchWithPinnedAddresses", () => {
         throw new Error("Test server did not expose a TCP address");
       }
       const origin = `http://127.0.0.1:${address.port}`;
-      await fetch(`${origin}/no-cors`, { mode: "no-cors" });
+      const response = await fetch(`${origin}/no-cors`, { mode: "no-cors" });
+      assertEquals(await response.text(), "header fixture");
 
       const ranged = applyRuntimeDefaultRequestHeaders(
         new Headers({ range: "bytes=0-0" }),
@@ -329,8 +332,8 @@ describe("fetchWithPinnedAddresses", () => {
     let seen: Record<string, string | string[] | undefined> = {};
     const server = createServer((request, response) => {
       seen = request.headers;
-      response.writeHead(204);
-      response.end();
+      response.writeHead(200);
+      response.end("header fixture");
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -342,11 +345,12 @@ describe("fetchWithPinnedAddresses", () => {
       if (!address || typeof address === "string") {
         throw new Error("Node test server did not expose a TCP address");
       }
-      await fetchWithPinnedAddresses(
+      const response = await fetchWithPinnedAddresses(
         new URL(`http://pinned-host.test:${address.port}/resource`),
         ["127.0.0.1"],
         { method: "GET" },
       );
+      assertEquals(await response.text(), "header fixture");
       assertEquals(
         seen["host"],
         `pinned-host.test:${address.port}`,
@@ -366,8 +370,8 @@ describe("fetchWithPinnedAddresses", () => {
     let seen: Record<string, string | string[] | undefined> = {};
     const server = createServer((request, response) => {
       seen = request.headers;
-      response.writeHead(204);
-      response.end();
+      response.writeHead(200);
+      response.end("header fixture");
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -379,11 +383,12 @@ describe("fetchWithPinnedAddresses", () => {
       if (!address || typeof address === "string") {
         throw new Error("Node test server did not expose a TCP address");
       }
-      await fetchWithPinnedAddresses(
+      const response = await fetchWithPinnedAddresses(
         new URL(`http://127.0.0.1:${address.port}/resource`),
         ["127.0.0.1"],
         { method: "POST", body: "{}", headers: { "content-type": "application/json" } },
       );
+      assertEquals(await response.text(), "header fixture");
       assertEquals(seen["user-agent"], DEFAULT_OUTBOUND_USER_AGENT);
       assertEquals(seen["accept"], "*/*");
       assertEquals(seen["content-type"], "application/json");
@@ -1036,7 +1041,18 @@ describe("fetchWithPinnedAddresses", () => {
     const bodyPullStarted = new Promise<void>((resolve) => {
       releaseBodyPull = resolve;
     });
+    let finishBodyPull!: () => void;
+    const bodyPullFinished = new Promise<void>((resolve) => {
+      finishBodyPull = resolve;
+    });
     let cancelStarted = false;
+    let cancelSettled = false;
+    let finishCancel!: () => void;
+    const cancelFinished = new Promise<void>((resolve) => {
+      finishCancel = resolve;
+    }).then(() => {
+      cancelSettled = true;
+    });
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         bodyController = controller;
@@ -1044,11 +1060,11 @@ describe("fetchWithPinnedAddresses", () => {
       },
       pull() {
         releaseBodyPull();
-        return new Promise(() => {});
+        return bodyPullFinished;
       },
       cancel() {
         cancelStarted = true;
-        return new Promise(() => {});
+        return cancelFinished;
       },
     }) as unknown as BodyInit;
 
@@ -1087,8 +1103,13 @@ describe("fetchWithPinnedAddresses", () => {
       if (timeout !== undefined) clearTimeout(timeout);
       assertEquals(result.includes(mutationMember), true);
       assertEquals(cancelStarted, true);
+      assertEquals(cancelSettled, false);
     } finally {
       Object.defineProperty(ClientRequest.prototype, mutationMember, originalMember);
+      finishCancel();
+      finishBodyPull();
+      if (cancelStarted) await cancelFinished;
+      await bodyPullFinished;
       await closeNodeTestServer(server);
     }
   });

@@ -144,6 +144,12 @@ values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+Set `parallelToolCalls: false` to request one tool call at a time from providers
+that support this control. Markdown agents accept `parallel-tool-calls: false`
+or `parallelToolCalls: false` in frontmatter. Omit the option to preserve the
+provider's default. This setting controls tool-call batching; it does not force
+the model to call a tool or change which tools it may use.
+
 File-read results from the immediately preceding user turn retain their content
 and version metadata so follow-up edits can use the file evidence. Older reads
 and large non-file results are compacted normally. Under context pressure, the
@@ -185,7 +191,7 @@ with a 4 KiB preview; the framework supplies `get_tool_result` for reads of up t
 import { agent } from "veryfront";
 
 export default agent({
-  instructions: "Use tools to answer the user's questions.",
+  system: "Use tools to answer the user's questions.",
   toolResultContext: {
     maxInlineBytes: 8192,
     previewBytes: 2048,
@@ -345,8 +351,8 @@ boundary for `load_skill`, not just a prompt filter.
 
 Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through
-`load_skill({ load: { skillId, file } })` and does not execute skill scripts
-directly.
+`load_skill({ reference: { skillId, file } })` and does not execute skill
+scripts directly.
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -357,7 +363,8 @@ When an agent uses a skill, the flow is:
 
 1. Call `load_skill({ load: { skillId } })` to load the skill instructions and policy.
 2. Read an advertised reference with `load_skill_reference(...)` on local and
-   project runtimes, or `load_skill({ load: { skillId, file } })` in hosted chat.
+   project runtimes, or `load_skill({ reference: { skillId, file } })` in hosted
+   chat.
 3. On local and project runtimes, optionally call
    `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls. Loading a skill does not change which
@@ -395,6 +402,11 @@ subprocesses.
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
+  Cloud scripts use background sandbox commands above `55000` ms so the
+  synchronous API limit does not shorten your configured timeout. Commands are
+  canceled at the configured deadline, and the executor closes its sandbox.
+  Truncated cloud script output returns output-limit exit code `125`, including
+  partial output and an explanatory error.
 
 ## Connect to a route
 
@@ -528,12 +540,67 @@ successful parse sets `response.object`, and a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
-When the hosted runtime runs an agent, its AG-UI stream reports the parsed value
-as `result` on the `RunFinished` event, and the Runs API stores it as the run's
-`output`. The event has no `result` when the agent declares no `outputSchema`,
-when the output did not parse, or when the run failed or was cancelled. See
-[Run input and output](./run-input-output.md) for what an agent run stores as
-input and output.
+When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
+of the parsed value as `result` on the `RunFinished` event, and the Runs API
+stores that snapshot as the run's `output`. The event has no `result` when the
+agent declares no `outputSchema`, when the output did not parse, or when the run
+failed or was cancelled. See [Run input and output](./run-input-output.md) for
+what an agent run stores as input and output.
+
+`response.object` in your own code is always the parsed value. The snapshot
+equals it when the value is plain JSON (strings, finite numbers, booleans,
+`null`, arrays and plain objects) and stays within the size limits below.
+Otherwise, for example when an `outputSchema` transform returns a `Date`, a
+`bigint`, `NaN`, `Infinity` or `undefined`, or when a string is too long, the
+stored value is a marker object instead:
+
+```json
+{
+  "captureStatus": "partial",
+  "reasons": ["unsupported_object", "unsupported_property"],
+  "value": { "title": "Report", "createdAt": "[unsupported object]" }
+}
+```
+
+- `captureStatus` is `partial` when some of the value was captured, or
+  `unsupported` when none of it could be.
+- `reasons` lists why, for example `unsupported_object`, `unsupported_bigint`,
+  `unsupported_number`, `unsupported_undefined`, `unsupported_property`,
+  `accessor_property`,
+  `circular`, `max_depth`, `array_truncated`, `object_keys_truncated`,
+  `string_truncated`, `aggregate_budget_exhausted`, `object_key_unsupported`
+  or `serialized_budget_exhausted`.
+- `value` holds the JSON-safe part. Each value that could not be captured is
+  replaced with a string placeholder:
+  - `"[unsupported bigint]"`, `"[unsupported undefined]"`,
+    `"[unsupported symbol]"` or `"[unsupported function]"` for a value of that
+    type, and `"[unsupported number]"` for `NaN`, `Infinity` or `-Infinity`;
+  - `"[unsupported object]"` for an object that is not a plain object or array,
+    such as a `Date`, `Map` or class instance;
+  - `"[unsupported accessor]"` for a getter or setter property;
+  - `"[circular]"` for an object reached a second time, either through a
+    reference back to an enclosing value or through another property that
+    already holds the same object;
+  - `"[truncated nested data]"` below the depth limit or after the node limit.
+
+  An array longer than 100 items keeps its first 100 items and then one extra
+  string, `"[truncated N items]"`, where `N` is the number of items left out
+  (`array_truncated`). This string is a marker, not authored data.
+
+  The snapshot keeps at most 100 array items or object keys per level, 32
+  levels and 1,000 nodes in total. String content is limited to 1 MiB per
+  string and 1 MiB across the whole snapshot: a longer string is cut and ends
+  with `"… [truncated]"` (`string_truncated`), and a string that no longer fits
+  is replaced with `"[truncated message-finish object budget]"`
+  (`aggregate_budget_exhausted`). A key longer than 16 KiB is left out
+  (`object_key_unsupported`).
+
+  The stored run event that carries the snapshot is also limited to 240 KiB,
+  together with the finish reason and usage. When the snapshot would exceed it,
+  strings are cut further, so a 300 KiB string is truncated even though it is
+  under 1 MiB. If no truncated snapshot fits, for example because its keys
+  alone are too large, the stored value is
+  `{ "captureStatus": "partial", "reasons": ["serialized_budget_exhausted"], "value": "[truncated message-finish object budget]" }`.
 
 ## Runtime UTC context
 
@@ -625,6 +692,7 @@ export default agent({
 | `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                             |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                     |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                                         |
+| `parallelToolCalls`   | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                        |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                                                 |
 | `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                                           |
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                                         |
@@ -651,6 +719,19 @@ Its lifecycle is:
   not diagnosed by the chain.
 - Re-entrant `next()` calls made by Promise species or other framework-internal
   result-observation hooks are rejected; they are not middleware-body calls.
+
+Middleware can replace or edit messages, but changing a platform control result
+removes its trusted ownership. Internal clones preserve that ownership only when
+the tool call ID, tool name, `providerExecuted` and data-only result still match the original result.
+Caller-supplied result shapes never grant platform control authority.
+
+For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
+matching the replayed platform result contents against immutable canonical run or
+input-response evidence, or an original host-authored content digest retained
+before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
+do not prove origin. Edited replacements lose the grant. Deploy compatible API
+and Studio support and qualify replay against that deployed combination before
+claiming trusted replay acceptance.
 
 ## Verify it worked
 

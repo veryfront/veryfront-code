@@ -132,6 +132,8 @@ export function createManagedBrokerPersistence(input: {
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
+  /** Internal/test persistence deadline; production uses the sink default. */
+  eventPersistenceTimeoutMs?: number;
   /** Trusted migration opt-in. Requires API support and a project-bound generation writer. */
   toolCallAdmissions?: { projectId: string };
   /** Trusted migration opt-in. Disabled until the API accepts runtime_observations. */
@@ -155,6 +157,9 @@ export function createManagedBrokerPersistence(input: {
     }),
     run,
     terminal,
+    ...(input.eventPersistenceTimeoutMs !== undefined
+      ? { eventPersistenceTimeoutMs: input.eventPersistenceTimeoutMs }
+      : {}),
     ...(input.toolCallAdmissions ? { toolCallAdmissions: input.toolCallAdmissions } : {}),
     ...(input.runtimeObservations ? { runtimeObservations: input.runtimeObservations } : {}),
   });
@@ -165,6 +170,8 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   capability: HostedRunEventWriterCapability;
   run: ConversationRunProjection;
   terminal: ManagedBrokerTerminal;
+  /** Internal/test persistence deadline; production uses the sink default. */
+  eventPersistenceTimeoutMs?: number;
   toolCallAdmissions?: { projectId: string };
   runtimeObservations?: { projectId: string };
 }) {
@@ -225,7 +232,12 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
-  const durableSink = createDurableRunEventSink({ mirror: durableMirror });
+  const durableSink = createDurableRunEventSink({
+    mirror: durableMirror,
+    ...(input.eventPersistenceTimeoutMs !== undefined
+      ? { timeoutMs: input.eventPersistenceTimeoutMs }
+      : {}),
+  });
   let tail = Promise.resolve();
   let failure: unknown;
   let failed = false;

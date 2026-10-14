@@ -8,7 +8,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, symlink, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { dirname, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -60,9 +60,23 @@ import { createMockAdapter } from "../platform/adapters/mock.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import {
   DeclarativeConfigEvaluationError,
+  evaluateDeclarativeConfigWithParser,
   prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
-import { DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS } from "./declarative-evaluator-worker-runner.ts";
+import {
+  DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS,
+  type DeclarativeConfigWorkerRunnerOptions,
+} from "./declarative-evaluator-worker-runner.ts";
+import {
+  createDeclarativeConfigWorkerErrorResponse,
+  createDeclarativeConfigWorkerInfrastructureError,
+  createDeclarativeConfigWorkerSuccessResponse,
+  type DeclarativeConfigWorkerRequest,
+  decodeDeclarativeConfigWorkerRequest,
+  decodeDeclarativeConfigWorkerResponse,
+} from "./declarative-evaluator-worker-protocol.ts";
+import { BabelParseOnlyParser } from "@veryfront/ext-parser-babel/parser-only";
+import type { ConfigSnapshotRecord } from "./snapshot.ts";
 import {
   getCurrentRequestContext,
   runWithRequestContext,
@@ -217,7 +231,51 @@ async function waitForTrustedFlightCount(expected: number): Promise<void> {
   );
 }
 
+/**
+ * Runs the hosted evaluator's parser and worker protocol round trip in this
+ * thread. The production worker charges startup, parser load and evaluation
+ * against one wall-clock deadline, so on a loaded host a real worker can
+ * report `worker-timeout` (service-overloaded) before the source is parsed.
+ * Loader tests assert parse and validation outcomes, not worker latency; the
+ * worker lifecycle, its deadline and the real worker thread have their own
+ * tests in declarative-evaluator-worker*.test.ts. There is no deadline here;
+ * cancellation reports `worker-aborted` like the runner does.
+ */
+async function evaluateHostedConfigInProcess(
+  payload: DeclarativeConfigWorkerRequest,
+  options?: DeclarativeConfigWorkerRunnerOptions,
+): Promise<ConfigSnapshotRecord> {
+  const throwIfAborted = () => {
+    if (options?.signal?.aborted) {
+      throw createDeclarativeConfigWorkerInfrastructureError("worker-aborted");
+    }
+  };
+  throwIfAborted();
+  let response: unknown;
+  try {
+    const request = decodeDeclarativeConfigWorkerRequest(structuredClone(payload));
+    response = createDeclarativeConfigWorkerSuccessResponse(
+      await evaluateDeclarativeConfigWithParser(
+        request.evaluationOptions,
+        new BabelParseOnlyParser(),
+      ),
+    );
+  } catch (error) {
+    response = createDeclarativeConfigWorkerErrorResponse(error);
+  }
+  throwIfAborted();
+  return decodeDeclarativeConfigWorkerResponse(
+    structuredClone(response),
+    payload.evaluationOptions.source.length,
+    payload.evaluationOptions.fileName,
+  ).snapshot;
+}
+
 describe("config/loader", () => {
+  beforeEach(() => {
+    __setHostedConfigEvaluatorForTests(evaluateHostedConfigInProcess);
+  });
+
   afterEach(async () => {
     __setHostedConfigEvaluatorForTests();
     await waitForHostedSourceReadState({
@@ -8484,7 +8542,7 @@ export default config as const;
       });
     });
 
-    it("evaluates hosted multi-project config in the real worker with tenant env", async () => {
+    it("evaluates hosted multi-project config with tenant env", async () => {
       const adapter = setup();
       const sourceContext = {
         productionMode: false,

@@ -28,6 +28,7 @@ export const UNTRACEABLE_WORKER_INCLUDES = [
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
   "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
   "extensions/ext-document-kreuzberg/src/native-extraction-process.ts",
+  "extensions/ext-document-kreuzberg/src/node-native-extraction-process.ts",
 ];
 
 export const DEFAULT_INCLUDES = [

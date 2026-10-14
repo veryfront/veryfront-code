@@ -113,7 +113,12 @@ function replacementApi() {
         if (listingFailed) {
           return Response.json({ message: "Fixture listing failure" }, { status: 503 });
         }
-        const cursor = Number(new URL(request.url).searchParams.get("cursor") ?? 0);
+        const query = new URL(request.url).searchParams;
+        // The file listing is addressed with the `ref` selector, not `branch`.
+        if (query.has("branch") || !/^(main|branch:.+)$/.test(query.get("ref") ?? "")) {
+          return Response.json({ message: "Fixture expects a ref selector" }, { status: 400 });
+        }
+        const cursor = Number(query.get("cursor") ?? 0);
         const paths = [...files.keys()];
         return Response.json({
           data: paths.slice(cursor, cursor + listingPageSize).map((path) => ({ path })),
@@ -184,11 +189,22 @@ function replacementApi() {
         body.chunk_ids.forEach((id) => embeddings.add(id));
         return Response.json({ created: body.chunk_ids.length });
       }
-      const documentMatch = path.match(/\/rag\/documents(?:\/([^/]+))?$/);
+      const documentMatch = path.match(/\/knowledge\/retrieval-documents(?:\/([^/]+))?$/);
       if (documentMatch) {
-        if (request.method === "GET") return Response.json({ documents: [...documents.values()] });
-        if (request.method === "POST") {
-          const body = await request.json() as Document;
+        const documentId = documentMatch[1] ? decodeURIComponent(documentMatch[1]) : undefined;
+        if (request.method === "GET" && !documentId) {
+          return Response.json({ data: [...documents.values()], page_info: { next: null } });
+        }
+        if (
+          (request.method === "POST" && !documentId) || (request.method === "PUT" && documentId)
+        ) {
+          const fields = await request.json() as Omit<Document, "id"> & { id?: string };
+          const body: Document = documentId
+            ? { ...fields, id: documentId }
+            : { ...fields, id: fields.id!, expected_revision: null };
+          if (documentId && !documents.has(documentId)) {
+            return Response.json({ code: "not_found" }, { status: 404 });
+          }
           const failure = metadataFailure;
           metadataFailure = undefined;
           if (failure === "delayed") {
@@ -199,7 +215,7 @@ function replacementApi() {
             return Response.json({ message: "Fixture metadata rejection" }, { status: 400 });
           }
           if (!commitMetadata(body)) {
-            return Response.json({ message: "Stale document revision" }, { status: 412 });
+            return Response.json({ code: "conflict" }, { status: 409 });
           }
           if (failure === "after") {
             return Response.json({ message: "Fixture response failure after commit" }, {
@@ -209,16 +225,18 @@ function replacementApi() {
           if (failure === "transport-after") {
             throw new TypeError("Fixture acknowledgement lost after commit");
           }
-          return Response.json({ document: body });
+          return Response.json(documents.get(body.id), { status: documentId ? 200 : 201 });
         }
-        if (request.method === "DELETE") {
-          const id = decodeURIComponent(documentMatch[1]!);
+        if (request.method === "DELETE" && documentId) {
           const expected = new URL(request.url).searchParams.get("expected_revision");
-          if (expected && documents.get(id)?.revision !== expected) {
-            return Response.json({ message: "Stale document revision" }, { status: 412 });
+          if (!documents.has(documentId)) {
+            return Response.json({ code: "not_found" }, { status: 404 });
           }
-          documents.delete(id);
-          return Response.json({ deleted: 1 });
+          if (expected && documents.get(documentId)?.revision !== expected) {
+            return Response.json({ code: "conflict" }, { status: 409 });
+          }
+          documents.delete(documentId);
+          return Response.json({ id: documentId, status: "deleted" });
         }
       }
       if (path.endsWith("/search")) {

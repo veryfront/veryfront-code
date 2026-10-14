@@ -102,6 +102,7 @@ interface TaskContext {
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
+  dataDir?: string;
 }
 ```
 
@@ -119,6 +120,12 @@ interface TaskContext {
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal
+- **`dataDir`**: writable scratch directory for this run. Hosted runtimes mount
+  the project filesystem read-only, so writes to relative paths such as
+  `.data/` fail there with `TASK_FILESYSTEM_READ_ONLY`. Write temporary files
+  under `ctx.dataDir` instead. It is removed when the run ends; keep durable
+  state in a database or blob store. It is unset when the process cannot write
+  to the OS temp directory
 
 Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
@@ -166,6 +173,10 @@ run from its first start, including any retry attempts. The runtime aborts
 ignores the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
 can continue executing inside the runtime process after the response returns;
 a timeout does not roll back side effects.
+
+A task that throws fails with error code `TASK_EXECUTION_FAILED`, or
+`TASK_FILESYSTEM_READ_ONLY` when it wrote outside `ctx.dataDir` on a read-only
+filesystem.
 
 ### Retries
 
@@ -244,11 +255,16 @@ with at most 20 errors:
 
 The runtime records `reason` `invalid` or `schema_uncompilable` for the
 `input` and `output` phases. The platform records the `identity` phase, with
-`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run. Each run records `input_schema_sha256` and
-`output_schema_sha256`: the lowercase sha256 hex of the canonical JSON Schema
-(a `defineSchema` schema converted to JSON Schema, object keys sorted at every
-depth, serialized without whitespace). A task without that schema records
-`null`. Runs created before identities existed are never revalidated.
+`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run.
+The SDK compatibility `Run` shape exposes `input_schema_sha256` and
+`output_schema_sha256`; canonical REST declares the corresponding optional
+`schemas.input.sha256` and `schemas.output.sha256` fields. Reported identities are
+the lowercase sha256 hex of the canonical JSON Schema (a `defineSchema` schema
+converted to JSON Schema, object keys sorted at every depth, serialized without
+whitespace). A deployed API may omit the optional schema entries, so the SDK may
+return `null` even for a schema-bound task. Missing identities do
+not prove that no schema was declared. Runs created before identities existed are
+never revalidated. See [Run input and output](./run-input-output.md#schema-identity).
 
 ## Child runs
 
@@ -324,8 +340,11 @@ To send business input over REST, add `input` to the request next to `config`:
 curl -X POST "$VERYFRONT_API_URL/runs" \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"kind":"task","owner":{"kind":"project","id":"<PROJECT_ID>"},"request":{"target":"task:sync-data","input":{"since":"2026-01-01"},"config":{"batchSize":100}}}'
+  -H "Idempotency-Key: <UNIQUE_REQUEST_ID>" \
+  -d '{"project_id":"<PROJECT_ID>","target":{"type":"task","id":"sync-data"},"input":{"since":"2026-01-01"},"config":{"batchSize":100}}'
 ```
+
+Reuse the same idempotency key when retrying one request. Use a new key for a new run.
 
 The value a task returns becomes the run's `output`. Its JSON serialization can
 be at most 1,048,576 bytes (1 MiB) of UTF-8. A larger successful result is not

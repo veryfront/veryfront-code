@@ -77,6 +77,7 @@ describe("observability/instruments/memory-instruments", () => {
         { name: "test.memory.heap", unit: "bytes" },
         { name: "test.memory.heap_total", unit: "bytes" },
         { name: "test.memory.heap_percent", unit: "percent" },
+        { name: "test.event_loop.max_lag", unit: "ms" },
       ],
       "memory gauge names and units are the dashboard contract",
     );
@@ -84,9 +85,13 @@ describe("observability/instruments/memory-instruments", () => {
 
   it("observes rss, heap, and heap utilization through their matching gauges", async () => {
     const instruments = createMemoryInstruments(createRecordingMeter([]), CONFIG);
-    const bindings = createMemoryObservableBindings(instruments, () => MEMORY_USAGE_SAMPLE);
+    const bindings = createMemoryObservableBindings(
+      instruments,
+      () => MEMORY_USAGE_SAMPLE,
+      () => 57_000,
+    );
 
-    assertEquals(bindings.length, 4, "every memory gauge is bound to a callback");
+    assertEquals(bindings.length, 5, "every memory gauge is bound to a callback");
     assertStrictEquals(
       bindings[0]?.instrument,
       instruments.memoryUsageGauge,
@@ -123,6 +128,8 @@ describe("observability/instruments/memory-instruments", () => {
     } finally {
       _resetEnvironmentConfig();
     }
+    assertStrictEquals(bindings[4]?.instrument, instruments.eventLoopMaxLagGauge);
+    assertEquals(await observeBinding(bindings[4]!.callback), 57_000);
 
     assertEquals(rss, MEMORY_USAGE_SAMPLE.rss);
     assertEquals(heapUsed, MEMORY_USAGE_SAMPLE.heapUsed);

@@ -89,4 +89,61 @@ describe("executor model agent error classification", () => {
       }
     });
   }
+
+  it("retries a pre-progress overload stream after Array.prototype.some is replaced", async () => {
+    let attempts = 0;
+    const runtime = new AgentRuntime("synthetic-retry-agent", {
+      model: modelId,
+      system: "Synthetic system",
+      maxSteps: 1,
+    }, {
+      resolveModelRuntime: () => ({
+        provider: "veryfront-cloud",
+        modelId: "synthetic",
+        modelProvider: "openai",
+        doGenerate: () => Promise.reject(new Error("generate must not be called")),
+        doStream() {
+          attempts += 1;
+          if (attempts === 1) throw overload();
+          return Promise.resolve({
+            stream: new ReadableStream({
+              start(controller) {
+                controller.enqueue({ type: "text-delta", text: "Synthetic retry success" });
+                controller.enqueue({ type: "finish", finishReason: "stop", totalUsage: {} });
+                controller.close();
+              },
+            }),
+          });
+        },
+      }),
+    });
+    const originalSome = Array.prototype.some;
+    let output = "";
+    try {
+      Array.prototype.some = function () {
+        if (
+          this.length === 3 &&
+          typeof this[0] === "number" &&
+          typeof this[1] === "number" &&
+          typeof this[2] === "number"
+        ) {
+          throw new Error("hostile Array.prototype.some");
+        }
+        return Reflect.apply(originalSome, this, arguments);
+      };
+      const stream = await runtime.stream([{
+        id: "message-test",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic prompt" }],
+        timestamp: 1,
+      }]);
+      output = await new Response(stream).text();
+    } finally {
+      Array.prototype.some = originalSome;
+    }
+
+    assertEquals(attempts, 2);
+    assertEquals(output.includes("Synthetic retry success"), true);
+    assertEquals(output.includes("hostile Array.prototype.some"), false);
+  });
 });
