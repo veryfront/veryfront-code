@@ -9,7 +9,6 @@ import {
   createNodeVeryfrontCloudAgentServiceRuntimeOptions,
 } from "./cloud-agent-chat-execution.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { hasRuntimeObservationCaptureOptIn } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   createNodeVeryfrontCloudAgentServiceContext,
@@ -42,19 +41,16 @@ describe("cloud agent provider replay bootstrap", () => {
 describe("cloud agent project definition bootstrap gate", () => {
   const flag = "VERYFRONT_EXPERIMENTAL_PROJECT_DEFINITION_BOOTSTRAP";
 
-  it("reads the service environment snapshot instead of the ambient process", () => {
-    const ambient = getEnv(flag);
-    setEnv(flag, "1");
-    try {
-      assertEquals(resolveProjectDefinitionBootstrapEnabled({ env: {} }), false);
-      assertEquals(
-        resolveProjectDefinitionBootstrapEnabled({ processTarget: { env: { [flag]: "0" } } }),
-        false,
-      );
-    } finally {
-      if (ambient === undefined) deleteEnv(flag);
-      else setEnv(flag, ambient);
-    }
+  it("decides the gate from the service environment snapshot only", () => {
+    // An explicit snapshot is authoritative, so the ambient process is never read.
+    assertEquals(resolveProjectDefinitionBootstrapEnabled({ env: {} }), false);
+    assertEquals(
+      resolveProjectDefinitionBootstrapEnabled({
+        env: { [flag]: "0" },
+        processTarget: { env: { [flag]: "1" } },
+      }),
+      false,
+    );
     assertEquals(resolveProjectDefinitionBootstrapEnabled({ env: { [flag]: "1" } }), true);
     assertEquals(
       resolveProjectDefinitionBootstrapEnabled({ processTarget: { env: { [flag]: "1" } } }),
