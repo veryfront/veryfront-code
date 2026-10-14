@@ -43,6 +43,7 @@ import {
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
 import { getProviderToolProfile } from "./provider-tool-compat.ts";
+import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
@@ -108,6 +109,8 @@ export interface PrepareAgentRuntimeStepInput {
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
   effectiveModel?: string;
+  /** The authenticated gateway model's resolved wire surface, when available. */
+  wireSurface?: VeryfrontCloudSurfaceId;
   modelRuntime?: ModelRuntime;
   excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
@@ -368,7 +371,10 @@ export async function prepareAgentRuntimeStep(
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
     bootstrapToolNames,
-    maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
+    maxVisibleTools: getProviderToolProfile(
+      input.effectiveModel ?? input.config.model,
+      input.wireSurface,
+    ).maxTools,
   });
   const baseSystemPrompt = removeIntegrationToolDiscoveryStatus(runtimeState.systemPrompt);
   const instructionsWithToolInventory = hasRuntimeToolInventory(baseSystemPrompt)

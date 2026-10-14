@@ -108,6 +108,42 @@ describe("agent/runtime-step", () => {
     assertEquals(providerOptionKey, "AWS-Anthropic");
   });
 
+  it("caps loaded schemas by the authenticated wire surface's tool limit", async () => {
+    const names = Array.from({ length: 130 }, (_, index) => `tool_${index}`);
+    const prepare = (wireSurface?: "openai") =>
+      prepareAgentRuntimeStep({
+        agentId: "agent_1",
+        activeSkillToolAvailability: undefined,
+        allowedRemoteToolNames: undefined,
+        config: {
+          model: "veryfront-cloud/google/local-model",
+          system: "Base",
+          toolLoading: "deferred",
+        } as unknown as AgentConfig,
+        effectiveModel: "veryfront-cloud/google/local-model",
+        ...(wireSurface ? { wireSurface } : {}),
+        forwardedRemoteToolDefinitions: undefined,
+        getAvailableTools: async () => names.map(toolDefinition),
+        supportsToolCalling: true,
+        messages: [],
+        mode: "generate",
+        remoteToolSources: undefined,
+        resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+        runtimeContext: undefined,
+        step: 1,
+        systemPrompt: "Base",
+        toolContextBase: undefined,
+        toolExposureState: createToolExposureState(names),
+      });
+
+    const publisherOnly = await prepare();
+    assertEquals(publisherOnly.tools.length, 130);
+    const openaiWire = await prepare("openai");
+    assertEquals(openaiWire.tools.length <= 128, true);
+    assertEquals(openaiWire.tools.some((tool) => tool.name === "tool_search"), true);
+    assertEquals(openaiWire.toolExposurePlan.deferred.length > 0, true);
+  });
+
   it("exposes only bootstrap and loaded schemas in deferred mode", async () => {
     const state = createToolExposureState(["get_release"]);
     const prepared = await prepareAgentRuntimeStep({

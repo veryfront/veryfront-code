@@ -3942,6 +3942,7 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
+          wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -5013,6 +5014,7 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
+        wireSurface: readVeryfrontCloudModelFacts(languageModel)?.surface,
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
