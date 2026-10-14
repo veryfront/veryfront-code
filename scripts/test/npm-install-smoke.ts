@@ -764,6 +764,27 @@ for (const error of [hostile, accessor]) {
   }
 }
 if (hooks !== 0) throw new Error('Packed classifier invoked project hooks');
+const nativeDeno = Deno;
+for (const mutation of ['namespace accessor', 'namespace proxy', 'version accessor', 'build accessor']) {
+  const owner = mutation.startsWith('namespace') ? globalThis : nativeDeno;
+  const key = mutation.startsWith('namespace') ? 'Deno' : mutation === 'version accessor' ? 'version' : 'build';
+  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  const fail = () => { hooks++; throw new Error('late project hook invoked'); };
+  try {
+    Object.defineProperty(owner, key, mutation === 'namespace proxy'
+      ? { configurable: true, value: new Proxy(nativeDeno, { get: fail, getOwnPropertyDescriptor: fail, getPrototypeOf: fail }) }
+      : { configurable: true, get: fail });
+    const classifier = await import(
+      './node_modules/veryfront/esm/src/platform/compat/not-found-error.js?late-' + encodeURIComponent(mutation)
+    );
+    if (!classifier.isCanonicalNotFoundError(missing) || !classifier.isCanonicalNotFoundError(new Error('wrapped', { cause: missing }))) {
+      throw new Error('Packed late-import classifier lost native identity');
+    }
+  } finally {
+    Object.defineProperty(owner, key, descriptor);
+  }
+}
+if (hooks !== 0) throw new Error('Packed late import invoked project hooks');
 `;
 
 const AUTH_IMPORT_SCRIPT = `
