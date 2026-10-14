@@ -1,3 +1,4 @@
+import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -1055,8 +1056,6 @@ export function cloneRuntimeStateMutableData<T>(
 type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
   | { kind: "callback"; chunk: string };
-
-const MAX_RUNTIME_PROVIDER_STREAM_RETRIES = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

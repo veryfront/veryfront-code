@@ -6,6 +6,7 @@ import {
   registerModelRuntimeResolverRevoker,
 } from "../runtime/model-transport.ts";
 import type { ModelStreamTimeouts } from "../types.ts";
+import { hostedFirstProgressWindowMs } from "./hosted-model-stream-timeouts.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type {
   DefaultHostedChatRuntimeCreationOptions,
@@ -159,8 +160,8 @@ export function readHostedChildModelStreamTimeouts(
 
 /**
  * @internal Keep only inherited budgets that expire before a child's own stream
- * watchdog. A longer budget would never fire there, so the child keeps its
- * framework defaults for that field instead.
+ * watchdog, counting the replay of a first-progress timeout. A longer budget
+ * would never surface there, so the child keeps its framework default instead.
  */
 export function restrictHostedChildModelStreamTimeouts(
   target: HostedInferenceAuthorityOwner,
@@ -173,7 +174,7 @@ export function restrictHostedChildModelStreamTimeouts(
   inheritedModelStreamTimeouts.set(
     target,
     ObjectFreeze({
-      ...(first !== undefined && first < watchdogIdleTimeoutMs
+      ...(first !== undefined && hostedFirstProgressWindowMs(first) < watchdogIdleTimeoutMs
         ? { firstProgressTimeoutMs: first }
         : {}),
       ...(idle !== undefined && idle < watchdogIdleTimeoutMs

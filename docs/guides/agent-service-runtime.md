@@ -448,11 +448,13 @@ Both budgets must stay below `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS` (default
 `120000`), including a default that applies to an unset variable. The service
 rejects a budget at or above that watchdog when it creates the chat runtime,
 because the watchdog would fire first and report a generic stall instead of
-the fixed `FIRST_PROGRESS_TIMEOUT` code.
+the fixed `FIRST_PROGRESS_TIMEOUT` code. A configured first-progress budget
+counts twice, because a stream that times out before any output can be
+replayed once. In the example, `30000` uses a `60000` window.
 
-Delegated child agents inherit these budgets only when a budget is shorter
-than the child stream watchdog (`45000`). A longer budget leaves that child on
-the framework default. See
+Delegated child agents inherit a budget only when its window is shorter than
+the child stream watchdog (`45000`). A longer budget leaves that child on the
+framework default. See
 [Configuration](./configuration.md#model-stream-progress-budgets) for every
 related variable.
 

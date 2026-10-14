@@ -1058,3 +1058,20 @@ Deno.test("runHostedChildForkRuntimeStep drops inherited budgets the child watch
   // The 50s semantic-idle budget would never fire under a 45s child watchdog.
   assertEquals(readHostedChildModelStreamTimeouts(stepInput), { firstProgressTimeoutMs: 20 });
 });
+
+Deno.test("runHostedChildForkRuntimeStep counts the first-progress replay against the child watchdog", async () => {
+  const forkContext = {} as Parameters<typeof bindHostedChildModelStreamTimeouts>[0];
+  // A 30s first-progress budget can run twice (60s) before failing under active
+  // lifecycle replay, which the 45s child watchdog would preempt.
+  bindHostedChildModelStreamTimeouts(forkContext, {
+    firstProgressTimeoutMs: 30_000,
+    semanticIdleTimeoutMs: 10_000,
+  });
+  const abort = new AbortController();
+  abort.abort();
+  const stepInput = createSilentChildStepInput(abort.signal);
+  const result = await runHostedChildForkRuntimeStep(stepInput, forkContext, 45_000);
+  await result.responsePromise.catch(() => {});
+  await result.stream.cancel().catch(() => {});
+  assertEquals(readHostedChildModelStreamTimeouts(stepInput), { semanticIdleTimeoutMs: 10_000 });
+});

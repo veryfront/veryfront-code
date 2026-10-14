@@ -2,6 +2,16 @@ import type { ModelStreamTimeouts } from "../types.ts";
 import type { AgentServiceConfig } from "../service/config.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import { DEFAULT_STREAM_LIFECYCLE_POLICY } from "../streaming/lifecycle/policy.ts";
+import { RUNTIME_PROVIDER_STREAM_ATTEMPTS } from "../runtime/provider-stream-retry-policy.ts";
+
+/**
+ * Worst-case wait a configured first-progress budget can produce. Active
+ * lifecycle mode replays a stream that timed out before any output, so the
+ * deadline can run once per attempt before the failure surfaces.
+ */
+export function hostedFirstProgressWindowMs(firstProgressTimeoutMs: number): number {
+  return firstProgressTimeoutMs * RUNTIME_PROVIDER_STREAM_ATTEMPTS;
+}
 
 /** Resolve only host-owned model stream budgets, leaving omitted fields at framework defaults. */
 export function resolveHostedModelStreamTimeouts(
@@ -18,7 +28,9 @@ export function resolveHostedModelStreamTimeouts(
     const [name, timeoutMs] of [
       [
         "first progress",
-        firstProgressTimeoutMs ?? DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs,
+        firstProgressTimeoutMs === undefined
+          ? DEFAULT_STREAM_LIFECYCLE_POLICY.firstProgressTimeoutMs
+          : hostedFirstProgressWindowMs(firstProgressTimeoutMs),
       ],
       [
         "semantic idle",
@@ -28,7 +40,7 @@ export function resolveHostedModelStreamTimeouts(
   ) {
     if (timeoutMs >= outerIdleTimeoutMs) {
       throw new TypeError(
-        `Hosted model ${name} timeout must be shorter than the chat stream idle timeout`,
+        `Hosted model ${name} timeout window must be shorter than the chat stream idle timeout`,
       );
     }
   }
