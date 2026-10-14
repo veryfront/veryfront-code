@@ -928,6 +928,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Read sequence of the newest listing applied to the snapshot. */
   #appliedListingReadSequence = 0;
   #appliedListingRecoveryScope: string | undefined;
+  #configAbsenceProof: {
+    recoveryScope: string;
+    readSequence: number;
+    snapshotVersion: number;
+    requestContext: ReturnType<typeof getCurrentRequestContext>;
+  } | undefined;
   /** Newest refresh requested per reserved data path, so older replies stand down. */
   #reservedDataRequestSequence = 0;
   readonly #reservedDataLatestRequests = new IntrinsicMap<string, number>();
@@ -1697,6 +1703,32 @@ export class VeryfrontFSAdapter implements FSAdapter {
     await joinSharedInitialization(flight, signal);
   }
 
+  #isConfigAbsentFromCurrentListing(path: string, recoveryScope: string): boolean {
+    const files = this.sourceSnapshotFiles;
+    const snapshotAge = currentTime() - this.sourceSnapshotCheckedAt;
+    return this.contentContext?.sourceType === "branch" &&
+      this.#appliedListingRecoveryScope === recoveryScope &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
+      snapshotAge >= 0 && snapshotAge < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS &&
+      files !== undefined &&
+      IntrinsicReflectApply(ArrayPrototypeSome, VERYFRONT_CONFIG_FILES, [
+        (candidate: string) => candidate === path,
+      ]) &&
+      !IntrinsicReflectApply(ArrayPrototypeSome, files, [
+        (file: SourceSnapshotFile) => file.path === path,
+      ]);
+  }
+
+  #canReuseConfigAbsenceProof(path: string): boolean {
+    const proof = this.#configAbsenceProof;
+    return proof !== undefined &&
+      proof.requestContext === getCurrentRequestContext() &&
+      proof.recoveryScope === this.#getBranchMissRecoveryScope() &&
+      proof.readSequence === this.#appliedListingReadSequence &&
+      proof.snapshotVersion === this.sourceSnapshotVersion &&
+      this.#isConfigAbsentFromCurrentListing(path, proof.recoveryScope);
+  }
+
   async #withBranchSnapshotRecovery<T>(
     path: string,
     operation: () => Promise<T>,
@@ -1727,6 +1759,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
       return retryResult;
     } catch (error) {
+      const normalizedPath = this.normalizer.normalize(path);
+      // The exact read has already failed. Reuse only this request's verified
+      // listing for other root spellings while invalidation keeps the index bypassed.
+      if (isNotFoundLikeError(error) && this.#canReuseConfigAbsenceProof(normalizedPath)) {
+        throw createNotFoundLikeError(normalizedPath);
+      }
       if (!this.#shouldRecoverBranchMiss(path, error)) throw error;
 
       const listingReadSequence = this.#appliedListingReadSequence;
@@ -1746,30 +1784,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
         throw error;
       }
 
-      // Pending invalidation bypasses the file-list index on the retry. Use
-      // only a newly applied, current-source listing to certify an absent root
-      // config; a failed or discarded refresh cannot establish this authority.
-      const normalizedPath = this.normalizer.normalize(path);
-      const files = this.sourceSnapshotFiles;
-      if (
-        this.#appliedListingReadSequence > listingReadSequence &&
-        this.#appliedListingRecoveryScope === recoveryScope &&
-        this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
-        files !== undefined &&
-        IntrinsicReflectApply(ArrayPrototypeSome, VERYFRONT_CONFIG_FILES, [
-          (candidate: string) => candidate === normalizedPath,
-        ]) &&
-        !IntrinsicReflectApply(ArrayPrototypeSome, files, [
-          (file: SourceSnapshotFile) => file.path === normalizedPath,
-        ])
-      ) {
-        throw createNotFoundLikeError(normalizedPath);
-      }
-
       try {
         return await operation();
       } catch (retryError) {
         if (isNotFoundLikeError(retryError)) {
+          // Exact file APIs may observe a just-created config before listings.
+          // Only a failed retry plus a newly applied scoped listing proves absence.
+          if (
+            this.#appliedListingReadSequence > listingReadSequence &&
+            this.#isConfigAbsentFromCurrentListing(normalizedPath, recoveryScope)
+          ) {
+            this.#configAbsenceProof = {
+              recoveryScope,
+              readSequence: this.#appliedListingReadSequence,
+              snapshotVersion: this.sourceSnapshotVersion,
+              requestContext: getCurrentRequestContext(),
+            };
+            throw createNotFoundLikeError(normalizedPath);
+          }
           this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         }
         throw retryError;

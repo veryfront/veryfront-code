@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import {
   assertEquals,
   assertExists,
@@ -3011,6 +3012,8 @@ describe("VeryfrontFSAdapter", () => {
         "listed config",
         "ordinary file",
         "superseded refresh",
+        "created config",
+        "all config candidates",
       ] as const
     ) {
       it(`preserves source authority for an invalidated missing file: ${scenario}`, async () => {
@@ -3060,6 +3063,9 @@ describe("VeryfrontFSAdapter", () => {
         };
         client.getFileContent = () => {
           contentReads++;
+          if (scenario === "created config" && contentReads > 1) {
+            return Promise.resolve("just-created config");
+          }
           return Promise.reject(
             API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }),
           );
@@ -3073,6 +3079,29 @@ describe("VeryfrontFSAdapter", () => {
         try {
           await adapter.initialize();
           addPendingInvalidation(prefix);
+          if (scenario === "created config") {
+            assertEquals(await adapter.readTextFile("/veryfront.config.js"), "just-created config");
+            assertEquals(listingPasses, 2);
+            assertEquals(contentReads, 2);
+            return;
+          }
+          if (scenario === "all config candidates") {
+            for (const candidate of VERYFRONT_CONFIG_FILES) {
+              const missing = await assertRejects(() => adapter.readTextFile(`/${candidate}`));
+              assertEquals(isNotFoundError(missing), true);
+            }
+            assertEquals(
+              listingPasses,
+              2,
+              "one recovery listing proves all root candidates absent",
+            );
+            assertEquals(
+              contentReads,
+              4,
+              "first exact retry plus one read per remaining candidate",
+            );
+            return;
+          }
           const error = await assertRejects(() =>
             adapter.readTextFile(
               scenario === "ordinary file" ? "/data/missing.json" : "/veryfront.config.js",
@@ -3086,7 +3115,7 @@ describe("VeryfrontFSAdapter", () => {
           assertEquals(listingPasses, scenario === "superseded refresh" ? 3 : 2);
           assertEquals(
             contentReads,
-            scenario === "absent config" || scenario === "refresh denied" ? 1 : 2,
+            scenario === "refresh denied" ? 1 : 2,
           );
         } finally {
           removePendingInvalidation(prefix);
