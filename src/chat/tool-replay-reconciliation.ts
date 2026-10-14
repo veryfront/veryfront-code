@@ -184,7 +184,20 @@ export type ProviderVisibleToolReplayMatches = {
 /** Find adjacent replay call/result occurrences using part object identity. */
 export function findProviderVisibleToolReplayMatches(
   messages: readonly ChatProviderModelInputMessage[],
+  trustedSourceMessageIds: readonly string[] = [],
 ): ProviderVisibleToolReplayMatches {
+  const trustedIds = new Set(trustedSourceMessageIds.filter((id) => id.length > 0));
+  const sourceIdsByCallPart = new WeakMap<object, string>();
+  const closedTrustedCallParts = new WeakSet<object>();
+  const isDistinctClosedOccurrence = (
+    prior: ReplayToolCallPart,
+    current: Pick<ReplayToolCallPart, "part">,
+  ): boolean => {
+    const priorId = sourceIdsByCallPart.get(prior.part);
+    const currentId = sourceIdsByCallPart.get(current.part);
+    return !!priorId && !!currentId && priorId !== currentId && trustedIds.has(currentId) &&
+      closedTrustedCallParts.has(prior.part);
+  };
   const preservedTransientToolParts = new WeakSet<object>();
   const matchedToolCallParts = new WeakSet<object>();
   const matchedToolResultParts = new WeakSet<object>();
@@ -202,6 +215,7 @@ export function findProviderVisibleToolReplayMatches(
     for (const part of message.parts) {
       const call = getReplayToolCallPart(part, message.role);
       if (call) {
+        sourceIdsByCallPart.set(call.part, message.id);
         const callsWithId = toolCallsById.get(call.toolCallId) ?? [];
         callsWithId.push(call);
         toolCallsById.set(call.toolCallId, callsWithId);
@@ -216,8 +230,9 @@ export function findProviderVisibleToolReplayMatches(
         }
         removePendingCallsWithId(pendingCalls, call.toolCallId);
         if (call.selfContainedResult) {
+          if (trustedIds.has(message.id)) closedTrustedCallParts.add(call.part);
           for (const priorCall of callsWithId) {
-            if (priorCall.part === call.part) {
+            if (priorCall.part === call.part || isDistinctClosedOccurrence(priorCall, call)) {
               continue;
             }
 
@@ -249,7 +264,10 @@ export function findProviderVisibleToolReplayMatches(
             preservedTransientToolParts.add(matchedCall.part);
           }
           for (const priorCall of toolCallsById.get(matchedCall.toolCallId) ?? []) {
-            if (priorCall.part === matchedCall.part) {
+            if (
+              priorCall.part === matchedCall.part ||
+              (trustedIds.has(message.id) && isDistinctClosedOccurrence(priorCall, matchedCall))
+            ) {
               continue;
             }
 
@@ -263,6 +281,12 @@ export function findProviderVisibleToolReplayMatches(
           matchedToolResultParts.add(result.part);
           matchedToolResultNames.set(result.part, matchedCall.toolName);
           matchedResultPartByCallPart.set(matchedCall.part, result.part);
+          if (
+            trustedIds.has(message.id) &&
+            trustedIds.has(sourceIdsByCallPart.get(matchedCall.part) ?? "")
+          ) {
+            closedTrustedCallParts.add(matchedCall.part);
+          }
           removePendingCallsThroughMatchedResult(pendingCalls, matchedIndex, result.toolCallId);
         }
         continue;
