@@ -941,6 +941,34 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext, {});
   });
 
+  it("loads only the startup catalog for runtimes without tool calling", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: false,
+      includeStartupAuthorizedTools: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Local",
+      toolContextBase: undefined,
+      getAvailableTools: async (_tools, options) => {
+        options?.onIntegrationToolDiscovery?.({ status: "unavailable", reason: "request_failed" });
+        return [toolDefinition("load_skill")];
+      },
+      resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
+    });
+
+    assertEquals(prepared.startupAuthorizedTools.map((tool) => tool.name), ["load_skill"]);
+    assertEquals(prepared.tools, []);
+    assertEquals(prepared.integrationToolDiscovery, undefined);
+  });
+
   it("loads tools for server-local runtimes that declare tool calling support", async () => {
     let loaded = false;
     const prepared = await prepareAgentRuntimeStep({

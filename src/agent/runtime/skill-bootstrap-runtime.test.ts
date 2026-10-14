@@ -47,6 +47,51 @@ Deno.test("startup supports the Code framework's flat-input skill loader", async
   }
 });
 
+for (const mode of ["generate", "stream"] as const) {
+  Deno.test(`startup skill loads for a ${mode} model without tool calling`, async () => {
+    clearMCPRegistry();
+    skillRegistryInternal.clearAll();
+    registerSkill("code-plan", {
+      id: "code-plan",
+      rootPath: "/skills/code-plan",
+      metadata: { name: "code-plan", description: "Plan guidance" },
+      fsAdapter: createSkillTestAdapter({
+        "/skills/code-plan/SKILL.md": "# Code planning guidance",
+      }),
+    });
+    const model = scriptedModel([(options) => {
+      assertStringIncludes(JSON.stringify(options.prompt), "Code planning guidance");
+      assertEquals(options.tools ?? [], []);
+      return { text: "Ready" };
+    }], { only: mode });
+    Object.assign(model, {
+      runtimeCapabilities: { ...model.runtimeCapabilities, toolCalling: false as const },
+    });
+    const assistant = agent({
+      id: `bootstrap-text-only-${mode}`,
+      system: "Help with the task.",
+      model: model.modelId,
+      bootstrapSkill: "code-plan",
+      skills: ["code-plan"],
+      tools: { load_skill: markTrustedHostToolProvenance(createLoadSkillTool()) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    try {
+      if (mode === "generate") {
+        const response = await assistant.generate({ input: "Plan the task" });
+        assertEquals(response.toolCalls?.[0]?.args, { skillId: "code-plan" });
+      } else {
+        const response = await assistant.stream({ input: "Plan the task" });
+        assertStringIncludes(await response.toDataStreamResponse().text(), "Ready");
+      }
+      assertEquals(model.callCount, 1);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
+}
+
 Deno.test("startup skill preparation does not open an unmatched streamed step", async () => {
   clearMCPRegistry();
   skillRegistryInternal.clearAll();

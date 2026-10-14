@@ -128,6 +128,8 @@ export interface PrepareAgentRuntimeStepInput {
   unavailableOptionalRemoteToolNames?: string[];
   unavailableOptionalRemoteToolPrefixes?: string[];
   supportsToolCalling: boolean;
+  /** Load the authorized catalog for a pending startup skill even when the model cannot call tools. */
+  includeStartupAuthorizedTools?: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
   providerOptionKey?: string;
@@ -295,7 +297,9 @@ export async function prepareAgentRuntimeStep(
   }
 
   let integrationToolDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
-  let tools = input.supportsToolCalling
+  // Host-controlled startup loads need the authorized catalog even when the
+  // model itself cannot call tools; the model still sees no tool schemas.
+  const authorizedCatalog = input.supportsToolCalling || input.includeStartupAuthorizedTools
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
       includeSkillTools: shouldIncludeSkillTools(input.config, input.agentId),
@@ -306,7 +310,7 @@ export async function prepareAgentRuntimeStep(
       unavailableOptionalRemoteToolNames: input.unavailableOptionalRemoteToolNames,
       unavailableOptionalRemoteToolPrefixes: input.unavailableOptionalRemoteToolPrefixes,
       onIntegrationToolDiscovery: (result) => {
-        integrationToolDiscovery = result;
+        if (input.supportsToolCalling) integrationToolDiscovery = result;
       },
       sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
@@ -314,9 +318,10 @@ export async function prepareAgentRuntimeStep(
       includeProviderSchemaHiddenTools: true,
     })
     : [];
+  let tools = input.supportsToolCalling ? authorizedCatalog : [];
 
   // Validate authored startup choices against the executable catalog before per-step restrictions.
-  const startupAuthorizedTools = tools;
+  const startupAuthorizedTools = authorizedCatalog;
 
   if (input.activeSkillToolAvailability) {
     tools = filterToolsForSkill(tools, input.activeSkillToolAvailability);
