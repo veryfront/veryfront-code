@@ -1250,7 +1250,8 @@ describe("chat-stream-handler", () => {
         );
         await pendingRead;
         try {
-          assertEquals(deadlines, []);
+          assertEquals(deadlines.length > 0, true);
+          assertEquals(deadlines.every((delay) => delay > 60_000 && delay <= 300_000), true);
           assertEquals(returns, 0);
           assertEquals(state.finishReason, null);
         } finally {
@@ -1276,6 +1277,66 @@ describe("chat-stream-handler", () => {
         assertEquals(state.finishReason, null);
       });
     }
+
+    it("bounds a stalled required-finish read without a caller abort signal", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const pending = Promise.withResolvers<IteratorResult<unknown>>();
+      let fireDeadline: (() => void) | undefined;
+      let cleared = 0;
+      const processing = processStream(
+        {
+          fullStream: {
+            [Symbol.asyncIterator]() {
+              let first = true;
+              return {
+                next: () => {
+                  if (first) {
+                    first = false;
+                    return pending.promise;
+                  }
+                  return Promise.resolve({ done: true, value: undefined });
+                },
+                return: () => Promise.resolve({ done: true, value: undefined }),
+              };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        },
+        state,
+        controller,
+        encoder,
+        "t",
+        {
+          streamRequiresFinish: true,
+          streamLifecyclePolicy: { attemptTimeoutMs: 1_000 },
+          setTimeoutFn: ((callback: () => void) => {
+            fireDeadline = callback;
+            return 1;
+          }) as typeof setTimeout,
+          clearTimeoutFn: (() => {
+            cleared++;
+          }) as typeof clearTimeout,
+        },
+      );
+      processing.catch(() => {});
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(
+          typeof fireDeadline,
+          "function",
+          "required finish must retain an attempt deadline",
+        );
+        fireDeadline!();
+        const error = await assertRejects(() => processing) as Error;
+        assertEquals(error.name, "RuntimeProviderStreamFailure");
+        assertEquals(state.finishReason, null);
+        assertEquals(cleared, 1);
+      } finally {
+        pending.resolve({ done: false, value: { type: "finish", finishReason: "stop" } });
+        await processing.catch(() => {});
+      }
+    });
 
     it("accepts a required provider stream finish and preserves its usage", async () => {
       const { controller, encoder } = createSSECollector();

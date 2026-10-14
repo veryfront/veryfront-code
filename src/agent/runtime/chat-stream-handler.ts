@@ -103,6 +103,7 @@ const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
 const STREAM_START_IDLE_MS = 60_000;
 const STREAM_OUTPUT_IDLE_MS = 15_000;
+const streamNow = Date.now;
 
 type TraceAttributePrimitive = string | number | boolean;
 type TraceAttributeValue = TraceAttributePrimitive | readonly TraceAttributePrimitive[];
@@ -635,7 +636,7 @@ async function readNextStreamPartWithTimeout(
       pending.reject,
     );
     timeoutId = setTimeoutFn(() => pending.resolve("timeout"), timeoutMs);
-    return await pending.promise;
+    return await awaitAbortable(pending.promise, abortSignal);
   } finally {
     if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
@@ -960,6 +961,9 @@ export function processStreamInternal(
   // provider wrappers. After Gate 2 the extensions emit raw streams, so the
   // legacy compatibility boundary reinstates the wrapper for source-opened
   // streams only; pre-opened results keep their historical unwrapped shape.
+  const requiredFinishDeadline = callbacks?.streamRequiresFinish
+    ? streamNow() + resolveRuntimeLifecyclePolicy(callbacks).attemptTimeoutMs
+    : undefined;
   const result = isRuntimeStreamSource(resultOrSource)
     ? wrapLegacyRuntimeStreamResult(
       resultOrSource.open(abortSignal ?? new AbortController().signal),
@@ -1316,11 +1320,25 @@ export function processStreamInternal(
         // as "stop" makes shouldContinueAfterStreamStep() bail, so the tool never
         // executes and its card is stranded at input-available.
         const wouldTimeOutIdle = !hasActiveLocalToolInput && !shouldStopForCommittedLocalToolCall;
+        const remainingFinishWait = requiredFinishDeadline === undefined
+          ? undefined
+          : requiredFinishDeadline - streamNow();
+        if (
+          !sawProviderFinishPart && remainingFinishWait !== undefined && remainingFinishWait <= 0
+        ) {
+          throw createRuntimeProviderStreamFailure(
+            new Error("Provider stream exceeded required finish deadline"),
+          );
+        }
         // Hosted streams wait for terminal metadata within the provider deadline and
         // caller signal, rather than the short local-model compatibility idle windows.
         const next = callbacks?.streamRequiresFinish && !sawProviderFinishPart
-          ? await awaitAbortable(
-            readNextStreamPart(streamIterator, state, abortSignal),
+          ? await readNextStreamPartWithTimeout(
+            streamIterator,
+            state,
+            remainingFinishWait!,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
             abortSignal,
           )
           : hasActiveLocalToolInput
@@ -1362,6 +1380,11 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state, abortSignal);
         throwIfAborted(abortSignal);
         if (next === "timeout") {
+          if (callbacks?.streamRequiresFinish && !sawProviderFinishPart) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream exceeded required finish deadline"),
+            );
+          }
           if (
             wouldTimeOutIdle && !sawProviderFinishPart && !hasStreamOutput(state) &&
             !somePrivateArray(state.reasoningParts, isPersistedReasoningPart)
