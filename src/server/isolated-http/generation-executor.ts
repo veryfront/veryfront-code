@@ -132,7 +132,7 @@ export interface HostedHttpGenerationExecutor extends RenderGenerationExecutor {
 
 /**
  * Identity of everything one executor installs: installation, image, allocation owner and
- * source, application configuration and header policy. Two inputs share an executor only
+ * source, authenticated broker identity, application configuration and header policy. Two inputs share an executor only
  * when these keys are equal. The key holds configuration values; keep it in memory only.
  */
 export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): string {
@@ -145,6 +145,7 @@ export function hostedHttpInstallationKey(input: PreparedHostedHttpInput): strin
     input.installation.environmentId,
     input.installation.configurationId,
     input.session.expectedImage,
+    input.session.expectedBrokerInstanceId,
     input.allocation.owner,
     input.allocation.source,
     input.configuration ?? null,

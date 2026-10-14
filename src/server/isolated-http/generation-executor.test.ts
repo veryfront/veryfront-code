@@ -112,6 +112,36 @@ describe("hosted HTTP generation broker", () => {
     }
   });
 
+  it("refuses a different authenticated broker identity on a warm executor", async () => {
+    let served = 0;
+    const f = fixture(() => new Response(`response-${++served}`));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "response-1",
+      );
+      await assertRejects(
+        () =>
+          broker.fetch(new Request("https://app.example"), {
+            ...f.input,
+            session: { ...f.input.session, expectedBrokerInstanceId: "broker-b" },
+          }),
+        TypeError,
+        "another installation",
+      );
+      assertEquals(served, 1);
+      assertEquals(f.calls, ["allocate", "install"]);
+      assertEquals(
+        await (await broker.fetch(new Request("https://app.example"), f.input)).text(),
+        "response-2",
+      );
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("drains the previous generation of an environment when its release changes", async () => {
     let finishOld: (() => void) | undefined;
     const old = fixture(() =>
