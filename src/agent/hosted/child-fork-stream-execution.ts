@@ -1,9 +1,6 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
-import {
-  JSON_VALUE_MAX_DEPTH,
-  JSON_VALUE_MAX_NODES,
-  JSON_VALUE_MAX_SERIALIZED_BYTES,
-} from "#veryfront/schemas/json-value.ts";
+import { JSON_VALUE_MAX_DEPTH, JSON_VALUE_MAX_NODES } from "#veryfront/schemas/json-value.ts";
 import {
   buildFallbackUiMessageChunks,
   extractFinalStepFinishReason,
@@ -348,7 +345,7 @@ function snapshotChildTelemetry(value: unknown) {
     maxDepth: JSON_VALUE_MAX_DEPTH,
     maxNodes: JSON_VALUE_MAX_NODES,
     maxContainerEntries: JSON_VALUE_MAX_NODES,
-    maxStringChars: JSON_VALUE_MAX_SERIALIZED_BYTES,
+    maxStringChars: PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES,
   });
 }
 

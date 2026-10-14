@@ -637,3 +637,63 @@ Deno.test("actual child handoffs preserve the existing envelope byte allowance",
     }
   }
 });
+
+Deno.test("actual final-step capture preserves ownership-admitted telemetry at the byte boundary", async () => {
+  const input = Object.fromEntries(
+    Array.from({ length: 4 }, (_, index) => [String(index), "x".repeat(1_048_576)]),
+  );
+  const local = await finalizeHostedChildForkCompletion({
+    streamResult: {
+      fullStream: (async function* () {})(),
+      steps: Promise.resolve([{
+        text: "accepted",
+        finishReason: "stop",
+        messages: [],
+        toolCalls: [{ toolName: "example", toolCallId: "fallback", input }],
+        toolResults: [],
+      }]),
+      totalUsage: Promise.resolve(undefined),
+    },
+    finalText: "accepted",
+    description: "Synthetic byte boundary",
+    kind: "invoke_agent",
+    maxSteps: 2,
+    toolCalls: [],
+    toolResults: [],
+    startTime: Date.now(),
+    durableMessageId: null,
+    durableMirrorHasEmittedProgress: true,
+    appendDurableMirrorChunk: () => Promise.resolve(),
+    finalizationTimeoutMs: 100,
+  });
+  assertEquals(local.success, true);
+  const copied = local.toolCalls[0]?.input as Record<string, string>;
+  assertEquals(copied["3"]?.length, 1_048_576);
+  assertEquals(copied, input);
+  for (
+    const result of [withRootOwnedChildResultHint(local), durableChildResult(undefined, local)]
+  ) {
+    const message = resultMessage(false);
+    const part = message.parts[0] as ToolResultPart;
+    part.result = result;
+    markTrustedPlatformPolicyToolResultPart(part);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(part), true);
+    const replayed = JSON.parse(JSON.stringify(
+      prepareTrustedPlatformPolicyMessageForPersistence(message),
+    )) as Message;
+    restoreTrustedPlatformPolicyResultsFromPersistedHistory([replayed]);
+    assertEquals(hasTrustedPlatformPolicyToolResultPart(replayed.parts[0] as ToolResultPart), true);
+    for (const admitted of [message, replayed]) {
+      for (
+        const converted of [
+          convertAgentRuntimeMessagesToProviderMessages([admitted]),
+          convertToTextGenerationRuntimeMessages([admitted]),
+        ]
+      ) {
+        assertEquals(JSON.stringify(converted).includes("[truncated]"), false);
+        assertEquals(JSON.stringify(converted).includes("[Truncated child telemetry]"), false);
+      }
+    }
+  }
+  assertEquals(input["3"]?.length, 1_048_576);
+});
