@@ -108,34 +108,44 @@ export function createCanonicalEventsV1Facade(
       onResponse: async (response, init, url, responseSignal) => {
         const signal = responseSignal ?? options.signal ?? new AbortController().signal;
         if (!response.ok) {
-          const reader = response.body?.getReader();
-          if (!reader) throw new TypeError("canonical-v1 error has no response body");
-          const abort = () => {
-            void reader.cancel(signal.reason).catch(() => {});
-          };
-          signal.addEventListener("abort", abort, { once: true });
-          if (signal.aborted) abort();
-          const decoder = new TextDecoder("utf-8", { fatal: true });
-          let text = "";
-          let bytes = 0;
           try {
-            while (true) {
-              signal.throwIfAborted();
-              const part = await reader.read();
-              signal.throwIfAborted();
-              if (part.done) break;
-              bytes += part.value.byteLength;
-              if (bytes > 64 * 1024) throw new TypeError("canonical-v1 error body is too large");
-              text += decoder.decode(part.value, { stream: true });
+            const reader = response.body?.getReader();
+            if (!reader) throw new TypeError("canonical-v1 error has no response body");
+            const abort = () => {
+              void reader.cancel(signal.reason).catch(() => {});
+            };
+            signal.addEventListener("abort", abort, { once: true });
+            if (signal.aborted) abort();
+            const decoder = new TextDecoder("utf-8", { fatal: true });
+            let text = "";
+            let bytes = 0;
+            try {
+              while (true) {
+                signal.throwIfAborted();
+                const part = await reader.read();
+                signal.throwIfAborted();
+                if (part.done) break;
+                bytes += part.value.byteLength;
+                if (bytes > 64 * 1024) throw new TypeError("canonical-v1 error body is too large");
+                text += decoder.decode(part.value, { stream: true });
+              }
+              text += decoder.decode();
+            } finally {
+              signal.removeEventListener("abort", abort);
+              await reader.cancel();
+              reader.releaseLock();
             }
-            text += decoder.decode();
-          } finally {
-            signal.removeEventListener("abort", abort);
-            await reader.cancel();
-            reader.releaseLock();
+            const problem = await parseEventErrorV1(JSON.parse(text));
+            throw new CanonicalEventsV1Error(response.status, problem);
+          } catch (error) {
+            signal.throwIfAborted();
+            if (error instanceof CanonicalEventsV1Error) throw error;
+            // Keep the HTTP classification without exposing an unvalidated error body.
+            throw API_CLIENT_ERROR.create({
+              detail: "Invalid canonical-v1 HTTP error response",
+              status: response.status,
+            });
           }
-          const problem = await parseEventErrorV1(JSON.parse(text));
-          throw new CanonicalEventsV1Error(response.status, problem);
         }
         successHeaders = response.headers;
         if (response.ok && stream) return response;

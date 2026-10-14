@@ -1,3 +1,4 @@
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import "../../../src/events/test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -413,7 +414,7 @@ it("rejects invalid UTF-8 in structured HTTP errors", async () => {
       return init.onResponse(new Response(bytes, { status: 503 }), init, "https://api.example");
     },
   });
-  await assertRejects(() => facade.list("run_demo"), TypeError);
+  await assertRejects(() => facade.list("run_demo"), VeryfrontError);
 });
 
 for (const ids of [[42], [41], [43, 43], [43, 42]]) {
@@ -493,3 +494,34 @@ it("preserves valid ascending and descending list continuations", async () => {
     );
   }
 });
+
+for (const status of [400, 401, 403, 404, 409, 422, 429, 500, 503]) {
+  for (
+    const body of [
+      "<html>private-response</html>",
+      '{"message":"private-response"}',
+      "private-response".repeat(5000),
+      new Uint8Array([0xff]),
+      null,
+    ]
+  ) {
+    it(`preserves HTTP ${status} retry policy for malformed canonical errors (${body === null ? "empty" : typeof body === "string" ? body.length : "invalid UTF-8"})`, async () => {
+      let attempts = 0;
+      await fixture(() => {
+        attempts++;
+        return new Response(body, { status });
+      }, async (sdk) => {
+        const error = await assertRejects(
+          () => sdk.canonicalEventsV1.list("run_demo"),
+          VeryfrontError,
+        );
+        if (!(error instanceof VeryfrontError)) throw new Error("Expected HTTP error");
+        assertEquals(error.status, status);
+        assertEquals(error instanceof CanonicalEventsV1Error, false);
+        assertEquals(JSON.stringify(error).includes("private-response"), false);
+        assertEquals(error.message.includes("private-response"), false);
+      });
+      assertEquals(attempts, status === 429 || status >= 500 ? 3 : 1);
+    });
+  }
+}

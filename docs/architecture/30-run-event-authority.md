@@ -22,6 +22,8 @@ Cloud transport removes caller correlation headers and sends `x-veryfront-model-
 
 A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input can leave a truncated legacy audit record, but it has no usable complete-input receipt and sends no provider request. Legacy records and acknowledgements remain readable; they cannot supply missing capture evidence.
 
+Google structured-output capture supports `generationConfig.responseJsonSchema` and the neutral `responseFormat: json_schema` override. Native `generationConfig.responseSchema` uses Google's schema dialect and is unsupported by this capture profile. When capture is required, that setting refuses dispatch. Supporting the native dialect requires a separate schema contract and qualification.
+
 Activation requires matching API support; merging this SDK change does not activate it or establish that the API is deployed. Remove the migration gate only after the API supports receipts, the SDK is released and consumers are pinned, and integrated acceptance tests pass. Projectless canonical runs retain legacy dispatch without new project correlation; target projectless provenance remains unsupported. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
 ## Hosted tool-start admission
