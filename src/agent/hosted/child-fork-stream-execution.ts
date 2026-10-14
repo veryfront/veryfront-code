@@ -1,3 +1,6 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
+import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
+import { JSON_VALUE_MAX_DEPTH, JSON_VALUE_MAX_NODES } from "#veryfront/schemas/json-value.ts";
 import {
   buildFallbackUiMessageChunks,
   extractFinalStepFinishReason,
@@ -54,6 +57,7 @@ import {
 import type { ForkPart, ForkRuntimeStreamResult } from "../streaming/fork-runtime-stream.ts";
 import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 
+const hasOwn = Object.hasOwn;
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;
 
@@ -186,10 +190,23 @@ export async function finalizeHostedChildForkCompletion(input: {
   }
 
   const fallbackToolCalls = extractFinalStepToolCalls(finalStep);
-  appendMissingChildRunToolCalls(input.toolCalls, fallbackToolCalls);
+  appendMissingChildRunToolCalls(
+    input.toolCalls,
+    fallbackToolCalls.map((call) => ({
+      ...call,
+      ...(hasOwn(call, "input") ? { input: snapshotChildTelemetry(call.input) } : {}),
+    })),
+  );
 
   const fallbackToolResults = extractFinalStepToolResults(finalStep);
-  appendMissingChildRunToolResults(input.toolResults, fallbackToolResults);
+  appendMissingChildRunToolResults(
+    input.toolResults,
+    fallbackToolResults.map((result) => ({
+      ...result,
+      input: snapshotChildTelemetry(result.input),
+      output: snapshotChildTelemetry(result.output),
+    })),
+  );
 
   if (!input.durableMirrorHasEmittedProgress && input.durableMessageId) {
     const fallbackChunks = buildFallbackUiMessageChunks(finalStep, input.durableMessageId);
@@ -323,6 +340,15 @@ export async function handleHostedChildForkFailure(
   return buildChildRunFailureResult(common, errorText, terminalErrorCode);
 }
 
+function snapshotChildTelemetry(value: unknown) {
+  return toChatJsonValue(value, {
+    maxDepth: JSON_VALUE_MAX_DEPTH,
+    maxNodes: JSON_VALUE_MAX_NODES,
+    maxContainerEntries: JSON_VALUE_MAX_NODES,
+    maxStringChars: PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES,
+  });
+}
+
 /** Process a hosted child fork stream part. */
 export async function handleHostedChildForkStreamPart(input: {
   part: ForkPart;
@@ -414,7 +440,7 @@ export async function handleHostedChildForkStreamPart(input: {
     input.toolCalls.push({
       toolName: part.toolName,
       toolCallId: part.toolCallId,
-      input: summarizedInput,
+      input: snapshotChildTelemetry(summarizedInput),
     });
     input.logger?.debug?.("Child fork tool call", {
       conversationId: input.conversationId,
@@ -454,8 +480,8 @@ export async function handleHostedChildForkStreamPart(input: {
     input.toolResults.push({
       toolName: part.toolName,
       toolCallId: part.toolCallId,
-      input: summarizedInput,
-      output: summarizedOutput,
+      input: snapshotChildTelemetry(summarizedInput),
+      output: snapshotChildTelemetry(summarizedOutput),
     });
     await input.appendDurableMirrorChunk({
       type: "tool-output-available",

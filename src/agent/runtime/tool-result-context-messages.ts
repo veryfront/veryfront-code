@@ -1,6 +1,7 @@
 import { getToolResultError, readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
 import type { Message, MessagePart, ToolResultPart } from "../types.ts";
 import type { ToolResultContext } from "./tool-result-context.ts";
+import { createProviderToolResultOutput, isProviderChildToolResult } from "./message-adapter.ts";
 
 const hasOwn = Object.hasOwn;
 const SKIPPED_TOOL_RESULT_CONTEXT_TOOLS = new Set([
@@ -44,7 +45,11 @@ function transformPartForToolResultContext(
     return part;
   }
 
+  const childPart = { toolCallId: part.toolCallId, toolName: part.toolName, output: part.result };
   const disclosure = context.discloseForModelContext({
+    ...(isProviderChildToolResult(childPart, part)
+      ? { modelResult: createProviderToolResultOutput(childPart, part).value }
+      : {}),
     toolCallId: part.toolCallId,
     toolName: part.toolName,
     result: part.result,
