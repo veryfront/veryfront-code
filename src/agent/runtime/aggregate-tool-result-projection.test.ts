@@ -341,6 +341,73 @@ it("shrinks an already retained historical skill reference preview without chang
   assertEquals(context.size, 1);
 });
 
+it("shrinks an already retained ordinary historical preview without changing its ref", () => {
+  const value = "y".repeat(20_000);
+  const old = toolMessage("old-ordinary", "read_data", value);
+  const latest = toolMessage("latest-ordinary", "read_data", "latest");
+  const context = createToolResultContext({ limits: { maxInlineBytes: 8192, previewBytes: 4096 } });
+  const retained = context.discloseReference({
+    toolCallId: "old-ordinary",
+    toolName: "read_data",
+    result: value,
+  });
+  const modelMessages: Message[] = [{
+    ...old,
+    parts: [{
+      type: "tool-result",
+      toolCallId: "old-ordinary",
+      toolName: "read_data",
+      result: retained.modelResult,
+    }],
+  }, latest];
+  const inspect = (messages: Message[]) =>
+    inspectFinalRequestBudget({
+      system: "Help",
+      messages,
+      limit: { context: 1000, output: 32 },
+      requestedOutputTokens: 32,
+    });
+  assertEquals(inspect(modelMessages).fits, false);
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: [old, latest],
+    modelMessages,
+    context,
+    inspect,
+  });
+  assertEquals(inspect(fitted).fits, true);
+  const reference = result(fitted[0]!) as { ref: string; previewBytes: number };
+  assertEquals(reference.ref, retained.modelResult.ref);
+  assertEquals(reference.previewBytes < 4096, true);
+  assertStrictEquals(context.getOriginalResult(reference.ref), value);
+  assertEquals(context.size, 1);
+});
+
+it("projects an inline ordinary historical result below the default preview when needed", () => {
+  const value = "z".repeat(20_000);
+  const old = toolMessage("inline-ordinary", "read_data", value);
+  const latest = toolMessage("latest-inline", "read_data", "latest");
+  const context = createToolResultContext({
+    limits: { maxInlineBytes: 32_768, previewBytes: 4096 },
+  });
+  const inspect = (messages: Message[]) =>
+    inspectFinalRequestBudget({
+      system: "Help",
+      messages,
+      limit: { context: 1000, output: 32 },
+      requestedOutputTokens: 32,
+    });
+  const fitted = projectHistoricalToolResultsForBudget({
+    sourceMessages: [old, latest],
+    modelMessages: [old, latest],
+    context,
+    inspect,
+  });
+  assertEquals(inspect(fitted).fits, true);
+  const reference = result(fitted[0]!) as { ref: string; previewBytes: number };
+  assertEquals(reference.previewBytes < 4096, true);
+  assertStrictEquals(context.getOriginalResult(reference.ref), value);
+});
+
 it("does not turn preview-only model fallbacks into retrievable references", () => {
   const original = toolMessage("preview", "read_data", "original".repeat(1000));
   const latest = toolMessage("latest", "read_data", "latest");

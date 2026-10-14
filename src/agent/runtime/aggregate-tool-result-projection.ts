@@ -22,8 +22,17 @@ function isProtectedToolResult(part: ToolResultPart): boolean {
   return PROTECTED_TOOL_NAMES.has(part.toolName) && !isSkillReferenceToolResult(part);
 }
 
-/** Smaller previews tried for skill reference files, which are usually long prose. */
+/** Smaller previews tried when a default historical preview still does not fit. */
 const HISTORICAL_REFERENCE_PREVIEW_BYTES = [2_048, 1_024, 512, 256, 128] as const;
+
+/** Skill reference files are usually long prose, so they start below the default. */
+const SKILL_REFERENCE_PREVIEW_CANDIDATES: readonly (number | undefined)[] =
+  HISTORICAL_REFERENCE_PREVIEW_BYTES;
+/** Ordinary results keep the default preview when it fits, then shrink it. */
+const ORDINARY_PREVIEW_CANDIDATES: readonly (number | undefined)[] = [
+  undefined,
+  ...HISTORICAL_REFERENCE_PREVIEW_BYTES,
+];
 
 /** Budget measurement for one candidate set of model messages. */
 export type ToolResultProjectionBudget = {
@@ -106,9 +115,9 @@ export function projectHistoricalToolResultsForBudget(input: {
       let createdRef: string | undefined;
       let bestMessages: Message[] | undefined;
       let bestBudget = budget;
-      const previewCandidates: readonly (number | undefined)[] = isSkillReferenceToolResult(part)
-        ? HISTORICAL_REFERENCE_PREVIEW_BYTES
-        : [undefined];
+      const previewCandidates = isSkillReferenceToolResult(part)
+        ? SKILL_REFERENCE_PREVIEW_CANDIDATES
+        : ORDINARY_PREVIEW_CANDIDATES;
       try {
         for (const previewBytes of previewCandidates) {
           const reference = input.context.discloseReference(
