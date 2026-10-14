@@ -23,8 +23,12 @@ import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
   isVeryfrontCloudRuntimeModel,
+  type ProviderToolSchemaTarget,
   resolveConfiguredAgentModel,
+  resolveProviderToolSchemaTarget,
 } from "#veryfront/agent/runtime/model-resolution.ts";
+import { revokeModelRuntimeResolver } from "#veryfront/agent/runtime/model-transport.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
   hasTrustedHostToolProvenance,
@@ -291,6 +295,36 @@ export function registerRuntimeManualPause(
   capability: AgentManualPause,
 ): void {
   runtimeManualPauseCapabilities.set(input, capability);
+}
+
+/**
+ * The model ID and wire surface the run converts tool schemas for. A run-scoped
+ * inference credential reads its own served catalog, so the wire surface comes
+ * from the facts of a model built for that credential once its catalog loads.
+ */
+async function resolveRunToolSchemaTarget(
+  executionModel: string,
+  inferenceAuthToken: string | undefined,
+  abortSignal: AbortSignal,
+): Promise<ProviderToolSchemaTarget> {
+  const target = resolveProviderToolSchemaTarget(executionModel);
+  if (!inferenceAuthToken || !target.model?.startsWith("veryfront-cloud/")) return target;
+  const scopedTarget: ProviderToolSchemaTarget = { model: target.model };
+  const resolveModelRuntime = createVeryfrontCloudInferenceModelResolver(inferenceAuthToken, {
+    apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+  });
+  try {
+    const model = resolveModelRuntime(target.model);
+    if (model === undefined) return scopedTarget;
+    // A failed catalog load leaves the facts the run's own model starts with.
+    await Promise.resolve(model.prepare?.(abortSignal)).catch(() => {});
+    const wireSurface = readVeryfrontCloudModelFacts(model)?.surface;
+    return wireSurface === undefined ? scopedTarget : { ...scopedTarget, wireSurface };
+  } catch {
+    return scopedTarget;
+  } finally {
+    revokeModelRuntimeResolver(resolveModelRuntime);
+  }
 }
 
 function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
@@ -1500,7 +1534,11 @@ export async function createRuntimeAgentStreamResponse(
         ]),
       ].sort(compareStrings),
       {
-        model: executionModel,
+        ...await resolveRunToolSchemaTarget(
+          executionModel,
+          getRuntimeInferenceCredential(input),
+          abortSignal,
+        ),
         requiredToolNames: localToolNames,
       },
     );

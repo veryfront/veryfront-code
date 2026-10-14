@@ -1807,3 +1807,20 @@ it("does not load an unrelated local action for a missing canonical query", () =
   assertEquals(result.matches, []);
   assertEquals([...state.loadedToolNames], []);
 });
+
+it("tool exposure caps eager schemas at the visible limit, keeping bootstrap tools first", () => {
+  const plan = createToolExposurePlan({
+    authorized: [
+      definition("alpha", "Alpha"),
+      definition("beta", "Beta"),
+      definition("load_skill", "Load skill"),
+    ],
+    mode: "eager",
+    state: createToolExposureState(),
+    bootstrapToolNames: new Set(["load_skill"]),
+    maxVisibleTools: 2,
+  });
+
+  assertEquals(plan.visible.map((tool) => tool.name), ["alpha", "load_skill"]);
+  assertEquals(plan.deferred, []);
+});

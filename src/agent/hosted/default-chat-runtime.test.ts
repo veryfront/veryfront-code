@@ -14,6 +14,12 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogClockForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  VERYFRONT_CLOUD_CATALOG_TTL_MS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -50,6 +56,7 @@ import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
@@ -2463,4 +2470,115 @@ it("hosted runtime retains authored parallel tool control with unchanged tool gr
   } finally {
     clearModelProviders();
   }
+});
+
+it("prepared hosted runtime converts tools for the assembly's target when the model has no cloud facts", async () => {
+  const modelId = "veryfront-cloud/google/prepared-tool-schema-target";
+  let names: string[] = [];
+  const model = scriptedModel([
+    (options) => {
+      names = (options.tools ?? []).map((tool) => tool.name);
+      return { text: "done" };
+    },
+  ], { only: "generate", provider: "google", modelId: "prepared-tool-schema-target" });
+  const toolNames = Array.from(
+    { length: 130 },
+    (_, index) => `tool_${String(index).padStart(3, "0")}`,
+  );
+  const runtimeTools = createToolsFromHostDefinitions(
+    markTrustedHostToolSet(Object.fromEntries(toolNames.map((name) => [name, {
+      description: `Tool ${name}`,
+      inputSchemaJson: { type: "object", properties: {} },
+      execute: () => ({ ok: true }),
+    }]))),
+  );
+  const runtime = createPreparedHostedRuntimeAgent({
+    options: {
+      projectId: "project",
+      instructions: "Use tools.",
+      model: modelId,
+      toolLoading: "eager",
+    },
+    taskContext: { projectId: "project", branchId: null },
+    toolAssembly: {
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      runtimeTools,
+      remoteToolSources: [],
+      localToolNames: toolNames,
+      remoteToolNames: [],
+      providerToolNames: [],
+      availableToolNames: toolNames,
+      modelVisibleToolNames: toolNames,
+      toolLoadingMode: "eager",
+      toolSchemaTarget: { model: modelId, wireSurface: "openai" },
+      compatibleRemoteToolNames: [],
+      systemInstructions: "Use tools.",
+    },
+    modelId,
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+  }, { resolveModelRuntime: (id) => id === modelId ? model : undefined });
+
+  await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+    await runtime.generate({ input: "Hello" });
+  });
+
+  assertEquals(names.length, 128);
+});
+
+it("preselects eager hosted tools under the strictest limit when only a stale catalog answered", async () => {
+  let now = 1_000_000;
+  __setVeryfrontCloudCatalogClockForTests(() => now);
+  __setVeryfrontCloudCatalogForScopeForTests(
+    { apiBaseUrl: "https://api.example.com", apiToken: "token-stale-catalog" },
+    {
+      models: [{
+        id: "stale-model",
+        modelId: "google/stale-model",
+        provider: "google",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    },
+  );
+  now += VERYFRONT_CLOUD_CATALOG_TTL_MS + 1;
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  try {
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ error: "unavailable" }, { status: 503 })),
+      async () => {
+        await createDefaultHostedChatRuntime({
+          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+          options: {
+            projectId: "project-1",
+            authToken: "token-stale-catalog",
+            instructions: "Use only authorized tools.",
+            model: "google/stale-model",
+            deniedTools: ["tool_search"],
+          },
+          config: {
+            apiUrl: "https://api.example.com",
+            apiMcpUrl: "https://api.example.com/mcp",
+          },
+          buildLocalTools: (taskContext) => {
+            capturedContext = taskContext;
+            return Object.fromEntries(
+              Array.from({ length: 129 }, (_, index) => [
+                `local_tool_${String(index).padStart(3, "0")}`,
+                localTool(`Local tool ${index}`),
+              ]),
+            );
+          },
+          createRemoteToolSource: emptyRemoteSource,
+          preloadLatestConversationUserText: false,
+        });
+      },
+    );
+  } finally {
+    __resetVeryfrontCloudCatalogForTests();
+  }
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
 });

@@ -14,6 +14,7 @@ import {
   type ToolExposureCheckpoint,
 } from "./tool-exposure.ts";
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
+import type { ProviderToolSchemaTarget } from "./model-resolution.ts";
 
 const ArrayIsArray = Array.isArray;
 const NativeSet = Set;
@@ -115,6 +116,8 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfToolLoadingMode?: RuntimeToolLoadingMode;
   __vfToolBootstrapNames?: readonly string[];
+  /** Tool schema target trusted preparation resolved from the run's served catalog. */
+  __vfToolSchemaTarget?: ProviderToolSchemaTarget;
   __vfOperationalToolLoadingOverride?: "eager";
   __vfPreassembledSkillContext?: boolean;
 } & RuntimeRemoteToolConfig;
@@ -199,6 +202,21 @@ export function getRuntimeToolBootstrapNames(config: AgentConfig): ReadonlySet<s
     if (name !== undefined) reflectApply(SetAdd, bootstrapNames, [name]);
   }
   return bootstrapNames;
+}
+
+/**
+ * Return the tool schema target trusted preparation resolved for the run, for
+ * a model whose runtime carries no Veryfront Cloud facts of its own.
+ */
+export function getRuntimeToolSchemaTarget(
+  config: AgentConfig,
+): ProviderToolSchemaTarget | undefined {
+  const raw = (config as RuntimeToolFilterConfig).__vfToolSchemaTarget;
+  if (raw === null || typeof raw !== "object") return undefined;
+  const model: unknown = raw.model;
+  const wireSurface: unknown = raw.wireSurface;
+  if (typeof model !== "string" || model.length === 0) return undefined;
+  return typeof wireSurface === "string" ? { model, wireSurface } : { model };
 }
 
 /** Return trusted run-scoped source policy; malformed internal state fails closed. */

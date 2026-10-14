@@ -122,6 +122,10 @@ import {
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
+  readVeryfrontCloudModelFacts,
+  type VeryfrontCloudSurfaceId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
   getRuntimeRemoteToolSources,
@@ -235,6 +239,7 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
+  getRuntimeToolSchemaTarget,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   type ProviderReplayInvokeAgentToolCall,
@@ -2109,6 +2114,26 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
     !intrinsicArraySome(plan.authorized, (tool) => tool.name === toolName);
 }
 
+/**
+ * The model and wire surface whose provider tool rules apply this step. A
+ * built Veryfront Cloud model's own facts win; a model runtime without them
+ * (an executor proxy) uses the target trusted preparation resolved only for
+ * the same effective model. Per-request overrides keep their own provider rules.
+ */
+function resolveStepToolSchemaOptions(
+  config: AgentConfig,
+  languageModel: ModelRuntime,
+  effectiveModel: string,
+): { toolSchemaModel?: string; wireSurface?: VeryfrontCloudSurfaceId } {
+  const surface = readVeryfrontCloudModelFacts(languageModel)?.surface;
+  if (surface !== undefined) return { wireSurface: surface };
+  const target = getRuntimeToolSchemaTarget(config);
+  if (target?.model === undefined || target.model !== effectiveModel) return {};
+  return target.wireSurface === undefined
+    ? { toolSchemaModel: target.model }
+    : { toolSchemaModel: target.model, wireSurface: target.wireSurface };
+}
+
 function hasToolResultContextEnabled(
   config: Pick<AgentConfig, "toolResultContext">,
 ): boolean {
@@ -2167,6 +2192,12 @@ function withToolResultReaderTool(
   const visible = mapPrivateArray(tools, (tool) => tool);
   if (exposeReader) pushPrivateArray(visible, createToolResultReadDefinition());
   return visible;
+}
+
+// Reserve the reader's slot whenever references can be created: a result
+// produced later in the step still makes the reader required at conversion.
+function getToolResultReaderReservedSlots(context: ToolResultContext | undefined): number {
+  return context === undefined ? 0 : 1;
 }
 
 function getRequiredToolResultReaderNames(exposeReader: boolean): readonly string[] | undefined {
@@ -4068,6 +4099,8 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+          reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
           excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
               runtimeStepToolLoading.mode === "eager"
             ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -4141,6 +4174,7 @@ export class AgentRuntime {
         );
         const runtimeTools = convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
+          ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
           providerTools: stepProviderTools,
           requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
         });
@@ -5138,6 +5172,8 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
+        reservedToolSlots: getToolResultReaderReservedSlots(toolResultContext),
         excludedToolNames: agentWriteFinalResponseToolGuardEnabled &&
             toolLoadingResolution.mode === "eager"
           ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
@@ -5398,6 +5434,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
+        ...resolveStepToolSchemaOptions(this.config, languageModel, effectiveModel),
         providerTools: stepProviderTools,
         requiredToolNames: getRequiredToolResultReaderNames(exposeToolResultReader),
       });

@@ -1,4 +1,7 @@
-import { resolveVeryfrontCloudModelSurface } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  resolveVeryfrontCloudModelSurface,
+  type VeryfrontCloudSurfaceId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
@@ -21,7 +24,11 @@ export interface ProviderToolProfile {
 /** Options accepted by provider tool compat. */
 export interface ProviderToolCompatOptions {
   model?: string;
+  /** The authenticated gateway model's resolved wire surface, when available. */
+  wireSurface?: VeryfrontCloudSurfaceId;
   requiredToolNames?: readonly string[];
+  /** Slots under the tool limit kept for schemas the runtime appends later. */
+  reservedToolSlots?: number;
 }
 
 const OPENAI_MAX_TOOLS = 128;
@@ -80,11 +87,28 @@ function normalizeModel(model?: string): string {
 }
 
 /** Return provider tool profile. */
-export function getProviderToolProfile(model?: string): ProviderToolProfile {
+export function getProviderToolProfile(
+  model?: string,
+  wireSurface?: VeryfrontCloudSurfaceId,
+): ProviderToolProfile {
   const normalized = normalizeModel(model);
   const parts = normalized.split("/").filter(Boolean);
   const provider = parts[0] === "veryfront-cloud" ? parts[1] : parts[0];
   const modelName = parts.at(-1);
+
+  // The publisher segment of a Veryfront Cloud ID can differ from the gateway
+  // protocol. Authenticated transport facts override publisher-based fallbacks.
+  if (parts[0] === "veryfront-cloud" && wireSurface !== undefined) {
+    if (wireSurface === "google") return { provider: "google", sanitizeSchema: true };
+    if (wireSurface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
+    if (wireSurface === "openai") {
+      // An OpenAI-compatible wire retains the backend's reference restrictions.
+      if (provider === "moonshot" || provider === "moonshotai") {
+        return { provider: "moonshot", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: true };
+      }
+      return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
+    }
+  }
 
   if (provider === "openai") {
     return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
@@ -102,10 +126,8 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
     return { provider: "moonshot", sanitizeSchema: true };
   }
 
-  // A Veryfront Cloud provider this list does not name takes the schema rules
-  // of the wire protocol it is served on: Google and Anthropic constrain tool
-  // schemas by protocol, not by vendor. This runs before the model-name
-  // heuristic below, so a served provider's own naming cannot override it.
+  // Without authenticated model facts, retain the served catalog fallback for
+  // providers whose publisher name does not itself imply a protocol.
   if (parts[0] === "veryfront-cloud") {
     const surface = resolveVeryfrontCloudModelSurface(normalized);
     if (surface === "google") return { provider: "google", sanitizeSchema: true };
@@ -138,10 +160,13 @@ export function selectProviderCompatibleToolNames(
   toolNames: readonly string[],
   options: ProviderToolCompatOptions = {},
 ): string[] {
-  const profile = getProviderToolProfile(options.model);
+  const profile = getProviderToolProfile(options.model, options.wireSurface);
+  const maxTools = profile.maxTools === undefined
+    ? undefined
+    : Math.max(0, profile.maxTools - Math.max(0, options.reservedToolSlots ?? 0));
   const orderedToolNames = uniqueInOrder(toolNames);
 
-  if (profile.maxTools === undefined || orderedToolNames.length <= profile.maxTools) {
+  if (maxTools === undefined || orderedToolNames.length <= maxTools) {
     return orderedToolNames;
   }
 
@@ -166,14 +191,14 @@ export function selectProviderCompatibleToolNames(
   for (let index = 0; index < orderedToolNames.length; index++) {
     const toolName = orderedToolNames[index];
     if (toolName === undefined) continue;
-    if (selected.length >= profile.maxTools) break;
+    if (selected.length >= maxTools) break;
     if (IntrinsicReflectApply(IntrinsicSetHas, selectedSet, [toolName])) continue;
     selected[selected.length] = toolName;
     IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
   }
 
   const bounded: string[] = [];
-  for (let index = 0; index < selected.length && index < profile.maxTools; index++) {
+  for (let index = 0; index < selected.length && index < maxTools; index++) {
     const toolName = selected[index];
     if (toolName !== undefined) bounded[bounded.length] = toolName;
   }
@@ -752,7 +777,7 @@ export function normalizeProviderToolInputSchema(schema: JsonSchema): JsonSchema
 
 /** Options accepted by {@link sanitizeProviderToolSchema}. */
 export interface SanitizeProviderToolSchemaOptions
-  extends Pick<ProviderToolCompatOptions, "model"> {
+  extends Pick<ProviderToolCompatOptions, "model" | "wireSurface"> {
   /**
    * Expansion budget shared across every tool in one conversion pass. Callers that
    * sanitize a whole tool set should create one budget and reuse it so `$ref` inlining
@@ -766,7 +791,7 @@ export function sanitizeProviderToolSchema(
   schema: JsonSchema,
   options: SanitizeProviderToolSchemaOptions = {},
 ): JsonSchema {
-  const profile = getProviderToolProfile(options.model);
+  const profile = getProviderToolProfile(options.model, options.wireSurface);
   if (!profile.sanitizeSchema) return schema;
 
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);

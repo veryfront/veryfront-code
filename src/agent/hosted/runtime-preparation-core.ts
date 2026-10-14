@@ -1,3 +1,4 @@
+import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import { getHostedAgentPauseCreationOptions } from "./manual-pause-credential.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
@@ -37,6 +38,7 @@ import {
 } from "#veryfront/agent/runtime/model-transport.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { resolveProviderToolSchemaTarget } from "#veryfront/agent/runtime/model-resolution.ts";
 import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
@@ -960,6 +962,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         providerNativeToolNames: withServedFacts(() =>
           getProviderNativeToolNames({ model: modelId, hosted: true })
         ),
+        // Granted IDs are always `veryfront-cloud/...`, so the target keeps
+        // that route; the broker-loaded catalog names its wire surface. The
+        // executor's model proxy carries no cloud facts, so the runtime
+        // converts tools for this target too.
+        toolSchemaTarget: withServedFacts(() => resolveProviderToolSchemaTarget(modelId)),
+        reservedToolSlots: getToolResultReaderReservedToolSlots(definition.toolResultContext),
         sourceProviderToolNames: definition.providerTools,
         prepareRemoteToolInput: ({ toolName, toolInput }) =>
           applyDefaultResearchArtifactPath(toolName, toolInput, taskContext),

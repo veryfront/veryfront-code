@@ -432,9 +432,10 @@ describe("agent runtime tool result context integration", () => {
       model: "openai/tool-result-context-cap",
       system: "Use tools.",
       skills: [],
+      // Eager schemas past the cap are not sent, so the called tool comes first.
       tools: {
-        ...cappedNoopTools(128),
         list_records: listRecordsTool(HUGE_EMAIL_RESULT),
+        ...cappedNoopTools(128),
       },
       toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
       maxSteps: 4,
@@ -456,6 +457,81 @@ describe("agent runtime tool result context integration", () => {
       text: HUGE_EMAIL_RESULT.slice(0, 1000),
       byteLength: 1000,
     });
+  });
+
+  it("reserves the reader's slot so deferred loading keeps tool_search under the 128-tool cap", async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] },
+      (options) => {
+        const names = toolNamesFromCall(options);
+        assertEquals(names.length <= 128, true);
+        assertEquals(names.includes("get_tool_result"), true);
+        assertEquals(names.includes("tool_search"), true);
+        return { text: "done" };
+      },
+    ], {
+      modelId: "openai/tool-result-context-deferred-cap",
+      provider: "openai",
+      only: "generate",
+    });
+    const noopTools = cappedNoopTools(140);
+
+    const assistant = agent(
+      {
+        model: "openai/tool-result-context-deferred-cap",
+        system: "Use tools.",
+        skills: [],
+        tools: { ...noopTools, list_records: listRecordsTool(HUGE_EMAIL_RESULT) },
+        toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
+        maxSteps: 3,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+        __vfToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: [...Object.keys(noopTools), "list_records"],
+        },
+      } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+    );
+
+    const response = await assistant.generate({ input: "List records." });
+
+    assertEquals(response.text, "done");
+  });
+
+  it("keeps every eager schema it advertised once the reader joins under the 128-tool cap", async () => {
+    const stepNames: string[][] = [];
+    const model = scriptedModel([
+      (options) => {
+        stepNames.push(toolNamesFromCall(options));
+        return { toolCalls: [{ id: "call-list", name: "list_records", input: {} }] };
+      },
+      (options) => {
+        stepNames.push(toolNamesFromCall(options));
+        return { text: "done" };
+      },
+    ], {
+      modelId: "openai/tool-result-context-eager-cap",
+      provider: "openai",
+      only: "generate",
+    });
+
+    const assistant = agent({
+      model: "openai/tool-result-context-eager-cap",
+      system: "Use tools.",
+      skills: [],
+      tools: { list_records: listRecordsTool(HUGE_EMAIL_RESULT), ...cappedNoopTools(127) },
+      toolResultContext: { maxInlineBytes: 32, previewBytes: 24, maxSectionBytes: 1_000 },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "List records." });
+
+    assertEquals(response.text, "done");
+    const [first = [], second = []] = stepNames;
+    assertEquals(first.length, 127);
+    assertEquals(second.includes("get_tool_result"), true);
+    assertEquals(first.every((name) => second.includes(name)), true);
   });
 
   it("preserves default inline behavior unless toolResultContext is enabled", async () => {
@@ -782,5 +858,69 @@ describe("agent runtime tool result context integration", () => {
     assertEquals(observedToolResults, [LARGE_RESULT]);
     assertExists(finished);
     assertEquals(toolResultValue(toolResultMessage(finished, "list_records")), LARGE_RESULT);
+  });
+});
+
+describe("agent runtime tool schema target without model facts", () => {
+  for (const mode of ["generate", "stream"] as const) {
+    it(`uses the request model's tool limits instead of a different prepared target in ${mode}`, async () => {
+      let names: string[] = [];
+      const model = scriptedModel([(options) => {
+        names = toolNamesFromCall(options);
+        return { text: "done" };
+      }], { modelId: "override", provider: "openai", only: mode });
+      const assistant = agent(
+        {
+          model: "veryfront-cloud/google/local-model",
+          system: "Use tools.",
+          skills: [],
+          tools: cappedNoopTools(130),
+          maxSteps: 1,
+          resolveModelTransport: () => ({ model }),
+          __vfToolSchemaTarget: {
+            model: "veryfront-cloud/google/local-model",
+            wireSurface: "google",
+          },
+        } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+      );
+      const request = { input: "Hello.", model: "openai/override" };
+      if (mode === "generate") await assistant.generate(request);
+      else await (await assistant.stream(request)).toDataStreamResponse().text();
+      assertEquals(names.length, 128);
+    });
+  }
+
+  it("caps converted tools by the prepared wire surface when the model runtime has no cloud facts", async () => {
+    let names: string[] = [];
+    const model = scriptedModel([
+      (options) => {
+        names = toolNamesFromCall(options);
+        return { text: "done" };
+      },
+    ], {
+      modelId: "google/local-model",
+      provider: "google",
+      only: "generate",
+    });
+
+    const assistant = agent(
+      {
+        model: "veryfront-cloud/google/local-model",
+        system: "Use tools.",
+        skills: [],
+        tools: cappedNoopTools(130),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolSchemaTarget: {
+          model: "veryfront-cloud/google/local-model",
+          wireSurface: "openai",
+        },
+      } as Parameters<typeof agent>[0] & RuntimeToolFilterConfig,
+    );
+
+    const response = await assistant.generate({ input: "Hello." });
+
+    assertEquals(response.text, "done");
+    assertEquals(names.length, 128);
   });
 });

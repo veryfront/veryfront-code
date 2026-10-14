@@ -1,3 +1,4 @@
+import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 import {
   type HostToolSet,
@@ -16,6 +17,7 @@ import {
   runWithRequestContext as runWithProjectRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   currentVeryfrontCloudCatalogScopeKey,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -40,7 +42,12 @@ import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeLocalTool,
 } from "../runtime/local-tool.ts";
-import { isVeryfrontCloudRuntimeModel, resolveRuntimeModel } from "../runtime/model-resolution.ts";
+import {
+  isVeryfrontCloudRuntimeModel,
+  type ProviderToolSchemaTarget,
+  resolveProviderToolSchemaTarget,
+  resolveRuntimeModel,
+} from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { isLoadSkillToolName } from "../runtime/skill-policy-enforcement.ts";
 import {
@@ -251,6 +258,7 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
     providerNativeToolNames: readonly string[];
+    toolSchemaTarget: ProviderToolSchemaTarget;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -299,6 +307,8 @@ async function buildToolAssembly(
     toolLoading: input.options.toolLoading,
     knowledge: input.options.knowledge,
     providerNativeToolNames: input.providerNativeToolNames,
+    toolSchemaTarget: input.toolSchemaTarget,
+    reservedToolSlots: getToolResultReaderReservedToolSlots(input.options.toolResultContext),
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -388,6 +398,9 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     ...(input.options.knowledge !== undefined ? { knowledge: input.options.knowledge } : {}),
     providerTools: input.toolAssembly.providerToolNames,
     __vfToolBootstrapNames: input.toolAssembly.modelVisibleToolNames,
+    ...(input.toolAssembly.toolSchemaTarget === undefined
+      ? {}
+      : { __vfToolSchemaTarget: input.toolAssembly.toolSchemaTarget }),
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
@@ -603,7 +616,7 @@ export async function createDefaultHostedChatRuntime(
       // A short model alias resolves through the served catalog. It is loaded
       // and read under the run's own credentials and project, the same scope
       // the run's later model reads use.
-      await runWithVeryfrontCloudContextAsync(
+      const catalogLoaded = await runWithVeryfrontCloudContextAsync(
         cloudContext,
         () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS }),
       );
@@ -629,12 +642,30 @@ export async function createDefaultHostedChatRuntime(
             hosted: isVeryfrontCloudRuntimeModel(modelId),
           }),
       );
+      // Preselection caps tools by the limit the run's model is converted with.
+      // The model settles against a fresh catalog: a load that timed out or
+      // answered from a stale entry still refreshes before dispatch, so
+      // preselection then assumes the strictest wire limit.
+      const toolSchemaTarget = runWithVeryfrontCloudContext(
+        cloudContext,
+        () =>
+          resolveProviderToolSchemaTarget(modelId, {
+            catalogSettled: catalogLoaded && canVeryfrontCloudCatalogRefuse(),
+          }),
+      );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext, cloudContext, providerNativeToolNames }),
+          () =>
+            buildToolAssembly({
+              ...input,
+              taskContext,
+              cloudContext,
+              providerNativeToolNames,
+              toolSchemaTarget,
+            }),
         );
         const refreshSystem = input.refreshSystem;
         const liveProjectSteering = input.options.liveProjectSteering;

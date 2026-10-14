@@ -47,6 +47,7 @@ import {
   markRuntimeProviderSchemaHiddenTool,
 } from "../runtime/local-tool.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
+import type { ProviderToolSchemaTarget } from "../runtime/model-resolution.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import {
@@ -217,6 +218,10 @@ export type HostedChatRuntimeToolAssemblyResult = {
   availableToolNames: string[];
   modelVisibleToolNames?: string[];
   toolLoadingMode: RuntimeToolLoadingMode;
+  /** Tool schema target the assembly's eager preselection was capped for. */
+  toolSchemaTarget?: ProviderToolSchemaTarget;
+  /** Tool-limit slots eager preselection kept for runtime-appended schemas. */
+  reservedToolSlots?: number;
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
   /** Structured system messages preserved for provider dispatch. */
@@ -259,6 +264,18 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * `taskContext.model` as written.
    */
   providerNativeToolNames?: readonly string[];
+  /**
+   * Runtime model ID and gateway wire surface the run converts tool schemas
+   * for, resolved where the run's routing and served catalog are known. Eager
+   * preselection applies that target's tool limit. Defaults to
+   * `taskContext.model` as written.
+   */
+  toolSchemaTarget?: ProviderToolSchemaTarget;
+  /**
+   * Slots under the tool limit kept for schemas the runtime appends after
+   * preselection, such as the tool-result reader.
+   */
+  reservedToolSlots?: number;
   /**
    * Include runtime-essential tools when `allowedToolNames` is an empty set.
    * Non-empty selectors remain restrictive.
@@ -1146,7 +1163,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const availableToolNames = toolLoadingMode === "deferred"
     ? authorizedToolNames
     : selectProviderCompatibleToolNames(providerVisibleAuthorizedToolNames, {
-      model: input.taskContext.model,
+      ...(input.toolSchemaTarget ?? { model: input.taskContext.model }),
+      reservedToolSlots: input.reservedToolSlots,
       requiredToolNames: [...eagerBootstrapToolNames, ...providerVisibleLocalToolNames],
     });
   const bootstrapToolNames = selectHostedRuntimeBootstrapToolNames({
@@ -1241,6 +1259,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     availableToolNames,
     modelVisibleToolNames,
     toolLoadingMode,
+    ...(input.toolSchemaTarget === undefined ? {} : { toolSchemaTarget: input.toolSchemaTarget }),
+    ...(input.reservedToolSlots === undefined
+      ? {}
+      : { reservedToolSlots: input.reservedToolSlots }),
     compatibleRemoteToolNames,
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),

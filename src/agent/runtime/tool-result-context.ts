@@ -759,3 +759,14 @@ export class ToolResultContext {
 export function createToolResultContext(options: ToolResultContextOptions = {}): ToolResultContext {
   return new ToolResultContext(options);
 }
+
+/**
+ * Tool-limit slots to keep for the framework `get_tool_result` reader, which
+ * the runtime appends after tool selection whenever tool-result context is on.
+ */
+export function getToolResultReaderReservedToolSlots(toolResultContext: unknown): number {
+  return toolResultContext === true ||
+      (typeof toolResultContext === "object" && toolResultContext !== null)
+    ? 1
+    : 0;
+}

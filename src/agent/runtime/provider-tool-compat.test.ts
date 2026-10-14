@@ -272,38 +272,40 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.properties?.labelIds?.items, {});
   });
 
-  it("normalizes Moonshot tool schemas to use $defs references", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          acceptance_criteria: {
-            $ref: "#/definitions/acceptanceCriteria",
-          },
-        },
-        definitions: {
-          acceptanceCriteria: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                label: { type: "string" },
-              },
-              required: ["label"],
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`normalizes Moonshot tool schemas to use $defs references (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            acceptance_criteria: {
+              $ref: "#/definitions/acceptanceCriteria",
             },
           },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
-    const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
+          definitions: {
+            acceptanceCriteria: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                },
+                required: ["label"],
+              },
+            },
+          },
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+      const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
-    assertEquals(sanitizedRecord.definitions, undefined);
-    assertEquals(defs.acceptanceCriteria?.type, "array");
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+      assertEquals(sanitizedRecord.definitions, undefined);
+      assertEquals(defs.acceptanceCriteria?.type, "array");
+    });
+  }
 
   it("normalizes short Kimi aliases as Moonshot tool schemas", () => {
     const profile = getProviderToolProfile("kimi-k2.6");
@@ -334,36 +336,38 @@ describe("provider-tool-compat", () => {
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
 
-  it("inlines Moonshot tool refs that point outside $defs", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          expectations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                description: { type: "string" },
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`inlines Moonshot tool refs that point outside $defs (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            expectations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["id", "description"],
               },
-              required: ["id", "description"],
+            },
+            acceptance_criteria: {
+              $ref: "#/properties/expectations",
             },
           },
-          acceptance_criteria: {
-            $ref: "#/properties/expectations",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, undefined);
-    assertEquals(properties.acceptance_criteria?.type, "array");
-    assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, undefined);
+      assertEquals(properties.acceptance_criteria?.type, "array");
+      assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
+    });
+  }
 
   it("bounds Moonshot ref inlining for fan-out ref chains", () => {
     // 15 levels, not a deeper hostile case: without the budget this already expands to
@@ -623,6 +627,64 @@ describe("getProviderToolProfile for providers only the served catalog lists", (
     served("anthropic");
     assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1"), {
       provider: "anthropic",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("keeps a Google publisher's tool schema on the served OpenAI wire surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "google/local-model",
+        provider: "google",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/google/local-model", "openai"), {
+      provider: "openai",
+      maxTools: 128,
+      sanitizeSchema: false,
+    });
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        target: { oneOf: [{ type: "string" }, { type: "null" }] },
+      },
+    } as never;
+    assertEquals(
+      sanitizeProviderToolSchema(schema, {
+        model: "veryfront-cloud/google/local-model",
+        wireSurface: "openai",
+      }),
+      schema,
+    );
+  });
+
+  it("keeps a direct provider ID on its own profile when a wire surface is supplied", () => {
+    assertEquals(getProviderToolProfile("google/gemini-2.5-pro", "openai"), {
+      provider: "google",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("uses the authenticated wire surface over the served catalog surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "acme-labs/local-model",
+        provider: "acme-labs",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/local-model", "google"), {
+      provider: "google",
       sanitizeSchema: true,
     });
   });
