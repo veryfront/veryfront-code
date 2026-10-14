@@ -356,6 +356,14 @@ export type RuntimeReasoningOption = {
   budgetTokens?: number;
 };
 
+/** Optional per-model deadlines for one streaming model call. */
+export interface ModelStreamTimeouts {
+  /** Time allowed for the first output from each model call. */
+  firstProgressTimeoutMs?: number;
+  /** Time allowed between outputs after progress begins. */
+  semanticIdleTimeoutMs?: number;
+}
+
 /** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {
   model?: ModelRuntime;

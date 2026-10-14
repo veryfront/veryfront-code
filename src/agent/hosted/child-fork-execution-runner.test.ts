@@ -8,7 +8,14 @@ import {
   DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
   executeHostedChildForkToolInput,
   executeHostedChildForkWithPreparedTools,
+  runHostedChildForkRuntimeStep,
 } from "./child-fork-execution-runner.ts";
+import {
+  bindHostedChildModelStreamTimeouts,
+  readHostedChildModelStreamTimeouts,
+} from "./inference-credential.ts";
+import type { ModelRuntime } from "#veryfront/provider";
+import type { RunAgentRuntimeForkStepInput } from "../streaming/fork-runtime-stream.ts";
 import { createHostedDurableChildForkRunContext } from "./child-fork-run-context.ts";
 import type { AgentResponse } from "../schemas/index.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
@@ -994,4 +1001,77 @@ Deno.test("executeHostedChildForkWithPreparedTools exports stable default timeou
   assertEquals(DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS, 5 * 60_000);
   assertEquals(DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS, 2 * 60_000);
   assertEquals(DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS, 10_000);
+});
+
+function createSilentChildStepInput(abortSignal?: AbortSignal): RunAgentRuntimeForkStepInput {
+  const silentModel = {
+    provider: "test",
+    modelId: "silent",
+    doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+    doStream: () => Promise.resolve({ stream: new ReadableStream({}) }),
+  } as unknown as ModelRuntime;
+  return {
+    resolveModelRuntime: () => silentModel,
+    apiUrl: "https://api.example.com",
+    authToken: "test-token",
+    projectId: null,
+    model: "test/silent",
+    messages: [{ id: "user-1", role: "user", parts: [{ type: "text", text: "Work." }] }],
+    system: "Fork instructions.",
+    ...(abortSignal ? { abortSignal } : {}),
+    forkToolNames: [],
+    runtimeTools: {},
+  };
+}
+
+function createBudgetedForkContext() {
+  const forkContext = {} as Parameters<typeof bindHostedChildModelStreamTimeouts>[0];
+  bindHostedChildModelStreamTimeouts(forkContext, {
+    firstProgressTimeoutMs: 20,
+    semanticIdleTimeoutMs: 50_000,
+  });
+  return forkContext;
+}
+
+Deno.test("runHostedChildForkRuntimeStep applies inherited budgets shorter than the child watchdog", async () => {
+  const result = await runHostedChildForkRuntimeStep(
+    createSilentChildStepInput(),
+    createBudgetedForkContext(),
+    45_000,
+  );
+  result.responsePromise.catch(() => {});
+  const body = await new Response(result.stream).text();
+  assertEquals(body.includes("FIRST_PROGRESS_TIMEOUT"), true);
+});
+
+Deno.test("runHostedChildForkRuntimeStep drops inherited budgets the child watchdog would preempt", async () => {
+  const abort = new AbortController();
+  abort.abort();
+  const stepInput = createSilentChildStepInput(abort.signal);
+  const result = await runHostedChildForkRuntimeStep(
+    stepInput,
+    createBudgetedForkContext(),
+    45_000,
+  );
+  await result.responsePromise.catch(() => {});
+  await result.stream.cancel().catch(() => {});
+  // The 50s semantic-idle budget would never fire under a 45s child watchdog.
+  assertEquals(readHostedChildModelStreamTimeouts(stepInput), { firstProgressTimeoutMs: 20 });
+});
+
+Deno.test("runHostedChildForkRuntimeStep counts the first-progress replay against the child watchdog", async () => {
+  const forkContext = {} as Parameters<typeof bindHostedChildModelStreamTimeouts>[0];
+  // A 30s first-progress budget can run twice (60s) before failing under active
+  // lifecycle replay, which the 45s child watchdog would preempt.
+  bindHostedChildModelStreamTimeouts(forkContext, {
+    firstProgressTimeoutMs: 30_000,
+    semanticIdleTimeoutMs: 10_000,
+  });
+  const abort = new AbortController();
+  abort.abort();
+  const stepInput = createSilentChildStepInput(abort.signal);
+  const result = await runHostedChildForkRuntimeStep(stepInput, forkContext, 45_000);
+  await result.responsePromise.catch(() => {});
+  await result.stream.cancel().catch(() => {});
+  assertEquals(readHostedChildModelStreamTimeouts(stepInput), { semanticIdleTimeoutMs: 10_000 });
 });

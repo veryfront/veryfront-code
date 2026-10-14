@@ -28,6 +28,8 @@ export type AgentServiceConfig = {
   VERYFRONT_AGENT_SERVICE_REGISTRATION: AgentServiceRegistrationMode;
   VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: number;
   VERYFRONT_AGENT_SERVICE_REGION?: string;
+  VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS?: number;
+  VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS?: number;
   POD_NAME?: string;
   POD_UID?: string;
   POD_IP?: string;
@@ -82,6 +84,12 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationModeInputSchema,
     VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.coerce.number().positive().default(30_000),
     VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
+    VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: v.coerce.number().int().positive().max(
+      300_000,
+    ).optional(),
+    VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS: v.coerce.number().int().positive().max(
+      300_000,
+    ).optional(),
     POD_NAME: v.string().min(1).max(128).optional(),
     POD_UID: v.string().min(1).max(128).optional(),
     POD_IP: v.string().min(1).max(128).optional(),
@@ -127,6 +135,10 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS:
       env.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS,
     VERYFRONT_AGENT_SERVICE_REGION: env.VERYFRONT_AGENT_SERVICE_REGION,
+    VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS:
+      env.VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS,
+    VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS:
+      env.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS,
     POD_NAME: env.POD_NAME,
     POD_UID: env.POD_UID,
     POD_IP: env.POD_IP,

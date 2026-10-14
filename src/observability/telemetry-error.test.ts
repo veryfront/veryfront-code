@@ -25,6 +25,7 @@ import {
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
+  buildProviderError,
   ProviderRateLimitError,
   ProviderRequestError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
@@ -1172,6 +1173,105 @@ describe("observability/telemetry-error", () => {
         name: "Error",
         messageRedacted: true,
       }]);
+    });
+
+    it("logs only safe structured fields from a rejected provider request", async () => {
+      const body = JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_tool_schema",
+          param: "tools[0].function.parameters",
+          message: "Private prompt and key sk-private were rejected",
+          request: "private request body",
+        },
+      });
+      const providerError = await buildProviderError("openai", new Response(body, { status: 400 }));
+      const result = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(providerError),
+      );
+
+      assertEquals(result, [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 400,
+        retryable: false,
+        providerErrorType: "invalid_request_error",
+        providerErrorCode: "invalid_tool_schema",
+        providerErrorParam: "tools[0].function.parameters",
+        messageRedacted: true,
+      }]);
+      assertEquals(JSON.stringify(result).includes("sk-private"), false);
+      assertEquals(JSON.stringify(providerError).includes("private request body"), false);
+    });
+
+    it("falls back to the Google status when the envelope code is numeric", async () => {
+      const body = JSON.stringify({
+        error: { code: 400, status: "INVALID_ARGUMENT", message: "private" },
+      });
+      const providerError = await buildProviderError("google", new Response(body, { status: 400 }));
+      const summary = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(providerError),
+      );
+      assertEquals(summary?.[0]?.providerErrorCode, "INVALID_ARGUMENT");
+    });
+
+    it("keeps malformed or unsafe provider details at status-only diagnostics", async () => {
+      const bodies = [
+        "not-json",
+        JSON.stringify({
+          error: {
+            type: "sk-private",
+            code: "sk-private",
+            param: "tools[0].function.parameters.secret-key",
+            message: "private",
+          },
+        }),
+      ];
+      for (const body of bodies) {
+        const providerError = await buildProviderError(
+          "openai",
+          new Response(body, { status: 400 }),
+        );
+        assertEquals(
+          summarizeErrorCausesForLog(
+            createRuntimeProviderStreamFailure(providerError),
+          ),
+          [{
+            name: "ProviderRequestError",
+            provider: "openai",
+            status: 400,
+            retryable: false,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("ignores lookalike diagnostic fields on an uncaptured provider error", () => {
+      const providerError = new ProviderRequestError({
+        provider: "openai",
+        status: 400,
+        message: "Private request failed",
+        retryable: false,
+      });
+      Object.defineProperty(providerError, "providerErrorCode", {
+        get() {
+          throw new Error("Untrusted diagnostic getter must not run");
+        },
+      });
+
+      assertEquals(
+        summarizeErrorCausesForLog(
+          createRuntimeProviderStreamFailure(providerError),
+        ),
+        [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 400,
+          retryable: false,
+          messageRedacted: true,
+        }],
+      );
     });
 
     it("logs rate-limit retryability and normalizes statusCode to status", () => {

@@ -1,3 +1,4 @@
+import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
 import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -84,6 +85,7 @@ import {
   getTextFromParts,
   type Message,
   type MessagePart,
+  type ModelStreamTimeouts,
   type ResolvedRuntimeState,
   type RuntimeReasoningOption,
   type ToolCall,
@@ -1059,8 +1061,6 @@ export function cloneRuntimeStateMutableData<T>(
 type DeferredRecoveryOutput =
   | { kind: "sse"; chunk: Uint8Array; isTextEvent: boolean }
   | { kind: "callback"; chunk: string };
-
-const MAX_RUNTIME_PROVIDER_STREAM_RETRIES = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -2741,6 +2741,8 @@ export type AgentRuntimeInternalOptions = {
   preserveToolCatalog?: boolean;
   /** Call controls for private models, independent of source transport hooks. */
   modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
+  /** Host-owned per-model stream deadlines. Omitted fields keep framework defaults. */
+  modelStreamTimeouts?: ModelStreamTimeouts;
   /** Observe original producer settlement before it starts, including its full cleanup. */
   onStreamCompletion?: (completion: Promise<void>) => void;
   /** Exact pending tool invocation trusted by the hosted control plane. */
@@ -2837,6 +2839,7 @@ export class AgentRuntime {
   #manualPause: AgentManualPause | undefined;
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
+  #modelStreamTimeouts: AgentRuntimeInternalOptions["modelStreamTimeouts"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
@@ -2862,6 +2865,7 @@ export class AgentRuntime {
       ObjectDefineProperty(this, name, descriptor);
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#modelStreamTimeouts = internalOptions.modelStreamTimeouts;
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#resumeToolCall = internalOptions.resumeToolCall;
@@ -5691,6 +5695,9 @@ export class AgentRuntime {
             providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
             availableToolNames: acceptedRuntimeToolNames,
             streamLifecycleMode,
+            ...(this.#modelStreamTimeouts
+              ? { streamLifecyclePolicy: { ...this.#modelStreamTimeouts } }
+              : {}),
             traceSpanName: `chat ${effectiveModel}`,
             traceAttributes: {
               ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),

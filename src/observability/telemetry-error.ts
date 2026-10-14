@@ -25,6 +25,7 @@ import {
   readNativeErrorStackWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { readProviderErrorDiagnostic } from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
 
 const apply = Reflect.apply;
 const createObject = Object.create;
@@ -618,6 +619,10 @@ export interface LoggedErrorCause {
   viaVeryfrontGateway?: boolean;
   /** Fixed endpoint classification; never a URL, path, credential or query. */
   requestOrigin?: "openai" | "anthropic" | "google";
+  /** Exact allowlisted provider rejection fields from a parsed HTTP response. */
+  providerErrorType?: string;
+  providerErrorCode?: string;
+  providerErrorParam?: string;
   /** An exact fixed protocol issue from the successful HTTP stream parser. */
   streamIssue?: string;
 }
@@ -963,6 +968,11 @@ function addBoundedProviderDiagnostics(error: Error, entry: LoggedErrorCause): v
 
   const retryable = readOwnErrorDataField(error, "retryable");
   if (typeof retryable === "boolean") entry.retryable = retryable;
+
+  const diagnostic = readProviderErrorDiagnostic(error);
+  if (diagnostic?.type !== undefined) entry.providerErrorType = diagnostic.type;
+  if (diagnostic?.code !== undefined) entry.providerErrorCode = diagnostic.code;
+  if (diagnostic?.param !== undefined) entry.providerErrorParam = diagnostic.param;
 
   const gateway = readOwnErrorDataField(error, "viaVeryfrontGateway");
   if (typeof gateway === "boolean") entry.viaVeryfrontGateway = gateway;
